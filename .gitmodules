@@ -1,0 +1,9 @@
+[submodule "external/eigen"]
+	path = external/eigen
+	url = https://gitlab.com/libeigen/eigen.git
+[submodule "external/exprtk"]
+	path = external/exprtk
+	url = https://github.com/ArashPartow/exprtk.git
+[submodule "external/nanoflann"]
+	path = external/nanoflann
+	url = https://github.com/jlblancoc/nanoflann.git

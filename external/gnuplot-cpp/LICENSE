@@ -1,0 +1,9 @@
+gnuplot-cpp: A C++ interface to gnuplot
+Originally from: https://code.google.com/archive/p/gnuplot-cpp/
+Mirror: https://github.com/tttamaki/gnuplot-cpp
+
+This software is distributed under the GNU Lesser General Public License
+version 2.1 (LGPL v2.1).
+
+See https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html for the full
+license text.

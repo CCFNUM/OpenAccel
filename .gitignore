@@ -1,0 +1,17 @@
+# Build
+build/
+examples/
+*.o
+*.exe
+CMakeCache.txt
+CMakeFiles/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Claude
+.claude/
