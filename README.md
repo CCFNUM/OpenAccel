@@ -132,7 +132,7 @@ mpirun -np <num-procs> <path-to-executable> -i <path-to-input-file>
 
 **Example:**
 ```bash
-mpirun -np 8 ./build/accel -i case/input.yaml
+mpirun -np 8 ./build/accel-3D.exe -i case/input.yaml
 ```
 
 ---
