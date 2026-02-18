@@ -14,7 +14,7 @@
 
 ## 🚀 Features
 * **Modern Foundation:** Built using the **C++20** standard.
-* **High Performance:** Optimized for massive parallelism via Trilinos.
+* **High Performance:** Optimized for massive parallelism via Trilinos-STK.
 
 ## 📚 Dependencies
 
