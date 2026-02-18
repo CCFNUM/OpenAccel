@@ -5,11 +5,9 @@ target_include_directories(main_obj SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/nalu/include
 )
 
-if(HAS_GNUPLOT)
-    target_include_directories(main_obj SYSTEM PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/gplotpp
-    )
-endif()
+target_include_directories(main_obj SYSTEM PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/gplotpp
+)
 
 # Nalu master_element sources
 target_sources(main_obj PRIVATE

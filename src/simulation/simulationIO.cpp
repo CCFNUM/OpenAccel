@@ -16,15 +16,12 @@
 #include "simulation.h"
 #include "types.h"
 
-#ifdef HAS_GNUPLOT
 #include <algorithm>
 #include <sstream>
-#endif
 
 namespace accel
 {
 
-#ifdef HAS_GNUPLOT
 std::string simulation::residualPlotCommand_() const
 {
     std::ostringstream cmd;
@@ -49,7 +46,6 @@ std::string simulation::residualPlotCommand_() const
 
     return cmd.str();
 }
-#endif
 
 // Read and register information
 
@@ -699,10 +695,16 @@ void simulation::createDirectories_()
 
 void simulation::initializeResidualPlot()
 {
-#ifdef HAS_GNUPLOT
     try
     {
         gp_ptr_ = std::make_unique<Gnuplot>();
+        if (!gp_ptr_->ok())
+        {
+            std::cout << "Warning: gnuplot executable not found. "
+                         "Please install gnuplot to plot residuals.\n";
+            gp_ptr_.reset();
+            return;
+        }
         gp_ptr_->sendcommand("set title 'Data Monitoring'");
         gp_ptr_->sendcommand("set xlabel 'Iter'");
         gp_ptr_->sendcommand("set ylabel 'scaled residuals'");
@@ -722,21 +724,15 @@ void simulation::initializeResidualPlot()
         std::cout << ex.what() << std::endl;
         return;
     }
-#else
-    std::cout << "Residual plotting requested but gnuplot support is "
-                 "disabled at compile time.\n";
-#endif
 }
 
 void simulation::updateResidualPlot()
 {
-#ifdef HAS_GNUPLOT
     if (gp_ptr_ && !plot_items_.empty())
     {
         gp_ptr_->sendcommand(residualPlotCommand_());
         gp_ptr_->show();
     }
-#endif
 }
 
 fs::path simulation::getSimulationDirectory() const
@@ -762,7 +758,6 @@ void simulation::plotResiduals()
     {
         if (plotRes_)
         {
-#ifdef HAS_GNUPLOT
             // Initialize window first
             if (!plotResInitialized_)
             {
@@ -772,16 +767,13 @@ void simulation::plotResiduals()
 
             // Plot residuals
             updateResidualPlot();
-#endif
         }
     }
 }
 
 void simulation::addPlotItem(const residualPlotItem& item)
 {
-#ifdef HAS_GNUPLOT
     plot_items_.push_back(item);
-#endif
 }
 
 // clang-format off

@@ -20,9 +20,7 @@
 #include "wallDistance.h"
 
 // external
-#ifdef HAS_GNUPLOT
 #include "gplot++.h"
-#endif
 
 namespace accel
 {
@@ -104,9 +102,7 @@ private:
 
     int verbose_;
 
-#ifdef HAS_GNUPLOT
     std::unique_ptr<Gnuplot> gp_ptr_ = nullptr;
-#endif
 
     std::vector<residualPlotItem> plot_items_;
 
@@ -223,9 +219,7 @@ public:
 
     void updateResidualPlot();
 
-#ifdef HAS_GNUPLOT
     std::string residualPlotCommand_() const;
-#endif
 
     void plotResiduals();
 

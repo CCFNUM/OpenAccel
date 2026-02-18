@@ -44,59 +44,6 @@ endif()
 # Spatial dimension
 add_compile_definitions(SPATIAL_DIM=${SPATIAL_DIM})
 
-# Detect gnuplot for residual plotting support.
-# If GNUPLOT_DIR is provided, search only within that path; otherwise search
-# standard system locations via find_program.
-set(GNUPLOT_DIR "" CACHE PATH "Path to gnuplot installation (prefix or bin directory)")
-if(GNUPLOT_DIR)
-    if(NOT IS_DIRECTORY "${GNUPLOT_DIR}")
-        message(FATAL_ERROR
-            "GNUPLOT_DIR is set to '${GNUPLOT_DIR}', but this directory does not exist.")
-    endif()
-
-    set(GNUPLOT_EXECUTABLE "")
-    set(_gnuplot_candidates
-        "${GNUPLOT_DIR}/gnuplot"
-        "${GNUPLOT_DIR}/pgnuplot"
-        "${GNUPLOT_DIR}/gnuplot.exe"
-        "${GNUPLOT_DIR}/pgnuplot.exe"
-        "${GNUPLOT_DIR}/bin/gnuplot"
-        "${GNUPLOT_DIR}/bin/pgnuplot"
-        "${GNUPLOT_DIR}/bin/gnuplot.exe"
-        "${GNUPLOT_DIR}/bin/pgnuplot.exe"
-    )
-    foreach(_gnuplot_candidate IN LISTS _gnuplot_candidates)
-        if(EXISTS "${_gnuplot_candidate}")
-            set(GNUPLOT_EXECUTABLE "${_gnuplot_candidate}")
-            break()
-        endif()
-    endforeach()
-
-    if(NOT GNUPLOT_EXECUTABLE)
-        message(FATAL_ERROR
-            "GNUPLOT_DIR is set to '${GNUPLOT_DIR}', but no gnuplot executable "
-            "was found. Expected one of: gnuplot, pgnuplot, gnuplot.exe, "
-            "pgnuplot.exe (directly in GNUPLOT_DIR or in GNUPLOT_DIR/bin).")
-    endif()
-else()
-    # No GNUPLOT_DIR provided: search standard system paths.
-    # Unset the cache entry so every cmake run performs a fresh search and
-    # does not reuse a stale NOTFOUND result from a previous invocation.
-    unset(GNUPLOT_EXECUTABLE CACHE)
-    find_program(GNUPLOT_EXECUTABLE
-        NAMES gnuplot gnuplot.exe pgnuplot pgnuplot.exe
-    )
-endif()
-
-if(GNUPLOT_EXECUTABLE)
-    set(HAS_GNUPLOT TRUE)
-    add_compile_definitions(HAS_GNUPLOT)
-    message("-- Gnuplot residual plotting: ENABLED (${GNUPLOT_EXECUTABLE})")
-else()
-    set(HAS_GNUPLOT FALSE)
-    message("-- Gnuplot residual plotting: DISABLED (gnuplot not found)")
-endif()
-
 # PkgConfig
 find_package(PkgConfig)
 
