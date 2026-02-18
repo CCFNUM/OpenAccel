@@ -21,7 +21,9 @@
 ### Required
 * **Trilinos:** Must be built with **STK**. **Tpetra** and **Belos** are optionally enabled.
 * **YAML-cpp:** Required for input parsing and configuration.
-* **Open-MPI:** Essential for parallel execution and distributed memory communication.
+* **MPI:** Essential for parallel execution and distributed memory
+  communication.  [MPICH](https://www.mpich.org/) and
+  [OpenMPI](https://www.open-mpi.org/) implementations are tested.
 
 ### Optional (Backend Solvers)
 * **PETSc:** Optional high-performance solver backend.
