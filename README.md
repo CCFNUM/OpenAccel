@@ -55,7 +55,7 @@ mkdir build
 cd build
 
 cmake -DCMAKE_CXX_EXTENSIONS=Off \
-    -DTrilinos_DIR=<trilinos-install-directory> \
+    -DTrilinos_DIR=<trilinos-install-cmake-directory> \
     -DYAML_DIR=<yaml-cpp-install-directory> \
     -DPETSC_DIR=<petsc-install-directory> \
     -DHYPRE_DIR=<hypre-install-directory> \
