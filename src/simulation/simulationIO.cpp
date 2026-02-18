@@ -16,8 +16,40 @@
 #include "simulation.h"
 #include "types.h"
 
+#ifdef HAS_GNUPLOT
+#include <algorithm>
+#include <sstream>
+#endif
+
 namespace accel
 {
+
+#ifdef HAS_GNUPLOT
+std::string simulation::residualPlotCommand_() const
+{
+    std::ostringstream cmd;
+    cmd << "plot ";
+
+    for (size_t i = 0; i < plot_items_.size(); ++i)
+    {
+        const auto& item = plot_items_[i];
+
+        std::string legend = item.legend_name;
+        std::replace(legend.begin(), legend.end(), '\'', ' ');
+
+        cmd << "'" << item.data_file << "' using " << (item.xdata_idx + 1)
+            << ":" << (item.ydata_idx + 1) << " with linespoints title '"
+            << legend << "'";
+
+        if (i + 1 < plot_items_.size())
+        {
+            cmd << ", ";
+        }
+    }
+
+    return cmd.str();
+}
+#endif
 
 // Read and register information
 
@@ -667,41 +699,44 @@ void simulation::createDirectories_()
 
 void simulation::initializeResidualPlot()
 {
+#ifdef HAS_GNUPLOT
     try
     {
         gp_ptr_ = std::make_unique<Gnuplot>();
-        gp_ptr_->set_title("Data Monitoring");
-        gp_ptr_->set_style("linespoints");
-        gp_ptr_->set_ylogscale();
-        gp_ptr_->set_xlabel("Iter");
-        gp_ptr_->set_ylabel("scaled residuals");
-        gp_ptr_->set_grid();
-        gp_ptr_->cmd("set format y \"1e{%T}");
-        gp_ptr_->cmd(
-            "set yrange [0:1]"); // necessary in case residual is 0 at startup
-        gp_ptr_->showonscreen(); // window output
-    }
-    catch (GnuplotException ge)
-    {
-        std::cout << ge.what() << std::endl;
-    }
+        gp_ptr_->sendcommand("set title 'Data Monitoring'");
+        gp_ptr_->sendcommand("set xlabel 'Iter'");
+        gp_ptr_->sendcommand("set ylabel 'scaled residuals'");
+        gp_ptr_->sendcommand("set grid");
+        gp_ptr_->sendcommand("set logscale y");
+        gp_ptr_->sendcommand("set format y \"1e{%T}\"");
+        gp_ptr_->sendcommand("set yrange [1e-10:1]");
 
-    for (const auto& item : plot_items_)
-    {
-        gp_ptr_->plotfile_xy(item.data_file,
-                             item.xdata_idx + 1,
-                             item.ydata_idx + 1,
-                             item.legend_name);
+        if (!plot_items_.empty())
+        {
+            gp_ptr_->sendcommand(residualPlotCommand_());
+            gp_ptr_->show();
+        }
     }
-
-    // Restore auto-scale for y axis
-    gp_ptr_->set_yautoscale();
-    gp_ptr_->cmd("set yrange [1e-10:1]"); // set upper limit for y
+    catch (const std::exception& ex)
+    {
+        std::cout << ex.what() << std::endl;
+        return;
+    }
+#else
+    std::cout << "Residual plotting requested but gnuplot support is "
+                 "disabled at compile time.\n";
+#endif
 }
 
 void simulation::updateResidualPlot()
 {
-    gp_ptr_->replot();
+#ifdef HAS_GNUPLOT
+    if (gp_ptr_ && !plot_items_.empty())
+    {
+        gp_ptr_->sendcommand(residualPlotCommand_());
+        gp_ptr_->show();
+    }
+#endif
 }
 
 fs::path simulation::getSimulationDirectory() const
@@ -727,6 +762,7 @@ void simulation::plotResiduals()
     {
         if (plotRes_)
         {
+#ifdef HAS_GNUPLOT
             // Initialize window first
             if (!plotResInitialized_)
             {
@@ -736,13 +772,16 @@ void simulation::plotResiduals()
 
             // Plot residuals
             updateResidualPlot();
+#endif
         }
     }
 }
 
 void simulation::addPlotItem(const residualPlotItem& item)
 {
+#ifdef HAS_GNUPLOT
     plot_items_.push_back(item);
+#endif
 }
 
 // clang-format off
@@ -752,7 +791,7 @@ void simulation::printSolverHeader(const int argc, const char* argv[])
  if (messager::master())
  {
  std::cout << "╔══════════════════════════════════════════════════════════════════════╗" << std::endl;
- std::cout << "║                              Accel " << SPATIAL_DIM
+ std::cout << "║                          OpenAccel " << SPATIAL_DIM
  << "D                                ║" << std::endl;
  std::cout << "║          Parallel fluid flow CFD package based on CVFEM              ║" << std::endl;
  std::cout << "║                    |<| Powered by Trilinos |>|                       ║" << std::endl;

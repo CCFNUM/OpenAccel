@@ -10,3 +10,6 @@
 [submodule "src/solver"]
 	path = src/solver
 	url = https://gitlab.com/hslu_ccfnum/liblinsolve.git
+[submodule "external/gplotpp"]
+	path = external/gplotpp
+	url = https://github.com/ziotom78/gplotpp

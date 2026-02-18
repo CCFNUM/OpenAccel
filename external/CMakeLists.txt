@@ -2,9 +2,14 @@ target_include_directories(main_obj SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/eigen
     ${CMAKE_CURRENT_SOURCE_DIR}/exprtk
     ${CMAKE_CURRENT_SOURCE_DIR}/nanoflann/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/gnuplot-cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/nalu/include
 )
+
+if(HAS_GNUPLOT)
+    target_include_directories(main_obj SYSTEM PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/gplotpp
+    )
+endif()
 
 # Nalu master_element sources
 target_sources(main_obj PRIVATE

@@ -7,10 +7,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 SOURCE='\.\./\.\./src/.*\.(c|cpp|C|h|hpp|H)'
+EXCLUDE='../../src/solver/*'
 
 # format in-place
 find ../.. \
     -regextype 'egrep' \
     -regex "${SOURCE}" \
+    -not -path "${EXCLUDE}" \
     -print0 | \
     xargs -0 -n12 -P$(nproc) clang-format -style=file -i "$@"

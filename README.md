@@ -31,12 +31,15 @@
   [`examples/cavity/input.i`](./examples/cavity/input.i) for an example that is
   using Trilinos native solvers only.)
 * **HYPRE:** Optional multigrid preconditioner support.
+* **gnuplot:** Optional live residual plotting.
 
 ### Submodules
 The following libraries are included as Git submodules:
 * **[Eigen](https://gitlab.com/libeigen/eigen):** Template library for linear algebra.
 * **[ExprTk](https://github.com/ArashPartow/exprtk):** Mathematical expression parsing and evaluation.
 * **[nanoflann](https://github.com/jlblancoc/nanoflann):** KD-tree library for nearest-neighbour searches.
+* **[gplotpp](https://github.com/ziotom78/gplotpp):** C++ interface for gnuplot.
+* **[liblinsolve](https://gitlab.com/hslu_ccfnum/liblinsolve.git):** Wrapper library for HYPRE, PETSc, and Trilinos linear solver utilities.
 
 ---
 
@@ -64,6 +67,7 @@ cmake -DCMAKE_CXX_EXTENSIONS=Off \
     -DYAML_DIR=<yaml-cpp-install-directory> \
     -DPETSC_DIR=<petsc-install-directory> \
     -DHYPRE_DIR=<hypre-install-directory> \
+    -DGNUPLOT_DIR=<gnuplot-install-directory> \
     ..
 ```
 
@@ -146,5 +150,5 @@ OpenAccel is licensed under the BSD 3-Clause License. See [LICENSE](LICENSE) for
 
 ## Contact
 
-* **Project Coordinator:** [Luca Mangani](mailto:luca.mangani@hslu.ch)
-* **Project Maintainer:** [Lucian Hanimann](mailto:lucian.hanimann@hslu.ch)
+* **Project Coordinator:** Luca Mangani ([luca.mangani@hslu.ch](mailto:luca.mangani@hslu.ch))
+* **Project Maintainer:** Lucian Hanimann ([lucian.hanimann@hslu.ch](mailto:lucian.hanimann@hslu.ch))
