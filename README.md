@@ -42,7 +42,7 @@ Retrieve the source code and initialize submodules:
 
 ```bash
 git clone https://github.com/CCFNUM/OpenAccel.git
-cd openaccel
+cd OpenAccel
 git submodule update --init --recursive
 ```
 
