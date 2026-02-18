@@ -74,7 +74,7 @@ The `-j$(nproc)` flag enables parallel compilation using all available CPU cores
 
 ---
 
-## 🖥️ Running accel
+## 🖥️ Running
 
 ### Serial Execution
 
