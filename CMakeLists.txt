@@ -147,6 +147,10 @@ if(WITH_THERMAL_TEMPERATURE)
     add_compile_definitions(HAS_THERMAL_TEMPERATURE)
 endif()
 
+# linear solver library
+add_compile_definitions(NO_LINSOLVE_CONF)
+add_subdirectory(src/solver)
+
 # Enable Fortran language support (if not already done)
 enable_language(Fortran)
 
@@ -160,12 +164,13 @@ add_subdirectory(external)
 # third-party includes
 target_include_directories(main_obj PUBLIC
     ${MPI_C_INCLUDE_DIRS}
-    ${MPI_CXX_INCLUDE_DIRS}
+    ${libLinSolve_INC}
     ${Trilinos_INCLUDE_DIRS}
     ${Trilinos_TPL_INCLUDE_DIRS}
 )
 
-# Link your executable with Trilinos libraries
+# Link your executable with liblinsolve and Trilinos libraries
+target_link_libraries(main_obj PUBLIC ${libLinSolve})
 target_link_libraries(main_obj PUBLIC ${Trilinos_LIBRARIES})
 
 # Link your executable with MPI libraries
