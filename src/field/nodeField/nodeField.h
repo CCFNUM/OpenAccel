@@ -4,7 +4,8 @@
 // Description: Templated node field with boundary/initial conditions and
 // gradient support
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef NODEFIELD_H
 #define NODEFIELD_H
@@ -12,6 +13,11 @@
 // code
 #include "boundary.h"
 #include "controls.h"
+#ifdef HAS_INTERFACE
+#include "dataTransfer.h"
+#include "dgInfo.h"
+#include "interface.h"
+#endif /* HAS_INTERFACE */
 #include "dataHandler.h"
 #include "nodeSideField.h"
 #include "scatterToSurface.h"
@@ -120,6 +126,10 @@ protected:
     std::unique_ptr<sideField<scalar, N>> sideFieldPtr_ = nullptr;
 
     std::unique_ptr<sideField<scalar, N>> sideFluxFieldPtr_ = nullptr;
+
+#ifdef HAS_INTERFACE
+    std::vector<std::unique_ptr<dataTransfer>> dataTransferVector_;
+#endif /* HAS_INTERFACE */
 
     std::vector<std::vector<boundaryConditionDictionary>>
         boundaryConditionsDictionaryArray_;
@@ -244,6 +254,16 @@ public:
 
     void registerSideFluxField(label iZone, label iBoundary);
 
+#ifdef HAS_INTERFACE
+    void registerSideFieldsForInterfaceSide(label iInterface,
+                                            bool master,
+                                            bool onlyIfNonoverlap = false);
+
+    void registerSideFluxFieldForInterfaceSide(label iInterface,
+                                               bool master,
+                                               bool onlyIfNonoverlap = false);
+#endif /* HAS_INTERFACE */
+
     nodeField& operator=(const nodeField& fld);
 
     virtual void setupGradientField();
@@ -269,6 +289,10 @@ public:
     virtual void updateField(label iZone);
 
     virtual void updateSideFields(label iZone);
+
+#ifdef HAS_INTERFACE
+    virtual void updateInterfaceSideField(label iInterface, bool master);
+#endif /* HAS_INTERFACE */
 
     virtual void updateBoundarySideField(label iZone, label iBoundary);
 
@@ -302,6 +326,14 @@ public:
 
     void synchronize(label iZone);
 
+#ifdef HAS_INTERFACE
+    // Data transfer across interface
+
+    void transfer(label iInterface,
+                  dataTransferType type = dataTransferType::copy,
+                  bool reverse = false);
+#endif /* HAS_INTERFACE */
+
     // Stats
 
     void updateScale();
@@ -313,6 +345,10 @@ public:
     // Other operations
 
     void correctBoundaryNodes(label iZone, label iBoundary);
+
+#ifdef HAS_INTERFACE
+    void correctInterfaceNodes(label iInterface, bool master);
+#endif /* HAS_INTERFACE */
 
     void relax(label iZone, const scalar urf);
 

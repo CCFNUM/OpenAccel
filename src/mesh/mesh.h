@@ -4,7 +4,8 @@
 // Description: Finite volume mesh container with topology, zones, and geometric
 // fields
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef MESH_H
 #define MESH_H
@@ -17,6 +18,9 @@ namespace accel
 {
 
 class controls;
+#ifdef HAS_INTERFACE
+class interface;
+#endif /* HAS_INTERFACE */
 class zone;
 
 #if SPATIAL_DIM == 3
@@ -80,6 +84,16 @@ private:
     // is because we re-define the local id's of the nodes
     std::vector<stk::mesh::Entity> localNodeIDToEntity_;
 
+#ifdef HAS_INTERFACE
+    // Interfaces
+
+    bool hasInterfaces_ = false;
+
+    // all interfaces in the simulation (translational periodic, rotational
+    // periodic and general connection)
+    std::vector<std::unique_ptr<interface>> interfaceVector_;
+#endif /* HAS_INTERFACE */
+
     // Zones
 
     // all zones in the mesh
@@ -101,15 +115,27 @@ private:
 
     void setupZones_();
 
+#ifdef HAS_INTERFACE
+    void setupInterfaces_();
+#endif /* HAS_INTERFACE */
+
     void initializeCoordinateField_();
 
     void initializeZones_();
+
+#ifdef HAS_INTERFACE
+    void initializeInterfaces_();
+#endif /* HAS_INTERFACE */
 
     void initializeGeometricFields_();
 
     void lazyInitializeNodeGraph_();
 
     void updateZones_(bool force = false);
+
+#ifdef HAS_INTERFACE
+    void updateInterfaces_(bool force = false);
+#endif /* HAS_INTERFACE */
 
     void updateGeometricFields_(bool force = false);
 
@@ -394,6 +420,23 @@ public:
         return this->metaDataRef().universal_part() &
                stk::mesh::selectUnion(this->boundaryActiveParts());
     };
+
+#ifdef HAS_INTERFACE
+    // Interfaces
+
+    label nInterfaces() const;
+
+    std::vector<interface*> interfaceVector() const;
+
+    interface& interfaceRef(label iInterface);
+
+    const interface& interfaceRef(label iInterface) const;
+
+    bool hasInterfaces() const
+    {
+        return hasInterfaces_;
+    }
+#endif /* HAS_INTERFACE */
 
     // Zones
 

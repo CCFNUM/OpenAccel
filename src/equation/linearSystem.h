@@ -177,7 +177,7 @@ linearSystem<N>::setupSolver(const std::string system_name)
     if (!solver_lookup["solver_control"]["basic_settings"]
                       ["convergence_controls"])
     {
-        // NOTE: [2024-02-28] This error is enforced
+        // NOTE: This error is enforced
         // because changes in yaml file structure may cause the following
         // options to be silently ignored and thus unset. This may cause
         // unintended configuration of simulation runs.

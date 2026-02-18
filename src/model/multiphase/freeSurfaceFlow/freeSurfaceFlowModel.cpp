@@ -1030,6 +1030,20 @@ void freeSurfaceFlowModel::initializeMassFlowRateInterior_(
         domain, this->mDotRef(iPhase), this->rhoRef(iPhase));
 }
 
+#ifdef HAS_INTERFACE
+void freeSurfaceFlowModel::initializeMassFlowRateInterfaceSideField_(
+    const std::shared_ptr<domain> domain,
+    const interfaceSideInfo* interfaceSideInfoPtr,
+    label iPhase)
+{
+    flowModel::initializeMassFlowRateInterfaceSideField_(
+        domain,
+        interfaceSideInfoPtr,
+        this->mDotRef(iPhase).sideFieldRef(),
+        this->rhoRef(iPhase));
+}
+#endif /* HAS_INTERFACE */
+
 void freeSurfaceFlowModel::initializeMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
     const boundary* boundary,
@@ -1095,7 +1109,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
 
             // extract master element
             MasterElement* meSCS =
-                accel::MasterElementRepo::get_surface_master_element(
+                MasterElementRepo::get_surface_master_element(
                     elementBucket.topology());
 
             // extract master element specifics
@@ -1170,6 +1184,144 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     }
 }
 
+#ifdef HAS_INTERFACE
+void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
+    const std::shared_ptr<domain> domain,
+    const interfaceSideInfo* interfaceSideInfoPtr)
+{
+    const auto& mesh = this->meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    STKScalarField& mixtureMdotfSideSTKFieldPtr =
+        this->mDotRef().sideFieldRef().stkFieldRef();
+
+    // check
+    assert(this->mDotRef().sideFieldRef().definedOn(
+        interfaceSideInfoPtr->currentPartVec_));
+
+    // zero-out
+    this->mDotRef().sideFieldRef().setToValue(
+        {0.0}, interfaceSideInfoPtr->currentPartVec_);
+
+    // ip values; both boundary and opposing surface
+    std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+    std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+
+    // interpolate nodal values to point-in-elem
+    const label sizeOfScalarField = 1;
+
+    // nodal fields to gather; face
+    std::vector<scalar> ws_c_alpha;
+    std::vector<scalar> ws_o_alpha;
+
+    // extract vector of dgInfo
+    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+        interfaceSideInfoPtr->dgInfoVec_;
+
+    for (label iPhase = 0; iPhase < domain->nMaterials(); iPhase++)
+    {
+        label phaseIndex = domain->localToGlobalMaterialIndex(iPhase);
+
+        // Get transport fields/side fields
+        const auto& alphaSTKFieldRef = this->alphaRef(phaseIndex).stkFieldRef();
+        const auto& mDotSideSTKFieldPtr =
+            this->mDotRef(phaseIndex).sideFieldRef().stkFieldRef();
+
+        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
+             iSide++)
+        {
+            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+
+            // now loop over all the DgInfo objects on this
+            // particular exposed face
+            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+            {
+                dgInfo* dgInfo = faceDgInfoVec[k];
+
+                // extract current/opposing face/element
+                stk::mesh::Entity currentFace = dgInfo->currentFace_;
+                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
+                stk::mesh::Entity currentElement = dgInfo->currentElement_;
+                stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
+
+                // master element; face and volume
+                MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+
+                // local ip, ordinals, etc
+                const label currentGaussPointId = dgInfo->currentGaussPointId_;
+                currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+
+                // pointer to mDot
+                scalar* ncmDot = stk::mesh::field_data(
+                    mixtureMdotfSideSTKFieldPtr, currentFace);
+                const scalar* pncmDot =
+                    stk::mesh::field_data(mDotSideSTKFieldPtr, currentFace);
+
+                // extract some master element info
+                const label currentNodesPerFace = meFCCurrent->nodesPerElement_;
+                const label opposingNodesPerFace =
+                    meFCOpposing->nodesPerElement_;
+
+                // algorithm related; face
+                ws_c_alpha.resize(currentNodesPerFace);
+                ws_o_alpha.resize(opposingNodesPerFace);
+
+                // face
+                scalar* p_c_alpha = &ws_c_alpha[0];
+                scalar* p_o_alpha = &ws_o_alpha[0];
+
+                // gather current face data
+                stk::mesh::Entity const* current_face_node_rels =
+                    bulkData.begin_nodes(currentFace);
+                const label current_num_face_nodes =
+                    bulkData.num_nodes(currentFace);
+                for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                {
+                    stk::mesh::Entity node = current_face_node_rels[ni];
+
+                    // gather; scalar
+                    p_c_alpha[ni] =
+                        *stk::mesh::field_data(alphaSTKFieldRef, node);
+                }
+
+                // gather opposing face data
+                stk::mesh::Entity const* opposing_face_node_rels =
+                    bulkData.begin_nodes(opposingFace);
+                const label opposing_num_face_nodes =
+                    bulkData.num_nodes(opposingFace);
+                for (label ni = 0; ni < opposing_num_face_nodes; ++ni)
+                {
+                    stk::mesh::Entity node = opposing_face_node_rels[ni];
+
+                    // gather; scalar
+                    p_o_alpha[ni] =
+                        *stk::mesh::field_data(alphaSTKFieldRef, node);
+                }
+
+                scalar currentAlphaBip = 0.0;
+                meFCCurrent->interpolatePoint(sizeOfScalarField,
+                                              &currentIsoParCoords[0],
+                                              &ws_c_alpha[0],
+                                              &currentAlphaBip);
+
+                scalar opposingAlphaBip = 0.0;
+                meFCOpposing->interpolatePoint(sizeOfScalarField,
+                                               &opposingIsoParCoords[0],
+                                               &ws_o_alpha[0],
+                                               &opposingAlphaBip);
+
+                ncmDot[currentGaussPointId] +=
+                    (currentAlphaBip + opposingAlphaBip) / 2.0 *
+                    pncmDot[currentGaussPointId];
+            }
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
+
 void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
     const boundary* boundary)
@@ -1243,8 +1395,9 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
                         stk::topology theElemTopo = parentTopo[0];
 
                         // face master element
-                        MasterElement* meFC = accel::MasterElementRepo::
-                            get_surface_master_element(sideBucket.topology());
+                        MasterElement* meFC =
+                            MasterElementRepo::get_surface_master_element(
+                                sideBucket.topology());
                         const label nodesPerSide =
                             sideBucket.topology().num_nodes();
                         const label numScsBip = meFC->numIntPoints_;
@@ -1339,6 +1492,20 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     flowModel::updateMassFlowRateInterior_(
         domain, this->mDotRef(iPhase), this->rhoRef(iPhase));
 }
+
+#ifdef HAS_INTERFACE
+void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
+    const std::shared_ptr<domain> domain,
+    const interfaceSideInfo* interfaceSideInfoPtr,
+    label iPhase)
+{
+    flowModel::updateMassFlowRateInterfaceSideField_(
+        domain,
+        interfaceSideInfoPtr,
+        this->mDotRef(iPhase).sideFieldRef(),
+        this->rhoRef(iPhase));
+}
+#endif /* HAS_INTERFACE */
 
 void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
@@ -1971,7 +2138,7 @@ void freeSurfaceFlowModel::setupFCTFields(const std::shared_ptr<domain> domain,
                             {
                                 // Determine number of integration points in the
                                 // face
-                                MasterElement* meFC = accel::MasterElementRepo::
+                                MasterElement* meFC = MasterElementRepo::
                                     get_surface_master_element(
                                         subPart->topology());
                                 const label numScsBip = meFC->numIntPoints_;
@@ -2038,7 +2205,7 @@ void freeSurfaceFlowModel::setupFCTFields(const std::shared_ptr<domain> domain,
                             {
                                 // Determine number of integration points in the
                                 // face
-                                MasterElement* meFC = accel::MasterElementRepo::
+                                MasterElement* meFC = MasterElementRepo::
                                     get_surface_master_element(
                                         subPart->topology());
                                 const label numScsBip = meFC->numIntPoints_;
@@ -2105,7 +2272,7 @@ void freeSurfaceFlowModel::setupFCTFields(const std::shared_ptr<domain> domain,
                             {
                                 // Determine number of integration points in the
                                 // face
-                                MasterElement* meFC = accel::MasterElementRepo::
+                                MasterElement* meFC = MasterElementRepo::
                                     get_surface_master_element(
                                         subPart->topology());
                                 const label numScsBip = meFC->numIntPoints_;
@@ -2171,7 +2338,7 @@ void freeSurfaceFlowModel::setupFCTFields(const std::shared_ptr<domain> domain,
                             {
                                 // Determine number of integration points in the
                                 // face
-                                MasterElement* meFC = accel::MasterElementRepo::
+                                MasterElement* meFC = MasterElementRepo::
                                     get_surface_master_element(
                                         subPart->topology());
                                 const label numScsBip = meFC->numIntPoints_;
@@ -4671,7 +4838,7 @@ void freeSurfaceFlowModel::computeLambdaIP_(
                                 if (totalFlux > SMALL)
                                 {
                                     // This is an outlet face - apply limiting
-                                    // MULES algorithm:
+                                    // cMULES algorithm:
                                     // - If phiCorr > 0: use lambdap (outflow
                                     // limiter = lambdaM)
                                     // - If phiCorr < 0: use lambdam (inflow

@@ -143,9 +143,8 @@ void turbulenceModel::updateUPlus(const std::shared_ptr<domain> domain)
         stk::topology theElemTopo = parentTopo[0];
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -626,6 +625,23 @@ void turbulenceModel::updateTWallCoeffs(const std::shared_ptr<domain> domain)
             }
         }
     }
+
+#ifdef HAS_INTERFACE
+    // interpolate T-wall coefficient field to the solid side: use temporary
+    // sideField container to make use of the transfer functionality
+    sideField<scalar, 1> t_TWallField(&this->meshRef(),
+                                      this->TWallCoeffsRef().stkFieldPtr());
+
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isFluidSolidType())
+        {
+            t_TWallField.transfer(interf->index(),
+                                  !interf->isMasterZone(domain->index()),
+                                  TRef().isShifted());
+        }
+    }
+#endif /* HAS_INTERFACE */
 }
 
 void turbulenceModel::updateWallShearStress(
@@ -850,9 +866,8 @@ void turbulenceModel::updateYStarScalable_(const std::shared_ptr<domain> domain)
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -965,9 +980,8 @@ void turbulenceModel::updateUStarScalable_(const std::shared_ptr<domain> domain)
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1086,9 +1100,8 @@ void turbulenceModel::updateYPlusScalable_(const std::shared_ptr<domain> domain)
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1450,9 +1463,8 @@ void turbulenceModel::updateYStarAutomatic_(
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1599,9 +1611,8 @@ void turbulenceModel::updateUStarAutomatic_(
         stk::topology theElemTopo = parentTopo[0];
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1805,9 +1816,8 @@ void turbulenceModel::updateYPlusAutomatic_(
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -2186,9 +2196,8 @@ void turbulenceModel::updateTPlusScalable_(const std::shared_ptr<domain> domain)
         stk::topology theElemTopo = parentTopo[0];
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -2331,9 +2340,8 @@ void turbulenceModel::updateTPlusAutomatic_(
         stk::topology theElemTopo = parentTopo[0];
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 

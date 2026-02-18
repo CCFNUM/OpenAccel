@@ -383,6 +383,62 @@ void elementField<T, N>::registerSideField(label iZone, label iBoundary)
     }
 }
 
+#ifdef HAS_INTERFACE
+template <class T, size_t N>
+void elementField<T, N>::registerSideFieldsForInterfaceSide(
+    label iInterface,
+    bool master,
+    bool onlyIfNonoverlap)
+{
+    if (master)
+    {
+        const auto& interf = this->meshRef().interfaceRef(iInterface);
+
+        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap_)
+            return;
+
+        // Instantiate if not yet
+        if (sideFieldPtr_ == nullptr)
+        {
+            sideFieldPtr_ = std::make_unique<sideField<T, N>>(
+                this->meshPtr(), this->name() + "_side", 1);
+
+            // copy some properties to side field
+            sideFieldPtr_->setURF(this->urf());
+        }
+
+        // Put the side field on the corresponding parts
+        for (auto* part : interf.masterInfoRef().currentPartVec_)
+        {
+            this->sideFieldRef().putFieldOnPart(*part);
+        }
+    }
+    else
+    {
+        const auto& interf = this->meshRef().interfaceRef(iInterface);
+
+        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap_)
+            return;
+
+        // Instantiate if not yet
+        if (sideFieldPtr_ == nullptr)
+        {
+            sideFieldPtr_ = std::make_unique<sideField<T, N>>(
+                this->meshPtr(), this->name() + "_side", 1);
+
+            // copy some properties to side field
+            sideFieldPtr_->setURF(this->urf());
+        }
+
+        // Put the side field on the corresponding parts
+        for (auto* part : interf.slaveInfoRef().currentPartVec_)
+        {
+            this->sideFieldRef().putFieldOnPart(*part);
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
+
 template <class T, size_t N>
 elementField<T, N>& elementField<T, N>::operator=(const elementField<T, N>& fld)
 {
@@ -468,6 +524,26 @@ void elementField<T, N>::initializeSideField(label iZone)
 
     zone* zonePtr = this->meshPtr()->zonePtr(iZone);
 
+#ifdef HAS_INTERFACE
+    // Interfaces
+    for (const interface* interf : zonePtr->interfacesRef())
+    {
+        if (interf->isInternal())
+        {
+            initializeInterfaceSideField(interf->masterInfoPtr());
+            initializeInterfaceSideField(interf->slaveInfoPtr());
+        }
+        else
+        {
+            // get interface side that is sitting in this domain
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(iZone);
+
+            initializeInterfaceSideField(interfaceSideInfoPtr);
+        }
+    }
+#endif /* HAS_INTERFACE */
+
     // Boundaries
     for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
     {
@@ -479,6 +555,14 @@ void elementField<T, N>::initializeSideField(label iZone)
         initializeBoundarySideField(iZone, iBoundary);
     }
 }
+
+#ifdef HAS_INTERFACE
+template <class T, size_t N>
+void elementField<T, N>::initializeInterfaceSideField(
+    const interfaceSideInfo* interfaceSideInfoPtr)
+{
+}
+#endif /* HAS_INTERFACE */
 
 template <class T, size_t N>
 void elementField<T, N>::initializeBoundarySideField(label iZone,
@@ -521,12 +605,36 @@ void elementField<T, N>::updateSideFields(label iZone)
 
     zone* zonePtr = this->meshPtr()->zonePtr(iZone);
 
+#ifdef HAS_INTERFACE
+    // Interfaces
+    for (const interface* interf : zonePtr->interfacesRef())
+    {
+        if (interf->isInternal())
+        {
+            updateInterfaceSideField(interf->index(), true);
+            updateInterfaceSideField(interf->index(), false);
+        }
+        else
+        {
+            updateInterfaceSideField(interf->index(),
+                                     interf->isMasterZone(iZone));
+        }
+    }
+#endif /* HAS_INTERFACE */
+
     // Boundaries
     for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
     {
         updateBoundarySideField(iZone, iBoundary);
     }
 }
+
+#ifdef HAS_INTERFACE
+template <class T, size_t N>
+void elementField<T, N>::updateInterfaceSideField(label iInterface, bool master)
+{
+}
+#endif /* HAS_INTERFACE */
 
 template <class T, size_t N>
 void elementField<T, N>::updateBoundarySideField(label iZone, label iBoundary)

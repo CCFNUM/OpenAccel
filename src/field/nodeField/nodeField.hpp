@@ -110,6 +110,11 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
     {
         this->setupMinMaxFields();
     }
+
+#ifdef HAS_INTERFACE
+    // Initialize interface transfer vector
+    dataTransferVector_.resize(this->meshPtr()->nInterfaces());
+#endif /* HAS_INTERFACE */
 }
 
 template <size_t N, size_t M>
@@ -545,6 +550,119 @@ void nodeField<N, M>::registerSideFluxField(label iZone, label iBoundary)
     }
 }
 
+#ifdef HAS_INTERFACE
+template <size_t N, size_t M>
+void nodeField<N, M>::registerSideFieldsForInterfaceSide(label iInterface,
+                                                         bool master,
+                                                         bool onlyIfNonoverlap)
+{
+    if (master)
+    {
+        const auto& interf = this->meshRef().interfaceRef(iInterface);
+
+        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap_)
+            return;
+
+        // Instantiate if not yet
+        if (nodeSideFieldPtr_ == nullptr)
+        {
+            nodeSideFieldPtr_ = std::make_unique<nodeSideField<scalar, N>>(
+                this->meshPtr(), this->name() + "_node_side", 1);
+        }
+
+        // Instantiate if not yet
+        if (sideFieldPtr_ == nullptr)
+        {
+            sideFieldPtr_ = std::make_unique<sideField<scalar, N>>(
+                this->meshPtr(), this->name() + "_side", 1);
+        }
+
+        // Put the side fields on the corresponding parts
+        for (auto* part : interf.masterInfoRef().currentPartVec_)
+        {
+            this->nodeSideFieldRef().putFieldOnPart(*part);
+            this->sideFieldRef().putFieldOnPart(*part);
+        }
+    }
+    else
+    {
+        const auto& interf = this->meshRef().interfaceRef(iInterface);
+
+        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap_)
+            return;
+
+        // Instantiate if not yet
+        if (nodeSideFieldPtr_ == nullptr)
+        {
+            nodeSideFieldPtr_ = std::make_unique<nodeSideField<scalar, N>>(
+                this->meshPtr(), this->name() + "_node_side", 1);
+        }
+
+        // Instantiate if not yet
+        if (sideFieldPtr_ == nullptr)
+        {
+            sideFieldPtr_ = std::make_unique<sideField<scalar, N>>(
+                this->meshPtr(), this->name() + "_side", 1);
+        }
+
+        // Put the side fields on the corresponding parts
+        for (auto* part : interf.slaveInfoRef().currentPartVec_)
+        {
+            this->nodeSideFieldRef().putFieldOnPart(*part);
+            this->sideFieldRef().putFieldOnPart(*part);
+        }
+    }
+}
+
+template <size_t N, size_t M>
+void nodeField<N, M>::registerSideFluxFieldForInterfaceSide(
+    label iInterface,
+    bool master,
+    bool onlyIfNonoverlap)
+{
+    if (master)
+    {
+        const auto& interf = this->meshRef().interfaceRef(iInterface);
+
+        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap_)
+            return;
+
+        // Instantiate if not yet
+        if (sideFluxFieldPtr_ == nullptr)
+        {
+            sideFluxFieldPtr_ = std::make_unique<sideField<scalar, N>>(
+                this->meshPtr(), this->name() + "_side_flux", 1);
+        }
+
+        // Put the side field on the corresponding interface side part
+        for (auto* part : interf.masterInfoRef().currentPartVec_)
+        {
+            this->sideFluxFieldRef().putFieldOnPart(*part);
+        }
+    }
+    else
+    {
+        const auto& interf = this->meshRef().interfaceRef(iInterface);
+
+        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap_)
+            return;
+
+        // Instantiate if not yet
+        if (sideFluxFieldPtr_ == nullptr)
+        {
+            sideFluxFieldPtr_ = std::make_unique<sideField<scalar, N>>(
+                this->meshPtr(), this->name() + "_side_flux", 1);
+        }
+
+        // Put the side field on the corresponding interface side part
+        for (auto* part : interf.slaveInfoRef().currentPartVec_)
+        {
+            this->sideFluxFieldRef().putFieldOnPart(*part);
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
+
 template <size_t N, size_t M>
 nodeField<N, M>& nodeField<N, M>::operator=(const nodeField& fld)
 {
@@ -666,8 +784,7 @@ void nodeField<N, M>::initializeField(label iZone)
         {
             restart_time = this->meshRef().ioBrokerRef().get_max_time();
         }
-        // FIXME: [2025-01-14] The call to
-        // mf.set_read_time() will always set
+        // FIXME: The call to mf.set_read_time() will always set
         // stk::io::MeshField::TimeMatchOption to SPECIFIED. This effectively
         // disables use of LINEAR_INTERPOLATION. STK API does not support this
         // as a per field operation. Instead, add_input_field() methods should
@@ -697,7 +814,7 @@ void nodeField<N, M>::initializeField(label iZone)
                           << std::scientific << mf.time_restored() << std::endl;
             }
 
-            // FIXME: [2025-01-14] Since we operate on fields individually
+            // FIXME: Since we operate on fields individually
             // rather than calling bulk field restore method from STK API, it is
             // possible that individual fields may have inconsistent restored
             // time (typically this should not happen based on tests I did, but
@@ -901,12 +1018,91 @@ void nodeField<N, M>::updateSideFields(label iZone)
 
     zone* zonePtr = this->meshPtr()->zonePtr(iZone);
 
+#ifdef HAS_INTERFACE
+    // Interfaces
+    for (const interface* interf : zonePtr->interfacesRef())
+    {
+        if (interf->isInternal())
+        {
+            updateInterfaceSideField(interf->index(), true);
+            updateInterfaceSideField(interf->index(), false);
+        }
+        else
+        {
+            updateInterfaceSideField(interf->index(),
+                                     interf->isMasterZone(iZone));
+        }
+    }
+#endif /* HAS_INTERFACE */
+
     // Boundaries
     for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
     {
         updateBoundarySideField(iZone, iBoundary);
     }
 }
+
+#ifdef HAS_INTERFACE
+template <size_t N, size_t M>
+void nodeField<N, M>::updateInterfaceSideField(label iInterface, bool master)
+{
+    const interfaceSideInfo* interfaceSideInfoPtr =
+        master ? this->meshPtr()->interfaceRef(iInterface).masterInfoPtr()
+               : this->meshPtr()->interfaceRef(iInterface).slaveInfoPtr();
+
+    if (!interfaceSideInfoPtr->dataHandlerRef().empty())
+    {
+        if (!interfaceSideInfoPtr->dataHandlerRef().isInputDataAdded(
+                this->name() + "_value"))
+            return;
+
+        assert(nodeSideFieldPtr_);
+        assert(sideFieldPtr_);
+
+        const auto& data =
+            interfaceSideInfoPtr->dataHandlerRef().template data<N>(
+                this->name() + "_value");
+
+        switch (data.type())
+        {
+            case inputDataType::null:
+                {
+                    // nothing to do
+                }
+                break;
+
+            case inputDataType::constant:
+                {
+                    std::array<scalar, N> value{};
+                    std::copy_n(data.value(), N, value.begin());
+                    this->nodeSideFieldRef().setToValue(
+                        value, interfaceSideInfoPtr->currentPartVec_);
+                    this->sideFieldRef().setToValue(
+                        value, interfaceSideInfoPtr->currentPartVec_);
+                }
+                break;
+
+            case inputDataType::expression:
+                {
+                    errorMsg("formula not implemented yet for interfaces");
+                }
+                break;
+
+            case inputDataType::timeTable:
+                {
+                    errorMsg("time table not implemented yet for interfaces");
+                }
+                break;
+
+            case inputDataType::profileData:
+                {
+                    errorMsg("profile data not provided yet for interfaces");
+                }
+                break;
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
 
 template <size_t N, size_t M>
 void nodeField<N, M>::updateBoundarySideField(label iZone, label iBoundary)
@@ -1360,7 +1556,7 @@ void nodeField<N, M>::updateSideFluxField(label iZone, label iBoundary)
 
                     // face master element
                     MasterElement* meFC =
-                        accel::MasterElementRepo::get_surface_master_element(
+                        MasterElementRepo::get_surface_master_element(
                             sideBucket.topology());
                     const label nodesPerSide =
                         sideBucket.topology().num_nodes();
@@ -2192,6 +2388,584 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
         }
     }
 
+#ifdef HAS_INTERFACE
+    // Interface ip
+    for (const interface* interf :
+         this->meshPtr()->zonePtr(iZone)->interfacesRef())
+    {
+        if (interf->isConformalTreatment())
+            continue;
+
+        if (interf->isInternal())
+        {
+            // extract geometric fields
+            STKScalarField* coordsSTKFieldPtr =
+                metaData.template get_field<scalar>(
+                    stk::topology::NODE_RANK, this->getCoordinatesID_(iZone));
+
+            // ip values; both boundary and opposing surface
+            std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+            std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+
+            std::vector<scalar> currentCoordsBip(SPATIAL_DIM);
+            std::vector<scalar> dxj(SPATIAL_DIM);
+
+            // nodal fields to gather
+            std::vector<scalar> ws_c_phi;
+            std::vector<scalar> ws_c_min;
+            std::vector<scalar> ws_c_max;
+            std::vector<scalar> ws_c_gradPhi;
+            std::vector<scalar> ws_c_coordinates;
+
+            // Master
+            {
+                const auto& masterInterface = interf->masterInfoRef();
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    masterInterface.dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (label k = 0;
+                         k < static_cast<label>(faceDgInfoVec.size());
+                         ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        // extract current/opposing face/element
+                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
+                        stk::mesh::Entity currentElement =
+                            dgInfo->currentElement_;
+                        const label currentFaceOrdinal =
+                            dgInfo->currentFaceOrdinal_;
+
+                        // master element; face and volume
+                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+
+                        // local ip, ordinals, etc
+                        const label currentGaussPointId =
+                            dgInfo->currentGaussPointId_;
+                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                        // mapping from ip to nodes for this ordinal
+                        const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
+
+                        // extract some master element info
+                        const label currentNodesPerSide =
+                            meFCCurrent->nodesPerElement_;
+                        const label currentNodesPerElement =
+                            meSCSCurrent->nodesPerElement_;
+
+                        // algorithm related; face
+                        ws_c_phi.resize(currentNodesPerSide * N);
+                        ws_c_min.resize(currentNodesPerSide * N);
+                        ws_c_max.resize(currentNodesPerSide * N);
+                        ws_c_gradPhi.resize(currentNodesPerSide * N *
+                                            SPATIAL_DIM);
+                        ws_c_coordinates.resize(currentNodesPerSide *
+                                                SPATIAL_DIM);
+
+                        scalar* p_c_phi = &ws_c_phi[0];
+                        scalar* p_c_min = &ws_c_min[0];
+                        scalar* p_c_max = &ws_c_max[0];
+                        scalar* p_c_gradPhi = &ws_c_gradPhi[0];
+                        scalar* p_c_coordinates = &ws_c_coordinates[0];
+
+                        // gather current face data
+                        stk::mesh::Entity const* current_face_node_rels =
+                            bulkData.begin_nodes(currentFace);
+                        const label current_num_face_nodes =
+                            bulkData.num_nodes(currentFace);
+                        for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                        {
+                            stk::mesh::Entity node = current_face_node_rels[ni];
+
+                            // gather...
+                            const scalar* phi =
+                                stk::mesh::field_data(*phiSTKFieldPtr, node);
+                            const scalar* min = stk::mesh::field_data(
+                                *minValueSTKFieldPtr, node);
+                            const scalar* max = stk::mesh::field_data(
+                                *maxValueSTKFieldPtr, node);
+                            const scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, node);
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + ni;
+                                p_c_phi[offset] = phi[i];
+                                p_c_min[offset] = min[i];
+                                p_c_max[offset] = max[i];
+
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const label row_gradPhi =
+                                        (i * SPATIAL_DIM + j) *
+                                            current_num_face_nodes +
+                                        ni;
+                                    p_c_gradPhi[row_gradPhi] =
+                                        gradPhi[i * SPATIAL_DIM + j];
+                                }
+                            }
+
+                            // gather; vector
+                            const scalar* coords =
+                                stk::mesh::field_data(*coordsSTKFieldPtr, node);
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + ni;
+                                p_c_coordinates[offset] = coords[i];
+                            }
+                        }
+
+                        meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                                      &currentIsoParCoords[0],
+                                                      &ws_c_coordinates[0],
+                                                      &currentCoordsBip[0]);
+
+                        // extract nearset node
+                        const label nn = faceIpNodeMap[currentGaussPointId];
+                        stk::mesh::Entity node = current_face_node_rels[nn];
+
+                        // position vector from left node to ip
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            dxj[j] = currentCoordsBip[j] -
+                                     p_c_coordinates[nn * SPATIAL_DIM + j];
+                        }
+
+                        scalar* beta = stk::mesh::field_data(
+                            *blendingFactorSTKFieldPtr, node);
+
+                        for (label i = 0; i < N; i++)
+                        {
+                            scalar rgrad = 0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                rgrad += p_c_gradPhi[nn * N * SPATIAL_DIM +
+                                                     i * SPATIAL_DIM + j] *
+                                         dxj[j];
+                            }
+
+                            // stabilisation
+                            if (rgrad > 0)
+                            {
+                                rgrad = rgrad + SMALL;
+                            }
+                            else
+                            {
+                                rgrad = rgrad - SMALL;
+                            }
+
+                            // local vals
+                            scalar betaLocal = std::max(
+                                (p_c_max[N * nn + i] - p_c_phi[N * nn + i]) /
+                                    rgrad,
+                                (p_c_min[N * nn + i] - p_c_phi[N * nn + i]) /
+                                    rgrad);
+                            scalar beta12Local = std::max(
+                                -(p_c_max[N * nn + i] - p_c_phi[N * nn + i]) /
+                                    rgrad,
+                                -(p_c_min[N * nn + i] - p_c_phi[N * nn + i]) /
+                                    rgrad);
+
+                            scalar y = std::min(betaLocal, beta12Local);
+
+                            if (blendingFactorMax_ < 2.0 - SMALL)
+                            {
+                                y = ((y * y + 2.0 * y) / (y * y + y + 2.0));
+                            }
+
+                            if ((rgrad > 100 * SMALL) || (rgrad < -100 * SMALL))
+                            {
+                                beta[i] = std::min(beta[i], y);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Slave
+            {
+                const auto& slaveInterface = interf->slaveInfoRef();
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    slaveInterface.dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (label k = 0;
+                         k < static_cast<label>(faceDgInfoVec.size());
+                         ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        // extract current/opposing face/element
+                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
+                        stk::mesh::Entity currentElement =
+                            dgInfo->currentElement_;
+                        const label currentFaceOrdinal =
+                            dgInfo->currentFaceOrdinal_;
+
+                        // master element; face and volume
+                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+
+                        // local ip, ordinals, etc
+                        const label currentGaussPointId =
+                            dgInfo->currentGaussPointId_;
+                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                        // mapping from ip to nodes for this ordinal
+                        const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
+
+                        // extract some master element info
+                        const label currentNodesPerSide =
+                            meFCCurrent->nodesPerElement_;
+                        const label currentNodesPerElement =
+                            meSCSCurrent->nodesPerElement_;
+
+                        // algorithm related; face
+                        ws_c_phi.resize(currentNodesPerSide * N);
+                        ws_c_min.resize(currentNodesPerSide * N);
+                        ws_c_max.resize(currentNodesPerSide * N);
+                        ws_c_gradPhi.resize(currentNodesPerSide * N *
+                                            SPATIAL_DIM);
+                        ws_c_coordinates.resize(currentNodesPerSide *
+                                                SPATIAL_DIM);
+
+                        scalar* p_c_phi = &ws_c_phi[0];
+                        scalar* p_c_min = &ws_c_min[0];
+                        scalar* p_c_max = &ws_c_max[0];
+                        scalar* p_c_gradPhi = &ws_c_gradPhi[0];
+                        scalar* p_c_coordinates = &ws_c_coordinates[0];
+
+                        // gather current face data
+                        stk::mesh::Entity const* current_face_node_rels =
+                            bulkData.begin_nodes(currentFace);
+                        const label current_num_face_nodes =
+                            bulkData.num_nodes(currentFace);
+                        for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                        {
+                            stk::mesh::Entity node = current_face_node_rels[ni];
+
+                            // gather...
+                            const scalar* phi =
+                                stk::mesh::field_data(*phiSTKFieldPtr, node);
+                            const scalar* min = stk::mesh::field_data(
+                                *minValueSTKFieldPtr, node);
+                            const scalar* max = stk::mesh::field_data(
+                                *maxValueSTKFieldPtr, node);
+                            const scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, node);
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + ni;
+                                p_c_phi[offset] = phi[i];
+                                p_c_min[offset] = min[i];
+                                p_c_max[offset] = max[i];
+
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const label row_gradPhi =
+                                        (i * SPATIAL_DIM + j) *
+                                            current_num_face_nodes +
+                                        ni;
+                                    p_c_gradPhi[row_gradPhi] =
+                                        gradPhi[i * SPATIAL_DIM + j];
+                                }
+                            }
+
+                            // gather; vector
+                            const scalar* coords =
+                                stk::mesh::field_data(*coordsSTKFieldPtr, node);
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + ni;
+                                p_c_coordinates[offset] = coords[i];
+                            }
+                        }
+
+                        meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                                      &currentIsoParCoords[0],
+                                                      &ws_c_coordinates[0],
+                                                      &currentCoordsBip[0]);
+
+                        // extract nearset node
+                        const label nn = faceIpNodeMap[currentGaussPointId];
+                        stk::mesh::Entity node = current_face_node_rels[nn];
+
+                        // position vector from left node to ip
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            dxj[j] = currentCoordsBip[j] -
+                                     p_c_coordinates[nn * SPATIAL_DIM + j];
+                        }
+
+                        scalar* beta = stk::mesh::field_data(
+                            *blendingFactorSTKFieldPtr, node);
+
+                        for (label i = 0; i < N; i++)
+                        {
+                            scalar rgrad = 0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                rgrad += p_c_gradPhi[nn * N * SPATIAL_DIM +
+                                                     i * SPATIAL_DIM + j] *
+                                         dxj[j];
+                            }
+
+                            // stabilisation
+                            if (rgrad > 0)
+                            {
+                                rgrad = rgrad + SMALL;
+                            }
+                            else
+                            {
+                                rgrad = rgrad - SMALL;
+                            }
+
+                            // local vals
+                            scalar betaLocal = std::max(
+                                (p_c_max[N * nn + i] - p_c_phi[N * nn + i]) /
+                                    rgrad,
+                                (p_c_min[N * nn + i] - p_c_phi[N * nn + i]) /
+                                    rgrad);
+                            scalar beta12Local = std::max(
+                                -(p_c_max[N * nn + i] - p_c_phi[N * nn + i]) /
+                                    rgrad,
+                                -(p_c_min[N * nn + i] - p_c_phi[N * nn + i]) /
+                                    rgrad);
+
+                            scalar y = std::min(betaLocal, beta12Local);
+
+                            if (blendingFactorMax_ < 2.0 - SMALL)
+                            {
+                                y = ((y * y + 2.0 * y) / (y * y + y + 2.0));
+                            }
+
+                            if ((rgrad > 100 * SMALL) || (rgrad < -100 * SMALL))
+                            {
+                                beta[i] = std::min(beta[i], y);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            // extract geometric fields
+            STKScalarField* coordsSTKFieldPtr =
+                metaData.template get_field<scalar>(
+                    stk::topology::NODE_RANK, this->getCoordinatesID_(iZone));
+
+            // ip values; both boundary and opposing surface
+            std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+            std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+
+            std::vector<scalar> currentCoordsBip(SPATIAL_DIM);
+            std::vector<scalar> dxj(SPATIAL_DIM);
+
+            // nodal fields to gather
+            std::vector<scalar> ws_c_phi;
+            std::vector<scalar> ws_c_min;
+            std::vector<scalar> ws_c_max;
+            std::vector<scalar> ws_c_gradPhi;
+            std::vector<scalar> ws_c_coordinates;
+
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(iZone);
+
+            // extract vector of dgInfo
+            const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                interfaceSideInfoPtr->dgInfoVec_;
+
+            for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
+                 iSide++)
+            {
+                const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+
+                // now loop over all the DgInfo objects on this
+                // particular exposed face
+                for (label k = 0; k < static_cast<label>(faceDgInfoVec.size());
+                     ++k)
+                {
+                    dgInfo* dgInfo = faceDgInfoVec[k];
+
+                    // extract current/opposing face/element
+                    stk::mesh::Entity currentFace = dgInfo->currentFace_;
+                    stk::mesh::Entity currentElement = dgInfo->currentElement_;
+                    const label currentFaceOrdinal =
+                        dgInfo->currentFaceOrdinal_;
+
+                    // master element; face and volume
+                    MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                    MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+
+                    // local ip, ordinals, etc
+                    const label currentGaussPointId =
+                        dgInfo->currentGaussPointId_;
+                    currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                    // mapping from ip to nodes for this ordinal
+                    const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
+
+                    // extract some master element info
+                    const label currentNodesPerSide =
+                        meFCCurrent->nodesPerElement_;
+                    const label currentNodesPerElement =
+                        meSCSCurrent->nodesPerElement_;
+
+                    // algorithm related; face
+                    ws_c_phi.resize(currentNodesPerSide * N);
+                    ws_c_min.resize(currentNodesPerSide * N);
+                    ws_c_max.resize(currentNodesPerSide * N);
+                    ws_c_gradPhi.resize(currentNodesPerSide * N * SPATIAL_DIM);
+                    ws_c_coordinates.resize(currentNodesPerSide * SPATIAL_DIM);
+
+                    scalar* p_c_phi = &ws_c_phi[0];
+                    scalar* p_c_min = &ws_c_min[0];
+                    scalar* p_c_max = &ws_c_max[0];
+                    scalar* p_c_gradPhi = &ws_c_gradPhi[0];
+                    scalar* p_c_coordinates = &ws_c_coordinates[0];
+
+                    // gather current face data
+                    stk::mesh::Entity const* current_face_node_rels =
+                        bulkData.begin_nodes(currentFace);
+                    const label current_num_face_nodes =
+                        bulkData.num_nodes(currentFace);
+                    for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                    {
+                        stk::mesh::Entity node = current_face_node_rels[ni];
+
+                        // gather...
+                        const scalar* phi =
+                            stk::mesh::field_data(*phiSTKFieldPtr, node);
+                        const scalar* min =
+                            stk::mesh::field_data(*minValueSTKFieldPtr, node);
+                        const scalar* max =
+                            stk::mesh::field_data(*maxValueSTKFieldPtr, node);
+                        const scalar* gradPhi =
+                            stk::mesh::field_data(*gradPhiSTKFieldPtr, node);
+                        for (label i = 0; i < N; ++i)
+                        {
+                            const label offset =
+                                i * current_num_face_nodes + ni;
+                            p_c_phi[offset] = phi[i];
+                            p_c_min[offset] = min[i];
+                            p_c_max[offset] = max[i];
+
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const label row_gradPhi =
+                                    (i * SPATIAL_DIM + j) *
+                                        current_num_face_nodes +
+                                    ni;
+                                p_c_gradPhi[row_gradPhi] =
+                                    gradPhi[i * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // gather; vector
+                        const scalar* coords =
+                            stk::mesh::field_data(*coordsSTKFieldPtr, node);
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            const label offset =
+                                i * current_num_face_nodes + ni;
+                            p_c_coordinates[offset] = coords[i];
+                        }
+                    }
+
+                    meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                                  &currentIsoParCoords[0],
+                                                  &ws_c_coordinates[0],
+                                                  &currentCoordsBip[0]);
+
+                    // extract nearset node
+                    const label nn = faceIpNodeMap[currentGaussPointId];
+                    stk::mesh::Entity node = current_face_node_rels[nn];
+
+                    // position vector from left node to ip
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        dxj[j] = currentCoordsBip[j] -
+                                 p_c_coordinates[nn * SPATIAL_DIM + j];
+                    }
+
+                    scalar* beta =
+                        stk::mesh::field_data(*blendingFactorSTKFieldPtr, node);
+
+                    for (label i = 0; i < N; i++)
+                    {
+                        scalar rgrad = 0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            rgrad += p_c_gradPhi[nn * N * SPATIAL_DIM +
+                                                 i * SPATIAL_DIM + j] *
+                                     dxj[j];
+                        }
+
+                        // stabilisation
+                        if (rgrad > 0)
+                        {
+                            rgrad = rgrad + SMALL;
+                        }
+                        else
+                        {
+                            rgrad = rgrad - SMALL;
+                        }
+
+                        // local vals
+                        scalar betaLocal = std::max(
+                            (p_c_max[N * nn + i] - p_c_phi[N * nn + i]) / rgrad,
+                            (p_c_min[N * nn + i] - p_c_phi[N * nn + i]) /
+                                rgrad);
+                        scalar beta12Local = std::max(
+                            -(p_c_max[N * nn + i] - p_c_phi[N * nn + i]) /
+                                rgrad,
+                            -(p_c_min[N * nn + i] - p_c_phi[N * nn + i]) /
+                                rgrad);
+
+                        scalar y = std::min(betaLocal, beta12Local);
+
+                        if (blendingFactorMax_ < 2.0 - SMALL)
+                        {
+                            y = ((y * y + 2.0 * y) / (y * y + y + 2.0));
+                        }
+
+                        if ((rgrad > 100 * SMALL) || (rgrad < -100 * SMALL))
+                        {
+                            beta[i] = std::min(beta[i], y);
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif /* HAS_INTERFACE */
+
     // Boundary ip
     {
         // get geometric fields
@@ -2248,7 +3022,7 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
 
                 // extract master element
                 MasterElement* meFC =
-                    accel::MasterElementRepo::get_surface_master_element(
+                    MasterElementRepo::get_surface_master_element(
                         sideBucket.topology());
 
                 // extract master element specifics
@@ -2658,6 +3432,1291 @@ void nodeField<N, M>::updateGradientField(label iZone)
         }
     }
 
+#ifdef HAS_INTERFACE
+    // Interface ip contribution
+    for (const interface* interf :
+         this->meshPtr()->zonePtr(iZone)->interfacesRef())
+    {
+        if (interf->isConformalTreatment())
+            continue;
+
+        if (interf->isInternal())
+        {
+            // Get geometric fields
+            const auto& exposedAreaVecSTKFieldRef =
+                *metaData.template get_field<scalar>(
+                    metaData.side_rank(), this->getExposedAreaVectorID_(iZone));
+            const STKScalarField* dualNodalVolumeSTKFieldPtr =
+                metaData.template get_field<scalar>(
+                    stk::topology::NODE_RANK,
+                    this->getDualNodalVolumeID_(iZone));
+
+            // ip values; both boundary and opposing surface
+            std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+            std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+
+            // space for current/opposing interpolated value for phi
+            std::vector<scalar> currentPhiBip(N);
+            std::vector<scalar> opposingPhiBip(N);
+
+            // interpolate nodal values to point-in-elem
+            const label sizeOfField = N;
+
+            // nodal fields to gather
+            std::vector<scalar> ws_c_phi;
+            std::vector<scalar> ws_o_phi;
+
+            // Master
+            {
+                const auto& masterInterface = interf->masterInfoRef();
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    masterInterface.dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (label k = 0;
+                         k < static_cast<label>(faceDgInfoVec.size());
+                         ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        if (dgInfo->gaussPointExposed_)
+                        {
+                            // extract current/opposing face/element
+                            stk::mesh::Entity currentFace =
+                                dgInfo->currentFace_;
+
+                            // master element
+                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+
+                            // local ip, ordinals, etc
+                            const label currentGaussPointId =
+                                dgInfo->currentGaussPointId_;
+                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                            // mapping from ip to nodes for this ordinal
+                            const label* faceIpNodeMap =
+                                meFCCurrent->ipNodeMap();
+
+                            // extract some master element info
+                            const label currentNodesPerFace =
+                                meFCCurrent->nodesPerElement_;
+
+                            // algorithm related; face
+                            ws_c_phi.resize(currentNodesPerFace * N);
+
+                            // pointers to real data
+                            scalar* p_c_phi = &ws_c_phi[0];
+
+                            // gather current face data
+                            stk::mesh::Entity const* current_face_node_rels =
+                                bulkData.begin_nodes(currentFace);
+                            const label current_num_face_nodes =
+                                bulkData.num_nodes(currentFace);
+                            for (label ni = 0; ni < current_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    current_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * current_num_face_nodes + ni;
+                                    p_c_phi[offset] = phi[i];
+                                }
+                            }
+
+                            meFCCurrent->interpolatePoint(
+                                sizeOfField,
+                                &currentIsoParCoords[0],
+                                &ws_c_phi[0],
+                                &currentPhiBip[0]);
+
+                            // extract pointers to nearest node fields
+                            const label nn = faceIpNodeMap[currentGaussPointId];
+                            stk::mesh::Entity nNode =
+                                current_face_node_rels[nn];
+
+                            const scalar volNN = *stk::mesh::field_data(
+                                *dualNodalVolumeSTKFieldPtr, nNode);
+                            scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, nNode);
+
+                            // nearest node inverse volume
+                            scalar inv_volNN = 1.0 / volNN;
+
+                            // pointer to face data
+                            const scalar* c_areaVec = stk::mesh::field_data(
+                                exposedAreaVecSTKFieldRef, currentFace);
+
+                            // assemble to nearest node
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + nn;
+
+                                scalar phiip = currentPhiBip[i];
+                                scalar phic = p_c_phi[offset];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    scalar fac = (phiip - incMult * phic) *
+                                                 c_areaVec[currentGaussPointId *
+                                                               SPATIAL_DIM +
+                                                           j];
+                                    gradPhi[i * N + j] +=
+                                        gradURF_ * fac * inv_volNN;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // extract current/opposing face/element
+                            stk::mesh::Entity currentFace =
+                                dgInfo->currentFace_;
+                            stk::mesh::Entity opposingFace =
+                                dgInfo->opposingFace_;
+
+                            // master element
+                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+
+                            // local ip, ordinals, etc
+                            const label currentGaussPointId =
+                                dgInfo->currentGaussPointId_;
+                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                            opposingIsoParCoords =
+                                dgInfo->opposingIsoParCoords_;
+
+                            // mapping from ip to nodes for this ordinal
+                            const label* faceIpNodeMap =
+                                meFCCurrent->ipNodeMap();
+
+                            // extract some master element info
+                            const label currentNodesPerFace =
+                                meFCCurrent->nodesPerElement_;
+                            const label opposingNodesPerFace =
+                                meFCOpposing->nodesPerElement_;
+
+                            // algorithm related; face
+                            ws_c_phi.resize(currentNodesPerFace * N);
+                            ws_o_phi.resize(opposingNodesPerFace * N);
+
+                            scalar* p_c_phi = &ws_c_phi[0];
+                            scalar* p_o_phi = &ws_o_phi[0];
+
+                            // gather current face data
+                            stk::mesh::Entity const* current_face_node_rels =
+                                bulkData.begin_nodes(currentFace);
+                            const label current_num_face_nodes =
+                                bulkData.num_nodes(currentFace);
+                            for (label ni = 0; ni < current_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    current_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * current_num_face_nodes + ni;
+                                    p_c_phi[offset] = phi[i];
+                                }
+                            }
+
+                            // gather opposing face data
+                            stk::mesh::Entity const* opposing_face_node_rels =
+                                bulkData.begin_nodes(opposingFace);
+                            const label opposing_num_face_nodes =
+                                bulkData.num_nodes(opposingFace);
+                            for (label ni = 0; ni < opposing_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    opposing_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * opposing_num_face_nodes + ni;
+                                    p_o_phi[offset] = phi[i];
+                                }
+                            }
+
+                            // apply transformation
+                            masterInterface.template rotateVectorListCompact<N>(
+                                ws_o_phi, opposing_num_face_nodes);
+
+                            meFCCurrent->interpolatePoint(
+                                sizeOfField,
+                                &currentIsoParCoords[0],
+                                &ws_c_phi[0],
+                                &currentPhiBip[0]);
+
+                            meFCOpposing->interpolatePoint(
+                                sizeOfField,
+                                &opposingIsoParCoords[0],
+                                &ws_o_phi[0],
+                                &opposingPhiBip[0]);
+
+                            // extract pointers to nearest node fields
+                            const label nn = faceIpNodeMap[currentGaussPointId];
+                            stk::mesh::Entity nNode =
+                                current_face_node_rels[nn];
+
+                            const scalar volNN = *stk::mesh::field_data(
+                                *dualNodalVolumeSTKFieldPtr, nNode);
+                            scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, nNode);
+
+                            // nearest node inverse volume
+                            scalar inv_volNN = 1.0 / volNN;
+
+                            // pointer to face data
+                            const scalar* c_areaVec = stk::mesh::field_data(
+                                exposedAreaVecSTKFieldRef, currentFace);
+
+                            // assemble to nearest node
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + nn;
+
+                                scalar phiip = 0.5 * (currentPhiBip[i] +
+                                                      opposingPhiBip[i]);
+                                scalar phic = p_c_phi[offset];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    scalar fac = (phiip - incMult * phic) *
+                                                 c_areaVec[currentGaussPointId *
+                                                               SPATIAL_DIM +
+                                                           j];
+                                    gradPhi[i * N + j] +=
+                                        gradURF_ * fac * inv_volNN;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Slave
+            {
+                const auto& slaveInterface = interf->slaveInfoRef();
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    slaveInterface.dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (label k = 0;
+                         k < static_cast<label>(faceDgInfoVec.size());
+                         ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        if (dgInfo->gaussPointExposed_)
+                        {
+                            // extract current/opposing face/element
+                            stk::mesh::Entity currentFace =
+                                dgInfo->currentFace_;
+
+                            // master element
+                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+
+                            // local ip, ordinals, etc
+                            const label currentGaussPointId =
+                                dgInfo->currentGaussPointId_;
+                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                            // mapping from ip to nodes for this ordinal
+                            const label* faceIpNodeMap =
+                                meFCCurrent->ipNodeMap();
+
+                            // extract some master element info
+                            const label currentNodesPerFace =
+                                meFCCurrent->nodesPerElement_;
+
+                            // algorithm related; face
+                            ws_c_phi.resize(currentNodesPerFace * N);
+
+                            scalar* p_c_phi = &ws_c_phi[0];
+
+                            // gather current face data
+                            stk::mesh::Entity const* current_face_node_rels =
+                                bulkData.begin_nodes(currentFace);
+                            const label current_num_face_nodes =
+                                bulkData.num_nodes(currentFace);
+                            for (label ni = 0; ni < current_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    current_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * current_num_face_nodes + ni;
+                                    p_c_phi[offset] = phi[i];
+                                }
+                            }
+
+                            meFCCurrent->interpolatePoint(
+                                sizeOfField,
+                                &currentIsoParCoords[0],
+                                &ws_c_phi[0],
+                                &currentPhiBip[0]);
+
+                            // extract pointers to nearest node fields
+                            const label nn = faceIpNodeMap[currentGaussPointId];
+                            stk::mesh::Entity nNode =
+                                current_face_node_rels[nn];
+
+                            const scalar volNN = *stk::mesh::field_data(
+                                *dualNodalVolumeSTKFieldPtr, nNode);
+                            scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, nNode);
+
+                            // nearest node inverse volume
+                            scalar inv_volNN = 1.0 / volNN;
+
+                            // pointer to face data
+                            const scalar* c_areaVec = stk::mesh::field_data(
+                                exposedAreaVecSTKFieldRef, currentFace);
+
+                            // assemble to nearest node
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + nn;
+
+                                scalar phiip = currentPhiBip[i];
+                                scalar phic = p_c_phi[offset];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    scalar fac = (phiip - incMult * phic) *
+                                                 c_areaVec[currentGaussPointId *
+                                                               SPATIAL_DIM +
+                                                           j];
+                                    gradPhi[i * N + j] +=
+                                        gradURF_ * fac * inv_volNN;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // extract current/opposing face/element
+                            stk::mesh::Entity currentFace =
+                                dgInfo->currentFace_;
+                            stk::mesh::Entity opposingFace =
+                                dgInfo->opposingFace_;
+
+                            // master element
+                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+
+                            // local ip, ordinals, etc
+                            const label currentGaussPointId =
+                                dgInfo->currentGaussPointId_;
+                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                            opposingIsoParCoords =
+                                dgInfo->opposingIsoParCoords_;
+
+                            // mapping from ip to nodes for this ordinal
+                            const label* faceIpNodeMap =
+                                meFCCurrent->ipNodeMap();
+
+                            // extract some master element info
+                            const label currentNodesPerFace =
+                                meFCCurrent->nodesPerElement_;
+                            const label opposingNodesPerFace =
+                                meFCOpposing->nodesPerElement_;
+
+                            // algorithm related; face
+                            ws_c_phi.resize(currentNodesPerFace * N);
+                            ws_o_phi.resize(opposingNodesPerFace * N);
+
+                            scalar* p_c_phi = &ws_c_phi[0];
+                            scalar* p_o_phi = &ws_o_phi[0];
+
+                            // gather current face data
+                            stk::mesh::Entity const* current_face_node_rels =
+                                bulkData.begin_nodes(currentFace);
+                            const label current_num_face_nodes =
+                                bulkData.num_nodes(currentFace);
+                            for (label ni = 0; ni < current_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    current_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * current_num_face_nodes + ni;
+                                    p_c_phi[offset] = phi[i];
+                                }
+                            }
+
+                            // gather opposing face data
+                            stk::mesh::Entity const* opposing_face_node_rels =
+                                bulkData.begin_nodes(opposingFace);
+                            const label opposing_num_face_nodes =
+                                bulkData.num_nodes(opposingFace);
+                            for (label ni = 0; ni < opposing_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    opposing_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * opposing_num_face_nodes + ni;
+                                    p_o_phi[offset] = phi[i];
+                                }
+                            }
+
+                            // apply transformation
+                            slaveInterface.template rotateVectorListCompact<N>(
+                                ws_o_phi, opposing_num_face_nodes);
+
+                            meFCCurrent->interpolatePoint(
+                                sizeOfField,
+                                &currentIsoParCoords[0],
+                                &ws_c_phi[0],
+                                &currentPhiBip[0]);
+
+                            meFCOpposing->interpolatePoint(
+                                sizeOfField,
+                                &opposingIsoParCoords[0],
+                                &ws_o_phi[0],
+                                &opposingPhiBip[0]);
+
+                            // extract pointers to nearest node fields
+                            const label nn = faceIpNodeMap[currentGaussPointId];
+                            stk::mesh::Entity nNode =
+                                current_face_node_rels[nn];
+
+                            const scalar volNN = *stk::mesh::field_data(
+                                *dualNodalVolumeSTKFieldPtr, nNode);
+                            scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, nNode);
+
+                            // nearest node inverse volume
+                            scalar inv_volNN = 1.0 / volNN;
+
+                            // pointer to face data
+                            const scalar* c_areaVec = stk::mesh::field_data(
+                                exposedAreaVecSTKFieldRef, currentFace);
+
+                            // assemble to nearest node
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + nn;
+
+                                scalar phiip = 0.5 * (currentPhiBip[i] +
+                                                      opposingPhiBip[i]);
+                                scalar phic = p_c_phi[offset];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    scalar fac = (phiip - incMult * phic) *
+                                                 c_areaVec[currentGaussPointId *
+                                                               SPATIAL_DIM +
+                                                           j];
+                                    gradPhi[i * N + j] +=
+                                        gradURF_ * fac * inv_volNN;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            if (interf->isFluidSolidType())
+            {
+                const auto* interfaceSideInfoPtr =
+                    interf->interfaceSideInfoPtr(iZone);
+
+                // if the field applies to any medium, use dg to
+                // interpolate, otherwise, the gradient at the interface
+                // must no see the values of the other side
+                if (mediumIndependent_)
+                {
+                    // Get geometric fields
+                    const auto& exposedAreaVecSTKFieldRef =
+                        *metaData.template get_field<scalar>(
+                            metaData.side_rank(),
+                            this->getExposedAreaVectorID_(iZone));
+                    const STKScalarField* dualNodalVolumeSTKFieldPtr =
+                        metaData.template get_field<scalar>(
+                            stk::topology::NODE_RANK,
+                            this->getDualNodalVolumeID_(iZone));
+
+                    // ip values; both boundary and opposing surface
+                    std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+                    std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+
+                    // space for current/opposing interpolated value for
+                    // phi
+                    std::vector<scalar> currentPhiBip(N);
+                    std::vector<scalar> opposingPhiBip(N);
+
+                    // interpolate nodal values to point-in-elem
+                    const label sizeOfField = N;
+
+                    // nodal fields to gather
+                    std::vector<scalar> ws_c_phi;
+                    std::vector<scalar> ws_o_phi;
+
+                    // extract vector of dgInfo
+                    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                        interfaceSideInfoPtr->dgInfoVec_;
+
+                    for (label iSide = 0;
+                         iSide < static_cast<label>(dgInfoVec.size());
+                         iSide++)
+                    {
+                        const std::vector<dgInfo*>& faceDgInfoVec =
+                            dgInfoVec[iSide];
+
+                        // now loop over all the DgInfo objects on this
+                        // particular exposed face
+                        for (label k = 0;
+                             k < static_cast<label>(faceDgInfoVec.size());
+                             ++k)
+                        {
+                            dgInfo* dgInfo = faceDgInfoVec[k];
+
+                            if (dgInfo->gaussPointExposed_)
+                            {
+                                // extract current/opposing face/element
+                                stk::mesh::Entity currentFace =
+                                    dgInfo->currentFace_;
+
+                                // master element
+                                MasterElement* meFCCurrent =
+                                    dgInfo->meFCCurrent_;
+
+                                // local ip, ordinals, etc
+                                const label currentGaussPointId =
+                                    dgInfo->currentGaussPointId_;
+                                currentIsoParCoords =
+                                    dgInfo->currentIsoParCoords_;
+
+                                // mapping from ip to nodes for this ordinal
+                                const label* faceIpNodeMap =
+                                    meFCCurrent->ipNodeMap();
+
+                                // extract some master element info
+                                const label currentNodesPerFace =
+                                    meFCCurrent->nodesPerElement_;
+
+                                // algorithm related; face
+                                ws_c_phi.resize(currentNodesPerFace * N);
+
+                                scalar* p_c_phi = &ws_c_phi[0];
+
+                                // gather current face data
+                                stk::mesh::Entity const*
+                                    current_face_node_rels =
+                                        bulkData.begin_nodes(currentFace);
+                                const label current_num_face_nodes =
+                                    bulkData.num_nodes(currentFace);
+                                for (label ni = 0; ni < current_num_face_nodes;
+                                     ++ni)
+                                {
+                                    stk::mesh::Entity node =
+                                        current_face_node_rels[ni];
+
+                                    // gather...
+                                    const scalar* phi = stk::mesh::field_data(
+                                        *phiSTKFieldPtr, node);
+                                    for (label i = 0; i < N; ++i)
+                                    {
+                                        const label offset =
+                                            i * current_num_face_nodes + ni;
+                                        p_c_phi[offset] = phi[i];
+                                    }
+                                }
+
+                                meFCCurrent->interpolatePoint(
+                                    sizeOfField,
+                                    &currentIsoParCoords[0],
+                                    &ws_c_phi[0],
+                                    &currentPhiBip[0]);
+
+                                // extract pointers to nearest node fields
+                                const label nn =
+                                    faceIpNodeMap[currentGaussPointId];
+                                stk::mesh::Entity nNode =
+                                    current_face_node_rels[nn];
+
+                                const scalar volNN = *stk::mesh::field_data(
+                                    *dualNodalVolumeSTKFieldPtr, nNode);
+                                scalar* gradPhi = stk::mesh::field_data(
+                                    *gradPhiSTKFieldPtr, nNode);
+
+                                // nearest node inverse volume
+                                scalar inv_volNN = 1.0 / volNN;
+
+                                // pointer to face data
+                                const scalar* c_areaVec = stk::mesh::field_data(
+                                    exposedAreaVecSTKFieldRef, currentFace);
+
+                                // assemble to nearest node
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * current_num_face_nodes + nn;
+
+                                    scalar phiip = currentPhiBip[i];
+                                    scalar phic = p_c_phi[offset];
+                                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                                    {
+                                        scalar fac =
+                                            (phiip - incMult * phic) *
+                                            c_areaVec[currentGaussPointId *
+                                                          SPATIAL_DIM +
+                                                      j];
+                                        gradPhi[i * N + j] +=
+                                            gradURF_ * fac * inv_volNN;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                // extract current/opposing face/element
+                                stk::mesh::Entity currentFace =
+                                    dgInfo->currentFace_;
+                                stk::mesh::Entity opposingFace =
+                                    dgInfo->opposingFace_;
+
+                                // master element
+                                MasterElement* meFCCurrent =
+                                    dgInfo->meFCCurrent_;
+                                MasterElement* meFCOpposing =
+                                    dgInfo->meFCOpposing_;
+
+                                // local ip, ordinals, etc
+                                const label currentGaussPointId =
+                                    dgInfo->currentGaussPointId_;
+                                currentIsoParCoords =
+                                    dgInfo->currentIsoParCoords_;
+                                opposingIsoParCoords =
+                                    dgInfo->opposingIsoParCoords_;
+
+                                // mapping from ip to nodes for this ordinal
+                                const label* faceIpNodeMap =
+                                    meFCCurrent->ipNodeMap();
+
+                                // extract some master element info
+                                const label currentNodesPerFace =
+                                    meFCCurrent->nodesPerElement_;
+                                const label opposingNodesPerFace =
+                                    meFCOpposing->nodesPerElement_;
+
+                                // algorithm related; face
+                                ws_c_phi.resize(currentNodesPerFace * N);
+                                ws_o_phi.resize(opposingNodesPerFace * N);
+
+                                scalar* p_c_phi = &ws_c_phi[0];
+                                scalar* p_o_phi = &ws_o_phi[0];
+
+                                // gather current face data
+                                stk::mesh::Entity const*
+                                    current_face_node_rels =
+                                        bulkData.begin_nodes(currentFace);
+                                const label current_num_face_nodes =
+                                    bulkData.num_nodes(currentFace);
+                                for (label ni = 0; ni < current_num_face_nodes;
+                                     ++ni)
+                                {
+                                    stk::mesh::Entity node =
+                                        current_face_node_rels[ni];
+
+                                    // gather...
+                                    const scalar* phi = stk::mesh::field_data(
+                                        *phiSTKFieldPtr, node);
+                                    for (label i = 0; i < N; ++i)
+                                    {
+                                        const label offset =
+                                            i * current_num_face_nodes + ni;
+                                        p_c_phi[offset] = phi[i];
+                                    }
+                                }
+
+                                // gather opposing face data
+                                stk::mesh::Entity const*
+                                    opposing_face_node_rels =
+                                        bulkData.begin_nodes(opposingFace);
+                                const label opposing_num_face_nodes =
+                                    bulkData.num_nodes(opposingFace);
+                                for (label ni = 0; ni < opposing_num_face_nodes;
+                                     ++ni)
+                                {
+                                    stk::mesh::Entity node =
+                                        opposing_face_node_rels[ni];
+
+                                    // gather...
+                                    const scalar* phi = stk::mesh::field_data(
+                                        *phiSTKFieldPtr, node);
+                                    for (label i = 0; i < N; ++i)
+                                    {
+                                        const label offset =
+                                            i * opposing_num_face_nodes + ni;
+                                        p_o_phi[offset] = phi[i];
+                                    }
+                                }
+
+                                // apply transformation
+                                interfaceSideInfoPtr
+                                    ->template rotateVectorListCompact<N>(
+                                        ws_o_phi, opposing_num_face_nodes);
+
+                                meFCCurrent->interpolatePoint(
+                                    sizeOfField,
+                                    &currentIsoParCoords[0],
+                                    &ws_c_phi[0],
+                                    &currentPhiBip[0]);
+
+                                meFCOpposing->interpolatePoint(
+                                    sizeOfField,
+                                    &opposingIsoParCoords[0],
+                                    &ws_o_phi[0],
+                                    &opposingPhiBip[0]);
+
+                                // extract pointers to nearest node fields
+                                const label nn =
+                                    faceIpNodeMap[currentGaussPointId];
+                                stk::mesh::Entity nNode =
+                                    current_face_node_rels[nn];
+
+                                const scalar volNN = *stk::mesh::field_data(
+                                    *dualNodalVolumeSTKFieldPtr, nNode);
+                                scalar* gradPhi = stk::mesh::field_data(
+                                    *gradPhiSTKFieldPtr, nNode);
+
+                                // nearest node inverse volume
+                                scalar inv_volNN = 1.0 / volNN;
+
+                                // pointer to face data
+                                const scalar* c_areaVec = stk::mesh::field_data(
+                                    exposedAreaVecSTKFieldRef, currentFace);
+
+                                // assemble to nearest node
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * current_num_face_nodes + nn;
+
+                                    scalar phiip = 0.5 * (currentPhiBip[i] +
+                                                          opposingPhiBip[i]);
+                                    scalar phic = p_c_phi[offset];
+                                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                                    {
+                                        scalar fac =
+                                            (phiip - incMult * phic) *
+                                            c_areaVec[currentGaussPointId *
+                                                          SPATIAL_DIM +
+                                                      j];
+                                        gradPhi[i * N + j] +=
+                                            gradURF_ * fac * inv_volNN;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // Get geometric fields
+                    const auto& exposedAreaVecSTKFieldRef =
+                        *metaData.template get_field<scalar>(
+                            metaData.side_rank(),
+                            this->getExposedAreaVectorID_(iZone));
+                    const STKScalarField* dualNodalVolumeSTKFieldPtr =
+                        metaData.template get_field<scalar>(
+                            stk::topology::NODE_RANK,
+                            this->getDualNodalVolumeID_(iZone));
+
+                    // nodal fields to gather; gather everything other than
+                    // what we are assembling
+                    std::vector<scalar> ws_phi;
+
+                    // geometry related to populate
+                    std::vector<scalar> ws_shape_function;
+
+                    // ip data
+                    std::vector<scalar> phiIp(N);
+
+                    // pointers to fixed size
+                    scalar* p_phiIp = &phiIp[0];
+
+                    // define vector of parent topos; should always be UNITY
+                    // in size
+                    std::vector<stk::topology> parentTopo;
+
+                    // define some common selectors
+                    stk::mesh::Selector selAllSides =
+                        metaData.universal_part() &
+                        stk::mesh::selectUnion(
+                            interfaceSideInfoPtr->currentPartVec_);
+
+                    stk::mesh::BucketVector const& sideBuckets =
+                        bulkData.get_buckets(metaData.side_rank(), selAllSides);
+                    for (stk::mesh::BucketVector::const_iterator ib =
+                             sideBuckets.begin();
+                         ib != sideBuckets.end();
+                         ++ib)
+                    {
+                        stk::mesh::Bucket& sideBucket = **ib;
+
+                        const stk::mesh::Bucket::size_type nSidesPerBucket =
+                            sideBucket.size();
+
+                        // extract master element
+                        MasterElement* meFC =
+                            MasterElementRepo::get_surface_master_element(
+                                sideBucket.topology());
+
+                        // extract master element specifics
+                        const label nodesPerSide = meFC->nodesPerElement_;
+                        const label numScsIp = meFC->numIntPoints_;
+                        const label* ipNodeMap = meFC->ipNodeMap();
+
+                        // algorithm related
+                        ws_phi.resize(nodesPerSide * N);
+                        ws_shape_function.resize(numScsIp * nodesPerSide);
+
+                        // pointers
+                        scalar* p_phi = &ws_phi[0];
+                        scalar* p_shape_function = &ws_shape_function[0];
+
+                        if (this->interpolationScheme_ ==
+                            interpolationSchemeType::linearLinear)
+                        {
+                            meFC->shifted_shape_fcn(&p_shape_function[0]);
+                        }
+                        else
+                        {
+                            meFC->shape_fcn(&p_shape_function[0]);
+                        }
+
+                        for (stk::mesh::Bucket::size_type iSide = 0;
+                             iSide < nSidesPerBucket;
+                             ++iSide)
+                        {
+                            // face data
+                            scalar* areaVec = stk::mesh::field_data(
+                                exposedAreaVecSTKFieldRef, sideBucket, iSide);
+
+                            //===============================================
+                            // gather nodal data; this is how we do it
+                            // now..
+                            //===============================================
+                            stk::mesh::Entity const* sideNodeRels =
+                                sideBucket.begin_nodes(iSide);
+                            label numNodes = sideBucket.num_nodes(iSide);
+
+                            // sanity check on num nodes
+                            STK_ThrowAssert(numNodes == nodesPerSide);
+
+                            for (label ni = 0; ni < numNodes; ++ni)
+                            {
+                                stk::mesh::Entity node = sideNodeRels[ni];
+
+                                // pointers to real data
+                                scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+
+                                // gather vectors
+                                const label offset = ni * N;
+                                for (label j = 0; j < N; ++j)
+                                {
+                                    p_phi[offset + j] = phi[j];
+                                }
+                            }
+
+                            // start assembly
+                            for (label ip = 0; ip < numScsIp; ++ip)
+                            {
+                                // nearest node
+                                const label nn = ipNodeMap[ip];
+
+                                stk::mesh::Entity node = sideNodeRels[nn];
+
+                                // pointer to fields to assemble
+                                scalar* gradPhi = stk::mesh::field_data(
+                                    *gradPhiSTKFieldPtr, node);
+
+                                // suplemental
+                                scalar vol = *stk::mesh::field_data(
+                                    *dualNodalVolumeSTKFieldPtr, node);
+
+                                // interpolate to scs point; operate on
+                                // saved off ws_field
+                                for (label j = 0; j < N; ++j)
+                                {
+                                    p_phiIp[j] = 0.0;
+                                }
+
+                                const label offset = ip * nodesPerSide;
+                                for (label ic = 0; ic < nodesPerSide; ++ic)
+                                {
+                                    const scalar r =
+                                        p_shape_function[offset + ic];
+                                    for (label j = 0; j < N; ++j)
+                                    {
+                                        p_phiIp[j] += r * p_phi[ic * N + j];
+                                    }
+                                }
+
+                                // nearest node volume
+                                scalar inv_vol = 1.0 / vol;
+
+                                // assemble to nearest node
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset = nn * N;
+
+                                    scalar phiip = p_phiIp[i];
+                                    scalar phic = p_phi[offset];
+                                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                                    {
+                                        scalar fac =
+                                            (phiip - incMult * phic) *
+                                            areaVec[ip * SPATIAL_DIM + j];
+                                        gradPhi[i * N + j] +=
+                                            gradURF_ * fac * inv_vol;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Get geometric fields
+                const auto& exposedAreaVecSTKFieldRef =
+                    *metaData.template get_field<scalar>(
+                        metaData.side_rank(),
+                        this->getExposedAreaVectorID_(iZone));
+                const STKScalarField* dualNodalVolumeSTKFieldPtr =
+                    metaData.template get_field<scalar>(
+                        stk::topology::NODE_RANK,
+                        this->getDualNodalVolumeID_(iZone));
+
+                // ip values; both boundary and opposing surface
+                std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+                std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+
+                // space for current/opposing interpolated value for
+                // phi
+                std::vector<scalar> currentPhiBip(N);
+                std::vector<scalar> opposingPhiBip(N);
+
+                // interpolate nodal values to point-in-elem
+                const label sizeOfField = N;
+
+                // nodal fields to gather
+                std::vector<scalar> ws_c_phi;
+                std::vector<scalar> ws_o_phi;
+
+                // get interface side that is sitting in this domain
+                const auto* interfaceSideInfoPtr =
+                    interf->interfaceSideInfoPtr(iZone);
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    interfaceSideInfoPtr->dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (label k = 0;
+                         k < static_cast<label>(faceDgInfoVec.size());
+                         ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        if (dgInfo->gaussPointExposed_)
+                        {
+                            // extract current/opposing face/element
+                            stk::mesh::Entity currentFace =
+                                dgInfo->currentFace_;
+
+                            // master element
+                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+
+                            // local ip, ordinals, etc
+                            const label currentGaussPointId =
+                                dgInfo->currentGaussPointId_;
+                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                            // mapping from ip to nodes for this ordinal
+                            const label* faceIpNodeMap =
+                                meFCCurrent->ipNodeMap();
+
+                            // extract some master element info
+                            const label currentNodesPerFace =
+                                meFCCurrent->nodesPerElement_;
+
+                            // algorithm related; face
+                            ws_c_phi.resize(currentNodesPerFace * N);
+
+                            scalar* p_c_phi = &ws_c_phi[0];
+
+                            // gather current face data
+                            stk::mesh::Entity const* current_face_node_rels =
+                                bulkData.begin_nodes(currentFace);
+                            const label current_num_face_nodes =
+                                bulkData.num_nodes(currentFace);
+                            for (label ni = 0; ni < current_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    current_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * current_num_face_nodes + ni;
+                                    p_c_phi[offset] = phi[i];
+                                }
+                            }
+
+                            meFCCurrent->interpolatePoint(
+                                sizeOfField,
+                                &currentIsoParCoords[0],
+                                &ws_c_phi[0],
+                                &currentPhiBip[0]);
+
+                            // extract pointers to nearest node fields
+                            const label nn = faceIpNodeMap[currentGaussPointId];
+                            stk::mesh::Entity nNode =
+                                current_face_node_rels[nn];
+
+                            const scalar volNN = *stk::mesh::field_data(
+                                *dualNodalVolumeSTKFieldPtr, nNode);
+                            scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, nNode);
+
+                            // nearest node inverse volume
+                            scalar inv_volNN = 1.0 / volNN;
+
+                            // pointer to face data
+                            const scalar* c_areaVec = stk::mesh::field_data(
+                                exposedAreaVecSTKFieldRef, currentFace);
+
+                            // assemble to nearest node
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + nn;
+
+                                scalar phiip = currentPhiBip[i];
+                                scalar phic = p_c_phi[offset];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    scalar fac = (phiip - incMult * phic) *
+                                                 c_areaVec[currentGaussPointId *
+                                                               SPATIAL_DIM +
+                                                           j];
+                                    gradPhi[i * N + j] +=
+                                        gradURF_ * fac * inv_volNN;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // extract current/opposing face/element
+                            stk::mesh::Entity currentFace =
+                                dgInfo->currentFace_;
+                            stk::mesh::Entity opposingFace =
+                                dgInfo->opposingFace_;
+
+                            // master element
+                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+
+                            // local ip, ordinals, etc
+                            const label currentGaussPointId =
+                                dgInfo->currentGaussPointId_;
+                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                            opposingIsoParCoords =
+                                dgInfo->opposingIsoParCoords_;
+
+                            // mapping from ip to nodes for this ordinal
+                            const label* faceIpNodeMap =
+                                meFCCurrent->ipNodeMap();
+
+                            // extract some master element info
+                            const label currentNodesPerFace =
+                                meFCCurrent->nodesPerElement_;
+                            const label opposingNodesPerFace =
+                                meFCOpposing->nodesPerElement_;
+
+                            // algorithm related; face
+                            ws_c_phi.resize(currentNodesPerFace * N);
+                            ws_o_phi.resize(opposingNodesPerFace * N);
+
+                            scalar* p_c_phi = &ws_c_phi[0];
+                            scalar* p_o_phi = &ws_o_phi[0];
+
+                            // gather current face data
+                            stk::mesh::Entity const* current_face_node_rels =
+                                bulkData.begin_nodes(currentFace);
+                            const label current_num_face_nodes =
+                                bulkData.num_nodes(currentFace);
+                            for (label ni = 0; ni < current_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    current_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * current_num_face_nodes + ni;
+                                    p_c_phi[offset] = phi[i];
+                                }
+                            }
+
+                            // gather opposing face data
+                            stk::mesh::Entity const* opposing_face_node_rels =
+                                bulkData.begin_nodes(opposingFace);
+                            const label opposing_num_face_nodes =
+                                bulkData.num_nodes(opposingFace);
+                            for (label ni = 0; ni < opposing_num_face_nodes;
+                                 ++ni)
+                            {
+                                stk::mesh::Entity node =
+                                    opposing_face_node_rels[ni];
+
+                                // gather...
+                                const scalar* phi = stk::mesh::field_data(
+                                    *phiSTKFieldPtr, node);
+                                for (label i = 0; i < N; ++i)
+                                {
+                                    const label offset =
+                                        i * opposing_num_face_nodes + ni;
+                                    p_o_phi[offset] = phi[i];
+                                }
+                            }
+
+                            // apply transformation
+                            interfaceSideInfoPtr
+                                ->template rotateVectorListCompact<N>(
+                                    ws_o_phi, opposing_num_face_nodes);
+
+                            meFCCurrent->interpolatePoint(
+                                sizeOfField,
+                                &currentIsoParCoords[0],
+                                &ws_c_phi[0],
+                                &currentPhiBip[0]);
+
+                            meFCOpposing->interpolatePoint(
+                                sizeOfField,
+                                &opposingIsoParCoords[0],
+                                &ws_o_phi[0],
+                                &opposingPhiBip[0]);
+
+                            // extract pointers to nearest node fields
+                            const label nn = faceIpNodeMap[currentGaussPointId];
+                            stk::mesh::Entity nNode =
+                                current_face_node_rels[nn];
+
+                            const scalar volNN = *stk::mesh::field_data(
+                                *dualNodalVolumeSTKFieldPtr, nNode);
+                            scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, nNode);
+
+                            // nearest node inverse volume
+                            scalar inv_volNN = 1.0 / volNN;
+
+                            // pointer to face data
+                            const scalar* c_areaVec = stk::mesh::field_data(
+                                exposedAreaVecSTKFieldRef, currentFace);
+
+                            // assemble to nearest node
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + nn;
+
+                                scalar phiip = 0.5 * (currentPhiBip[i] +
+                                                      opposingPhiBip[i]);
+                                scalar phic = p_c_phi[offset];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    scalar fac = (phiip - incMult * phic) *
+                                                 c_areaVec[currentGaussPointId *
+                                                               SPATIAL_DIM +
+                                                           j];
+                                    gradPhi[i * N + j] +=
+                                        gradURF_ * fac * inv_volNN;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif /* HAS_INTERFACE */
+
     // Boundary ip contribution
     {
         // Get geometric fields
@@ -2722,8 +4781,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 sideBucket.size();
 
                             // extract master element
-                            MasterElement* meFC = accel::MasterElementRepo::
-                                get_surface_master_element(
+                            MasterElement* meFC =
+                                MasterElementRepo::get_surface_master_element(
                                     sideBucket.topology());
 
                             // extract master element specifics
@@ -2843,6 +4902,22 @@ void nodeField<N, M>::updateGradientField(label iZone)
             }
         }
     }
+
+#ifdef HAS_INTERFACE
+    // Conformal interface completions
+    for (label iInterface = 0; iInterface < this->meshPtr()->nInterfaces();
+         iInterface++)
+    {
+        auto& interf = this->meshPtr()->interfaceRef(iInterface);
+
+        if (!interf.isConformalTreatment() || !interf.isMasterZone(iZone))
+            continue;
+
+        // average gradient at master/slave nodes
+        this->gradRef().transfer(interf.index(),
+                                 dataTransferType::volumeAverage);
+    }
+#endif /* HAS_INTERFACE */
 
     if (limitGradient_)
     {
@@ -3134,6 +5209,534 @@ void nodeField<N, M>::limitGradientField_(label iZone)
         }
     }
 
+#ifdef HAS_INTERFACE
+    // Process interface sides
+    for (const interface* interf :
+         this->meshPtr()->zonePtr(iZone)->interfacesRef())
+    {
+        if (interf->isConformalTreatment())
+            continue;
+
+        if (interf->isInternal())
+        {
+            // extract geometric fields
+            STKScalarField* coordsSTKFieldPtr =
+                metaData.template get_field<scalar>(
+                    stk::topology::NODE_RANK, this->getCoordinatesID_(iZone));
+
+            // ip values; both boundary and opposing surface
+            std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+            std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+
+            std::vector<scalar> currentCoordsBip(SPATIAL_DIM);
+            std::vector<scalar> dxj(SPATIAL_DIM);
+
+            // nodal fields to gather
+            std::vector<scalar> ws_c_phi;
+            std::vector<scalar> ws_c_min;
+            std::vector<scalar> ws_c_max;
+            std::vector<scalar> ws_c_gradPhi;
+            std::vector<scalar> ws_c_coordinates;
+
+            // Master
+            {
+                const auto& masterInterface = interf->masterInfoRef();
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    masterInterface.dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (label k = 0;
+                         k < static_cast<label>(faceDgInfoVec.size());
+                         ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        // extract current/opposing face/element
+                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
+                        stk::mesh::Entity currentElement =
+                            dgInfo->currentElement_;
+                        const label currentFaceOrdinal =
+                            dgInfo->currentFaceOrdinal_;
+
+                        // master element; face and volume
+                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+
+                        // local ip, ordinals, etc
+                        const label currentGaussPointId =
+                            dgInfo->currentGaussPointId_;
+                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                        // mapping from ip to nodes for this ordinal
+                        const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
+
+                        // extract some master element info
+                        const label currentNodesPerSide =
+                            meFCCurrent->nodesPerElement_;
+                        const label currentNodesPerElement =
+                            meSCSCurrent->nodesPerElement_;
+
+                        // algorithm related; face
+                        ws_c_phi.resize(currentNodesPerSide * N);
+                        ws_c_min.resize(currentNodesPerSide * N);
+                        ws_c_max.resize(currentNodesPerSide * N);
+                        ws_c_gradPhi.resize(currentNodesPerSide * N *
+                                            SPATIAL_DIM);
+                        ws_c_coordinates.resize(currentNodesPerSide *
+                                                SPATIAL_DIM);
+
+                        scalar* p_c_phi = &ws_c_phi[0];
+                        scalar* p_c_min = &ws_c_min[0];
+                        scalar* p_c_max = &ws_c_max[0];
+                        scalar* p_c_gradPhi = &ws_c_gradPhi[0];
+                        scalar* p_c_coordinates = &ws_c_coordinates[0];
+
+                        // gather current face data
+                        stk::mesh::Entity const* current_face_node_rels =
+                            bulkData.begin_nodes(currentFace);
+                        const label current_num_face_nodes =
+                            bulkData.num_nodes(currentFace);
+                        for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                        {
+                            stk::mesh::Entity node = current_face_node_rels[ni];
+
+                            // gather...
+                            const scalar* phi =
+                                stk::mesh::field_data(*phiSTKFieldPtr, node);
+                            const scalar* min = stk::mesh::field_data(
+                                *minValueSTKFieldPtr, node);
+                            const scalar* max = stk::mesh::field_data(
+                                *maxValueSTKFieldPtr, node);
+                            const scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, node);
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + ni;
+                                p_c_phi[offset] = phi[i];
+                                p_c_min[offset] = min[i];
+                                p_c_max[offset] = max[i];
+
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const label row_gradPhi =
+                                        (i * SPATIAL_DIM + j) *
+                                            current_num_face_nodes +
+                                        ni;
+                                    p_c_gradPhi[row_gradPhi] =
+                                        gradPhi[i * SPATIAL_DIM + j];
+                                }
+                            }
+
+                            // gather; vector
+                            const scalar* coords =
+                                stk::mesh::field_data(*coordsSTKFieldPtr, node);
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + ni;
+                                p_c_coordinates[offset] = coords[i];
+                            }
+                        }
+
+                        meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                                      &currentIsoParCoords[0],
+                                                      &ws_c_coordinates[0],
+                                                      &currentCoordsBip[0]);
+
+                        // extract nearset node
+                        const label nn = faceIpNodeMap[currentGaussPointId];
+                        stk::mesh::Entity node = current_face_node_rels[nn];
+
+                        // position vector from left node to ip
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            dxj[j] = currentCoordsBip[j] -
+                                     p_c_coordinates[nn * SPATIAL_DIM + j];
+                        }
+
+                        scalar* limiter = stk::mesh::field_data(
+                            *gradLimiterSTKFieldPtr, node);
+
+                        for (label i = 0; i < N; i++)
+                        {
+                            // Compute gradient projection: gradi·dx
+                            scalar gradiDx = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                gradiDx += p_c_gradPhi[nn * N * SPATIAL_DIM +
+                                                       i * SPATIAL_DIM + j] *
+                                           dxj[j];
+                            }
+
+                            scalar deltaMax =
+                                p_c_max[nn * N + i] - p_c_phi[nn * N + i];
+                            scalar deltaMin =
+                                p_c_min[nn * N + i] - p_c_phi[nn * N + i];
+
+                            if (gradiDx > deltaMax + SMALL)
+                            {
+                                limiter[i] =
+                                    std::min(limiter[i], deltaMax / gradiDx);
+                            }
+                            else if (gradiDx < deltaMin - SMALL)
+                            {
+                                limiter[i] =
+                                    std::min(limiter[i], deltaMin / gradiDx);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Slave
+            {
+                const auto& slaveInterface = interf->slaveInfoRef();
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    slaveInterface.dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (label k = 0;
+                         k < static_cast<label>(faceDgInfoVec.size());
+                         ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        // extract current/opposing face/element
+                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
+                        stk::mesh::Entity currentElement =
+                            dgInfo->currentElement_;
+                        const label currentFaceOrdinal =
+                            dgInfo->currentFaceOrdinal_;
+
+                        // master element; face and volume
+                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+
+                        // local ip, ordinals, etc
+                        const label currentGaussPointId =
+                            dgInfo->currentGaussPointId_;
+                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                        // mapping from ip to nodes for this ordinal
+                        const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
+
+                        // extract some master element info
+                        const label currentNodesPerSide =
+                            meFCCurrent->nodesPerElement_;
+                        const label currentNodesPerElement =
+                            meSCSCurrent->nodesPerElement_;
+
+                        // algorithm related; face
+                        ws_c_phi.resize(currentNodesPerSide * N);
+                        ws_c_min.resize(currentNodesPerSide * N);
+                        ws_c_max.resize(currentNodesPerSide * N);
+                        ws_c_gradPhi.resize(currentNodesPerSide * N *
+                                            SPATIAL_DIM);
+                        ws_c_coordinates.resize(currentNodesPerSide *
+                                                SPATIAL_DIM);
+
+                        scalar* p_c_phi = &ws_c_phi[0];
+                        scalar* p_c_min = &ws_c_min[0];
+                        scalar* p_c_max = &ws_c_max[0];
+                        scalar* p_c_gradPhi = &ws_c_gradPhi[0];
+                        scalar* p_c_coordinates = &ws_c_coordinates[0];
+
+                        // gather current face data
+                        stk::mesh::Entity const* current_face_node_rels =
+                            bulkData.begin_nodes(currentFace);
+                        const label current_num_face_nodes =
+                            bulkData.num_nodes(currentFace);
+                        for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                        {
+                            stk::mesh::Entity node = current_face_node_rels[ni];
+
+                            // gather...
+                            const scalar* phi =
+                                stk::mesh::field_data(*phiSTKFieldPtr, node);
+                            const scalar* min = stk::mesh::field_data(
+                                *minValueSTKFieldPtr, node);
+                            const scalar* max = stk::mesh::field_data(
+                                *maxValueSTKFieldPtr, node);
+                            const scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, node);
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + ni;
+                                p_c_phi[offset] = phi[i];
+                                p_c_min[offset] = min[i];
+                                p_c_max[offset] = max[i];
+
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const label row_gradPhi =
+                                        (i * SPATIAL_DIM + j) *
+                                            current_num_face_nodes +
+                                        ni;
+                                    p_c_gradPhi[row_gradPhi] =
+                                        gradPhi[i * SPATIAL_DIM + j];
+                                }
+                            }
+
+                            // gather; vector
+                            const scalar* coords =
+                                stk::mesh::field_data(*coordsSTKFieldPtr, node);
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                const label offset =
+                                    i * current_num_face_nodes + ni;
+                                p_c_coordinates[offset] = coords[i];
+                            }
+                        }
+
+                        meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                                      &currentIsoParCoords[0],
+                                                      &ws_c_coordinates[0],
+                                                      &currentCoordsBip[0]);
+
+                        // extract nearset node
+                        const label nn = faceIpNodeMap[currentGaussPointId];
+                        stk::mesh::Entity node = current_face_node_rels[nn];
+
+                        // position vector from left node to ip
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            dxj[j] = currentCoordsBip[j] -
+                                     p_c_coordinates[nn * SPATIAL_DIM + j];
+                        }
+
+                        scalar* limiter = stk::mesh::field_data(
+                            *gradLimiterSTKFieldPtr, node);
+
+                        for (label i = 0; i < N; i++)
+                        {
+                            // Compute gradient projection: gradi·dx
+                            scalar gradiDx = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                gradiDx += p_c_gradPhi[nn * N * SPATIAL_DIM +
+                                                       i * SPATIAL_DIM + j] *
+                                           dxj[j];
+                            }
+
+                            scalar deltaMax =
+                                p_c_max[nn * N + i] - p_c_phi[nn * N + i];
+                            scalar deltaMin =
+                                p_c_min[nn * N + i] - p_c_phi[nn * N + i];
+
+                            if (gradiDx > deltaMax + SMALL)
+                            {
+                                limiter[i] =
+                                    std::min(limiter[i], deltaMax / gradiDx);
+                            }
+                            else if (gradiDx < deltaMin - SMALL)
+                            {
+                                limiter[i] =
+                                    std::min(limiter[i], deltaMin / gradiDx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            // extract geometric fields
+            STKScalarField* coordsSTKFieldPtr =
+                metaData.template get_field<scalar>(
+                    stk::topology::NODE_RANK, this->getCoordinatesID_(iZone));
+
+            // ip values; both boundary and opposing surface
+            std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+            std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+
+            std::vector<scalar> currentCoordsBip(SPATIAL_DIM);
+            std::vector<scalar> dxj(SPATIAL_DIM);
+
+            // nodal fields to gather
+            std::vector<scalar> ws_c_phi;
+            std::vector<scalar> ws_c_min;
+            std::vector<scalar> ws_c_max;
+            std::vector<scalar> ws_c_gradPhi;
+            std::vector<scalar> ws_c_coordinates;
+
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(iZone);
+
+            // extract vector of dgInfo
+            const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                interfaceSideInfoPtr->dgInfoVec_;
+
+            for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
+                 iSide++)
+            {
+                const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+
+                // now loop over all the DgInfo objects on this
+                // particular exposed face
+                for (label k = 0; k < static_cast<label>(faceDgInfoVec.size());
+                     ++k)
+                {
+                    dgInfo* dgInfo = faceDgInfoVec[k];
+
+                    // extract current/opposing face/element
+                    stk::mesh::Entity currentFace = dgInfo->currentFace_;
+                    stk::mesh::Entity currentElement = dgInfo->currentElement_;
+                    const label currentFaceOrdinal =
+                        dgInfo->currentFaceOrdinal_;
+
+                    // master element; face and volume
+                    MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                    MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+
+                    // local ip, ordinals, etc
+                    const label currentGaussPointId =
+                        dgInfo->currentGaussPointId_;
+                    currentIsoParCoords = dgInfo->currentIsoParCoords_;
+
+                    // mapping from ip to nodes for this ordinal
+                    const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
+
+                    // extract some master element info
+                    const label currentNodesPerSide =
+                        meFCCurrent->nodesPerElement_;
+                    const label currentNodesPerElement =
+                        meSCSCurrent->nodesPerElement_;
+
+                    // algorithm related; face
+                    ws_c_phi.resize(currentNodesPerSide * N);
+                    ws_c_min.resize(currentNodesPerSide * N);
+                    ws_c_max.resize(currentNodesPerSide * N);
+                    ws_c_gradPhi.resize(currentNodesPerSide * N * SPATIAL_DIM);
+                    ws_c_coordinates.resize(currentNodesPerSide * SPATIAL_DIM);
+
+                    scalar* p_c_phi = &ws_c_phi[0];
+                    scalar* p_c_min = &ws_c_min[0];
+                    scalar* p_c_max = &ws_c_max[0];
+                    scalar* p_c_gradPhi = &ws_c_gradPhi[0];
+                    scalar* p_c_coordinates = &ws_c_coordinates[0];
+
+                    // gather current face data
+                    stk::mesh::Entity const* current_face_node_rels =
+                        bulkData.begin_nodes(currentFace);
+                    const label current_num_face_nodes =
+                        bulkData.num_nodes(currentFace);
+                    for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                    {
+                        stk::mesh::Entity node = current_face_node_rels[ni];
+
+                        // gather...
+                        const scalar* phi =
+                            stk::mesh::field_data(*phiSTKFieldPtr, node);
+                        const scalar* min =
+                            stk::mesh::field_data(*minValueSTKFieldPtr, node);
+                        const scalar* max =
+                            stk::mesh::field_data(*maxValueSTKFieldPtr, node);
+                        const scalar* gradPhi =
+                            stk::mesh::field_data(*gradPhiSTKFieldPtr, node);
+                        for (label i = 0; i < N; ++i)
+                        {
+                            const label offset =
+                                i * current_num_face_nodes + ni;
+                            p_c_phi[offset] = phi[i];
+                            p_c_min[offset] = min[i];
+                            p_c_max[offset] = max[i];
+
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const label row_gradPhi =
+                                    (i * SPATIAL_DIM + j) *
+                                        current_num_face_nodes +
+                                    ni;
+                                p_c_gradPhi[row_gradPhi] =
+                                    gradPhi[i * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // gather; vector
+                        const scalar* coords =
+                            stk::mesh::field_data(*coordsSTKFieldPtr, node);
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            const label offset =
+                                i * current_num_face_nodes + ni;
+                            p_c_coordinates[offset] = coords[i];
+                        }
+                    }
+
+                    meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                                  &currentIsoParCoords[0],
+                                                  &ws_c_coordinates[0],
+                                                  &currentCoordsBip[0]);
+
+                    // extract nearset node
+                    const label nn = faceIpNodeMap[currentGaussPointId];
+                    stk::mesh::Entity node = current_face_node_rels[nn];
+
+                    // position vector from left node to ip
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        dxj[j] = currentCoordsBip[j] -
+                                 p_c_coordinates[nn * SPATIAL_DIM + j];
+                    }
+
+                    scalar* limiter =
+                        stk::mesh::field_data(*gradLimiterSTKFieldPtr, node);
+
+                    for (label i = 0; i < N; i++)
+                    {
+                        // Compute gradient projection: gradi·dx
+                        scalar gradiDx = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            gradiDx += p_c_gradPhi[nn * N * SPATIAL_DIM +
+                                                   i * SPATIAL_DIM + j] *
+                                       dxj[j];
+                        }
+
+                        scalar deltaMax =
+                            p_c_max[nn * N + i] - p_c_phi[nn * N + i];
+                        scalar deltaMin =
+                            p_c_min[nn * N + i] - p_c_phi[nn * N + i];
+
+                        if (gradiDx > deltaMax + SMALL)
+                        {
+                            limiter[i] =
+                                std::min(limiter[i], deltaMax / gradiDx);
+                        }
+                        else if (gradiDx < deltaMin - SMALL)
+                        {
+                            limiter[i] =
+                                std::min(limiter[i], deltaMin / gradiDx);
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif /* HAS_INTERFACE */
+
     // Process boundary sides
     {
         // Declare temporary arrays at the top
@@ -3180,7 +5783,7 @@ void nodeField<N, M>::limitGradientField_(label iZone)
 
                 // Extract master element
                 MasterElement* meFC =
-                    accel::MasterElementRepo::get_surface_master_element(
+                    MasterElementRepo::get_surface_master_element(
                         sideBucket.topology());
 
                 // Extract master element specifics
@@ -3421,6 +6024,109 @@ void nodeField<N, M>::synchronize(label iZone)
     }
 }
 
+#ifdef HAS_INTERFACE
+template <size_t N, size_t M>
+void nodeField<N, M>::transfer(label iInterface,
+                               dataTransferType type,
+                               bool reverse)
+{
+    interface& interf = this->meshRef().interfaceRef(iInterface);
+
+    if (interf.isConformalTreatment())
+    {
+        // lazy instantiation: create transfer at interface if not yet created
+        if (!dataTransferVector_[iInterface])
+        {
+            std::vector<std::pair<std::string, std::string>> fields = {
+                {this->name(), this->name()}};
+
+            dataTransferVector_[iInterface] =
+                std::move(std::make_unique<conformalDataTransfer>(
+                    &interf,
+                    this->name() + "_xfer_" + interf.name(),
+                    fields,
+                    type));
+
+            dataTransferVector_[iInterface]->setup();
+            dataTransferVector_[iInterface]->initialize();
+        }
+
+        // update
+        dataTransferVector_[iInterface]->update();
+    }
+    else
+    {
+        // Force re-search if any interfacing zone has mesh motion,
+        // since the element-node mappings become stale as the mesh deforms
+        if (dataTransferVector_[iInterface])
+        {
+            const bool anyZoneMoving =
+                interf.masterInfoPtr()->zonePtr()->meshMoving() ||
+                interf.slaveInfoPtr()->zonePtr()->meshMoving();
+
+            bool forceResearch = this->meshRef()
+                                     .controlsRef()
+                                     .solverRef()
+                                     .solverControl_.advancedOptions_
+                                     .interfaceTransfer_.forceResearch_;
+
+            if (anyZoneMoving && forceResearch)
+            {
+                dataTransferVector_[iInterface].reset();
+            }
+        }
+
+        // lazy instantiation: create transfer at interface if not yet created
+        if (!dataTransferVector_[iInterface])
+        {
+            std::vector<std::pair<std::string, std::string>> fields = {
+                {this->name(), this->name()}};
+
+            scalar searchTolerance = this->meshRef()
+                                         .controlsRef()
+                                         .solverRef()
+                                         .solverControl_.advancedOptions_
+                                         .interfaceTransfer_.searchTolerance_;
+            scalar searchExpansionFactor =
+                this->meshRef()
+                    .controlsRef()
+                    .solverRef()
+                    .solverControl_.advancedOptions_.interfaceTransfer_
+                    .searchExpansionFactor_;
+
+            std::vector<std::pair<scalar, scalar>> clipVec = {
+                std::pair<scalar, scalar>(this->minAcceptedValue(),
+                                          this->maxAcceptedValue())};
+
+            dataTransferVector_[iInterface] =
+                std::move(std::make_unique<nonconformalDataTransfer>(
+                    &interf,
+                    this->name() + "_xfer_" + interf.name(),
+                    fields,
+                    type,
+                    reverse,
+                    clipVec,
+                    searchTolerance,
+                    searchExpansionFactor));
+
+            dataTransferVector_[iInterface]->setup();
+            dataTransferVector_[iInterface]->initialize();
+        }
+
+        // update
+        dataTransferVector_[iInterface]->update();
+
+        // sync in case of parallel over the interface
+        if (messager::parallel())
+        {
+            stk::mesh::communicate_field_data(
+                *(this->meshRef().interfaceRef(iInterface).interfaceGhosting_),
+                {this->stkFieldPtr()});
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
+
 template <size_t N, size_t M>
 scalar nodeField<N, M>::max()
 {
@@ -3589,6 +6295,56 @@ void nodeField<N, M>::correctBoundaryNodes(label iZone, label iBoundary)
         }
     }
 }
+
+#ifdef HAS_INTERFACE
+template <size_t N, size_t M>
+void nodeField<N, M>::correctInterfaceNodes(label iInterface, bool master)
+{
+    assert(nodeSideFieldPtr_);
+    assert(correctedBoundaryNodeValues_);
+
+    const interfaceSideInfo* interfaceSideInfoPtr =
+        master ? this->meshPtr()->interfaceRef(iInterface).masterInfoPtr()
+               : this->meshPtr()->interfaceRef(iInterface).slaveInfoPtr();
+
+    // Get fields
+    auto& stkFieldRef = this->stkFieldRef();
+    const auto& nodeSideSTKFieldRef = this->nodeSideFieldRef().stkFieldRef();
+
+    // define some common selectors; select All nodes
+    stk::mesh::Selector selAllSideNodes =
+        this->metaDataRef().universal_part() &
+        stk::mesh::selectUnion(interfaceSideInfoPtr->currentPartVec_);
+
+    stk::mesh::BucketVector const& nodeBuckets =
+        this->bulkDataRef().get_buckets(stk::topology::NODE_RANK,
+                                        selAllSideNodes);
+    for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+         ib != nodeBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& sideNodeBucket = **ib;
+
+        const stk::mesh::Bucket::size_type nNodesPerBucket =
+            sideNodeBucket.size();
+
+        for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
+             ++iNode)
+        {
+            stk::mesh::Entity node = sideNodeBucket[iNode];
+
+            scalar* value = stk::mesh::field_data(stkFieldRef, node);
+            const scalar* snvalue =
+                stk::mesh::field_data(nodeSideSTKFieldRef, node);
+
+            for (label i = 0; i < N; i++)
+            {
+                value[i] = snvalue[i];
+            }
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
 
 template <size_t N, size_t M>
 void nodeField<N, M>::relax(label iZone, const scalar urf)

@@ -4,7 +4,8 @@
 // Description: Velocity vector field with flow reversal detection and direction
 // fields
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef VELOCITY_H
 #define VELOCITY_H
@@ -48,6 +49,10 @@ public:
     void updateBoundarySideDirectionFields(label iZone, label iBoundary);
 
     void registerSideFlowDirectionFields(label iZone, label iBoundary);
+
+#ifdef HAS_INTERFACE
+    void updateInterfaceSideField(label iInterface, bool master) override;
+#endif /* HAS_INTERFACE */
 
     // Access
 

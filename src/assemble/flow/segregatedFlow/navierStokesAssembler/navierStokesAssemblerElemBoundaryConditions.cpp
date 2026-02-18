@@ -237,7 +237,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
     }
 }
 
-// FIXME: [2024-10-28] Equation terms assembly kernels.
+// FIXME: Equation terms assembly kernels.
 // Macros are being used here to avoid error prone code duplication and to make
 // the code where these macros are used more readable. This is not an ideal
 // approach, assembly kernels should be generated with a source code generator
@@ -459,14 +459,13 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
         }                                                                      \
     } while (0)
 
-// FIXME: [2024-11-24] The divUstress term below should use axi
-// instead of axj because Kronecker delta will project only the diagonal part.
-// In the second part where i != l the divU stress should be zero since
-// Kronecker delta is zero for indices not equal to each other (NEEDS CHECKING).
-// This issue exists in various places of the code, not just in the kernels
-// below.
+// FIXME: The divUstress term below should use axi instead of axj because
+// Kronecker delta will project only the diagonal part. In the second part where
+// i != l the divU stress should be zero since Kronecker delta is zero for
+// indices not equal to each other (NEEDS CHECKING). This issue exists in
+// various places of the code, not just in the kernels below.
 
-// WARNING: [2024-11-25] This implementation does not account for the transpose
+// WARNING: This implementation does not account for the transpose
 // term of the velocity gradient. An alternative approach includes the transpose
 // term in the assembly.
 #define IP_ZERO_NORMAL_STRESS_NO_GRADU_TRANSPOSE__()                           \
@@ -877,13 +876,12 @@ void navierStokesAssembler::assembleElemTermsBoundaryInletSpecifiedVelocity_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1213,13 +1211,12 @@ void navierStokesAssembler::
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1440,7 +1437,7 @@ void navierStokesAssembler::
                     p_nx[i] = areaVec[faceOffSet + i] / amag;
                 }
 
-                // FIXME: [2024-10-30] Flow reversal check is not applicable
+                // FIXME: Flow reversal check is not applicable
                 // if velocity is specified at boundary.
                 if (rfflag[ip] == 1)
                 {
@@ -1554,13 +1551,12 @@ void navierStokesAssembler::assembleElemTermsBoundaryOutletSpecifiedPressure_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1861,13 +1857,12 @@ void navierStokesAssembler::assembleElemTermsBoundaryOutletOutflow_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -2746,14 +2741,12 @@ void navierStokesAssembler::assembleElemTermsBoundaryWallNoSlip_(
 
             // volume master element
             MasterElement* meSCS =
-                accel::MasterElementRepo::get_surface_master_element(
-                    theElemTopo);
+                MasterElementRepo::get_surface_master_element(theElemTopo);
             const label nodesPerElement = meSCS->nodesPerElement_;
 
             // face master element
-            MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
-                    sideBucket.topology());
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
             const label nodesPerSide = meFC->nodesPerElement_;
             const label numScsBip = meFC->numIntPoints_;
 
@@ -3043,9 +3036,8 @@ void navierStokesAssembler::assembleElemTermsBoundaryWallNoSlip_(
             stk::mesh::Bucket& sideBucket = **ib;
 
             // face master element
-            MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
-                    sideBucket.topology());
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
             const label nodesPerSide = meFC->nodesPerElement_;
             const label numScsBip = meFC->numIntPoints_;
 
@@ -3174,8 +3166,6 @@ void navierStokesAssembler::assembleElemTermsBoundaryWallNoSlip_(
                     }
 
                     // interpolate to bip
-                    // TODO: [2024-10-31] Redundant interpolation; cleanup
-                    // candidate
                     for (label ic = 0; ic < nodesPerSide; ++ic)
                     {
                         const scalar r_vel =
@@ -3325,13 +3315,12 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -3650,13 +3639,12 @@ void navierStokesAssembler::assembleElemTermsBoundaryInletSpecifiedPressure_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
@@ -4037,14 +4025,12 @@ void navierStokesAssembler::
 
             // volume master element
             MasterElement* meSCS =
-                accel::MasterElementRepo::get_surface_master_element(
-                    theElemTopo);
+                MasterElementRepo::get_surface_master_element(theElemTopo);
             const label nodesPerElement = meSCS->nodesPerElement_;
 
             // face master element
-            MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
-                    sideBucket.topology());
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
             const label nodesPerSide = meFC->nodesPerElement_;
             const label numScsBip = meFC->numIntPoints_;
 
@@ -4479,14 +4465,12 @@ void navierStokesAssembler::
 
             // volume master element
             MasterElement* meSCS =
-                accel::MasterElementRepo::get_surface_master_element(
-                    theElemTopo);
+                MasterElementRepo::get_surface_master_element(theElemTopo);
             const label nodesPerElement = meSCS->nodesPerElement_;
 
             // face master element
-            MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
-                    sideBucket.topology());
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
             const label nodesPerSide = meFC->nodesPerElement_;
             const label numScsBip = meFC->numIntPoints_;
 
@@ -4951,13 +4935,12 @@ void navierStokesAssembler::
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 

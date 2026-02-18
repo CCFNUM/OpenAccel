@@ -4,7 +4,8 @@
 // Description: Mesh zone with interior parts, boundaries, and motion
 // capabilities
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef ZONE_H
 #define ZONE_H
@@ -70,6 +71,14 @@ protected:
 
     mutable std::unique_ptr<zoneDeformation> deformationPtr_ = nullptr;
 
+#ifdef HAS_INTERFACE
+    // interfaces to be processed by this domain (meta data is owned by mesh)
+    std::vector<interface*> interfaces_;
+
+    // zone indices that are connected to this zone with an interface
+    std::vector<label> interfacingZoneIndices_;
+#endif /* HAS_INTERFACE */
+
 public:
     zone(mesh* meshPtr, label index, std::string name);
 
@@ -115,6 +124,20 @@ public:
     {
         return stats_;
     }
+
+#ifdef HAS_INTERFACE
+    // interfacing zones
+
+    std::vector<label>& interfacingZoneIndices()
+    {
+        return interfacingZoneIndices_;
+    }
+
+    const std::vector<label>& interfacingZoneIndices() const
+    {
+        return interfacingZoneIndices_;
+    }
+#endif /* HAS_INTERFACE */
 
     // For zone motion, a transient motion implies a real
     // mesh motion, but if steady-state, then a frame motion
@@ -186,6 +209,37 @@ public:
     mesh& meshRef();
 
     const mesh& meshRef() const;
+
+#ifdef HAS_INTERFACE
+    // Interfaces
+
+    bool hasInterfaces() const
+    {
+        return interfaces_.size() > 0;
+    }
+
+    void addInterface(interface* i)
+    {
+        interfaces_.push_back(i);
+    }
+
+    std::vector<interface*>& interfacesRef()
+    {
+        return interfaces_;
+    }
+
+    const std::vector<interface*>& interfacesRef() const
+    {
+        return interfaces_;
+    }
+
+    bool isInterfacingZone(label iZone) const
+    {
+        return std::find(interfacingZoneIndices_.begin(),
+                         interfacingZoneIndices_.end(),
+                         iZone) != interfacingZoneIndices_.end();
+    }
+#endif /* HAS_INTERFACE */
 };
 
 } // namespace accel

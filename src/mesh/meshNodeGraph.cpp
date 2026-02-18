@@ -6,6 +6,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 // code
+#ifdef HAS_INTERFACE
+#include "interface.h"
+#include "interfaceSideInfo.h"
+#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
 #include "zone.h"
@@ -412,6 +416,45 @@ void mesh::initializeLocalNodeIDs_()
                 }
             }
 
+#ifdef HAS_INTERFACE
+            // Loop over all elements that are ghosted as aura at non-conformal
+            // interfaces. The nodes of these elements are ALWAYS useful
+            if (hasInterfaces_)
+            {
+                for (label iInterface = 0; iInterface < nInterfaces();
+                     iInterface++)
+                {
+                    if (interfaceRef(iInterface).interfaceGhosting_)
+                    {
+                        std::vector<stk::mesh::EntityKey> recvList;
+                        interfaceRef(iInterface)
+                            .interfaceGhosting_->receive_list(recvList);
+
+                        for (const stk::mesh::EntityKey& key : recvList)
+                        {
+                            stk::mesh::Entity entity = bulkData.get_entity(key);
+                            stk::mesh::EntityRank entityRank =
+                                bulkData.entity_rank(entity);
+                            if (entityRank ==
+                                stk::mesh::EntityRank::ELEMENT_RANK)
+                            {
+                                stk::mesh::Entity const* nodeRels =
+                                    bulkData.begin_nodes(entity);
+                                label numNodes = bulkData.num_nodes(entity);
+                                for (label ni = 0; ni < numNodes; ++ni)
+                                {
+                                    stk::mesh::Entity node = nodeRels[ni];
+                                    stk::mesh::EntityId nodeID =
+                                        bulkData.local_id(node);
+                                    activeNodeFlag[nodeID] = 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+#endif /* HAS_INTERFACE */
+
             // Set some sizes
             nActiveNodes_ = 0;
             for (label i = 0; i < static_cast<label>(activeNodeFlag.size());
@@ -661,6 +704,43 @@ void mesh::updateLocalNodeIDs_()
             }
         }
     }
+
+#ifdef HAS_INTERFACE
+    // Loop over all elements that are ghosted as aura at non-conformal
+    // interfaces. The nodes of these elements are ALWAYS useful
+    if (hasInterfaces_)
+    {
+        for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
+        {
+            if (interfaceRef(iInterface).interfaceGhosting_)
+            {
+                std::vector<stk::mesh::EntityKey> recvList;
+                interfaceRef(iInterface)
+                    .interfaceGhosting_->receive_list(recvList);
+
+                for (const stk::mesh::EntityKey& key : recvList)
+                {
+                    stk::mesh::Entity entity = bulkData.get_entity(key);
+                    stk::mesh::EntityRank entityRank =
+                        bulkData.entity_rank(entity);
+                    if (entityRank == stk::mesh::EntityRank::ELEMENT_RANK)
+                    {
+                        stk::mesh::Entity const* nodeRels =
+                            bulkData.begin_nodes(entity);
+                        label numNodes = bulkData.num_nodes(entity);
+                        for (label ni = 0; ni < numNodes; ++ni)
+                        {
+                            stk::mesh::Entity node = nodeRels[ni];
+                            stk::mesh::EntityId nodeID =
+                                bulkData.local_id(node);
+                            activeNodeFlag[nodeID] = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+#endif /* HAS_INTERFACE */
 
     // Set some sizes
     nActiveNodes_ = 0;

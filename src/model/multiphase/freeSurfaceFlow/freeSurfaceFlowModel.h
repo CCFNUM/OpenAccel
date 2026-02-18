@@ -186,6 +186,13 @@ protected:
     void initializeMassFlowRateInterior_(const std::shared_ptr<domain> domain,
                                          label iPhase) override;
 
+#ifdef HAS_INTERFACE
+    void initializeMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        label iPhase) override;
+#endif /* HAS_INTERFACE */
+
     void
     initializeMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
                                          const boundary* boundary,
@@ -194,11 +201,24 @@ protected:
     void
     updateMassFlowRateInterior_(const std::shared_ptr<domain> domain) override;
 
+#ifdef HAS_INTERFACE
+    void updateMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr) override;
+#endif /* HAS_INTERFACE */
+
     void updateMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
                                           const boundary* boundary) override;
 
     void updateMassFlowRateInterior_(const std::shared_ptr<domain> domain,
                                      label iPhase) override;
+
+#ifdef HAS_INTERFACE
+    void updateMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        label iPhase) override;
+#endif /* HAS_INTERFACE */
 
     void updateMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
                                           const boundary* boundary,

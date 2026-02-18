@@ -52,6 +52,24 @@ protected:
 
         stk::mesh::PartVector parts;
 
+#ifdef HAS_INTERFACE
+        // fluid-solid interface side
+        for (const interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType())
+            {
+                // get interface side that is sitting in this domain
+                const auto* interfaceSideInfoPtr =
+                    interf->interfaceSideInfoPtr(domain->index());
+
+                for (const auto part : interfaceSideInfoPtr->currentPartVec_)
+                {
+                    parts.push_back(part);
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         // no-slip boundary walls
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)

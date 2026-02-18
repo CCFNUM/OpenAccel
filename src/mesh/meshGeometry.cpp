@@ -7,6 +7,11 @@
 
 // code
 #include "boundary.h"
+#ifdef HAS_INTERFACE
+#include "dgInfo.h"
+#include "interface.h"
+#include "interfaceSideInfo.h"
+#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
 #include "zone.h"
@@ -147,7 +152,7 @@ void mesh::setupGeometricFields_()
             {
                 // Determine number of integration points in the face
                 MasterElement* meFC =
-                    accel::MasterElementRepo::get_surface_master_element(
+                    MasterElementRepo::get_surface_master_element(
                         subPart->topology());
                 const label numScsIp = meFC->numIntPoints_;
 
@@ -178,6 +183,93 @@ void mesh::setupGeometricFields_()
                         metaDataRef().side_rank(),
                         original_exposed_area_vector_ID);
 
+#ifdef HAS_INTERFACE
+                // Interface
+                for (auto interf : this->zonePtr(iZone)->interfacesRef())
+                {
+                    if (interf->isInternal())
+                    {
+                        for (const stk::mesh::Part* part :
+                             interf->masterInfoPtr()->currentPartVec_)
+                        {
+                            // A part could have different topologies, by
+                            // getting the subparts we make sure we take into
+                            // account all topologies.
+                            for (const stk::mesh::Part* subPart :
+                                 part->subsets())
+                            {
+                                // Determine number of integration points in the
+                                // face
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        subPart->topology());
+                                const label numScsIp = meFC->numIntPoints_;
+
+                                // Put the field on mesh
+                                stk::mesh::put_field_on_mesh(
+                                    originalExposedAreaVecSTKFieldRef,
+                                    *subPart,
+                                    SPATIAL_DIM * numScsIp,
+                                    nullptr);
+                            }
+                        }
+
+                        for (const stk::mesh::Part* part :
+                             interf->slaveInfoPtr()->currentPartVec_)
+                        {
+                            // A part could have different topologies, by
+                            // getting the subparts we make sure we take into
+                            // account all topologies.
+                            for (const stk::mesh::Part* subPart :
+                                 part->subsets())
+                            {
+                                // Determine number of integration points in the
+                                // face
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        subPart->topology());
+                                const label numScsIp = meFC->numIntPoints_;
+
+                                // Put the field on mesh
+                                stk::mesh::put_field_on_mesh(
+                                    originalExposedAreaVecSTKFieldRef,
+                                    *subPart,
+                                    SPATIAL_DIM * numScsIp,
+                                    nullptr);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const stk::mesh::Part* part :
+                             interf->interfaceSideInfoPtr(iZone)
+                                 ->currentPartVec_)
+                        {
+                            // A part could have different topologies, by
+                            // getting the subparts we make sure we take into
+                            // account all topologies.
+                            for (const stk::mesh::Part* subPart :
+                                 part->subsets())
+                            {
+                                // Determine number of integration points in the
+                                // face
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        subPart->topology());
+                                const label numScsIp = meFC->numIntPoints_;
+
+                                // Put the field on mesh
+                                stk::mesh::put_field_on_mesh(
+                                    originalExposedAreaVecSTKFieldRef,
+                                    *subPart,
+                                    SPATIAL_DIM * numScsIp,
+                                    nullptr);
+                            }
+                        }
+                    }
+                }
+#endif /* HAS_INTERFACE */
+
                 // Boundary
                 for (label iBoundary = 0;
                      iBoundary < this->zoneRef(iZone).nBoundaries();
@@ -193,8 +285,9 @@ void mesh::setupGeometricFields_()
                         {
                             // Determine number of integration points in the
                             // face
-                            MasterElement* meFC = accel::MasterElementRepo::
-                                get_surface_master_element(subPart->topology());
+                            MasterElement* meFC =
+                                MasterElementRepo::get_surface_master_element(
+                                    subPart->topology());
                             const label numScsIp = meFC->numIntPoints_;
 
                             // Put the field on mesh
@@ -226,7 +319,7 @@ void mesh::setupGeometricFields_()
                 // Determine number of integration points in
                 // the face
                 MasterElement* meFC =
-                    accel::MasterElementRepo::get_surface_master_element(
+                    MasterElementRepo::get_surface_master_element(
                         subPart->topology());
                 const label numScsIp = meFC->numIntPoints_;
 
@@ -299,6 +392,16 @@ void mesh::setupZones_()
         zonePtr(iZone)->setup();
     }
 }
+
+#ifdef HAS_INTERFACE
+void mesh::setupInterfaces_()
+{
+    for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
+    {
+        interfaceRef(iInterface).setup();
+    }
+}
+#endif /* HAS_INTERFACE */
 
 void mesh::initializeCoordinateField_()
 {
@@ -386,6 +489,20 @@ void mesh::initializeZones_()
         zoneRef(iZone).initialize();
     }
 }
+
+#ifdef HAS_INTERFACE
+void mesh::initializeInterfaces_()
+{
+    if (hasInterfaces())
+    {
+        // update interface info for master and slave of every pair
+        for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
+        {
+            interfaceRef(iInterface).initialize();
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
 
 void mesh::initializeGeometricFields_()
 {
@@ -475,6 +592,93 @@ void mesh::initializeGeometricFields_()
                         metaDataRef().side_rank(),
                         original_exposed_area_vector_ID);
 
+#ifdef HAS_INTERFACE
+                // Interface
+                for (auto interf : this->zonePtr(iZone)->interfacesRef())
+                {
+                    if (interf->isInternal())
+                    {
+                        for (const stk::mesh::Part* part :
+                             interf->masterInfoPtr()->currentPartVec_)
+                        {
+                            // A part could have different topologies, by
+                            // getting the subparts we make sure we take into
+                            // account all topologies.
+                            for (const stk::mesh::Part* subPart :
+                                 part->subsets())
+                            {
+                                // Determine number of integration points in the
+                                // face
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        subPart->topology());
+                                const label numScsIp = meFC->numIntPoints_;
+
+                                // Put the field on mesh
+                                stk::mesh::put_field_on_mesh(
+                                    *orgExposedAreaVectorKFieldPtr,
+                                    *subPart,
+                                    SPATIAL_DIM * numScsIp,
+                                    nullptr);
+                            }
+                        }
+
+                        for (const stk::mesh::Part* part :
+                             interf->slaveInfoPtr()->currentPartVec_)
+                        {
+                            // A part could have different topologies, by
+                            // getting the subparts we make sure we take into
+                            // account all topologies.
+                            for (const stk::mesh::Part* subPart :
+                                 part->subsets())
+                            {
+                                // Determine number of integration points in the
+                                // face
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        subPart->topology());
+                                const label numScsIp = meFC->numIntPoints_;
+
+                                // Put the field on mesh
+                                stk::mesh::put_field_on_mesh(
+                                    *orgExposedAreaVectorKFieldPtr,
+                                    *subPart,
+                                    SPATIAL_DIM * numScsIp,
+                                    nullptr);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const stk::mesh::Part* part :
+                             interf->interfaceSideInfoPtr(iZone)
+                                 ->currentPartVec_)
+                        {
+                            // A part could have different topologies, by
+                            // getting the subparts we make sure we take into
+                            // account all topologies.
+                            for (const stk::mesh::Part* subPart :
+                                 part->subsets())
+                            {
+                                // Determine number of integration points in the
+                                // face
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        subPart->topology());
+                                const label numScsIp = meFC->numIntPoints_;
+
+                                // Put the field on mesh
+                                stk::mesh::put_field_on_mesh(
+                                    *orgExposedAreaVectorKFieldPtr,
+                                    *subPart,
+                                    SPATIAL_DIM * numScsIp,
+                                    nullptr);
+                            }
+                        }
+                    }
+                }
+#endif /* HAS_INTERFACE */
+
                 // Boundary
                 for (label iBoundary = 0;
                      iBoundary < this->zoneRef(iZone).nBoundaries();
@@ -490,8 +694,9 @@ void mesh::initializeGeometricFields_()
                         {
                             // Determine number of integration points in the
                             // face
-                            MasterElement* meFC = accel::MasterElementRepo::
-                                get_surface_master_element(subPart->topology());
+                            MasterElement* meFC =
+                                MasterElementRepo::get_surface_master_element(
+                                    subPart->topology());
                             const label numScsIp = meFC->numIntPoints_;
 
                             // Put the field on mesh
@@ -506,6 +711,109 @@ void mesh::initializeGeometricFields_()
             }
             else
             {
+#ifdef HAS_INTERFACE
+                // Interface
+                for (auto interf : this->zonePtr(iZone)->interfacesRef())
+                {
+                    if (interf->isInternal())
+                    {
+                        // check if defined over the current interface parts
+                        if (!orgExposedAreaVectorKFieldPtr->defined_on_any(
+                                interf->masterInfoPtr()->currentPartVec_))
+                        {
+                            for (const stk::mesh::Part* part :
+                                 interf->masterInfoPtr()->currentPartVec_)
+                            {
+                                // A part could have different topologies, by
+                                // getting the subparts we make sure we take
+                                // into account all topologies.
+                                for (const stk::mesh::Part* subPart :
+                                     part->subsets())
+                                {
+                                    // Determine number of integration points in
+                                    // the face
+                                    MasterElement* meFC = MasterElementRepo::
+                                        get_surface_master_element(
+                                            subPart->topology());
+                                    const label numScsIp = meFC->numIntPoints_;
+
+                                    // Put the field on mesh
+                                    stk::mesh::put_field_on_mesh(
+                                        *orgExposedAreaVectorKFieldPtr,
+                                        *subPart,
+                                        SPATIAL_DIM * numScsIp,
+                                        nullptr);
+                                }
+                            }
+                        }
+
+                        // check if defined over the opposing interface parts
+                        if (!orgExposedAreaVectorKFieldPtr->defined_on_any(
+                                interf->slaveInfoPtr()->currentPartVec_))
+                        {
+                            for (const stk::mesh::Part* part :
+                                 interf->slaveInfoPtr()->currentPartVec_)
+                            {
+                                // A part could have different topologies, by
+                                // getting the subparts we make sure we take
+                                // into account all topologies.
+                                for (const stk::mesh::Part* subPart :
+                                     part->subsets())
+                                {
+                                    // Determine number of integration points in
+                                    // the face
+                                    MasterElement* meFC = MasterElementRepo::
+                                        get_surface_master_element(
+                                            subPart->topology());
+                                    const label numScsIp = meFC->numIntPoints_;
+
+                                    // Put the field on mesh
+                                    stk::mesh::put_field_on_mesh(
+                                        *orgExposedAreaVectorKFieldPtr,
+                                        *subPart,
+                                        SPATIAL_DIM * numScsIp,
+                                        nullptr);
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // check if defined over the current interface parts
+                        if (!orgExposedAreaVectorKFieldPtr->defined_on_any(
+                                interf->interfaceSideInfoPtr(iZone)
+                                    ->currentPartVec_))
+                        {
+                            for (const stk::mesh::Part* part :
+                                 interf->interfaceSideInfoPtr(iZone)
+                                     ->currentPartVec_)
+                            {
+                                // A part could have different topologies, by
+                                // getting the subparts we make sure we take
+                                // into account all topologies.
+                                for (const stk::mesh::Part* subPart :
+                                     part->subsets())
+                                {
+                                    // Determine number of integration points in
+                                    // the face
+                                    MasterElement* meFC = MasterElementRepo::
+                                        get_surface_master_element(
+                                            subPart->topology());
+                                    const label numScsIp = meFC->numIntPoints_;
+
+                                    // Put the field on mesh
+                                    stk::mesh::put_field_on_mesh(
+                                        *orgExposedAreaVectorKFieldPtr,
+                                        *subPart,
+                                        SPATIAL_DIM * numScsIp,
+                                        nullptr);
+                                }
+                            }
+                        }
+                    }
+                }
+#endif /* HAS_INTERFACE */
+
                 // Boundary
                 for (label iBoundary = 0;
                      iBoundary < this->zoneRef(iZone).nBoundaries();
@@ -530,7 +838,7 @@ void mesh::initializeGeometricFields_()
                             {
                                 // Determine number of integration points in the
                                 // face
-                                MasterElement* meFC = accel::MasterElementRepo::
+                                MasterElement* meFC = MasterElementRepo::
                                     get_surface_master_element(
                                         subPart->topology());
                                 const label numScsIp = meFC->numIntPoints_;
@@ -555,6 +863,29 @@ void mesh::initializeGeometricFields_()
                           << this->zoneRef(iZone).name() << std::endl;
             }
 #endif
+
+#ifdef HAS_INTERFACE
+            // Interface
+            for (auto interf : this->zonePtr(iZone)->interfacesRef())
+            {
+                if (interf->isInternal())
+                {
+                    ops::copy<scalar>(exposedAreaVectorKFieldPtr,
+                                      orgExposedAreaVectorKFieldPtr,
+                                      interf->masterInfoPtr()->currentPartVec_);
+                    ops::copy<scalar>(exposedAreaVectorKFieldPtr,
+                                      orgExposedAreaVectorKFieldPtr,
+                                      interf->slaveInfoPtr()->currentPartVec_);
+                }
+                else
+                {
+                    ops::copy<scalar>(
+                        exposedAreaVectorKFieldPtr,
+                        orgExposedAreaVectorKFieldPtr,
+                        interf->interfaceSideInfoPtr(iZone)->currentPartVec_);
+                }
+            }
+#endif /* HAS_INTERFACE */
 
             // Boundary
             for (label iBoundary = 0;
@@ -623,6 +954,36 @@ void mesh::updateZones_(bool force)
     }
 }
 
+#ifdef HAS_INTERFACE
+void mesh::updateInterfaces_(bool force)
+{
+    // only update if any of the two connected zones is moving (deforming or
+    // transforming)
+    for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
+    {
+        if (this->interfaceRef(iInterface)
+                .masterInfoPtr()
+                ->zonePtr()
+                ->meshMoving() ||
+            this->interfaceRef(iInterface)
+                .slaveInfoPtr()
+                ->zonePtr()
+                ->meshMoving() ||
+            force)
+        {
+#ifndef NDEBUG
+            if (messager::master())
+            {
+                std::cout << "updating interface: "
+                          << this->interfaceRef(iInterface).name() << std::endl;
+            }
+#endif
+            interfaceRef(iInterface).update();
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
+
 void mesh::updateGeometricFields_(bool force)
 {
     // get required components
@@ -674,6 +1035,33 @@ void mesh::updateGeometricFields_(bool force)
                 }
 #endif
 
+#ifdef HAS_INTERFACE
+                for (auto interf : this->zonePtr(iZone)->interfacesRef())
+                {
+                    if (interf->isInternal())
+                    {
+                        for (auto part :
+                             interf->masterInfoPtr()->currentPartVec_)
+                        {
+                            parts.push_back(part);
+                        }
+                        for (auto part :
+                             interf->slaveInfoPtr()->currentPartVec_)
+                        {
+                            parts.push_back(part);
+                        }
+                    }
+                    else
+                    {
+                        for (auto part : interf->interfaceSideInfoPtr(iZone)
+                                             ->currentPartVec_)
+                        {
+                            parts.push_back(part);
+                        }
+                    }
+                }
+#endif /* HAS_INTERFACE */
+
                 for (label iBoundary = 0;
                      iBoundary < this->zonePtr(iZone)->nBoundaries();
                      iBoundary++)
@@ -722,6 +1110,20 @@ void mesh::updateGeometricFields_(bool force)
                             break;
                     }
                 }
+
+#ifdef HAS_INTERFACE
+                for (auto interf : this->zonePtr(iZone)->interfacesRef())
+                {
+                    if (interf->isFluidSolidType())
+                    {
+                        for (auto part : interf->interfaceSideInfoPtr(iZone)
+                                             ->currentPartVec_)
+                        {
+                            parts.push_back(part);
+                        }
+                    }
+                }
+#endif /* HAS_INTERFACE */
             }
         }
 
@@ -760,6 +1162,20 @@ void mesh::updateGeometricFields_(bool force)
                             break;
                     }
                 }
+
+#ifdef HAS_INTERFACE
+                for (auto interf : this->zonePtr(iZone)->interfacesRef())
+                {
+                    if (interf->isFluidSolidType())
+                    {
+                        for (auto part : interf->interfaceSideInfoPtr(iZone)
+                                             ->currentPartVec_)
+                        {
+                            parts.push_back(part);
+                        }
+                    }
+                }
+#endif /* HAS_INTERFACE */
             }
         }
 
@@ -836,6 +1252,20 @@ void mesh::updateGeometricFields_(bool force)
                             break;
                     }
                 }
+
+#ifdef HAS_INTERFACE
+                for (auto interf : this->zonePtr(iZone)->interfacesRef())
+                {
+                    if (interf->isFluidSolidType())
+                    {
+                        for (auto part : interf->interfaceSideInfoPtr(iZone)
+                                             ->currentPartVec_)
+                        {
+                            parts.push_back(part);
+                        }
+                    }
+                }
+#endif /* HAS_INTERFACE */
             }
         }
 
@@ -880,9 +1310,8 @@ void mesh::updateDualNodalVolumeField_(stk::mesh::ConstPartVector interiorParts)
             stk::mesh::Bucket& elementBucket = **ib;
 
             // extract master element
-            MasterElement* meSCV =
-                accel::MasterElementRepo::get_volume_master_element(
-                    elementBucket.topology());
+            MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
+                elementBucket.topology());
 
             // extract master element specifics
             const label nodesPerElement = meSCV->nodesPerElement_;
@@ -989,9 +1418,9 @@ void mesh::updateDualNodalVolumeField_(stk::mesh::ConstPartVector interiorParts)
                     std::ostringstream msg;
                     msg << "[Rank " << messager::myProcNo()
                         << "] Negative dual volume detected!\n"
-                        << " Node ID: " << nodeId << "\n"
-                        << " Volume: " << *dualcv << "\n"
-                        << " Surrounding elements: ";
+                        << "  Node ID: " << nodeId << "\n"
+                        << "  Volume: " << *dualcv << "\n"
+                        << "  Surrounding elements: ";
 
                     for (size_t i = 0; i < elementIds.size(); ++i)
                     {
@@ -1041,9 +1470,8 @@ void mesh::updateExposedAreaVectorField_(
         stk::mesh::Bucket& sideBucket = **ib;
 
         // extract master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
 
         // extract master element specifics
         const label nodesPerSide = meFC->nodesPerElement_;
@@ -1138,12 +1566,11 @@ void mesh::updateWallNormalDistanceField_(stk::mesh::ConstPartVector wallParts)
 
         // extract master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1296,9 +1723,8 @@ void mesh::updateAssembledWallAreaField_(stk::mesh::ConstPartVector wallParts)
             stk::topology theElemTopo = parentTopo[0];
 
             // face master element
-            MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
-                    sideBucket.topology());
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
 
             // mapping from ip to nodes for this ordinal; face
             // perspective (use with face_node_relations)
@@ -1405,9 +1831,8 @@ void mesh::updateAssembledSymmetryAreaField_(
             stk::topology theElemTopo = parentTopo[0];
 
             // face master element
-            MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
-                    sideBucket.topology());
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
 
             // mapping from ip to nodes for this ordinal; face
             // perspective (use with face_node_relations)
@@ -1505,9 +1930,8 @@ void mesh::updateAssembledWallNormalDistanceField_(
             stk::mesh::Bucket& sideBucket = **ib;
 
             // face master element
-            MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
-                    sideBucket.topology());
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
 
             // mapping from ip to nodes for this ordinal; face
             // perspective (use with face_node_relations)

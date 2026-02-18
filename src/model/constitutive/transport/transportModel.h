@@ -4,7 +4,8 @@
 // Description: Base transport model interface for viscosity and thermal
 // conductivity
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TRANSPORTMODEL_H
 #define TRANSPORTMODEL_H

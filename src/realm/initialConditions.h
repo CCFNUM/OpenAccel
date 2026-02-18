@@ -4,6 +4,7 @@
 // Description: Initial conditions utilities
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
+
 #ifndef INITIALCONDITIONS_H
 #define INITIALCONDITIONS_H
 
@@ -18,7 +19,7 @@ namespace accel
 namespace initialCondition
 {
 
-// NOTE: [2024-03-06] Temporary helper — initial
+// NOTE: Temporary helper — initial
 // conditions should be set in model classes without needing to call
 // field.setupInitializationDetails(...) method for fields
 

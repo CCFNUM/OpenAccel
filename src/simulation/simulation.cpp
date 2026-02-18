@@ -9,6 +9,9 @@
 #include "simulation.h"
 #include "domain.h"
 #include "elementField.h"
+#ifdef HAS_INTERFACE
+#include "interfaceSideInfo.h"
+#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "realm.h"
 
@@ -345,7 +348,7 @@ void simulation::assembleAndSolveSystems()
             {
                 std::cout << "\t solve equation: " << equation->name() << "\n";
             }
-            // FIXME: [2024-03-07] This check may not apply
+            // FIXME: This check may not apply
             // for segregated equation queues(?):
             // if (!equation->isConverged()) {
             // equation->solve();

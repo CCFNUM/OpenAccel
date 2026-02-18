@@ -4,7 +4,9 @@
 // Description: Templated input data storage with interpolation and time table
 // support
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
+
 #ifndef DATAHANDLER_H
 #define DATAHANDLER_H
 
@@ -239,7 +241,7 @@ public:
                 }
             }
         }
-        // TODO: [2025-01-14] Implement closest time interpolation scheme
+        // TODO: Implement closest time interpolation scheme
         // timeInterpolationSchemeType::closest
         else
         {

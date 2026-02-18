@@ -331,6 +331,24 @@ void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
         }
     }
 
+#ifdef HAS_INTERFACE
+    // add interface parts for relaxation under certain circumstances:
+    // 1) if the interface is a fluid-solid interface
+    // 2) if the interface whether inter-domain are connecting multiple
+    //    domains, we only consider nodes nearest to exposed ip's
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isFluidSolidType())
+        {
+            for (auto part :
+                 interf->interfaceSideInfoPtr(domain->index())->currentPartVec_)
+            {
+                partVec.push_back(part);
+            }
+        }
+    }
+#endif /* HAS_INTERFACE */
+
     // Apply relaxation
     {
         stk::mesh::Selector selOwnedNodes =
@@ -523,6 +541,22 @@ void navierStokesAssembler::assembleNormalRelaxation(const domain* domain,
                     break;
             }
         }
+
+#ifdef HAS_INTERFACE
+        // add interface parts for relaxation if fluid-solid interface
+        for (const interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType())
+            {
+                auto parts = interf->interfaceSideInfoPtr(domain->index())
+                                 ->currentPartVec_;
+                for (auto part : parts)
+                {
+                    partVec.push_back(part);
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
 
         // Apply relaxation
         {

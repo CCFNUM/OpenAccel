@@ -5,6 +5,7 @@
 // owned by the realm
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
+
 #ifndef FIELDBROKER_H
 #define FIELDBROKER_H
 
@@ -96,7 +97,7 @@ public:
     const massFlowRate& mDotRef(label iPhase) const;
 
     // public API for fluid transport
-    // TODO: [2024-05-31] Provide convenience methods for transport
+    // TODO: Provide convenience methods for transport
     // field initialization and facilitation of code re-usage
     //
     // Having further separation for fluidBroker (and solidBroker) would make
@@ -756,6 +757,15 @@ protected:
         errorMsg("Must not reach here");
     }
 
+#ifdef HAS_INTERFACE
+    virtual void initializeMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr)
+    {
+        errorMsg("Must not reach here");
+    }
+#endif /* HAS_INTERFACE */
+
     virtual void
     initializeMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
                                          const boundary* boundary)
@@ -768,6 +778,15 @@ protected:
     {
         errorMsg("Must not reach here");
     }
+
+#ifdef HAS_INTERFACE
+    virtual void updateMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr)
+    {
+        errorMsg("Must not reach here");
+    }
+#endif /* HAS_INTERFACE */
 
     virtual void
     updateMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
@@ -785,6 +804,16 @@ protected:
         errorMsg("Must not reach here");
     }
 
+#ifdef HAS_INTERFACE
+    virtual void initializeMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        label iPhase)
+    {
+        errorMsg("Must not reach here");
+    }
+#endif /* HAS_INTERFACE */
+
     virtual void
     initializeMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
                                          const boundary* boundary,
@@ -799,6 +828,16 @@ protected:
     {
         errorMsg("Must not reach here");
     }
+
+#ifdef HAS_INTERFACE
+    virtual void updateMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        label iPhase)
+    {
+        errorMsg("Must not reach here");
+    }
+#endif /* HAS_INTERFACE */
 
     virtual void
     updateMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
@@ -1095,10 +1134,9 @@ protected:
                                 for (const stk::mesh::Part* subPart :
                                      part->subsets())
                                 {
-                                    MasterElement* meFC =
-                                        accel::MasterElementRepo::
-                                            get_surface_master_element(
-                                                subPart->topology());
+                                    MasterElement* meFC = MasterElementRepo::
+                                        get_surface_master_element(
+                                            subPart->topology());
                                     const label numScsIp = meFC->numIntPoints_;
                                     stk::mesh::put_field_on_mesh(*f,
                                                                  *subPart,
@@ -1115,6 +1153,52 @@ protected:
                 }
             }
         }
+
+#ifdef HAS_INTERFACE
+        for (label iInterface = 0; iInterface < meshRef().nInterfaces();
+             iInterface++)
+        {
+            const auto& interf = meshRef().interfaceRef(iInterface);
+
+            // In case of a very rare situation where no walls exist in the
+            // simulation, f needs to be declared since not yet declared
+            if (f == nullptr)
+            {
+                f = &const_cast<stk::mesh::MetaData&>(meshRef().metaDataRef())
+                         .declare_field<T>(meshRef().metaDataRef().side_rank(),
+                                           name);
+            }
+
+            if (interf.isFluidSolidType())
+            {
+                for (auto* part : interf.masterInfoRef().currentPartVec_)
+                {
+                    for (const stk::mesh::Part* subPart : part->subsets())
+                    {
+                        MasterElement* meFC =
+                            MasterElementRepo::get_surface_master_element(
+                                subPart->topology());
+                        const label numScsIp = meFC->numIntPoints_;
+                        stk::mesh::put_field_on_mesh(
+                            *f, *subPart, ncomponents * numScsIp, nullptr);
+                    }
+                }
+
+                for (auto* part : interf.slaveInfoRef().currentPartVec_)
+                {
+                    for (const stk::mesh::Part* subPart : part->subsets())
+                    {
+                        MasterElement* meFC =
+                            MasterElementRepo::get_surface_master_element(
+                                subPart->topology());
+                        const label numScsIp = meFC->numIntPoints_;
+                        stk::mesh::put_field_on_mesh(
+                            *f, *subPart, ncomponents * numScsIp, nullptr);
+                    }
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
 
         // For very rare situations where no walls exist, f still needs to be
         // instantiated for consistency

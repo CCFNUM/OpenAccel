@@ -679,6 +679,44 @@ void controls::read(YAML::Node inputNode)
                 }
             }
 
+#ifdef HAS_INTERFACE
+            if (advancedOptions["interface_transfer"])
+            {
+                const auto& interfaceTransfer =
+                    advancedOptions["interface_transfer"];
+
+                if (interfaceTransfer["search_tolerance"])
+                {
+                    solver_.solverControl_.advancedOptions_.interfaceTransfer_
+                        .searchTolerance_ =
+                        interfaceTransfer["search_tolerance"]
+                            .template as<scalar>();
+                }
+
+                if (interfaceTransfer["search_expansion_factor"])
+                {
+                    solver_.solverControl_.advancedOptions_.interfaceTransfer_
+                        .searchExpansionFactor_ =
+                        interfaceTransfer["search_expansion_factor"]
+                            .template as<scalar>();
+                }
+
+                if (interfaceTransfer["force_research"])
+                {
+                    solver_.solverControl_.advancedOptions_.interfaceTransfer_
+                        .forceResearch_ =
+                        interfaceTransfer["force_research"].template as<bool>();
+                }
+
+                if (interfaceTransfer["verbose"])
+                {
+                    solver_.solverControl_.advancedOptions_.interfaceTransfer_
+                        .verbose_ =
+                        interfaceTransfer["verbose"].template as<label>();
+                }
+            }
+#endif /* HAS_INTERFACE */
+
             if (advancedOptions["equation_controls"])
             {
                 if (advancedOptions["equation_controls"]["sub_iterations"])
@@ -1076,7 +1114,7 @@ void controls::read(YAML::Node inputNode)
 
                 if (interp_type == timeInterpolationSchemeType::piecewiseLinear)
                 {
-                    // FIXME: [2025-01-14] See related FIXME in
+                    // FIXME: See related FIXME in
                     // nodeField<N, M>::initializeField()
                     errorMsg("interpolation_type piecewise_linear in "
                              "restart_control is currently not supported");

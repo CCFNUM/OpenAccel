@@ -42,6 +42,37 @@ void domain::setupPressureLevelInformation_()
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
+#ifdef HAS_INTERFACE
+    // If an interfacing domain already has been assigned to have a pressure
+    // level, then this is not to be assigned.
+    bool hasLowerIndexFluidInterfacingZone = false;
+    for (const auto* interf : this->meshRef().interfaceVector())
+    {
+        if (interf->type() == interfaceType::fluid_fluid)
+        {
+            if (interf->masterZoneIndex() == this->zonePtr()->index())
+            {
+                if (interf->masterZoneIndex() > interf->slaveZoneIndex())
+                {
+                    hasLowerIndexFluidInterfacingZone = true;
+                }
+            }
+            else
+            {
+                if (interf->slaveZoneIndex() > interf->masterZoneIndex())
+                {
+                    hasLowerIndexFluidInterfacingZone = true;
+                }
+            }
+        }
+    }
+
+    if (hasLowerIndexFluidInterfacingZone)
+    {
+        return;
+    }
+#endif /* HAS_INTERFACE */
+
     // set default to true
     pressureLevelRequired_ = true;
 
@@ -351,5 +382,22 @@ std::string domain::name() const
 {
     return this->zonePtr()->name();
 }
+
+#ifdef HAS_INTERFACE
+bool domain::hasInterfaces() const
+{
+    return zonePtr_->hasInterfaces();
+}
+
+std::vector<interface*>& domain::interfacesRef()
+{
+    return zonePtr_->interfacesRef();
+}
+
+const std::vector<interface*>& domain::interfacesRef() const
+{
+    return zonePtr_->interfacesRef();
+}
+#endif /* HAS_INTERFACE */
 
 } // namespace accel

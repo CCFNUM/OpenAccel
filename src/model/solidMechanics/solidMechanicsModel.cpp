@@ -38,6 +38,45 @@ void solidMechanicsModel::setupDisplacement(
         initialCondition::setupFieldInitializationOverDomainFromInput(
             DRef(), realm::D_ID, domain);
 
+#ifdef HAS_INTERFACE
+        // In the case of fluid-structure interaction, that is, the presence of
+        // fluid domains adjacent to the current solid domain (provided that
+        // this solid domain is naturally deforming), therefore, the fluid-solid
+        // interface must store traction information coming from fluid
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                // do nothing
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // this is a fluid-structure interface, and displacement
+                    // flux field must be defined on this side
+                    DRef().registerSideFluxFieldForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+
+                    if (!domain->zonePtr()->meshDeforming())
+                    {
+                        // if no mesh deformation is set (simple physics), then
+                        // the side flux field on the fluid side must be created
+                        // here, because the displacement diffusion equation on
+                        // the fluid zone is not created
+                        DRef().registerSideFluxFieldForInterfaceSide(
+                            interf->index(),
+                            !interf->isMasterZone(domain->index()));
+                    }
+                }
+                else
+                {
+                    // do nothing
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         // boundary conditions for this domain
         setupBoundaryConditions_(
             domain,
@@ -572,6 +611,15 @@ void solidMechanicsModel::updateDisplacement(
 void solidMechanicsModel::updateDisplacementSideFields_(
     const std::shared_ptr<domain> domain)
 {
+#ifdef HAS_INTERFACE
+    // Interface
+    for (const interface* interf : domain->interfacesRef())
+    {
+        updateDisplacementInterfaceSideFieldTraction_(
+            domain, interf->interfaceSideInfoPtr(domain->index()));
+    }
+#endif /* HAS_INTERFACE */
+
     // Boundary
     for (label iBoundary = 0;
          iBoundary < this->meshRef().zonePtr(domain->index())->nBoundaries();
@@ -608,6 +656,387 @@ void solidMechanicsModel::updateDisplacementSideFields_(
         }
     }
 }
+
+#ifdef HAS_INTERFACE
+void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
+    const std::shared_ptr<domain> domain,
+    const interfaceSideInfo* interfaceSideInfoPtr)
+{
+    // update side flux field on the fluid side from pressure and wall
+    // shear stress information, and interpolate that to the solid side
+    // as traction
+    if (!interfaceSideInfoPtr->interfPtr()->isFluidSolidType())
+        return;
+
+    // Consider only if a side field is defined on the boundary.
+    if ((!this->DRef().sideFluxFieldRef().definedOn(
+            interfaceSideInfoPtr->currentPartVec_)))
+        errorMsg("Side flux field not defined on interface side");
+    if ((!this->DRef().sideFluxFieldRef().definedOn(
+            interfaceSideInfoPtr->opposingPartVec_)))
+        errorMsg("Side flux field not defined on interface side");
+
+    // Common mesh data references
+    stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+
+    // nodal fields to gather
+    std::vector<scalar> ws_p;
+
+    // master element
+    std::vector<scalar> ws_face_shape_function;
+
+    // Get field references and mesh data (only once)
+    const auto& pSTKFieldRef = this->pRef().stkFieldRef();
+    const auto& wallShearStressSTKFieldRef =
+        this->wallShearStressRef().stkFieldRef();
+    auto& sideFluxSTKFieldRef = this->DRef().sideFluxFieldRef().stkFieldRef();
+
+    // Area vector field needed only for pressure (normal traction). We always
+    // use current area for fluid side assuming it is deforming
+    const STKScalarField* exposedAreaVecSTKFieldPtr =
+        metaData.get_field<scalar>(metaData.side_rank(),
+                                   mesh::exposed_area_vector_ID);
+
+    // update traction on fluid side: need to negate the fluxes
+    stk::mesh::Selector selOwnedSides =
+        metaData.locally_owned_part() &
+        stk::mesh::selectUnion(interfaceSideInfoPtr->opposingPartVec_);
+
+    // shifted ip's for field?
+    const bool isPShifted = this->pRef().isShifted();
+
+    stk::mesh::BucketVector const& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selOwnedSides);
+
+    for (const stk::mesh::Bucket* bucket : sideBuckets)
+    {
+        MasterElement* meFC =
+            MasterElementRepo::get_surface_master_element(bucket->topology());
+        const label nodesPerSide = meFC->nodesPerElement_;
+        const label numScsBip = meFC->numIntPoints_;
+
+        // algorithm related; element
+        ws_p.resize(nodesPerSide);
+        ws_face_shape_function.resize(numScsBip * nodesPerSide);
+
+        // pointers
+        scalar* p_p = &ws_p[0];
+        scalar* p_face_shape_function = &ws_face_shape_function[0];
+
+        // shape functions
+        if (isPShifted)
+        {
+            meFC->shifted_shape_fcn(&p_face_shape_function[0]);
+        }
+        else
+        {
+            meFC->shape_fcn(&p_face_shape_function[0]);
+        }
+
+        for (const stk::mesh::Entity side : *bucket)
+        {
+            // face node relations
+            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
+
+            //======================================
+            // gather nodal data off of side
+            //======================================
+            for (label ni = 0; ni < nodesPerSide; ++ni)
+            {
+                stk::mesh::Entity node = sideNodeRels[ni];
+
+                // gather scalars
+                p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+            }
+
+            // Get traction values at integration points
+            scalar* tractionValues =
+                stk::mesh::field_data(sideFluxSTKFieldRef, side);
+
+            // Get area vector if needed for pressure
+            const scalar* areaVec =
+                stk::mesh::field_data(*exposedAreaVecSTKFieldPtr, side);
+
+            const scalar* wallShearStressBip =
+                stk::mesh::field_data(wallShearStressSTKFieldRef, side);
+
+            // Loop over integration points
+            for (label ip = 0; ip < numScsBip; ++ip)
+            {
+                // offsets
+                const label offSetSF_face = ip * nodesPerSide;
+
+                // Apply pressure contribution (normal force on solid)
+                // Force on solid = +p * n, where n is the fluid's outward
+                // normal (pointing into solid). Positive pressure causes
+                // compression.
+                // Compute magnitude of area vector to normalize
+                scalar aMag = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar axj = areaVec[SPATIAL_DIM * ip + j];
+                    aMag += axj * axj;
+                }
+
+                // Inverse of area magnitude for normalization
+                const scalar invAMag = 1.0 / std::sqrt(aMag);
+
+                // interpolate to bip
+                scalar pBip = 0.0;
+                for (label ic = 0; ic < nodesPerSide; ++ic)
+                {
+                    const scalar r = p_face_shape_function[offSetSF_face + ic];
+                    pBip += r * p_p[ic];
+                }
+
+                // Set traction as pressure * unit normal
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    tractionValues[SPATIAL_DIM * ip + j] =
+                        pBip * areaVec[SPATIAL_DIM * ip + j] * invAMag;
+                }
+
+                // Accumulate shear contribution (tangential traction)
+                // Note: If only shear is present, this adds to existing
+                // values
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    tractionValues[SPATIAL_DIM * ip + j] +=
+                        wallShearStressBip[SPATIAL_DIM * ip + j];
+                }
+            }
+        }
+    }
+
+    // interpolate data from fluid side to solid side
+    this->DRef().sideFluxFieldRef().transfer(
+        interfaceSideInfoPtr->interfPtr()->index(),
+        interfaceSideInfoPtr->isMasterSide(),
+        DRef().isShifted());
+
+#ifndef NDEBUG
+    // ========================================================================
+    // Debug: Compute force statistics on FLUID side
+    // ========================================================================
+    std::array<scalar, SPATIAL_DIM> fluidForceMin;
+    std::array<scalar, SPATIAL_DIM> fluidForceMax;
+    std::array<scalar, SPATIAL_DIM> fluidForceSum;
+    fluidForceMin.fill(std::numeric_limits<scalar>::max());
+    fluidForceMax.fill(std::numeric_limits<scalar>::lowest());
+    fluidForceSum.fill(0.0);
+    label fluidTotalIps = 0;
+
+    for (const stk::mesh::Bucket* bucket : sideBuckets)
+    {
+        MasterElement* meFC =
+            MasterElementRepo::get_surface_master_element(bucket->topology());
+        const label numScsBip = meFC->numIntPoints_;
+
+        for (const stk::mesh::Entity side : *bucket)
+        {
+            const scalar* tractionValues =
+                stk::mesh::field_data(sideFluxSTKFieldRef, side);
+            const scalar* areaVec =
+                stk::mesh::field_data(*exposedAreaVecSTKFieldPtr, side);
+
+            for (label ip = 0; ip < numScsBip; ++ip)
+            {
+                // Compute area magnitude for this ip
+                scalar aMag = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar axj = areaVec[SPATIAL_DIM * ip + j];
+                    aMag += axj * axj;
+                }
+                aMag = std::sqrt(aMag);
+
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    // Force = traction * area
+                    const scalar force =
+                        tractionValues[SPATIAL_DIM * ip + j] * aMag;
+                    fluidForceMin[j] = std::min(fluidForceMin[j], force);
+                    fluidForceMax[j] = std::max(fluidForceMax[j], force);
+                    fluidForceSum[j] += force;
+                }
+                fluidTotalIps++;
+            }
+        }
+    }
+
+    // MPI reduction for fluid side statistics
+    std::array<scalar, SPATIAL_DIM> globalFluidForceMin;
+    std::array<scalar, SPATIAL_DIM> globalFluidForceMax;
+    std::array<scalar, SPATIAL_DIM> globalFluidForceSum;
+    label globalFluidTotalIps = 0;
+
+    stk::all_reduce_min(bulkData.parallel(),
+                        fluidForceMin.data(),
+                        globalFluidForceMin.data(),
+                        SPATIAL_DIM);
+    stk::all_reduce_max(bulkData.parallel(),
+                        fluidForceMax.data(),
+                        globalFluidForceMax.data(),
+                        SPATIAL_DIM);
+    stk::all_reduce_sum(bulkData.parallel(),
+                        fluidForceSum.data(),
+                        globalFluidForceSum.data(),
+                        SPATIAL_DIM);
+    stk::all_reduce_sum(
+        bulkData.parallel(), &fluidTotalIps, &globalFluidTotalIps, 1);
+
+    // ========================================================================
+    // Debug: Compute force statistics on SOLID side
+    // ========================================================================
+    std::array<scalar, SPATIAL_DIM> solidForceMin;
+    std::array<scalar, SPATIAL_DIM> solidForceMax;
+    std::array<scalar, SPATIAL_DIM> solidForceSum;
+    solidForceMin.fill(std::numeric_limits<scalar>::max());
+    solidForceMax.fill(std::numeric_limits<scalar>::lowest());
+    solidForceSum.fill(0.0);
+    label solidTotalIps = 0;
+
+    // Select solid side (current side)
+    stk::mesh::Selector selOwnedSidesSolid =
+        metaData.locally_owned_part() &
+        stk::mesh::selectUnion(interfaceSideInfoPtr->currentPartVec_);
+
+    // Area vector on solid side
+    const STKScalarField* solidExposedAreaVecPtr = metaData.get_field<scalar>(
+        metaData.side_rank(), mesh::exposed_area_vector_ID);
+
+    stk::mesh::BucketVector const& solidSideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selOwnedSidesSolid);
+
+    for (const stk::mesh::Bucket* bucket : solidSideBuckets)
+    {
+        MasterElement* meFC =
+            MasterElementRepo::get_surface_master_element(bucket->topology());
+        const label numScsBip = meFC->numIntPoints_;
+
+        for (const stk::mesh::Entity side : *bucket)
+        {
+            const scalar* tractionValues =
+                stk::mesh::field_data(sideFluxSTKFieldRef, side);
+            const scalar* areaVec =
+                stk::mesh::field_data(*solidExposedAreaVecPtr, side);
+
+            for (label ip = 0; ip < numScsBip; ++ip)
+            {
+                // Compute area magnitude for this ip
+                scalar aMag = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar axj = areaVec[SPATIAL_DIM * ip + j];
+                    aMag += axj * axj;
+                }
+                aMag = std::sqrt(aMag);
+
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    // Force = traction * area
+                    const scalar force =
+                        tractionValues[SPATIAL_DIM * ip + j] * aMag;
+                    solidForceMin[j] = std::min(solidForceMin[j], force);
+                    solidForceMax[j] = std::max(solidForceMax[j], force);
+                    solidForceSum[j] += force;
+                }
+                solidTotalIps++;
+            }
+        }
+    }
+
+    // MPI reduction for solid side statistics
+    std::array<scalar, SPATIAL_DIM> globalSolidForceMin;
+    std::array<scalar, SPATIAL_DIM> globalSolidForceMax;
+    std::array<scalar, SPATIAL_DIM> globalSolidForceSum;
+    label globalSolidTotalIps = 0;
+
+    stk::all_reduce_min(bulkData.parallel(),
+                        solidForceMin.data(),
+                        globalSolidForceMin.data(),
+                        SPATIAL_DIM);
+    stk::all_reduce_max(bulkData.parallel(),
+                        solidForceMax.data(),
+                        globalSolidForceMax.data(),
+                        SPATIAL_DIM);
+    stk::all_reduce_sum(bulkData.parallel(),
+                        solidForceSum.data(),
+                        globalSolidForceSum.data(),
+                        SPATIAL_DIM);
+    stk::all_reduce_sum(
+        bulkData.parallel(), &solidTotalIps, &globalSolidTotalIps, 1);
+
+    // Print debug information
+    if (messager::master())
+    {
+        std::vector<std::string> dirNames = {"x", "y", "z"};
+
+        // Save original flags to restore them later (good practice)
+        std::ios_base::fmtflags oldFlags = std::cout.flags();
+
+        std::cout << "\n===== FSI Force Transfer Debug (Interface: "
+                  << interfaceSideInfoPtr->interfPtr()->name()
+                  << ") =====" << std::endl;
+
+        // Set scientific notation and high precision
+        std::cout << std::scientific << std::setprecision(8);
+
+        std::cout << "FLUID side (source):\n";
+        std::cout << "  Total IPs: " << globalFluidTotalIps << "\n";
+        for (label j = 0; j < SPATIAL_DIM; ++j)
+        {
+            scalar mean = (globalFluidTotalIps > 0)
+                              ? globalFluidForceSum[j] / globalFluidTotalIps
+                              : 0.0;
+            std::cout << "  F_" << dirNames[j] << ": min=" << std::setw(15)
+                      << globalFluidForceMin[j] << ", max=" << std::setw(15)
+                      << globalFluidForceMax[j] << ", mean=" << std::setw(15)
+                      << mean << ", total=" << std::setw(15)
+                      << globalFluidForceSum[j] << "\n";
+        }
+
+        std::cout << "SOLID side (target, after transfer):\n";
+        std::cout << "  Total IPs: " << globalSolidTotalIps << "\n";
+        for (label j = 0; j < SPATIAL_DIM; ++j)
+        {
+            scalar mean = (globalSolidTotalIps > 0)
+                              ? globalSolidForceSum[j] / globalSolidTotalIps
+                              : 0.0;
+            std::cout << "  F_" << dirNames[j] << ": min=" << std::setw(15)
+                      << globalSolidForceMin[j] << ", max=" << std::setw(15)
+                      << globalSolidForceMax[j] << ", mean=" << std::setw(15)
+                      << mean << ", total=" << std::setw(15)
+                      << globalSolidForceSum[j] << "\n";
+        }
+
+        // Conservation check
+        std::cout << "Force conservation (solid - fluid):\n";
+        for (label j = 0; j < SPATIAL_DIM; ++j)
+        {
+            scalar diff = globalSolidForceSum[j] - globalFluidForceSum[j];
+            scalar relErr =
+                (std::abs(globalFluidForceSum[j]) > 1e-12)
+                    ? std::abs(diff / globalFluidForceSum[j]) * 100.0
+                    : 0.0;
+
+            // Use fixed for the percentage but keep scientific for the delta
+            std::cout << "  Delta_F_" << dirNames[j] << ": " << std::scientific
+                      << diff << " (rel. error: " << std::fixed
+                      << std::setprecision(6) << relErr << "%)\n";
+            std::cout << std::scientific
+                      << std::setprecision(8); // Reset to scientific
+        }
+        std::cout << "=================================================\n"
+                  << std::endl;
+
+        // Restore original formatting
+        std::cout.flags(oldFlags);
+    }
+#endif /* NDEBUG */
+}
+#endif /* HAS_INTERFACE */
 
 void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
     const std::shared_ptr<domain> domain,
@@ -707,8 +1136,7 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
     for (const stk::mesh::Bucket* bucket : sideBuckets)
     {
         const MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                bucket->topology());
+            MasterElementRepo::get_surface_master_element(bucket->topology());
         const label numScsBip = meFC->numIntPoints_;
 
         for (const stk::mesh::Entity side : *bucket)
@@ -806,8 +1234,7 @@ void solidMechanicsModel::updateStressAndStrain_(
         const stk::mesh::Bucket::size_type length = elemBucket.size();
 
         MasterElement* meSCV =
-            accel::MasterElementRepo::get_volume_master_element(
-                elemBucket.topology());
+            MasterElementRepo::get_volume_master_element(elemBucket.topology());
         const label nodesPerElement = meSCV->nodesPerElement_;
         const label numScvIp = meSCV->numIntPoints_;
 

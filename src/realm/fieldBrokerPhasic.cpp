@@ -51,15 +51,14 @@ void fieldBroker::setupVolumeFraction(const std::shared_ptr<domain> domain,
 #ifndef NDEBUG
             if (messager::master())
             {
-                // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tphase index: " << iPhase << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << fluidValues << "\n\n";
-                // clang-format on
+                std::cout << "Setting boundary conditions:\n";
+                std::cout << "\tdomain name:   " << domain->name() << "\n";
+                std::cout << "\tdomain index:  " << domain->index() << "\n";
+                std::cout << "\tpatch index:   " << iBoundary << "\n";
+                std::cout << "\tphase index:  " << iPhase << "\n";
+                std::cout << "\tBoundary type: " << ::accel::toString(bc_type)
+                          << "\n";
+                std::cout << "\tYAML values:\n" << fluidValues << "\n\n";
             }
 #endif /* NDEBUG */
 
@@ -248,6 +247,32 @@ void fieldBroker::setupMassFlowRate(const std::shared_ptr<domain> domain,
         this->mDotRef(iPhase).setZone(domain->index());
         this->mDotRef(iPhase).divRef().setZone(domain->index());
 
+#ifdef HAS_INTERFACE
+        // register mass flux side field for interfaces in fluid domain
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                this->mDotRef(iPhase).registerSideFieldsForInterfaceSide(
+                    interf->index(), true);
+                this->mDotRef(iPhase).registerSideFieldsForInterfaceSide(
+                    interf->index(), false);
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // do nothing
+                }
+                else
+                {
+                    this->mDotRef(iPhase).registerSideFieldsForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         // Register mass flux side field for patches in fluid domain
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
@@ -345,6 +370,29 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain,
 {
     // interior
     initializeMassFlowRateInterior_(domain, iPhase);
+
+#ifdef HAS_INTERFACE
+    // Interfaces
+    for (const interface* interf : domain->zonePtr()->interfacesRef())
+    {
+        if (interf->isInternal())
+        {
+            initializeMassFlowRateInterfaceSideField_(
+                domain, interf->masterInfoPtr(), iPhase);
+            initializeMassFlowRateInterfaceSideField_(
+                domain, interf->slaveInfoPtr(), iPhase);
+        }
+        else if (!interf->isFluidSolidType())
+        {
+            // get interface side that is sitting in this domain
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(domain->index());
+
+            initializeMassFlowRateInterfaceSideField_(
+                domain, interfaceSideInfoPtr, iPhase);
+        }
+    }
+#endif /* HAS_INTERFACE */
 
     // Boundary
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -489,6 +537,29 @@ void fieldBroker::updateMassFlowRate(const std::shared_ptr<domain> domain,
 {
     // interior
     updateMassFlowRateInterior_(domain, iPhase);
+
+#ifdef HAS_INTERFACE
+    // Interfaces
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isInternal())
+        {
+            updateMassFlowRateInterfaceSideField_(
+                domain, interf->masterInfoPtr(), iPhase);
+            updateMassFlowRateInterfaceSideField_(
+                domain, interf->slaveInfoPtr(), iPhase);
+        }
+        else if (!interf->isFluidSolidType())
+        {
+            // get interface side that is sitting in this domain
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(domain->index());
+
+            updateMassFlowRateInterfaceSideField_(
+                domain, interfaceSideInfoPtr, iPhase);
+        }
+    }
+#endif /* HAS_INTERFACE */
 
     // Boundary
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();

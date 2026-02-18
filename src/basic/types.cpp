@@ -638,6 +638,66 @@ initialConditionOption convertInitialConditionOptionFromString(std::string s)
     return initialConditionOption::null; // useless
 }
 
+#ifdef HAS_INTERFACE
+// Interface model option
+
+std::unordered_map<std::string, interfaceModelOption> interfaceModelOptionMap{
+    {"translational_periodicity",
+     interfaceModelOption::translationalPeriodicity},
+    {"rotational_periodicity", interfaceModelOption::rotationalPeriodicity},
+    {"general_connection", interfaceModelOption::generalConnection}};
+
+interfaceModelOption convertInterfaceModelOptionFromString(std::string s)
+{
+    auto it = interfaceModelOptionMap.find(s);
+    if (it != interfaceModelOptionMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid interface model option: " + s);
+    }
+
+    return interfaceModelOption::generalConnection; // useless
+}
+
+// Interface type
+
+std::unordered_map<std::string, interfaceType> interfaceTypeMap{
+    {"fluid_fluid", interfaceType::fluid_fluid},
+    {"solid_solid", interfaceType::solid_solid},
+    {"fluid_solid", interfaceType::fluid_solid}};
+
+interfaceType convertInterfaceTypeFromString(std::string s)
+{
+    auto it = interfaceTypeMap.find(s);
+    if (it != interfaceTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid interface type: " + s);
+    }
+
+    return interfaceType::fluid_fluid; // useless
+}
+
+std::string toString(interfaceType type)
+{
+    for (const auto& pair : interfaceTypeMap)
+    {
+        if (pair.second == type)
+        {
+            return pair.first;
+        }
+    }
+    errorMsg("interface type not available");
+    return "";
+}
+#endif /* HAS_INTERFACE */
+
 // Wall-function type
 
 std::unordered_map<std::string, wallFunctionType> wallFunctionTypeMap{

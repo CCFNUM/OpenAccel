@@ -2674,11 +2674,372 @@ void heatTransferModel::updateSpecificTotalEnthalpyBoundarySideFieldOpening_(
 
 void heatTransferModel::reportHeatData_()
 {
+#ifdef HAS_INTERFACE
+    // Mass imbalance for interfaces
+    if (this->meshRef().hasInterfaces())
+    {
+        scalar in = 0.0;
+        scalar out = 0.0;
+        if (messager::master())
+        {
+            for (const HeatBoundaryData& interfaceData :
+                 heatInterfaceDataVector_)
+            {
+                in += interfaceData.in;
+                out += interfaceData.out;
+            }
+
+            std::cout << std::endl;
+            std::cout << "Interface Heat in:    " << std::scientific
+                      << std::setprecision(3) << std::setw(10) << std::right
+                      << in << '\n';
+            std::cout << "Interface Heat out:   " << std::scientific
+                      << std::setprecision(3) << std::setw(10) << std::right
+                      << out << '\n';
+            std::cout << "Interface Heat imbalance: " << std::scientific
+                      << std::setprecision(3) << std::setw(10) << std::right
+                      << (in + out) / (in + ::accel::SMALL) * 100 << " %\n";
+        }
+
+        // destroy interface data vector
+        heatInterfaceDataVector_.clear();
+    }
+#endif /* HAS_INTERFACE */
 }
 
 void heatTransferModel::updateHeatImbalance_(
     const std::shared_ptr<domain> domain)
 {
 }
+
+#ifdef HAS_INTERFACE
+void heatTransferModel::updateInterfaceHeatImbalance_(
+    const std::shared_ptr<domain> domain)
+{
+    const auto& mesh = meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    const auto& qDotSideSTKFieldRef = qDotRef().sideFieldRef().stkFieldRef();
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    std::vector<HeatBoundaryData> interfaceDataVector;
+
+    bool noInterfaces = true;
+    for (const interface* interf : domain->zonePtr()->interfacesRef())
+    {
+        noInterfaces = false;
+        if (interf->isInternal())
+        {
+            // Master
+            {
+                // get interface side that is sitting in this domain
+                const auto* interfaceSideInfoPtr = interf->masterInfoPtr();
+
+                interfaceDataVector.push_back(HeatBoundaryData());
+                HeatBoundaryData& interfaceData = interfaceDataVector.back();
+
+                // set primary traits
+                std::strncpy(interfaceData.name,
+                             interfaceSideInfoPtr->name().c_str(),
+                             sizeof(interfaceData.name));
+                interfaceData.name[sizeof(interfaceData.name) - 1] = '\0';
+
+                auto type = interf->type();
+                std::strncpy(interfaceData.type,
+                             toString(type).c_str(),
+                             sizeof(interfaceData.type));
+                interfaceData.type[sizeof(interfaceData.type) - 1] = '\0';
+
+                // consider only if qDot is defined on the boundary
+                if (!this->qDotRef().sideFieldRef().definedOn(
+                        interfaceSideInfoPtr->currentPartVec_))
+                {
+                    continue;
+                }
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    interfaceSideInfoPtr->dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        // consider only owned sides
+                        if (bulkData.parallel_owner_rank(
+                                dgInfo->currentElement_) !=
+                            messager::myProcNo())
+                            continue;
+
+                        // if gauss point is exposed (non-overlapping),
+                        // then treat as a wall
+                        if (dgInfo->gaussPointExposed_)
+                        {
+                            continue;
+                        }
+
+                        // extract current/opposing face/element
+                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
+
+                        // local ip, ordinals, etc
+                        const label currentGaussPointId =
+                            dgInfo->currentGaussPointId_;
+
+                        // pointer to face data
+                        const scalar* c_areaVec = stk::mesh::field_data(
+                            exposedAreaVecSTKFieldRef, currentFace);
+                        const scalar* ncqDot = stk::mesh::field_data(
+                            qDotSideSTKFieldRef, currentFace);
+
+                        // area associated to ip
+                        scalar c_amag = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar c_axj =
+                                c_areaVec[currentGaussPointId * SPATIAL_DIM +
+                                          j];
+                            c_amag += c_axj * c_axj;
+                        }
+                        c_amag = std::sqrt(c_amag);
+
+                        const scalar heat_flow = ncqDot[currentGaussPointId];
+                        if (heat_flow < 0.0) // heat-in
+                        {
+                            interfaceData.in += heat_flow;
+                            interfaceData.in_area += c_amag;
+                        }
+                        else // heat-out
+                        {
+                            interfaceData.out += heat_flow;
+                            interfaceData.out_area += c_amag;
+                        }
+                        interfaceData.total_area += c_amag;
+                    }
+                }
+            }
+
+            // Slave
+            {
+                // get interface side that is sitting in this domain
+                const auto* interfaceSideInfoPtr = interf->slaveInfoPtr();
+
+                interfaceDataVector.push_back(HeatBoundaryData());
+                HeatBoundaryData& interfaceData = interfaceDataVector.back();
+
+                // set primary traits
+                std::strncpy(interfaceData.name,
+                             interfaceSideInfoPtr->name().c_str(),
+                             sizeof(interfaceData.name));
+                interfaceData.name[sizeof(interfaceData.name) - 1] = '\0';
+
+                auto type = interf->type();
+                std::strncpy(interfaceData.type,
+                             toString(type).c_str(),
+                             sizeof(interfaceData.type));
+                interfaceData.type[sizeof(interfaceData.type) - 1] = '\0';
+
+                // consider only if qDot is defined on the boundary
+                if (!this->qDotRef().sideFieldRef().definedOn(
+                        interfaceSideInfoPtr->currentPartVec_))
+                {
+                    continue;
+                }
+
+                // extract vector of dgInfo
+                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                    interfaceSideInfoPtr->dgInfoVec_;
+
+                for (label iSide = 0;
+                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide++)
+                {
+                    const std::vector<dgInfo*>& faceDgInfoVec =
+                        dgInfoVec[iSide];
+
+                    // now loop over all the DgInfo objects on this
+                    // particular exposed face
+                    for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+                    {
+                        dgInfo* dgInfo = faceDgInfoVec[k];
+
+                        // consider only owned sides
+                        if (bulkData.parallel_owner_rank(
+                                dgInfo->currentElement_) !=
+                            messager::myProcNo())
+                            continue;
+
+                        // if gauss point is exposed (non-overlapping),
+                        // then treat as a wall
+                        if (dgInfo->gaussPointExposed_)
+                        {
+                            continue;
+                        }
+
+                        // extract current/opposing face/element
+                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
+
+                        // local ip, ordinals, etc
+                        const label currentGaussPointId =
+                            dgInfo->currentGaussPointId_;
+
+                        // pointer to face data
+                        const scalar* c_areaVec = stk::mesh::field_data(
+                            exposedAreaVecSTKFieldRef, currentFace);
+                        const scalar* ncqDot = stk::mesh::field_data(
+                            qDotSideSTKFieldRef, currentFace);
+
+                        // area associated to ip
+                        scalar c_amag = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar c_axj =
+                                c_areaVec[currentGaussPointId * SPATIAL_DIM +
+                                          j];
+                            c_amag += c_axj * c_axj;
+                        }
+                        c_amag = std::sqrt(c_amag);
+
+                        const scalar heat_flow = ncqDot[currentGaussPointId];
+                        if (heat_flow < 0.0) // heat-in
+                        {
+                            interfaceData.in += heat_flow;
+                            interfaceData.in_area += c_amag;
+                        }
+                        else // heat-out
+                        {
+                            interfaceData.out += heat_flow;
+                            interfaceData.out_area += c_amag;
+                        }
+                        interfaceData.total_area += c_amag;
+                    }
+                }
+            }
+        }
+        else
+        {
+            // get interface side that is sitting in this domain
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(domain->index());
+
+            interfaceDataVector.push_back(HeatBoundaryData());
+            HeatBoundaryData& interfaceData = interfaceDataVector.back();
+
+            // set primary traits
+            std::strncpy(interfaceData.name,
+                         interfaceSideInfoPtr->name().c_str(),
+                         sizeof(interfaceData.name));
+            interfaceData.name[sizeof(interfaceData.name) - 1] = '\0';
+
+            auto type = interf->type();
+            std::strncpy(interfaceData.type,
+                         toString(type).c_str(),
+                         sizeof(interfaceData.type));
+            interfaceData.type[sizeof(interfaceData.type) - 1] = '\0';
+
+            // consider only if qDot is defined on the boundary
+            if (!this->qDotRef().sideFieldRef().definedOn(
+                    interfaceSideInfoPtr->currentPartVec_))
+            {
+                continue;
+            }
+
+            // extract vector of dgInfo
+            const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+                interfaceSideInfoPtr->dgInfoVec_;
+
+            for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
+                 iSide++)
+            {
+                const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+
+                // now loop over all the DgInfo objects on this
+                // particular exposed face
+                for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+                {
+                    dgInfo* dgInfo = faceDgInfoVec[k];
+
+                    // consider only owned sides
+                    if (bulkData.parallel_owner_rank(dgInfo->currentElement_) !=
+                        messager::myProcNo())
+                        continue;
+
+                    // if gauss point is exposed (non-overlapping),
+                    // then treat as a wall
+                    if (dgInfo->gaussPointExposed_)
+                    {
+                        continue;
+                    }
+
+                    // extract current/opposing face/element
+                    stk::mesh::Entity currentFace = dgInfo->currentFace_;
+
+                    // local ip, ordinals, etc
+                    const label currentGaussPointId =
+                        dgInfo->currentGaussPointId_;
+
+                    // pointer to face data
+                    const scalar* c_areaVec = stk::mesh::field_data(
+                        exposedAreaVecSTKFieldRef, currentFace);
+                    const scalar* ncqDot =
+                        stk::mesh::field_data(qDotSideSTKFieldRef, currentFace);
+
+                    // area associated to ip
+                    scalar c_amag = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar c_axj =
+                            c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
+                        c_amag += c_axj * c_axj;
+                    }
+                    c_amag = std::sqrt(c_amag);
+
+                    const scalar heat_flow = ncqDot[currentGaussPointId];
+
+                    if (heat_flow < 0.0) // heat-in
+                    {
+                        interfaceData.in += heat_flow;
+                        interfaceData.in_area += c_amag;
+                    }
+                    else // heat-out
+                    {
+                        interfaceData.out += heat_flow;
+                        interfaceData.out_area += c_amag;
+                    }
+                    interfaceData.total_area += c_amag;
+                }
+            }
+        }
+    }
+
+    if (!noInterfaces)
+    {
+        std::vector<HeatBoundaryData> globalInterfaceDataVector(
+            interfaceDataVector.size());
+
+        MPI_Reduce(interfaceDataVector.data(),
+                   globalInterfaceDataVector.data(),
+                   interfaceDataVector.size(),
+                   MPIHeatBoundaryData,
+                   MPIHeatBoundaryData_SUM,
+                   0,
+                   messager::comm());
+
+        heatInterfaceDataVector_.insert(heatInterfaceDataVector_.end(),
+                                        globalInterfaceDataVector.begin(),
+                                        globalInterfaceDataVector.end());
+    }
+}
+#endif /* HAS_INTERFACE */
 
 } /* namespace accel */

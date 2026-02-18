@@ -8,6 +8,10 @@
 // code
 #include "mesh.h"
 #include "controls.h"
+#ifdef HAS_INTERFACE
+#include "interface.h"
+#include "interfaceSideInfo.h"
+#endif /* HAS_INTERFACE */
 #include "messager.h"
 #include "realm.h"
 #include "zone.h"
@@ -119,6 +123,11 @@ void mesh::setup()
     // Create and allocate containers
     setupZones_();
 
+#ifdef HAS_INTERFACE
+    // Create and allocate structures and containers
+    setupInterfaces_();
+#endif /* HAS_INTERFACE */
+
 #if SPATIAL_DIM == 3
     // Create element validator for quality checking and correction (if enabled)
     setupElementValidation_();
@@ -140,8 +149,13 @@ void mesh::initialize()
     // field is filled and ready to use
     initializeCoordinateField_();
 
-    // Initialize zones: boundaries, oversets, etc.
+    // Initialize zones: boundaries, etc.
     initializeZones_();
+
+#ifdef HAS_INTERFACE
+    // Initialize interfaces: make required searches
+    initializeInterfaces_();
+#endif /* HAS_INTERFACE */
 
     // Calculate geometric quantities (volume, exposed area, etc.)
     initializeGeometricFields_();
@@ -162,6 +176,9 @@ void mesh::update()
 {
     // Update mesh structures in case of possible mesh motion/deformation
     updateZones_();
+#ifdef HAS_INTERFACE
+    updateInterfaces_();
+#endif /* HAS_INTERFACE */
     updateGeometricFields_();
     updateNodeGraph_();
 }
@@ -238,6 +255,35 @@ const stk::mesh::ConstPartVector mesh::symmetryBoundaryActiveParts() const
     return symmetryBoundaryActiveParts_;
 }
 
+#ifdef HAS_INTERFACE
+// Interfaces
+
+label mesh::nInterfaces() const
+{
+    return interfaceVector_.size();
+}
+
+std::vector<interface*> mesh::interfaceVector() const
+{
+    std::vector<interface*> interfaceVec(nInterfaces(), nullptr);
+    for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
+    {
+        interfaceVec[iInterface] = interfaceVector_[iInterface].get();
+    }
+    return interfaceVec;
+}
+
+interface& mesh::interfaceRef(label iInterface)
+{
+    return *interfaceVector_[iInterface].get();
+}
+
+const interface& mesh::interfaceRef(label iInterface) const
+{
+    return *interfaceVector_[iInterface].get();
+}
+#endif /* HAS_INTERFACE */
+
 // Zones
 
 label mesh::nZones() const
@@ -302,17 +348,17 @@ void mesh::reportLoadImbalance_() const
     std::vector<label> all_locally_owned(size, n_locally_owned);
 
     // clang-format off
- if (messager::parallel())
- {
- LocalNodes gmax, gmin;
- MPI_Reduce(&max_locally_owned, &gmax, 1, MPI_2INT, MPI_MAXLOC, 0, messager::comm());
- MPI_Reduce(&min_locally_owned, &gmin, 1, MPI_2INT, MPI_MINLOC, 0, messager::comm());
- MPI_Gather(&n_locally_owned, 1, MPI_INT, all_locally_owned.data(), 1, MPI_INT, 0, messager::comm());
- max_locally_owned.nodes = gmax.nodes;
- max_locally_owned.rank = gmax.rank;
- min_locally_owned.nodes = gmin.nodes;
- min_locally_owned.rank = gmin.rank;
- }
+    if (messager::parallel())
+    {
+        LocalNodes gmax, gmin;
+        MPI_Reduce(&max_locally_owned, &gmax, 1, MPI_2INT, MPI_MAXLOC, 0, messager::comm());
+        MPI_Reduce(&min_locally_owned, &gmin, 1, MPI_2INT, MPI_MINLOC, 0, messager::comm());
+        MPI_Gather(&n_locally_owned, 1, MPI_INT, all_locally_owned.data(), 1, MPI_INT, 0, messager::comm());
+        max_locally_owned.nodes = gmax.nodes;
+        max_locally_owned.rank = gmax.rank;
+        min_locally_owned.nodes = gmin.nodes;
+        min_locally_owned.rank = gmin.rank;
+    }
     // clang-format on
     const double global_load_imbalance =
         static_cast<double>(max_locally_owned.nodes - min_locally_owned.nodes) /

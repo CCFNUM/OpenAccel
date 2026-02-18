@@ -4,7 +4,8 @@
 // Description: Assembler for the volume fraction transport in free-surface
 // flows
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef VOLUMEFRACTIONASSEMBLER_H
 #define VOLUMEFRACTIONASSEMBLER_H
@@ -31,6 +32,13 @@ protected:
     // Assembly
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
+
+#ifdef HAS_INTERFACE
+    void assembleElemTermsInterfaceSide_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx) override;
+#endif /* HAS_INTERFACE */
 
     // Auxiliary field access
 

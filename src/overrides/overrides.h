@@ -4,7 +4,8 @@
 // Description: Runtime configuration overrides including fluid-structure
 // interaction
 // Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef OVERRIDES_H
 #define OVERRIDES_H

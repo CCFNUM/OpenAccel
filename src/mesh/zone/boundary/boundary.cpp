@@ -116,9 +116,8 @@ void boundary::computeStats0_()
         stk::mesh::Bucket& sideBucket = **ib;
 
         // extract master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
 
         // extract master element specifics
         const label nodesPerSide = meFC->nodesPerElement_;
@@ -257,9 +256,8 @@ void boundary::computeStats_()
         stk::mesh::Bucket& sideBucket = **ib;
 
         // extract master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
 
         // extract master element specifics
         const label numScsIp = meFC->numIntPoints_;

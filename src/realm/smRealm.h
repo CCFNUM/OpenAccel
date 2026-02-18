@@ -4,7 +4,8 @@
 // Description: Solid mechanics field container for material properties and
 // stress-strain
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef SMREALM_H
 #define SMREALM_H

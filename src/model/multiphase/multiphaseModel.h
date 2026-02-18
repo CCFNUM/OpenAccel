@@ -4,7 +4,8 @@
 // Description: Base multiphase model managing phase definitions and volume
 // fractions
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef MULTIPHASEMODEL_H
 #define MULTIPHASEMODEL_H

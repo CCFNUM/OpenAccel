@@ -72,9 +72,8 @@ void turbulenceModel::clipMinDistToWall(const std::shared_ptr<domain> domain)
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
 
         // mapping from ip to nodes for this
         // ordinal; face perspective (use with
@@ -254,6 +253,24 @@ const stk::mesh::PartVector
 turbulenceModel::collectNoSlipWallParts_(const std::shared_ptr<domain> domain)
 {
     stk::mesh::PartVector parts;
+
+#ifdef HAS_INTERFACE
+    // fluid-solid interface side
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isFluidSolidType())
+        {
+            // get interface side that is sitting in this domain
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(domain->index());
+
+            for (const auto part : interfaceSideInfoPtr->currentPartVec_)
+            {
+                parts.push_back(part);
+            }
+        }
+    }
+#endif /* HAS_INTERFACE */
 
     // no-slip boundary walls
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();

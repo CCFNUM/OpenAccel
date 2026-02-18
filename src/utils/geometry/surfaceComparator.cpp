@@ -666,9 +666,8 @@ void surfaceComparator::calcCentroid_(const stk::mesh::PartVector& surfaceParts,
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 

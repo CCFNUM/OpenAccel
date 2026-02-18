@@ -195,6 +195,17 @@ void turbulentIntermittencyCorrelationTransitionSSTEquation::
     // if this is a fluid-solid interface, then it is necessary to transfer the
     // gamma field to the solid, as this will be used in the hybrid heat
     // transfer appraoch
+#ifdef HAS_INTERFACE
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isFluidSolidType())
+        {
+            model_->gammaRef().transfer(interf->index(),
+                                        dataTransferType::copy,
+                                        !interf->isMasterZone(domain->index()));
+        }
+    }
+#endif /* HAS_INTERFACE */
 }
 
 void turbulentIntermittencyCorrelationTransitionSSTEquation::printScales()

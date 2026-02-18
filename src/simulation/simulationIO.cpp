@@ -11,6 +11,10 @@
 #include "equation.h"
 #include "fluidEquationsIncludes.h"
 #include "git_revision.h"
+#ifdef HAS_INTERFACE
+#include "interface.h"
+#include "interfaceSideInfo.h"
+#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
 #include "simulation.h"
@@ -166,6 +170,190 @@ void simulation::createDomains_()
             }
         }
     }
+
+#ifdef HAS_INTERFACE
+    // 2.) Assign interfaces to domains (requires interfaces to be created)
+    for (label i = 0; i < meshPtr_->nInterfaces(); i++)
+    {
+        interface& iface = meshPtr_->interfaceRef(i);
+
+        const auto domain_names = iface.pairZoneNames();
+        const std::string& master_name = domain_names.first;
+        const std::string& slave_name = domain_names.second;
+
+        // consistency checks
+        auto it = name2index.find(master_name);
+        if (it == name2index.end())
+        {
+            errorMsg("simulation: master domain name `" + master_name +
+                     "` for interface " + std::to_string(i) +
+                     " does not exist");
+        }
+        it = name2index.find(slave_name);
+        if (it == name2index.end())
+        {
+            errorMsg("simulation: slave domain name `" + slave_name +
+                     "` for interface " + std::to_string(i) +
+                     " does not exist");
+        }
+
+        // Checks:
+        // 1) if the interface is an inter-domain interface
+        // 2) let each zone know what other zone it interfaces
+        // 3) if a fluid/solid interface in case 1) is true
+
+        auto& dm1 = domainRef(master_name);
+        auto& dm2 = domainRef(slave_name);
+
+        if (master_name == slave_name)
+        {
+            // inter-domain interface
+            dm1.zoneRef().addInterface(&iface);
+
+            // this is an inter-domain interface
+            iface.setInternal(true);
+
+            // store domain type for master and slave (in this case same domain)
+            iface.masterInfoRef().setDomainType(dm1.type());
+            iface.slaveInfoRef().setDomainType(dm2.type());
+
+            // check interface type
+            if (dm1.type() == domainType::fluid)
+            {
+                if (iface.type() != interfaceType::fluid_fluid)
+                {
+                    errorMsg("Inconsistent domain types");
+                }
+            }
+            else
+            {
+                if (iface.type() != interfaceType::solid_solid)
+                {
+                    errorMsg("Inconsistent domain types");
+                }
+            }
+        }
+        else
+        {
+            // distinct domains interfacing each other
+            dm1.zoneRef().addInterface(&iface);
+            dm2.zoneRef().addInterface(&iface);
+
+            // this is an inter-domain interface
+            iface.setInternal(false);
+
+            // add interfacing zones
+            dm1.zoneRef().interfacingZoneIndices().push_back(dm2.index());
+            dm2.zoneRef().interfacingZoneIndices().push_back(dm1.index());
+
+            // store domain type for master and slave
+            iface.masterInfoRef().setDomainType(dm1.type());
+            iface.slaveInfoRef().setDomainType(dm2.type());
+
+            // check interface type
+            if ((dm1.type() == domainType::fluid &&
+                 dm2.type() == domainType::solid) ||
+                (dm2.type() == domainType::fluid &&
+                 dm1.type() == domainType::solid))
+            {
+                if (iface.type() != interfaceType::fluid_solid)
+                {
+                    errorMsg("Inconsistent domain types");
+                }
+            }
+
+            // check models consistency for both domains according to the
+            // following rules: 1) for a fluid-fluid or a solid-solid interface,
+            // all the models enabled in one domain must be enabled in the other
+            // 2) for a fluid-solid domain, selected models must be enabled in
+            // both (heat transfer, electromagnetics, etc.)
+            if (iface.type() == interfaceType::fluid_fluid)
+            {
+                if (dm1.turbulence_.option_ != dm2.turbulence_.option_)
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different turbulence options");
+                }
+
+                if (dm1.heatTransfer_.option_ != dm2.heatTransfer_.option_)
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different heat transfer options");
+                }
+
+                if (dm1.multiphase_.freeSurfaceModel_.option_ !=
+                    dm2.multiphase_.freeSurfaceModel_.option_)
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different free surface model options");
+                }
+
+#ifdef HAS_MHD
+                if ((dm1.electromagnetics_.enabled_ &&
+                     !dm2.electromagnetics_.enabled_) ||
+                    (!dm1.electromagnetics_.enabled_ &&
+                     dm2.electromagnetics_.enabled_))
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different electromagnetics statuses");
+                }
+#endif /* HAS_MHD */
+
+                if (dm1.buoyancy_.option_ != dm2.buoyancy_.option_)
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() + " have different buoyancy options");
+                }
+            }
+            else if (iface.type() == interfaceType::solid_solid)
+            {
+                if (dm1.heatTransfer_.option_ != dm2.heatTransfer_.option_)
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different heat transfer options");
+                }
+
+#ifdef HAS_MHD
+                if ((dm1.electromagnetics_.enabled_ &&
+                     !dm2.electromagnetics_.enabled_) ||
+                    (!dm1.electromagnetics_.enabled_ &&
+                     dm2.electromagnetics_.enabled_))
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different electromagnetics statuses");
+                }
+#endif /* HAS_MHD */
+            }
+            else
+            {
+                if (dm1.heatTransfer_.option_ != dm2.heatTransfer_.option_)
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different heat transfer options");
+                }
+
+#ifdef HAS_MHD
+                if ((dm1.electromagnetics_.enabled_ &&
+                     !dm2.electromagnetics_.enabled_) ||
+                    (!dm1.electromagnetics_.enabled_ &&
+                     dm2.electromagnetics_.enabled_))
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different electromagnetics statuses");
+                }
+#endif /* HAS_MHD */
+            }
+        }
+    }
+#endif /* HAS_INTERFACE */
 }
 
 void simulation::createEquations_()
@@ -198,6 +386,67 @@ void simulation::createEquations_()
             }
         }
     }
+
+#ifdef HAS_INTERFACE
+    // 3.) Physics sanity check
+    for (label i = 0; i < meshPtr_->nInterfaces(); i++)
+    {
+        const interface& iface = meshPtr_->interfaceRef(i);
+
+        if (iface.isInternal())
+            continue;
+
+        switch (iface.type())
+        {
+            case interfaceType::fluid_fluid:
+                {
+                    const auto domain_names = iface.pairZoneNames();
+                    const std::string& master_name = domain_names.first;
+                    const std::string& slave_name = domain_names.second;
+
+                    const auto& dm1 = domainRef(master_name);
+                    const auto& dm2 = domainRef(slave_name);
+
+                    for (auto& equation : equationVector_)
+                    {
+                        const equationID id = equation->getID();
+
+                        if (dm1.hasEquation(id) != dm2.hasEquation(id))
+                        {
+                            errorMsg("Fluid-Fluid interface connecting two "
+                                     "domains enabling different physics");
+                        }
+                    }
+                }
+                break;
+
+            case interfaceType::solid_solid:
+                {
+                    const auto domain_names = iface.pairZoneNames();
+                    const std::string& master_name = domain_names.first;
+                    const std::string& slave_name = domain_names.second;
+
+                    const auto& dm1 = domainRef(master_name);
+                    const auto& dm2 = domainRef(slave_name);
+
+                    for (auto& equation : equationVector_)
+                    {
+                        const equationID id = equation->getID();
+
+                        if (dm1.hasEquation(id) != dm2.hasEquation(id))
+                        {
+                            errorMsg("Solid-Solid interface connecting two "
+                                     "domains enabling different physics");
+                        }
+                    }
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+#endif /* HAS_INTERFACE */
 
     if (messager::master())
     {

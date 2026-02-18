@@ -276,10 +276,9 @@ void reductionObject::update()
                             {
                                 const stk::mesh::Bucket& bucket =
                                     *sideBuckets[ib];
-                                const MasterElement* meFC =
-                                    accel::MasterElementRepo::
-                                        get_surface_master_element(
-                                            bucket.topology());
+                                const MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        bucket.topology());
                                 const label n_bip = meFC->numIntPoints_;
 
                                 maxNbip = std::max(maxNbip, n_bip);
@@ -301,7 +300,7 @@ void reductionObject::update()
                             const stk::mesh::Bucket& bucket = *sideBuckets[ib];
                             const stk::mesh::Bucket::size_type n_entities =
                                 bucket.size();
-                            const MasterElement* meFC = accel::
+                            const MasterElement* meFC =
                                 MasterElementRepo::get_surface_master_element(
                                     bucket.topology());
                             const label n_bip = meFC->numIntPoints_;
@@ -442,8 +441,9 @@ void reductionObject::update()
                         const stk::mesh::Bucket& bucket = *sideBuckets[ib];
 
                         // face master element
-                        MasterElement* meFC = accel::MasterElementRepo::
-                            get_surface_master_element(bucket.topology());
+                        MasterElement* meFC =
+                            MasterElementRepo::get_surface_master_element(
+                                bucket.topology());
                         const label nodesPerSide =
                             bucket.topology().num_nodes();
                         const label numScsBip = meFC->numIntPoints_;
@@ -662,10 +662,9 @@ void reductionObject::update()
                             {
                                 const stk::mesh::Bucket& bucket =
                                     *sideBuckets[ib];
-                                const MasterElement* meFC =
-                                    accel::MasterElementRepo::
-                                        get_surface_master_element(
-                                            bucket.topology());
+                                const MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        bucket.topology());
                                 const label n_bip = meFC->numIntPoints_;
 
                                 maxNbip = std::max(maxNbip, n_bip);
@@ -692,8 +691,9 @@ void reductionObject::update()
                             const stk::mesh::Bucket& bucket = *sideBuckets[ib];
 
                             // face master element
-                            MasterElement* meFC = accel::MasterElementRepo::
-                                get_surface_master_element(bucket.topology());
+                            MasterElement* meFC =
+                                MasterElementRepo::get_surface_master_element(
+                                    bucket.topology());
                             const label nodesPerSide =
                                 bucket.topology().num_nodes();
                             const label numScsBip = meFC->numIntPoints_;
@@ -890,8 +890,9 @@ void reductionObject::update()
                         const stk::mesh::Bucket& bucket = *sideBuckets[ib];
 
                         // face master element
-                        MasterElement* meFC = accel::MasterElementRepo::
-                            get_surface_master_element(bucket.topology());
+                        MasterElement* meFC =
+                            MasterElementRepo::get_surface_master_element(
+                                bucket.topology());
                         const label nodesPerSide =
                             bucket.topology().num_nodes();
                         const label numScsBip = meFC->numIntPoints_;
@@ -1073,10 +1074,9 @@ void reductionObject::update()
                             {
                                 const stk::mesh::Bucket& bucket =
                                     *sideBuckets[ib];
-                                const MasterElement* meFC =
-                                    accel::MasterElementRepo::
-                                        get_surface_master_element(
-                                            bucket.topology());
+                                const MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        bucket.topology());
                                 const label n_bip = meFC->numIntPoints_;
 
                                 maxNbip = std::max(maxNbip, n_bip);
@@ -1100,7 +1100,7 @@ void reductionObject::update()
                             const stk::mesh::Bucket& bucket = *sideBuckets[ib];
                             const stk::mesh::Bucket::size_type n_entities =
                                 bucket.size();
-                            const MasterElement* meFC = accel::
+                            const MasterElement* meFC =
                                 MasterElementRepo::get_surface_master_element(
                                     bucket.topology());
                             const label n_bip = meFC->numIntPoints_;

@@ -4,7 +4,8 @@
 // Description: Element scalar field for mass flow rate with divergence and
 // boundary fractions
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef MASSFLOWRATE_H
 #define MASSFLOWRATE_H

@@ -11,27 +11,34 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(main_obj PRIVATE
     ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssembler.cpp
     ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssemblerElemBoundaryConditions.cpp
+    ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssemblerElemInterfaceConditions.cpp
     ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssemblerElemTerms.cpp
     ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssemblerNodeTerms.cpp
     ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssembler.cpp
     ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssemblerElemBoundaryConditions.cpp
+    ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssemblerElemInterfaceConditions.cpp
     ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssemblerElemTerms.cpp
     ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssemblerNodeTerms.cpp
     ############################################################################
     ${DIR}/heatTransfer/thermalTemperature/thermalTemperatureAssemblerElemBoundaryConditions.cpp
+    ${DIR}/heatTransfer/thermalTemperature/thermalTemperatureAssemblerElemInterfaceConditions.cpp
     ${DIR}/heatTransfer/thermalTemperature/thermalTemperatureAssemblerElemTerms.cpp
     ${DIR}/heatTransfer/thermalTemperature/thermalTemperatureAssemblerNodeTerms.cpp
     ${DIR}/heatTransfer/thermalEnergy/thermalEnergyAssemblerElemBoundaryConditions.cpp
+    ${DIR}/heatTransfer/thermalEnergy/thermalEnergyAssemblerElemInterfaceConditions.cpp
     ${DIR}/heatTransfer/thermalEnergy/thermalEnergyAssemblerNodeTerms.cpp
     ${DIR}/heatTransfer/totalEnergy/totalEnergyAssemblerElemBoundaryConditions.cpp
+    ${DIR}/heatTransfer/totalEnergy/totalEnergyAssemblerElemInterfaceConditions.cpp
     ${DIR}/heatTransfer/totalEnergy/totalEnergyAssemblerElemTerms.cpp
     ${DIR}/heatTransfer/totalEnergy/totalEnergyAssemblerNodeTerms.cpp
     ############################################################################
     ${DIR}/multiphase/freeSurfaceFlow/segregatedBulkFlow/bulkPressureCorrection/bulkPressureCorrectionAssembler.cpp
     ${DIR}/multiphase/freeSurfaceFlow/segregatedBulkFlow/bulkPressureCorrection/bulkPressureCorrectionAssemblerElemBoundaryConditions.cpp
+    ${DIR}/multiphase/freeSurfaceFlow/segregatedBulkFlow/bulkPressureCorrection/bulkPressureCorrectionAssemblerElemInterfaceConditions.cpp
     ${DIR}/multiphase/freeSurfaceFlow/segregatedBulkFlow/bulkPressureCorrection/bulkPressureCorrectionAssemblerElemTerms.cpp
     ${DIR}/multiphase/freeSurfaceFlow/segregatedBulkFlow/bulkPressureCorrection/bulkPressureCorrectionAssemblerNodeTerms.cpp
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssembler.cpp
+    ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssemblerElemInterfaceConditions.cpp
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssemblerElemTerms.cpp
     ############################################################################
     ${DIR}/turbulence/RANS/kEpsilon/segregatedKEpsilon/turbulentDissipationRate/turbulentDissipationRateAssemblerElemBoundaryConditions.cpp
@@ -52,6 +59,7 @@ target_sources(main_obj PRIVATE
     ############################################################################
     ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssembler.cpp
     ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssemblerElemBoundaryConditions.cpp
+    ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssemblerElemInterfaceConditions.cpp
     ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssemblerElemTerms.cpp
     ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssemblerNodeTerms.cpp
 )

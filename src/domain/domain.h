@@ -4,7 +4,8 @@
 // Description: Physical domain definition with material properties and equation
 // models
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef DOMAIN_H
 #define DOMAIN_H
@@ -17,6 +18,9 @@ namespace accel
 
 class realm;
 class simulation;
+#ifdef HAS_INTERFACE
+class interface;
+#endif /* HAS_INTERFACE */
 class zone;
 class mesh;
 
@@ -322,6 +326,14 @@ public:
     {
         return equations_[static_cast<int>(id)];
     }
+
+#ifdef HAS_INTERFACE
+    bool hasInterfaces() const;
+
+    std::vector<interface*>& interfacesRef();
+
+    const std::vector<interface*>& interfacesRef() const;
+#endif /* HAS_INTERFACE */
 
     simulation* simulationPtr();
 

@@ -4,7 +4,8 @@
 // Description: Assembler for the solid displacement equation in structural
 // mechanics
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef SOLIDDISPLACEMENTASSEMBLER_H
 #define SOLIDDISPLACEMENTASSEMBLER_H
@@ -75,6 +76,13 @@ private:
 
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
+#ifdef HAS_INTERFACE
+    void assembleElemTermsInterfaceSide_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx) override;
+#endif /* HAS_INTERFACE */
+
     void assembleElemTermsBoundary_(const domain* domain,
                                     Context* ctx) override;
 };

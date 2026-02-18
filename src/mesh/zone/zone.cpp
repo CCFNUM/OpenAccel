@@ -70,9 +70,8 @@ void zone::computeStats0_()
         stk::mesh::Bucket& elementBucket = **ib;
 
         // extract master element for this bucket's topology
-        MasterElement* meSCV =
-            accel::MasterElementRepo::get_volume_master_element(
-                elementBucket.topology());
+        MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
+            elementBucket.topology());
 
         // extract master element specifics
         const label nodesPerElement = meSCV->nodesPerElement_;

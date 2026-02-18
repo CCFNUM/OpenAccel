@@ -45,6 +45,53 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
         initialCondition::setupFieldInitializationOverDomainFromInput(
             URef(), realm::U_ID, domain);
 
+#ifdef HAS_INTERFACE
+        // 1) Register velocity side fields on fluid-solid interface
+        // (only fluid)
+        //    side, because we deal with this as a typical no-slip wall
+        // 2) Register also on an interface side which has a non-overlap
+        // portion
+        //    because the non-overlap portion might be treated as as a no-slip
+        //    subject to user's preference
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                if (interf->isSlipNonOverlap())
+                    continue;
+
+                // register side fields only if there are non-overlaps
+                // while the current domain is a fluid domain
+                URef().registerSideFieldsForInterfaceSide(
+                    interf->index(), true, true);
+                URef().registerSideFieldsForInterfaceSide(
+                    interf->index(), false, true);
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // consider only the side of the interface that belong to
+                    // the current fluid domain
+                    URef().registerSideFieldsForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+                }
+                else
+                {
+                    if (interf->isSlipNonOverlap())
+                        continue;
+
+                    // register side fields only if there are non-overlaps while
+                    // the current domain is a fluid domain
+                    URef().registerSideFieldsForInterfaceSide(
+                        interf->index(),
+                        interf->isMasterZone(domain->index()),
+                        true);
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         // boundary conditions for this domain
         setupBoundaryConditions_(
             domain,
@@ -1858,6 +1905,38 @@ void fieldBroker::setupWallScale(const std::shared_ptr<domain> domain)
     {
         yScaleRef().setZone(domain->index());
 
+#ifdef HAS_INTERFACE
+        // 1) Register yscale side fields on fluid-solid interface (only fluid)
+        //    side, because we deal with this as a typical no-slip wall
+        // 2) Register also on an interface side which has a non-overlap portion
+        //    because the non-overlap portion shall be treated as a no-slip wall
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                // do nothing
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // consider only the side of the interface that belong to
+                    // the current domain
+                    yScaleRef().registerSideFieldsForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+                    interf->interfaceSideInfoPtr(domain->index())
+                        ->dataHandlerRef()
+                        .setConstantValue<1>(yScaleRef().name() + "_value",
+                                             {0});
+                }
+                else
+                {
+                    // do nothing
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
         {
@@ -1911,6 +1990,36 @@ void fieldBroker::setupTurbulentKineticEnergy(
         // set initial conditions from input
         initialCondition::setupFieldInitializationOverDomainFromInput(
             kRef(), turbRealm::k_ID, domain);
+
+#ifdef HAS_INTERFACE
+        // 1) Register k side fields on fluid-solid interface (only fluid)
+        //    side, because we deal with this as a typical no-slip wall
+        // 2) Register also on an interface side which has a non-overlap
+        // portion
+        //    because the non-overlap portion shall be treated as a no-slip
+        //    wall
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                // do nothing
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // consider only the side of the interface that belong to
+                    // the current domain
+                    kRef().registerSideFieldsForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+                }
+                else
+                {
+                    // do nothing
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
 
         // boundary conditions
         setupBoundaryConditions_(
@@ -2165,6 +2274,37 @@ void fieldBroker::setupTurbulentEddyFrequency(
         initialCondition::setupFieldInitializationOverDomainFromInput(
             omegaRef(), turbRealm::omega_ID, domain);
 
+#ifdef HAS_INTERFACE
+        // 1) Register omega side fields on fluid-solid interface (only
+        // fluid)
+        //    side, because we deal with this as a typical no-slip wall
+        // 2) Register also on an interface side which has a non-overlap
+        // portion
+        //    because the non-overlap portion shall be treated as a no-slip
+        //    wall
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                // do nothing
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // consider only the side of the interface that belong to
+                    // the current domain
+                    omegaRef().registerSideFieldsForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+                }
+                else
+                {
+                    // do nothing
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         // boundary conditions for this domain
         setupBoundaryConditions_(
             domain,
@@ -2415,6 +2555,36 @@ void fieldBroker::setupTurbulentDissipationRate(
         // set initial conditions from input
         initialCondition::setupFieldInitializationOverDomainFromInput(
             epsilonRef(), turbRealm::epsilon_ID, domain);
+
+#ifdef HAS_INTERFACE
+        // 1) Register epsilon side fields on fluid-solid interface (only fluid)
+        //    side, because we deal with this as a typical no-slip wall
+        // 2) Register also on an interface side which has a non-overlap
+        // portion
+        //    because the non-overlap portion shall be treated as a no-slip
+        //    wall
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                // do nothing
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // consider only the side of the interface that belong to
+                    // the current domain
+                    epsilonRef().registerSideFieldsForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+                }
+                else
+                {
+                    // do nothing
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
 
         // boundary conditions
         setupBoundaryConditions_(
@@ -2874,6 +3044,34 @@ void fieldBroker::setupDisplacement(const std::shared_ptr<domain> domain)
         initialCondition::setupFieldInitializationOverDomainFromValues(
             DRef(), domain->index(), std::vector<scalar>(SPATIAL_DIM, 0.0));
 
+#ifdef HAS_INTERFACE
+        // for a fluid-solid interface, the interface side in this domain will
+        // act as a dirichlet boundary for the displacement diffusion equation,
+        // which is being solved over this domain, thus, side fields on the
+        // this side must be registered
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                // do nothing
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // this is a fluid-structure interface. Displacement
+                    // side flux field must be defined on this side
+                    DRef().registerSideFluxFieldForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+                }
+                else
+                {
+                    // do nothing
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         setupBoundaryConditions_(domain,
                                  // anonymous function to set boundary
                                  // conditions for this model
@@ -3085,6 +3283,32 @@ void fieldBroker::setupMassFlowRate(const std::shared_ptr<domain> domain)
         this->mDotRef().setZone(domain->index());
         this->mDotRef().divRef().setZone(domain->index());
 
+#ifdef HAS_INTERFACE
+        // register mass flux side field for interfaces in fluid domain
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                this->mDotRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), true);
+                this->mDotRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), false);
+            }
+            else
+            {
+                if (interf->isFluidSolidType())
+                {
+                    // do nothing
+                }
+                else
+                {
+                    this->mDotRef().registerSideFieldsForInterfaceSide(
+                        interf->index(), interf->isMasterZone(domain->index()));
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
         {
@@ -3113,6 +3337,25 @@ void fieldBroker::setupHeatFlowRate(const std::shared_ptr<domain> domain)
     if (this->qDotRef().isZoneUnset(domain->index()))
     {
         this->qDotRef().setZone(domain->index());
+
+#ifdef HAS_INTERFACE
+        // register heat flux side field for interfaces
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                this->qDotRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), true);
+                this->qDotRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), false);
+            }
+            else
+            {
+                this->qDotRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), interf->isMasterZone(domain->index()));
+            }
+        }
+#endif /* HAS_INTERFACE */
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
@@ -3326,6 +3569,32 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain)
     {
         // interior
         initializeMassFlowRateInterior_(domain);
+
+#ifdef HAS_INTERFACE
+        // Interfaces
+        for (const interface* interf : domain->zonePtr()->interfacesRef())
+        {
+            if (interf->isConformalTreatment())
+                continue;
+
+            if (interf->isInternal())
+            {
+                initializeMassFlowRateInterfaceSideField_(
+                    domain, interf->masterInfoPtr());
+                initializeMassFlowRateInterfaceSideField_(
+                    domain, interf->slaveInfoPtr());
+            }
+            else if (!interf->isFluidSolidType())
+            {
+                // get interface side that is sitting in this domain
+                const auto* interfaceSideInfoPtr =
+                    interf->interfaceSideInfoPtr(domain->index());
+
+                initializeMassFlowRateInterfaceSideField_(domain,
+                                                          interfaceSideInfoPtr);
+            }
+        }
+#endif /* HAS_INTERFACE */
 
         // Boundary
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -3708,6 +3977,31 @@ void fieldBroker::updateMassFlowRate(const std::shared_ptr<domain> domain)
 {
     // interior
     updateMassFlowRateInterior_(domain);
+
+#ifdef HAS_INTERFACE
+    // Interfaces
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isConformalTreatment())
+            continue;
+
+        if (interf->isInternal())
+        {
+            updateMassFlowRateInterfaceSideField_(domain,
+                                                  interf->masterInfoPtr());
+            updateMassFlowRateInterfaceSideField_(domain,
+                                                  interf->slaveInfoPtr());
+        }
+        else if (!interf->isFluidSolidType())
+        {
+            // get interface side that is sitting in this domain
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(domain->index());
+
+            updateMassFlowRateInterfaceSideField_(domain, interfaceSideInfoPtr);
+        }
+    }
+#endif /* HAS_INTERFACE */
 
     // Boundary
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();

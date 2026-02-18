@@ -4,7 +4,8 @@
 // Description: Boundary face representation with physical type and reference
 // frame
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef BOUNDARY_H
 #define BOUNDARY_H

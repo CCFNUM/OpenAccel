@@ -4,7 +4,8 @@
 // Description: Mesh displacement vector field with deforming mesh coordinate
 // handling
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef DISPLACEMENT_H
 #define DISPLACEMENT_H

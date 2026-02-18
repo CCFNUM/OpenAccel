@@ -21,8 +21,8 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    // TODO: [2024-02-29] Account for BLOCKSIZE in
-    // space for LHS/RHS; nodesPerElem*nodesPerElem* and nodesPerElem
+    // TODO: Account for BLOCKSIZE in space for LHS/RHS;
+    // nodesPerElem*nodesPerElem* and nodesPerElem
     std::vector<scalar> lhs;
     std::vector<scalar> rhs;
     std::vector<label> scratchIds;
@@ -92,9 +92,8 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
             elementBucket.size();
 
         // extract master element
-        MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(
-                elementBucket.topology());
+        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
+            elementBucket.topology());
 
         // extract master element specifics
         const label nodesPerElement = meSCS->nodesPerElement_;

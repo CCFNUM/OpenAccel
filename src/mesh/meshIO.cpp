@@ -8,6 +8,10 @@
 // code
 #include "boundary.h"
 #include "controls.h"
+#ifdef HAS_INTERFACE
+#include "interface.h"
+#include "interfaceSideInfo.h"
+#endif /* HAS_INTERFACE */
 #include "messager.h"
 #include "types.h"
 #include "zone.h"
@@ -219,6 +223,87 @@ void mesh::read(const YAML::Node& inputNode)
         errorMsg("simulation block is not provided in the yaml input file");
     }
 
+#ifdef HAS_INTERFACE
+    // Read and register interfaces
+    if (inputNode["simulation"])
+    {
+        if (inputNode["simulation"]["physical_analysis"])
+        {
+            if (inputNode["simulation"]["physical_analysis"]["interfaces"])
+            {
+                const auto& interfacesBlock =
+                    inputNode["simulation"]["physical_analysis"]["interfaces"];
+
+                if (messager::master())
+                {
+                    std::cout << "Registering interfaces" << std::endl;
+                }
+
+                const label nInterfaces =
+                    static_cast<label>(interfacesBlock.size());
+
+                // Initialize interface manager and process interfaces
+                if (nInterfaces > 0)
+                {
+                    // set flag
+                    hasInterfaces_ = true;
+
+                    // Read information for interfaces and instantiate
+                    for (label iInterface = 0; iInterface < nInterfaces;
+                         iInterface++)
+                    {
+                        // instantiate the interface
+                        std::unique_ptr<interface> interface_ptr =
+                            std::make_unique<interface>(
+                                this,
+                                iInterface,
+                                interfacesBlock[iInterface]["name"]
+                                    .template as<std::string>());
+
+                        // read the details of the interface from the yaml node
+                        interface_ptr->read(interfacesBlock[iInterface]);
+
+                        // add to global vector
+                        interfaceVector_.push_back(std::move(interface_ptr));
+                    }
+                }
+
+                if (messager::master())
+                {
+                    std::cout << "Finished registering interfaces" << std::endl;
+                }
+            }
+        }
+        else
+        {
+            errorMsg("simulation->physical_analysis block is not provided in "
+                     "the yaml input file");
+        }
+    }
+    else
+    {
+        errorMsg("simulation block is not provided in the yaml input file");
+    }
+#else
+    if (inputNode["simulation"])
+    {
+        if (inputNode["simulation"]["physical_analysis"])
+        {
+            if (inputNode["simulation"]["physical_analysis"]["interfaces"])
+            {
+                const auto& interfacesBlock =
+                    inputNode["simulation"]["physical_analysis"]["interfaces"];
+
+                if (interfacesBlock.size() > 0)
+                {
+                    errorMsg("interfaces are not supported (HAS_INTERFACE is "
+                             "not enabled)");
+                }
+            }
+        }
+    }
+#endif /* HAS_INTERFACE */
+
     // Collect interior parts: this includes all interior parts found in the
     // mesh database. The code currently assumes that the node-graph used in
     // assembly is based on all the mesh parts. Another use of this variable
@@ -235,6 +320,88 @@ void mesh::read(const YAML::Node& inputNode)
     {
         if (inputNode["simulation"]["physical_analysis"])
         {
+#ifdef HAS_INTERFACE
+            // collect boundary mesh parts from interfaces if any
+            if (inputNode["simulation"]["physical_analysis"]["interfaces"])
+            {
+                const auto& interfacesBlock =
+                    inputNode["simulation"]["physical_analysis"]["interfaces"];
+
+                for (const auto& interfaceBlock : interfacesBlock)
+                {
+                    // side 1
+                    for (std::string side1PartName :
+                         interfaceBlock["side1"]["region_list"]
+                             .template as<std::vector<std::string>>())
+                    {
+                        const stk::mesh::Part* side1Part =
+                            metaDataRef().get_part(side1PartName);
+
+                        // check validity
+                        if (side1Part->primary_entity_rank() !=
+                                metaDataRef().side_rank() ||
+                            side1Part->topology() !=
+                                stk::topology::INVALID_TOPOLOGY)
+                        {
+                            errorMsg("invalid side1 part " + side1PartName);
+                        }
+
+                        // only add if not stored yet
+                        const auto it = std::find(boundaryActiveParts_.begin(),
+                                                  boundaryActiveParts_.end(),
+                                                  side1Part);
+                        if (it == boundaryActiveParts_.end())
+                        {
+                            boundaryActiveParts_.push_back(side1Part);
+
+                            // add wall parts
+                            if (interfaceBlock["type"]
+                                    .template as<std::string>() ==
+                                "fluid_solid")
+                            {
+                                wallBoundaryActiveParts_.push_back(side1Part);
+                            }
+                        }
+                    }
+
+                    // side 2
+                    for (std::string side2PartName :
+                         interfaceBlock["side2"]["region_list"]
+                             .template as<std::vector<std::string>>())
+                    {
+                        const stk::mesh::Part* side2Part =
+                            metaDataRef().get_part(side2PartName);
+
+                        // check validity
+                        if (side2Part->primary_entity_rank() !=
+                                metaDataRef().side_rank() ||
+                            side2Part->topology() !=
+                                stk::topology::INVALID_TOPOLOGY)
+                        {
+                            errorMsg("invalid side2 part " + side2PartName);
+                        }
+
+                        // only add if not stored yet
+                        const auto it = std::find(boundaryActiveParts_.begin(),
+                                                  boundaryActiveParts_.end(),
+                                                  side2Part);
+                        if (it == boundaryActiveParts_.end())
+                        {
+                            boundaryActiveParts_.push_back(side2Part);
+
+                            // add wall parts
+                            if (interfaceBlock["type"]
+                                    .template as<std::string>() ==
+                                "fluid_solid")
+                            {
+                                wallBoundaryActiveParts_.push_back(side2Part);
+                            }
+                        }
+                    }
+                }
+            }
+#endif /* HAS_INTERFACE */
+
             // collect interior mesh parts from domains and the relevant
             // boundary mesh parts
             if (inputNode["simulation"]["physical_analysis"]["domains"])
@@ -811,6 +978,122 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
                 }
             }
         }
+
+#ifdef HAS_INTERFACE
+        // Check interfaces
+        if (inputNode["simulation"]["physical_analysis"]["interfaces"])
+        {
+            const auto& interfacesBlock =
+                inputNode["simulation"]["physical_analysis"]["interfaces"];
+
+            for (const auto& interfaceBlock : interfacesBlock)
+            {
+                const std::string interfaceName =
+                    interfaceBlock["name"].template as<std::string>();
+
+                // Helper to validate interface side
+                auto validateInterfaceSide =
+                    [&](const std::string& sideName,
+                        const YAML::Node& sideNode) -> void
+                {
+                    const std::string domainName =
+                        sideNode["domain"].template as<std::string>();
+
+                    // Find the domain in domainsBlock
+                    std::vector<std::string> domainLocations;
+                    bool domainFound = false;
+
+                    for (const auto& domainBlock : domainsBlock)
+                    {
+                        if (domainBlock["name"].template as<std::string>() ==
+                            domainName)
+                        {
+                            domainLocations =
+                                domainBlock["location"]
+                                    .template as<std::vector<std::string>>();
+                            domainFound = true;
+                            break;
+                        }
+                    }
+
+                    if (!domainFound)
+                    {
+                        errorMsg("Interface '" + interfaceName + "', " +
+                                 sideName + ": domain '" + domainName +
+                                 "' not found in domains list");
+                    }
+
+                    // Check each region in region_list
+                    for (const std::string& regionName :
+                         sideNode["region_list"]
+                             .template as<std::vector<std::string>>())
+                    {
+                        // Check if region exists in Exodus file
+                        if (!partExistsInExodus(regionName))
+                        {
+                            errorMsg("Interface '" + interfaceName + "', " +
+                                     sideName + ": region '" + regionName +
+                                     "' does not exist in the Exodus file");
+                        }
+
+                        // Check if region is attached to at least one
+                        // domain location
+                        bool isAttached = false;
+                        for (const std::string& domainLocation :
+                             domainLocations)
+                        {
+                            if (isSidesetAttachedToElementBlock(regionName,
+                                                                domainLocation))
+                            {
+                                isAttached = true;
+                                break;
+                            }
+                        }
+
+                        if (!isAttached)
+                        {
+                            std::string errorMessage =
+                                "Interface '" + interfaceName + "', " +
+                                sideName + ": region '" + regionName +
+                                "' is not attached to any location of domain "
+                                "'" +
+                                domainName + "'";
+
+                            // Get all sidesets touching the domain element
+                            // blocks
+                            auto availableSidesets =
+                                getSidesetsForElementBlocks(domainLocations);
+                            if (!availableSidesets.empty())
+                            {
+                                errorMessage +=
+                                    "\nAvailable sidesets touching domain '" +
+                                    domainName + "' element blocks:";
+                                for (const auto& sidesetName :
+                                     availableSidesets)
+                                {
+                                    errorMessage += "\n  - " + sidesetName;
+                                }
+                            }
+
+                            errorMsg(errorMessage);
+                        }
+                    }
+                };
+
+                // Validate side1
+                if (interfaceBlock["side1"])
+                {
+                    validateInterfaceSide("side1", interfaceBlock["side1"]);
+                }
+
+                // Validate side2
+                if (interfaceBlock["side2"])
+                {
+                    validateInterfaceSide("side2", interfaceBlock["side2"]);
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
     }
 
     std::cout << "Finished validating YAML input" << std::endl;

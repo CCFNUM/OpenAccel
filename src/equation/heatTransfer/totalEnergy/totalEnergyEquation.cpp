@@ -95,7 +95,7 @@ void totalEnergyEquation::setup()
     });
 
     // setup linear solver
-    // FIXME: [2024-03-13] Consider passing mesh argument or
+    // FIXME: Consider passing mesh argument or
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
@@ -229,6 +229,11 @@ void totalEnergyEquation::solve()
     TRef().updateScale();
     cpRef().updateScale();
     lambdaRef().updateScale();
+
+#ifdef HAS_INTERFACE
+    // 4) Post-processed quantities
+    FOREACH_DOMAIN(updateInterfaceHeatImbalance_);
+#endif /* HAS_INTERFACE */
 }
 
 void totalEnergyEquation::postSolve()

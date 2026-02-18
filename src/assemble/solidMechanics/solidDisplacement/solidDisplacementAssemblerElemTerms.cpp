@@ -95,9 +95,8 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
             elementBucket.size();
 
         // Extract master element
-        MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(
-                elementBucket.topology());
+        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
+            elementBucket.topology());
 
         const label nodesPerElement = meSCS->nodesPerElement_;
         const label numScsIp = meSCS->numIntPoints_;

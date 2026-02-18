@@ -59,7 +59,7 @@ void volumeFractionEquation::setup()
     assembler_->setup(&model_->alphaRef(phaseIndex_), advection, domainVector_);
 
     // setup linear solver
-    // FIXME: [2024-03-13] Consider passing mesh argument or
+    // FIXME: Consider passing mesh argument or
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker

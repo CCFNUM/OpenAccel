@@ -357,6 +357,16 @@ void nodeSideField<T, N>::interpolate(const sideField<T, N>& sf,
     errorMsg("Must not reach here");
 }
 
+#ifdef HAS_INTERFACE
+template <class T, size_t N>
+void nodeSideField<T, N>::interpolate(const sideField<T, N>& sf,
+                                      label iInterface,
+                                      bool master)
+{
+    errorMsg("Must not reach here");
+}
+#endif /* HAS_INTERFACE */
+
 template <class T, size_t N>
 nodeSideField<T, N>& nodeSideField<T, N>::prevTimeRef()
 {

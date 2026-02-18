@@ -4,7 +4,8 @@
 // Description: Assembler for the turbulent kinetic energy in transition SST
 // model
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TURBULENTKINETICENERGYTRANSITIONSSTASSEMBLER_H
 #define TURBULENTKINETICENERGYTRANSITIONSSTASSEMBLER_H

@@ -4,7 +4,8 @@
 // Description: Templated base class for element fields with side fields and
 // time history
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef ELEMENTFIELD_H
 #define ELEMENTFIELD_H
@@ -13,6 +14,9 @@
 #include "boundary.h"
 #include "field.h"
 #include "master_element/MasterElement.h"
+#ifdef HAS_INTERFACE
+#include "interface.h"
+#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
 #include "sideField.h"
@@ -78,6 +82,12 @@ public:
 
     virtual void registerSideField(label iZone, label iBoundary);
 
+#ifdef HAS_INTERFACE
+    void registerSideFieldsForInterfaceSide(label iInterface,
+                                            bool master,
+                                            bool onlyIfNonoverlap = false);
+#endif /* HAS_INTERFACE */
+
     elementField& operator=(const elementField& fld);
 
     // Initialize
@@ -88,6 +98,11 @@ public:
 
     virtual void initializeSideField(label iZone);
 
+#ifdef HAS_INTERFACE
+    virtual void
+    initializeInterfaceSideField(const interfaceSideInfo* interfaceSideInfoPtr);
+#endif /* HAS_INTERFACE */
+
     virtual void initializeBoundarySideField(label iZone, label iBoundary);
 
     // Update
@@ -97,6 +112,10 @@ public:
     virtual void updateField(label iZone);
 
     virtual void updateSideFields(label iZone);
+
+#ifdef HAS_INTERFACE
+    virtual void updateInterfaceSideField(label iInterface, bool master);
+#endif /* HAS_INTERFACE */
 
     virtual void updateBoundarySideField(label iZone, label iBoundary);
 

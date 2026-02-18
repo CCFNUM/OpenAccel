@@ -335,13 +335,12 @@ void pressureCorrectionAssembler::assembleElemTermsBoundarySymmetry_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
 
@@ -674,13 +673,12 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryWallNoSlip_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1032,13 +1030,12 @@ void pressureCorrectionAssembler::
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
 
@@ -1440,13 +1437,12 @@ void pressureCorrectionAssembler::
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label numScsBip = meFC->numIntPoints_;
 
         // resize some things; matrix related
@@ -1637,13 +1633,12 @@ void pressureCorrectionAssembler::
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
 
@@ -2036,13 +2031,12 @@ void pressureCorrectionAssembler::
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
         const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
@@ -2630,13 +2624,12 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOutletOutflow_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
 
@@ -3149,13 +3142,12 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
         const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
@@ -3674,13 +3666,12 @@ void pressureCorrectionAssembler::
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
         const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
@@ -4196,13 +4187,12 @@ void pressureCorrectionAssembler::
 
         // volume master element
         MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(theElemTopo);
+            MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label numScsBip = meFC->numIntPoints_;
 
         // resize some things; matrix related

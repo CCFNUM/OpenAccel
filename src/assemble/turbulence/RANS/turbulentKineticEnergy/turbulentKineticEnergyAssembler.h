@@ -4,7 +4,8 @@
 // Description: Abstract base assembler for the turbulent kinetic energy
 // equation
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TURBULENTKINETICENERGYASSEMBLER_H
 #define TURBULENTKINETICENERGYASSEMBLER_H

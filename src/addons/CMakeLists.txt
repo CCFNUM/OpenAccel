@@ -12,6 +12,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/meshMotion/deformation/deformation.cpp
     ${DIR}/meshMotion/deformation/displacementDiffusion/displacementDiffusionAssembler.cpp
     ${DIR}/meshMotion/deformation/displacementDiffusion/displacementDiffusionAssemblerElemBoundaryConditions.cpp
+    ${DIR}/meshMotion/deformation/displacementDiffusion/displacementDiffusionAssemblerElemInterfaceConditions.cpp
     ${DIR}/meshMotion/deformation/displacementDiffusion/displacementDiffusionEquation.cpp
     ${DIR}/meshMotion/deformation/displacementDiffusion/displacementDiffusionModel.cpp
     ${DIR}/meshMotion/meshMotion.cpp
@@ -22,6 +23,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionModel.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionEquation.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionAssemblerElemBoundaryConditions.cpp
+    ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionAssemblerElemInterfaceConditions.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionAssemblerElemTerms.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionAssemblerNodeTerms.cpp
 )

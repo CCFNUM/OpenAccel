@@ -48,8 +48,7 @@ void sideField<T, N>::putFieldOnPart(const stk::mesh::Part& part)
     {
         // Determine number of integration points in the face
         MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                subPart->topology());
+            MasterElementRepo::get_surface_master_element(subPart->topology());
         const label numScsBip = meFC->numIntPoints_;
 
         // initial value
@@ -120,9 +119,8 @@ void sideField<T, N>::setToValue_(const T* val)
         const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
 
         // extract master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
 
         // extract master element specifics
         const label numScsBip = meFC->numIntPoints_;
@@ -160,9 +158,8 @@ void sideField<T, N>::setToValue_(const T* val, const stk::mesh::Part& part)
         const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
 
         // extract master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
 
         // extract master element specifics
         const label numScsBip = meFC->numIntPoints_;
@@ -201,9 +198,8 @@ void sideField<T, N>::setToValue_(const T* val,
         const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
 
         // extract master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
 
         // extract master element specifics
         const label numScsBip = meFC->numIntPoints_;
@@ -392,6 +388,23 @@ void sideField<T, N>::interpolate(const nodeSideField<T, N>& nsf,
     errorMsg("Must not reach here");
 }
 
+#ifdef HAS_INTERFACE
+template <class T, size_t N>
+void sideField<T, N>::interpolate(const nodeSideField<T, N>& nsf,
+                                  label iInterface,
+                                  bool master,
+                                  bool shifted)
+{
+    errorMsg("Must not reach here");
+}
+
+template <class T, size_t N>
+void sideField<T, N>::transfer(label iInterface, bool reverse, bool shifted)
+{
+    errorMsg("Must not reach here");
+}
+#endif /* HAS_INTERFACE */
+
 template <class T, size_t N>
 sideField<T, N>& sideField<T, N>::prevTimeRef()
 {
@@ -442,7 +455,7 @@ std::ostream& operator<<(std::ostream& os, const sideField<T, N>& field)
 
                 // extract master element
                 MasterElement* meFC =
-                    accel::MasterElementRepo::get_surface_master_element(
+                    MasterElementRepo::get_surface_master_element(
                         sideBucket.topology());
 
                 // extract master element specifics

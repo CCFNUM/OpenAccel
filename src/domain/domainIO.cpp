@@ -42,9 +42,9 @@ void domain::read_()
                  this->name());
     }
 
-    // NOTE: [2024-06-10] Safety check: currently
-    // `domainType::undefined` is not a valid state. Should that be relaxed
-    // some time in the future, remove this sanity check.
+    // NOTE: Safety check: currently domainType::undefined` is not a valid
+    // state. Should that be relaxed some time in the future, remove this sanity
+    // check.
     if (type_ == domainType::undefined)
     {
         errorMsg("domain: undefined type for domain index" + this->name());

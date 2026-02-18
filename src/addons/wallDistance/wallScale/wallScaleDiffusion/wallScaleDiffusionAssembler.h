@@ -4,7 +4,8 @@
 // Description: Assembles node and element terms for wall scale diffusion
 // equation
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef WALLSCALEDIFFUSIONASSEMBLER_H
 #define WALLSCALEDIFFUSIONASSEMBLER_H
@@ -44,6 +45,19 @@ protected:
                                                     Context* ctx) override;
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
+
+#ifdef HAS_INTERFACE
+    void assembleElemTermsInterfaces_(const domain* domain,
+                                      Context* ctx) override;
+    void assembleElemTermsInterfaceSide_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx) override;
+    void assembleElemTermsInterfaceSideNoSlipWall_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx);
+#endif /* HAS_INTERFACE */
 
     // Boundary conditions
     void assembleElemTermsBoundary_(const domain* domain,

@@ -4,7 +4,8 @@
 // Description: Solid mechanics model for displacement, stress, and strain
 // computations
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef SOLIDMECHANICSMODEL_H
 #define SOLIDMECHANICSMODEL_H
@@ -25,6 +26,12 @@ private:
     void updateDisplacementBoundarySideFieldTraction_(
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
+
+#ifdef HAS_INTERFACE
+    void updateDisplacementInterfaceSideFieldTraction_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr);
+#endif /* HAS_INTERFACE */
 
 public:
     solidMechanicsModel(realm* realm);

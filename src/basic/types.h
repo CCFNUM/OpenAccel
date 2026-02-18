@@ -4,7 +4,8 @@
 // Description: Fundamental type aliases, enumerations, and constants for the
 // solver
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TYPES_H
 #define TYPES_H
@@ -543,6 +544,30 @@ enum class initialConditionOption
 };
 
 initialConditionOption convertInitialConditionOptionFromString(std::string s);
+
+#ifdef HAS_INTERFACE
+// Interface model option
+enum class interfaceModelOption
+{
+    translationalPeriodicity,
+    rotationalPeriodicity,
+    generalConnection
+};
+
+interfaceModelOption convertInterfaceModelOptionFromString(std::string s);
+
+// Interface type
+enum class interfaceType
+{
+    fluid_fluid,
+    solid_solid,
+    fluid_solid,
+};
+
+interfaceType convertInterfaceTypeFromString(std::string s);
+
+std::string toString(interfaceType type);
+#endif /* HAS_INTERFACE */
 
 // Wall-function type
 enum class wallFunctionType

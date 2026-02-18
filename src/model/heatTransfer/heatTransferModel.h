@@ -23,6 +23,10 @@ protected:
 
     void updateHeatImbalance_(const std::shared_ptr<domain> domain);
 
+#ifdef HAS_INTERFACE
+    void updateInterfaceHeatImbalance_(const std::shared_ptr<domain> domain);
+#endif /* HAS_INTERFACE */
+
 public:
     heatTransferModel(realm* realm);
 
@@ -43,7 +47,7 @@ public:
     using fieldBroker::TRef;
     using fieldBroker::TWallCoeffsRef;
 
-    // TODO: [2024-05-31] Implement utility methods for use in
+    // TODO: Implement utility methods for use in
     // equations that inherit from this model, e.g., computation of enthalpy
     // from temperature, post processing routines, etc.
 

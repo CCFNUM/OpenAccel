@@ -4,7 +4,8 @@
 // Description: MPI communication wrapper for reductions, broadcasts, and
 // gathers
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef MESSAGER_H
 #define MESSAGER_H

@@ -237,9 +237,8 @@ void kEpsilonModel::updateTurbulentProduction(
                 MasterElementRepo::get_surface_master_element(theElemTopo);
 
             // face master element
-            MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
-                    sideBucket.topology());
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
             const label nodesPerSide = meFC->nodesPerElement_;
             const label numScsBip = meFC->numIntPoints_;
 
@@ -527,9 +526,8 @@ void kEpsilonModel::clipMinDistToWall(const std::shared_ptr<domain> domain)
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
 
         // mapping from ip to nodes for this
         // ordinal; face perspective (use with

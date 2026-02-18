@@ -81,7 +81,7 @@ void solidDisplacementEquation::setup()
     assembler_->setup(&DRef(), diffusion, domainVector_, 0.0);
 
     // setup linear solver
-    // FIXME: [2024-03-13] Consider passing mesh argument or
+    // FIXME: Consider passing mesh argument or
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
@@ -304,6 +304,17 @@ void solidDisplacementEquation::applyDependencyUpdates_(
     // displacement from solid side to fluid side
     if (domain->zonePtr()->meshDeforming())
     {
+#ifdef HAS_INTERFACE
+        for (const interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType())
+            {
+                DRef().transfer(interf->index(),
+                                dataTransferType::copy,
+                                !interf->isMasterZone(domain->index()));
+            }
+        }
+#endif /* HAS_INTERFACE */
     }
 }
 

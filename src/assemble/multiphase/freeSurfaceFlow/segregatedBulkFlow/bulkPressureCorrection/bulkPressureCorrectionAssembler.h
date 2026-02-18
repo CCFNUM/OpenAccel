@@ -18,11 +18,10 @@ namespace accel
 class freeSurfaceFlowModel;
 class domain;
 
-// TODO: [2024-03-13] Some specializations for
-// momentumAssembler based on phiAssembler result in some degree of code
-// duplication in this class. If possible, phiAssembler should be generic
-// enough to handle momentum assembly without the need for implementing a new
-// class.
+// TODO: Some specializations for momentumAssembler based on phiAssembler result
+// in some degree of code duplication in this class. If possible, phiAssembler
+// should be generic enough to handle momentum assembly without the need for
+// implementing a new class.
 class bulkPressureCorrectionAssembler : public phiAssembler<1>
 {
 public:
@@ -70,6 +69,20 @@ private:
                                                     Context* ctx) override;
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
+
+#ifdef HAS_INTERFACE
+    void assembleElemTermsInterfaces_(const domain* domain,
+                                      Context* ctx) override;
+    void assembleElemTermsInterfaceSide_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx) override;
+    void assembleElemTermsInterfaceSideNoSlipWall_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx);
+#endif /* HAS_INTERFACE */
+
     void assembleElemTermsBoundary_(const domain* domain,
                                     Context* ctx) override;
 

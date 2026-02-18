@@ -4,7 +4,8 @@
 // Description: Base thermodynamic model for density, enthalpy, and temperature
 // properties
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef THERMOMODEL_H
 #define THERMOMODEL_H

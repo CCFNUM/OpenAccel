@@ -4,7 +4,8 @@
 // Description: Assembler for the turbulent kinetic energy equation in k-epsilon
 // model
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TURBULENTKINETICENERGYKEPSILONASSEMBLER_H
 #define TURBULENTKINETICENERGYKEPSILONASSEMBLER_H

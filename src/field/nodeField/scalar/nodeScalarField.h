@@ -4,7 +4,8 @@
 // Description: Base class for scalar-valued node fields with gradient
 // correction
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef NODESCALARFIELD_H
 #define NODESCALARFIELD_H

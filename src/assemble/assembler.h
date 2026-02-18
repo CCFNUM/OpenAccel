@@ -297,16 +297,15 @@ protected:
     virtual void assemble_(const domain*, Context*) = 0;
 
     // helper methods
-    void
-    applyCoeff_(Matrix& A,
-                Vector& b,
-                const std::vector<stk::mesh::Entity>& sym_meshobj,
-                std::vector<label>& scratchIds,
-                std::vector<scalar>& /* scratchVals */, // FIXME: [2024-02-29]
-                                                        // Unused parameter
-                const std::vector<scalar>& rhs,
-                const std::vector<scalar>& lhs,
-                bool deductUnfound = true);
+    void applyCoeff_(
+        Matrix& A,
+        Vector& b,
+        const std::vector<stk::mesh::Entity>& sym_meshobj,
+        std::vector<label>& scratchIds,
+        std::vector<scalar>& /* scratchVals */, // FIXME: Unused parameter
+        const std::vector<scalar>& rhs,
+        const std::vector<scalar>& lhs,
+        bool deductUnfound = true);
 };
 
 template <size_t N>
@@ -315,8 +314,7 @@ void assembler<N>::applyCoeff_(
     Vector& b,
     const std::vector<stk::mesh::Entity>& connectedNodes,
     std::vector<label>& scratchIds,
-    std::vector<scalar>& /* scratchVals */, // FIXME: [2024-02-29] Unused
-                                            // parameter
+    std::vector<scalar>& /* scratchVals */, // FIXME: Unused parameter
     const std::vector<scalar>& rhs,
     const std::vector<scalar>& lhs,
     bool deductUnfound)

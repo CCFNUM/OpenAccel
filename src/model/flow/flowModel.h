@@ -108,6 +108,12 @@ protected:
     virtual void initializeMassFlowRateInterior_(
         const std::shared_ptr<domain> domain) override;
 
+#ifdef HAS_INTERFACE
+    virtual void initializeMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr) override;
+#endif /* HAS_INTERFACE */
+
     virtual void
     initializeMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
                                          const boundary* boundary) override;
@@ -116,6 +122,14 @@ protected:
     initializeMassFlowRateInterior_(const std::shared_ptr<domain> domain,
                                     elementField<scalar, 1>& mDotField,
                                     const nodeField<1, SPATIAL_DIM>& rhoField);
+
+#ifdef HAS_INTERFACE
+    virtual void initializeMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        sideField<scalar, 1>& mDotSideField,
+        const nodeField<1, SPATIAL_DIM>& rhoField);
+#endif /* HAS_INTERFACE */
 
     virtual void initializeMassFlowRateBoundaryField_(
         const std::shared_ptr<domain> domain,
@@ -128,6 +142,12 @@ protected:
     virtual void
     updateMassFlowRateInterior_(const std::shared_ptr<domain> domain) override;
 
+#ifdef HAS_INTERFACE
+    virtual void updateMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr) override;
+#endif /* HAS_INTERFACE */
+
     virtual void
     updateMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
                                      const boundary* boundary) override;
@@ -136,6 +156,14 @@ protected:
     updateMassFlowRateInterior_(const std::shared_ptr<domain> domain,
                                 elementField<scalar, 1>& mDotField,
                                 const nodeField<1, SPATIAL_DIM>& rhoField);
+
+#ifdef HAS_INTERFACE
+    virtual void updateMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        sideField<scalar, 1>& mDotSideField,
+        const nodeField<1, SPATIAL_DIM>& rhoField);
+#endif /* HAS_INTERFACE */
 
     virtual void
     updateMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,

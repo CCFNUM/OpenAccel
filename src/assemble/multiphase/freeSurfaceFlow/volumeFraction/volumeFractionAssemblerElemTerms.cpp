@@ -24,8 +24,8 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         domain->multiphase_.freeSurfaceModel_.fluxCorrectedTransport_ ? 0.0
                                                                       : 1.0;
 
-    // TODO: [2024-02-29] Account for BLOCKSIZE in
-    // space for LHS/RHS; nodesPerElem*nodesPerElem* and nodesPerElem
+    // TODO: Account for BLOCKSIZE in space for LHS/RHS;
+    // nodesPerElem*nodesPerElem* and nodesPerElem
     std::vector<scalar> lhs;
     std::vector<scalar> rhs;
     std::vector<label> scratchIds;
@@ -96,12 +96,10 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
             elementBucket.size();
 
         // extract master elements
-        MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(
-                elementBucket.topology());
-        MasterElement* meSCV =
-            accel::MasterElementRepo::get_volume_master_element(
-                elementBucket.topology());
+        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
+            elementBucket.topology());
+        MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
+            elementBucket.topology());
 
         // extract master element specifics
         const label nodesPerElement = meSCS->nodesPerElement_;

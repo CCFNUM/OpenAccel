@@ -4,7 +4,8 @@
 // Description: Simulation controls for time stepping, solver settings, and
 // output
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef CONTROLS_H
 #define CONTROLS_H
@@ -169,6 +170,16 @@ struct solverDictionary
                 scalar relativePressureLevel_ = 0.0;
             };
 
+#ifdef HAS_INTERFACE
+            struct interfaceTransferDictionary
+            {
+                scalar searchTolerance_ = 1e-4;
+                scalar searchExpansionFactor_ = 1.5;
+                bool forceResearch_ = false;
+                label verbose_ = 0;
+            };
+#endif /* HAS_INTERFACE */
+
             struct equationControlsDictionary
             {
                 struct subIterationsDictionary
@@ -212,6 +223,9 @@ struct solverDictionary
             };
 
             pressureLevelInformationDictionary pressureLevelInformation_;
+#ifdef HAS_INTERFACE
+            interfaceTransferDictionary interfaceTransfer_;
+#endif /* HAS_INTERFACE */
             equationControlsDictionary equationControls_;
         };
 

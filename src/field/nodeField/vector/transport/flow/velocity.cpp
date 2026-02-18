@@ -4852,7 +4852,7 @@ void velocity::updateBoundarySideDirectionFields(label iZone, label iBoundary)
         for (const stk::mesh::Bucket* bucket : sideBuckets)
         {
             const MasterElement* meFC =
-                accel::MasterElementRepo::get_surface_master_element(
+                MasterElementRepo::get_surface_master_element(
                     bucket->topology());
             const label numScsBip = meFC->numIntPoints_;
             for (const stk::mesh::Entity face : *bucket)
@@ -5461,6 +5461,78 @@ void velocity::updateBoundarySideDirectionFields(label iZone, label iBoundary)
         errorMsg("Must not reach here");
     }
 }
+
+#ifdef HAS_INTERFACE
+void velocity::updateInterfaceSideField(label iInterface, bool master)
+{
+    const auto& mesh = this->meshRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    auto& interf = mesh.interfaceRef(iInterface);
+
+    const interfaceSideInfo* interfaceSideInfoPtr =
+        master ? interf.masterInfoPtr() : interf.slaveInfoPtr();
+
+    if (interf.isFluidSolidType() &&
+        interfaceSideInfoPtr->zonePtr()->meshDeforming())
+    {
+        // Get mesh velocity field
+        const auto& UmSTKFieldRef =
+            this->simulationRef().meshMotionRef().UmRef().stkFieldRef();
+
+        // select all nodes relevant to the node side field
+        stk::mesh::Selector selAllNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(interfaceSideInfoPtr->currentPartVec_);
+
+        // get fields
+        auto& stkFieldRef = this->stkFieldRef();
+        auto& nodeSideSTKFieldRef = this->nodeSideFieldRef().stkFieldRef();
+
+        stk::mesh::BucketVector const& sideNodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+        for (stk::mesh::BucketVector::const_iterator ib =
+                 sideNodeBuckets.begin();
+             ib != sideNodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& sideNodeBucket = **ib;
+            const stk::mesh::Bucket::size_type nSideNodesPerBucket =
+                sideNodeBucket.size();
+            scalar* snvalue =
+                stk::mesh::field_data(nodeSideSTKFieldRef, sideNodeBucket);
+            scalar* value = stk::mesh::field_data(stkFieldRef, sideNodeBucket);
+            for (stk::mesh::Bucket::size_type iSideNode = 0;
+                 iSideNode < nSideNodesPerBucket;
+                 ++iSideNode)
+            {
+                const scalar* Um = stk::mesh::field_data(
+                    UmSTKFieldRef, sideNodeBucket, iSideNode);
+
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    snvalue[SPATIAL_DIM * iSideNode + i] = Um[i];
+                }
+
+                // override internal node values
+                if (correctedBoundaryNodeValues_)
+                {
+                    for (label i = 0; i < SPATIAL_DIM; i++)
+                    {
+                        value[SPATIAL_DIM * iSideNode + i] =
+                            snvalue[SPATIAL_DIM * iSideNode + i];
+                    }
+                }
+            }
+        }
+
+        // Update side field on the current boundary
+        this->sideFieldRef().interpolate(
+            this->nodeSideFieldRef(), iInterface, master, this->isShifted());
+    }
+}
+#endif /* HAS_INTERFACE */
 
 void velocity::registerSideFlowDirectionFields(label iZone, label iBoundary)
 {

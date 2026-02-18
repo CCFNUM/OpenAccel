@@ -1,13 +1,17 @@
+// File : realm.h
+// Created :
+// Author :
+// Description:
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
+
 #ifndef REALM_H
 #define REALM_H
 
 #include "types.h"
 
 // fields
-// issue: https://gitlab.cc-fnum.ch/cfd-code/cv-fem/accel-stk/-/issues/1
-// resolving this issue would allow to just include something like this:
-// #include "scalarNodeField.h"
-// #include "vectorNodeField.h"
 #include "compressibility.h"
 #include "density.h"
 #include "displacement.h"

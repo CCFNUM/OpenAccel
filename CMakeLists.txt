@@ -133,6 +133,15 @@ if(HYPRE_FOUND)
     message("-- Found HYPRE = ${HYPRE_DIR}")
 endif()
 
+# Interface support (enabled by default)
+option(HAS_INTERFACE "Enable interface support" ON)
+if(HAS_INTERFACE)
+    add_compile_definitions(HAS_INTERFACE)
+    message("-- Interface support: ENABLED")
+else()
+    message("-- Interface support: DISABLED")
+endif()
+
 # Solid mechanics assembler
 option(USE_CVFEM_SOLID_MECHANICS "Use CVFEM for solid mechanics" ON)
 if(USE_CVFEM_SOLID_MECHANICS)

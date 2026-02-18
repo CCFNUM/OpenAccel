@@ -4,7 +4,8 @@
 // Description: Common field operations, IO helpers, and STK mesh utility
 // functions
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef MACROS_H
 #define MACROS_H

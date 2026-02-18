@@ -4,7 +4,8 @@
 // Description: Node scalar property field for Poisson's ratio in solid
 // mechanics
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef POISSONRATIO_H
 #define POISSONRATIO_H

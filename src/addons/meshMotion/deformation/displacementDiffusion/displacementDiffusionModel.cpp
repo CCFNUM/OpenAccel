@@ -45,6 +45,15 @@ void displacementDiffusionModel::updateDisplacement(
 void displacementDiffusionModel::updateDisplacementSideFields_(
     const std::shared_ptr<domain> domain)
 {
+#ifdef HAS_INTERFACE
+    // Interface
+    for (const interface* interf : domain->interfacesRef())
+    {
+        updateDisplacementInterfaceSideFieldDeformation_(
+            domain, interf->interfaceSideInfoPtr(domain->index()));
+    }
+#endif /* HAS_INTERFACE */
+
     // Boundary
     for (label iBoundary = 0;
          iBoundary < this->meshRef().zonePtr(domain->index())->nBoundaries();
@@ -615,6 +624,56 @@ void displacementDiffusionModel::
                                             this->DRef().isShifted());
 }
 
+#ifdef HAS_INTERFACE
+void displacementDiffusionModel::
+    updateDisplacementInterfaceSideFieldDeformation_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr)
+{
+    if (!interfaceSideInfoPtr->interfPtr()->isFluidSolidType())
+        return;
+
+    label relativeDisp = domain->zonePtr()
+                             ->deformationRef()
+                             .displacementRelativeToPreviousMesh();
+
+    // Get fields
+    auto& DSTKFieldRef = this->DRef().stkFieldRef();
+    const auto& DtSTKFieldRefOld = this->DtRef().prevTimeRef().stkFieldRef();
+
+    // select all nodes relevant to
+    // the node side field
+    stk::mesh::Selector selAllSideNodes =
+        this->meshRef().metaDataRef().universal_part() &
+        stk::mesh::selectUnion(interfaceSideInfoPtr->currentPartVec_);
+    stk::mesh::BucketVector const& sideNodeBuckets =
+        this->meshRef().bulkDataRef().get_buckets(stk::topology::NODE_RANK,
+                                                  selAllSideNodes);
+    for (stk::mesh::BucketVector::const_iterator ib = sideNodeBuckets.begin();
+         ib != sideNodeBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& sideNodeBucket = **ib;
+        const stk::mesh::Bucket::size_type nSideNodesPerBucket =
+            sideNodeBucket.size();
+        scalar* Db = stk::mesh::field_data(DSTKFieldRef, sideNodeBucket);
+        const scalar* DtbOld =
+            stk::mesh::field_data(DtSTKFieldRefOld, sideNodeBucket);
+
+        for (stk::mesh::Bucket::size_type iSideNode = 0;
+             iSideNode < nSideNodesPerBucket;
+             ++iSideNode)
+        {
+            for (label i = 0; i < SPATIAL_DIM; i++)
+            {
+                Db[SPATIAL_DIM * iSideNode + i] -=
+                    relativeDisp * DtbOld[SPATIAL_DIM * iSideNode + i];
+            }
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
+
 void displacementDiffusionModel::calculateSurfaceForceAndMoment_(
     const boundary* boundary,
     const utils::vector& center,
@@ -686,9 +745,8 @@ void displacementDiffusionModel::calculateSurfaceForceAndMoment_(
         stk::mesh::Bucket& sideBucket = **ib;
 
         // face master element
-        MasterElement* meFC =
-            accel::MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
         const label nodesPerFace = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 

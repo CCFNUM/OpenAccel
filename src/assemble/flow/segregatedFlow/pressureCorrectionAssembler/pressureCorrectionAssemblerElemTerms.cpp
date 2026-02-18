@@ -158,9 +158,8 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
             elementBucket.size();
 
         // extract master elements
-        MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(
-                elementBucket.topology());
+        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
+            elementBucket.topology());
         MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
             elementBucket.topology());
 
@@ -498,7 +497,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                 // Advection: compressibility
                 // Newton-Raphson linearization: ρ*U = ρ(old)*U(new) +
                 // ρ(new)*U(old) - ρ(old)*U(old)
-                // where ρ(new) = ψ p(new) and ψ = ∂ρ/∂p
+                //   where ρ(new) = ψ p(new) and ψ = ∂ρ/∂p
                 // LHS coefficient = mDot / ρ_ip * ψ_upwind
                 //================================
 
@@ -522,11 +521,11 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
 
                 // assemble mDot
                 // mDot = ρ*U·S - ρ*D*(∇p - Gp)·S + ρ*D*(F_orig - F)·S
-                // ╰───╯ ╰──────────────╯ ╰─────────────────╯
-                // divergence pressure RC body force stab
+                //        ╰───╯   ╰──────────────╯   ╰─────────────────╯
+                //        divergence  pressure RC      body force stab
                 // Note: F_orig (original) plays the role of "face" value,
-                // F (redistributed) plays the role of Gp
-                // (cell-consistent)
+                //       F (redistributed) plays the role of Gp
+                //       (cell-consistent)
                 scalar mDot = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {

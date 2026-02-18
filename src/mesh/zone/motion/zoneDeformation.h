@@ -4,7 +4,8 @@
 // Description: Mesh deformation specification and displacement diffusion
 // parameters
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef ZONEDEFORMATION_H
 #define ZONEDEFORMATION_H

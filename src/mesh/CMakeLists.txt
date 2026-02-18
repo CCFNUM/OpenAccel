@@ -11,6 +11,12 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(main_obj PRIVATE
     ${DIR}/graph/nodeGraph.cpp
     ############################################################################
+    ${DIR}/interface/dgInfo.cpp
+    ${DIR}/interface/interface.cpp
+    ${DIR}/interface/interfaceIO.cpp
+    ${DIR}/interface/interfaceSideInfo.cpp
+    ${DIR}/interface/transfer/dataTransfer.cpp
+    ############################################################################
     ${DIR}/mesh.cpp
     ${DIR}/meshGeometry.cpp
     ${DIR}/meshIO.cpp
@@ -31,6 +37,9 @@ target_include_directories(main_obj PUBLIC
     ${DIR}
     ############################################################################
     ${DIR}/graph
+    ############################################################################
+    ${DIR}/interface
+    ${DIR}/interface/transfer
     ############################################################################
     ${DIR}/validation
     ############################################################################

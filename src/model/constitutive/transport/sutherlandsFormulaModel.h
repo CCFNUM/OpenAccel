@@ -4,7 +4,8 @@
 // Description: Sutherland's formula for temperature-dependent viscosity and
 // conductivity
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef SUTHERLANDSFORMULAMODEL_H
 #define SUTHERLANDSFORMULAMODEL_H

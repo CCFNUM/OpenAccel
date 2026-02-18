@@ -44,6 +44,23 @@ protected:
 
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
+
+#ifdef HAS_INTERFACE
+    void assembleElemTermsInterfaceSide_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx) override;
+    void assembleElemTermsInterfaceSideHTC_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx);
+
+    void assembleElemTermsInterfaceSideHybrid_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx);
+#endif /* HAS_INTERFACE */
+
     // boundary conditions
     void assembleElemTermsBoundary_(const domain* domain,
                                     Context* ctx) override;

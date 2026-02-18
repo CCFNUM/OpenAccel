@@ -4,7 +4,8 @@
 // Description: Field defined at nodes on boundary sides with interpolation
 // support
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and
-// Arts. SPDX-License-Identifier: BSD-3-Clause
+// Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef NODESIDEFIELD_H
 #define NODESIDEFIELD_H
@@ -90,6 +91,10 @@ public:
 
     void interpolate(const sideField<T, N>& sf, label iZone, label iBoundary);
 
+#ifdef HAS_INTERFACE
+    void interpolate(const sideField<T, N>& sf, label iInterface, bool master);
+#endif /* HAS_INTERFACE */
+
     // Access
 
     nodeSideField<T, N>& prevTimeRef();
@@ -109,11 +114,26 @@ void nodeSideField<scalar, 1>::interpolate(const sideField<scalar, 1>& sf,
                                            label iZone,
                                            label iBoundary);
 
+#ifdef HAS_INTERFACE
+template <>
+void nodeSideField<scalar, 1>::interpolate(const sideField<scalar, 1>& sf,
+                                           label iInterface,
+                                           bool master);
+#endif /* HAS_INTERFACE */
+
 template <>
 void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
     const sideField<scalar, SPATIAL_DIM>& sf,
     label iZone,
     label iBoundary);
+
+#ifdef HAS_INTERFACE
+template <>
+void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
+    const sideField<scalar, SPATIAL_DIM>& sf,
+    label iInterface,
+    bool master);
+#endif /* HAS_INTERFACE */
 
 } // namespace accel
 

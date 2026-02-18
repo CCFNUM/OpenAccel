@@ -4,7 +4,8 @@
 // Description: Node scalar transport field for turbulent dissipation rate
 // (epsilon)
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences
-// and Arts. SPDX-License-Identifier: BSD-3-Clause
+// and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TURBULENTDISSIPATIONRATE_H
 #define TURBULENTDISSIPATIONRATE_H

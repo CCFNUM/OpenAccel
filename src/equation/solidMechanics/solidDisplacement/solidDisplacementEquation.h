@@ -4,7 +4,8 @@
 // Description: Solid displacement equation with Aitken acceleration for
 // structural mechanics
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied
-// Sciences and Arts. SPDX-License-Identifier: BSD-3-Clause
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef SOLIDDISPLACEMENTEQUATION_H
 #define SOLIDDISPLACEMENTEQUATION_H

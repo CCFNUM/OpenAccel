@@ -280,7 +280,7 @@ void displacementDiffusionEquation::setup()
     });
 
     // setup linear solver
-    // FIXME: [2024-03-13] Consider passing mesh argument or
+    // FIXME: Consider passing mesh argument or
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
@@ -367,6 +367,20 @@ displacementDiffusionEquation::collectDirichletBoundaryParts_()
     stk::mesh::PartVector incPartVec;
     for (const auto& domain : domainVector_)
     {
+#ifdef HAS_INTERFACE
+        for (const interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType())
+            {
+                for (auto part : interf->interfaceSideInfoPtr(domain->index())
+                                     ->currentPartVec_)
+                {
+                    incPartVec.push_back(part);
+                }
+            }
+        }
+#endif /* HAS_INTERFACE */
+
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
         {

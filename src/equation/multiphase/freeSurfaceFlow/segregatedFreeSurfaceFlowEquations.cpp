@@ -451,6 +451,9 @@ void segregatedFreeSurfaceFlowEquations::postSolve()
     FOREACH_DOMAIN(updateRelativeVelocityField_);
     FOREACH_DOMAIN(updateWallShearStress); // laminar
     FOREACH_DOMAIN(updateMassImbalance_);
+#ifdef HAS_INTERFACE
+    FOREACH_DOMAIN(updateInterfaceMassImbalance_);
+#endif /* HAS_INTERFACE */
 
     this->reportFlowData_();
 }

@@ -99,9 +99,8 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
             elementBucket.size();
 
         // extract master element
-        MasterElement* meSCS =
-            accel::MasterElementRepo::get_surface_master_element(
-                elementBucket.topology());
+        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
+            elementBucket.topology());
 
         // extract master element specifics
         const label nodesPerElement = meSCS->nodesPerElement_;
