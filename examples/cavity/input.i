@@ -61,13 +61,13 @@ simulation:
                     relative_pressure_level: 0
                 linear_solver_settings:
                     default:
-                        family: PETSc
-                        max_iterations: 20
-                        rtol: 1.0e-1
+                        family: Trilinos
+                        max_iterations: 200
+                        rtol: 1.0e-6
                         atol: 1.0e-12
                         options:
-                            ksp_type: fgmres
-                            pc_type: bjacobi                
+                            belos_solver: fgmres
+                            preconditioner: riluk
                     pressure_correction:
                         family: Trilinos
                         max_iterations: 200

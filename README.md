@@ -26,7 +26,10 @@
   [OpenMPI](https://www.open-mpi.org/) implementations are tested.
 
 ### Optional (Backend Solvers)
-* **PETSc:** Optional high-performance solver backend.
+* **PETSc:** Optional high-performance solver backend. (Some examples are
+  configured with PETSc solvers.  See
+  [`examples/cavity/input.i`](./examples/cavity/input.i) for an example that is
+  using Trilinos native solvers only.)
 * **HYPRE:** Optional multigrid preconditioner support.
 
 ### Submodules
