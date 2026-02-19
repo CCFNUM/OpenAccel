@@ -2426,11 +2426,10 @@ void bulkPressureCorrectionAssembler::
                             p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
 
                             // interpolate redistributed body force using shape
-                            // functions (GRAD_AVER = HARM_AVER)
+                            // functions
                             p_FBip[j] += r_vel * p_F[icNdim + j] * invRho;
 
                             // face-centre average for original body force
-                            // (BFORCE_AV_TYPE = HARM_AVER)
                             p_FOrigBip[j] += f * p_FOrig[icNdim + j] * invRho;
                         }
                     }
@@ -3569,11 +3568,10 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                         p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
 
                         // interpolate redistributed body force using shape
-                        // functions (GRAD_AVER = HARM_AVER)
+                        // functions
                         p_FBip[j] += r_vel * p_F[icNdim + j] * invRho;
 
                         // face-centre average for original body force
-                        // (BFORCE_AV_TYPE = HARM_AVER)
                         p_FOrigBip[j] += f * p_FOrig[icNdim + j] * invRho;
                     }
                 }
@@ -4123,11 +4121,10 @@ void bulkPressureCorrectionAssembler::
                             p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
 
                             // interpolate redistributed body force using shape
-                            // functions (GRAD_AVER = HARM_AVER)
+                            // functions
                             p_FBip[j] += r_vel * p_F[icNdim + j] * invRho;
 
                             // face-centre average for original body force
-                            // (BFORCE_AV_TYPE = HARM_AVER)
                             p_FOrigBip[j] += f * p_FOrig[icNdim + j] * invRho;
                         }
                     }

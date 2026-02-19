@@ -446,13 +446,11 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                         // harmonic density-weighted interpolation of
                         // redistributed body force to IP using shape
                         // functions: Σ N_i * (F_i / ρ_i)
-                        // (GRAD_AVER = HARM_AVER)
                         p_FIp[j] += r_vel * p_F[SPATIAL_DIM * ic + j] * invRho;
 
                         // harmonic density-weighted volume-weighted average
                         // of original body force to element centre:
                         // Σ w_scv_i * (FOrig_i / ρ_i)
-                        // (BFORCE_AV_TYPE = HARM_AVER)
                         p_FOrigIp[j] +=
                             w_scv * p_FOrig[SPATIAL_DIM * ic + j] * invRho;
                     }

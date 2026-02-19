@@ -425,11 +425,10 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
 
                         // interpolate redistributed body force to IP
                         // using velocity shape functions
-                        // (GRAD_AVER = VOLW_AVER)
                         p_FIp[j] += r_vel * p_F[SPATIAL_DIM * ic + j];
 
                         // volume-weighted average of original body force
-                        // to element centre (BFORCE_AV_TYPE = VOLW_AVER)
+                        // to element centre
                         p_FOrigIp[j] += w_scv * p_FOrig[SPATIAL_DIM * ic + j];
                     }
                 }
