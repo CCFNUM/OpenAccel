@@ -336,7 +336,7 @@ public:
 
     // Stats
 
-    void updateScale();
+    void updateScale() override;
 
     virtual scalar max();
 
