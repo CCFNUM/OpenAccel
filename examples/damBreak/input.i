@@ -5,7 +5,7 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 1
+            total_time: 0.1
             time_steps:
                 option: adaptive
                 initial_timestep: 0.001
@@ -127,6 +127,8 @@ simulation:
                         options:
                             belos_solver: gmres
                             preconditioner: ilu
+            expert_parameters:
+                body_force_redistribution: false
         output_control:
             file_path: results.e
             output_frequency:
