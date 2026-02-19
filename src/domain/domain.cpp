@@ -253,10 +253,15 @@ bool domain::isWallDistanceRequired() const
     if (this->zonePtr()->meshDeforming())
     {
         if (this->zonePtr()
-                ->deformationRef()
-                .displacementDiffusion()
-                .meshStiffnessSpecification_ ==
-            meshStiffnessSpecificationType::increaseNearBoundaries)
+                    ->deformationRef()
+                    .displacementDiffusion()
+                    .meshStiffnessSpecification_ ==
+                meshStiffnessSpecificationType::increaseNearBoundaries ||
+            this->zonePtr()
+                    ->deformationRef()
+                    .displacementDiffusion()
+                    .meshStiffnessSpecification_ ==
+                meshStiffnessSpecificationType::blendedDistanceAndSmallVolumes)
         {
             state = true;
         }
