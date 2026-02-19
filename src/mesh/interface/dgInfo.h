@@ -16,8 +16,6 @@
 namespace accel
 {
 
-class MasterElement;
-
 class dgInfo
 {
 public:
