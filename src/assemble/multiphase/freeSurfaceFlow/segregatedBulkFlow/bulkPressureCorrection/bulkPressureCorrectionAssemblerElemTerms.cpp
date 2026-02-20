@@ -84,7 +84,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> dpdxIp(SPATIAL_DIM);
     std::vector<scalar> duIp(SPATIAL_DIM);
     std::vector<scalar> FIp(SPATIAL_DIM);
-    std::vector<scalar> FOrigIp(SPATIAL_DIM);
+    std::vector<scalar> FOrigElIp(SPATIAL_DIM);
 
     // pointers to everyone...
     scalar* p_coordIp = &coordIp[0];
@@ -94,7 +94,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     scalar* p_dpdxIp = &dpdxIp[0];
     scalar* p_duIp = &duIp[0];
     scalar* p_FIp = &FIp[0];
-    scalar* p_FOrigIp = &FOrigIp[0];
+    scalar* p_FOrigIp = &FOrigElIp[0];
 
     // Get transport fields/side fields
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
@@ -127,7 +127,10 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     const auto& duSTKFieldRef = *metaData.get_field<scalar>(
         stk::topology::NODE_RANK, freeSurfaceFlowModel::du_ID);
 
-    // Get body force fields for buoyancy pressure stabilization
+    // Get body force fields for buoyancy pressure stabilization:
+    //   F     = redistributed (HARM_AVER smoothed) body force → smooth IP term
+    //   FOrig = original (pre-redistribution) body force     → compact elem
+    //   term
     const auto* FSTKFieldPtr =
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
@@ -345,13 +348,19 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
                 scalar V_el = 0.0;
                 for (label ip = 0; ip < numScvIp; ++ip)
+                {
                     V_el += ws_scv_volume[ip];
-                const scalar invV_el = (V_el > SMALL) ? 1.0 / V_el : 0.0;
+                }
+                const scalar invV_el = 1.0 / V_el;
                 for (label i = 0; i < nodesPerElement; ++i)
+                {
                     ws_scv_weight[i] = 0.0;
+                }
                 for (label ip = 0; ip < numScvIp; ++ip)
+                {
                     ws_scv_weight[scvIpNodeMap[ip]] +=
                         ws_scv_volume[ip] * invV_el;
+                }
             }
 
             // compute dndx for residual
@@ -403,8 +412,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 }
 
                 scalar alphaIp = 0;
-                scalar rhoIpVel = 0.0;
-                scalar rhoIpScv = 0.0;
                 const label offSetSF = ip * nodesPerElement;
                 for (label ic = 0; ic < nodesPerElement; ++ic)
                 {
@@ -415,12 +422,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     const scalar w_scv = ws_scv_weight[ic];
 
                     alphaIp += r_vel * p_alpha[ic];
-
-                    // density weights for harmonic body force interpolation
-                    const scalar invRho =
-                        (p_rho[ic] > SMALL) ? 1.0 / p_rho[ic] : 0.0;
-                    rhoIpVel += r_vel * p_rho[ic];
-                    rhoIpScv += w_scv * p_rho[ic];
 
                     scalar lhsfac = 0.0;
                     const label offSetDnDx =
@@ -439,32 +440,18 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                         // use pressure shape function derivative
                         p_dpdxIp[j] += p_dndx[offSetDnDx + j] * p_p[ic];
 
+                        // volume-weighted average of original body force
+                        // to element centre
+                        p_FOrigIp[j] += r_vel * p_FOrig[SPATIAL_DIM * ic + j];
+
                         // volume-weighted average of pressure gradient
                         // to element centre
                         p_GpdxIp[j] += w_scv * p_Gpdx[SPATIAL_DIM * ic + j];
 
-                        // harmonic density-weighted interpolation of
-                        // redistributed body force to IP using shape
-                        // functions: Σ N_i * (F_i / ρ_i)
-                        p_FIp[j] += r_vel * p_F[SPATIAL_DIM * ic + j] * invRho;
-
-                        // harmonic density-weighted volume-weighted average
-                        // of original body force to element centre:
-                        // Σ w_scv_i * (FOrig_i / ρ_i)
-                        p_FOrigIp[j] +=
-                            w_scv * p_FOrig[SPATIAL_DIM * ic + j] * invRho;
+                        // interpolate redistributed body force to IP
+                        // using velocity shape functions
+                        p_FIp[j] += w_scv * p_F[SPATIAL_DIM * ic + j];
                     }
-                }
-
-                // Recover body forces by multiplying by interpolated density
-                // F_ip = ρ_ip * Σ N_i * (F_i / ρ_i) [shape func]
-                // FOrig_el = ρ_el * Σ w_scv_i * (FOrig_i / ρ_i) [elem avg]
-                // Harmonic averaging prevents unphysical body force
-                // smearing across the density interface in free surface flows.
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    p_FIp[j] *= rhoIpVel;
-                    p_FOrigIp[j] *= rhoIpScv;
                 }
 
                 scalar dcorr = 0;
@@ -553,12 +540,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 p_lhs[rLiR_i] += alhsfacR * alphaIp / densityScale;
 
                 // assemble mDot
-                // mDot = ρ*U·S - ρ*D*(∇p - Gp)·S + ρ*D*(F_orig - F)·S
-                //        ╰───╯   ╰──────────────╯   ╰─────────────────╯
-                //        divergence  pressure RC      body force stab
-                // Note: F_orig (original) plays the role of "face" value,
-                //       F (redistributed) plays the role of Gp
-                //       (cell-consistent)
+                // mDot = ρ*U·S - ρ*D*(∇p - Gp)·S + ρ*D*(FOrigEl - F_ip)·S
+                //        ╰───╯   ╰──────────────╯   ╰───────────────────────╯
+                //      divergence   pressure RC           body force RC
                 scalar mDot = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -570,9 +554,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     mDot -= rhoHR * p_duIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
                             p_scs_areav[ip * SPATIAL_DIM + j];
 
-                    // body force stabilization: +ρ*D*(F_orig - F)·S
-                    mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
-                            p_scs_areav[ip * SPATIAL_DIM + j];
+                    // body force RC: +ρ*D*(FOrig - F_ip)·S
+                    // mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                    //         p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 
                 // transform mDot to relative frame

@@ -337,13 +337,19 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                     1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
                 scalar V_el = 0.0;
                 for (label ip = 0; ip < numScvIp; ++ip)
+                {
                     V_el += ws_scv_volume[ip];
-                const scalar invV_el = (V_el > SMALL) ? 1.0 / V_el : 0.0;
+                }
+                const scalar invV_el = 1.0 / V_el;
                 for (label i = 0; i < nodesPerElement; ++i)
+                {
                     ws_scv_weight[i] = 0.0;
+                }
                 for (label ip = 0; ip < numScvIp; ++ip)
+                {
                     ws_scv_weight[scvIpNodeMap[ip]] +=
                         ws_scv_volume[ip] * invV_el;
+                }
             }
 
             // compute dndx for residual
@@ -412,12 +418,16 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                         p_umIp[j] += r_vel * p_Um[SPATIAL_DIM * ic + j];
                         p_duIp[j] += r_vel * p_du[SPATIAL_DIM * ic + j];
 
-                        // use pressure shape function derivative
-                        p_dpdxIp[j] += p_dndx[offSetDnDx + j] * p_p[ic];
-
                         // use coordinates shape functions
                         p_coordIp[j] +=
                             r_coord * p_coordinates[ic * SPATIAL_DIM + j];
+
+                        // use pressure shape function derivative
+                        p_dpdxIp[j] += p_dndx[offSetDnDx + j] * p_p[ic];
+
+                        // volume-weighted average of original body force
+                        // to element centre
+                        p_FOrigIp[j] += r_vel * p_FOrig[SPATIAL_DIM * ic + j];
 
                         // volume-weighted average of pressure gradient
                         // to element centre
@@ -425,11 +435,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
 
                         // interpolate redistributed body force to IP
                         // using velocity shape functions
-                        p_FIp[j] += r_vel * p_F[SPATIAL_DIM * ic + j];
-
-                        // volume-weighted average of original body force
-                        // to element centre
-                        p_FOrigIp[j] += w_scv * p_FOrig[SPATIAL_DIM * ic + j];
+                        p_FIp[j] += w_scv * p_F[SPATIAL_DIM * ic + j];
                     }
                 }
 
@@ -521,10 +527,8 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                 // assemble mDot
                 // mDot = ρ*U·S - ρ*D*(∇p - Gp)·S + ρ*D*(F_orig - F)·S
                 //        ╰───╯   ╰──────────────╯   ╰─────────────────╯
-                //        divergence  pressure RC      body force stab
-                // Note: F_orig (original) plays the role of "face" value,
-                //       F (redistributed) plays the role of Gp
-                //       (cell-consistent)
+                //      divergence   pressure RC       body force stab
+                //
                 scalar mDot = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -537,8 +541,8 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                             p_scs_areav[ip * SPATIAL_DIM + j];
 
                     // body force stabilization: +ρ*D*(F_orig - F)·S
-                    mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
-                            p_scs_areav[ip * SPATIAL_DIM + j];
+                    // mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                    //         p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 
                 // transform mDot to relative frame
