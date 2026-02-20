@@ -61,13 +61,13 @@ simulation:
                     relative_pressure_level: 0
                 linear_solver_settings:
                     default:
-                        family: Trilinos
-                        max_iterations: 200
-                        rtol: 1.0e-6
+                        family: PETSc
+                        max_iterations: 20
+                        rtol: 1.0e-1
                         atol: 1.0e-12
                         options:
-                            belos_solver: fgmres
-                            preconditioner: riluk
+                            ksp_type: fgmres
+                            pc_type: bjacobi  
                     pressure_correction:
                         family: Trilinos
                         max_iterations: 200
@@ -75,12 +75,7 @@ simulation:
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
-                            preconditioner: riluk
-                            preconditioner_parameters:
-                                "fact: iluk level-of-fill": 2
-                                "fact: drop tolerance": 1.0e-3
-                                "fact: absolute threshold": 1.0e-6
-                                "fact: relative threshold": 1.0            
+                            preconditioner: ilu
         output_control:
             file_path: results.e
             output_frequency: 10
