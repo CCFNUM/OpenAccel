@@ -61,7 +61,7 @@ simulation:
                 reduced_stencil: true
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 100
+                    max_iterations: 250
                     physical_timescale: 1   
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.8
@@ -75,25 +75,13 @@ simulation:
                 linear_solver_settings:
                     default:
                         family: PETSc
+                        min_iterations: 3
                         max_iterations: 20
                         rtol: 1.0e-1
                         atol: 1.0e-12
                         options:
                             ksp_type: fgmres
-                            pc_type: bjacobi                
-                    pressure_correction:
-                        family: Trilinos
-                        max_iterations: 200
-                        rtol: 1.0e-6
-                        atol: 1.0e-12
-                        options:
-                            belos_solver: gmres
-                            preconditioner: riluk
-                            preconditioner_parameters:
-                                "fact: iluk level-of-fill": 2
-                                "fact: drop tolerance": 1.0e-3
-                                "fact: absolute threshold": 1.0e-6
-                                "fact: relative threshold": 1.0
+                            pc_type: bjacobi
         output_control:
             file_path: results.e
             output_frequency: 10
