@@ -76,13 +76,14 @@ simulation:
             advanced_options:
                 linear_solver_settings:
                     default:
-                        family: PETSc
+                        family: Trilinos
+                        min_iterations: 3
                         max_iterations: 20
-                        rtol: 1.0e-1
+                        rtol: 1.0e-2
                         atol: 1.0e-12
                         options:
-                            ksp_type: fgmres
-                            pc_type: bjacobi     
+                            belos_solver: gmres
+                            preconditioner: ilu   
         output_control:
             file_path: results.e
             output_frequency: 50
