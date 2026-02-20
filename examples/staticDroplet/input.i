@@ -75,8 +75,6 @@ simulation:
                     residual_target: 1e-6
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
-            expert_parameters:
-                body_force_redistribution: true
             advanced_options:
                 pressure_level_information:
                     option: cartesian_coordinates
@@ -90,6 +88,7 @@ simulation:
                 linear_solver_settings:
                     default:
                         family: PETSc
+                        min_iterations: 3
                         max_iterations: 20
                         rtol: 1.0e-1
                         atol: 1.0e-12
@@ -98,21 +97,15 @@ simulation:
                             pc_type: bjacobi                
                     pressure_correction:
                         family: Trilinos
-                        max_iterations: 150 # Cap iterations; if it hasn't found it by 150, it's drifting
+                        min_iterations: 3
+                        max_iterations: 20
                         rtol: 1.0e-6
                         atol: 1.0e-10
                         options:
                             belos_solver: gmres
-                            preconditioner: riluk
-                            preconditioner_parameters:
-                                "fact: iluk level-of-fill": 0  # 0 is much faster than 2
-                                "fact: absolute threshold": 1.0e-2
-                                "fact: relative threshold": 1.0
-                            # Belos-specific speed boosts
-                            solver_parameters:
-                                "Num Blocks": 50            # Size of Krylov subspace
-                                "Maximum Restarts": 2       # Prevents infinite loops
-                                "Orthogonalization": "ICGS" # Fast orthogonalization
+                            preconditioner: ilu
+            expert_parameters:
+                body_force_redistribution: true
         output_control:
             file_path: results.e
             output_frequency:
