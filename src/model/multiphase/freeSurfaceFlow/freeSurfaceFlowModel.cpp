@@ -185,113 +185,285 @@ void freeSurfaceFlowModel::computeCurvature_(
     // get nHat field for the given phase
     const STKScalarField* nHatSTKFieldPtr = this->nHatRef(iPhase).stkFieldPtr();
 
-    // workspace
-    std::vector<scalar> ws_coordinates;
-    std::vector<scalar> ws_nHat;
-    std::vector<scalar> ws_dualVolume;
-    std::vector<scalar> ws_scsAreav;
-    std::vector<scalar> ws_shape_function;
-
-    stk::mesh::Selector selUniversalElements =
-        metaData.universal_part() & stk::mesh::selectUnion(partVec);
-
-    stk::mesh::BucketVector const& elementBuckets =
-        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selUniversalElements);
-
-    for (auto ib = elementBuckets.begin(); ib != elementBuckets.end(); ++ib)
+    // ========================================
+    // Interior IP contribution
+    // ========================================
     {
-        stk::mesh::Bucket& elementBucket = **ib;
-        const auto nElemPerBucket = elementBucket.size();
+        // workspace
+        std::vector<scalar> ws_coordinates;
+        std::vector<scalar> ws_nHat;
+        std::vector<scalar> ws_dualVolume;
+        std::vector<scalar> ws_scsAreav;
+        std::vector<scalar> ws_shape_function;
 
-        // extract master element SCS
-        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
-            elementBucket.topology());
-        const label nodesPerElement = meSCS->nodesPerElement_;
-        const label numScsIp = meSCS->numIntPoints_;
-        const label* lrscv = meSCS->adjacentNodes();
+        // integration point data that depends on size
+        std::vector<scalar> nHatIp(SPATIAL_DIM);
 
-        // resize workspaces
-        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
-        ws_nHat.resize(nodesPerElement * SPATIAL_DIM);
-        ws_dualVolume.resize(nodesPerElement);
-        ws_scsAreav.resize(numScsIp * SPATIAL_DIM);
-        ws_shape_function.resize(numScsIp * nodesPerElement);
+        // pointers to everyone...
+        scalar* p_nHatIp = &nHatIp[0];
 
-        // get shape functions at SCS integration points
-        meSCS->shape_fcn(&ws_shape_function[0]);
+        stk::mesh::Selector selAllElements =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
 
-        for (stk::mesh::Bucket::size_type k = 0; k < nElemPerBucket; ++k)
+        stk::mesh::BucketVector const& elementBuckets =
+            bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
+
+        for (auto ib = elementBuckets.begin(); ib != elementBuckets.end(); ++ib)
         {
-            stk::mesh::Entity const* nodeRels = elementBucket.begin_nodes(k);
-            const label numNodes = elementBucket.num_nodes(k);
-            STK_ThrowAssert(numNodes == nodesPerElement);
+            stk::mesh::Bucket& elementBucket = **ib;
+            const auto nElemPerBucket = elementBucket.size();
 
-            // gather nodal data
-            for (label ni = 0; ni < nodesPerElement; ++ni)
+            // extract master element SCS
+            MasterElement* meSCS =
+                MasterElementRepo::get_surface_master_element(
+                    elementBucket.topology());
+            const label nodesPerElement = meSCS->nodesPerElement_;
+            const label numScsIp = meSCS->numIntPoints_;
+            const label* lrscv = meSCS->adjacentNodes();
+
+            // resize workspaces
+            ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
+            ws_nHat.resize(nodesPerElement * SPATIAL_DIM);
+            ws_dualVolume.resize(nodesPerElement);
+            ws_scsAreav.resize(numScsIp * SPATIAL_DIM);
+            ws_shape_function.resize(numScsIp * nodesPerElement);
+
+            // get shape functions at SCS integration points
+            meSCS->shape_fcn(&ws_shape_function[0]);
+
+            for (stk::mesh::Bucket::size_type k = 0; k < nElemPerBucket; ++k)
             {
-                stk::mesh::Entity node = nodeRels[ni];
+                stk::mesh::Entity const* nodeRels =
+                    elementBucket.begin_nodes(k);
+                const label numNodes = elementBucket.num_nodes(k);
+                STK_ThrowAssert(numNodes == nodesPerElement);
 
-                const scalar* coords =
-                    stk::mesh::field_data(*coordsSTKFieldPtr, node);
-                const scalar* nHat =
-                    stk::mesh::field_data(*nHatSTKFieldPtr, node);
-                ws_dualVolume[ni] =
-                    *stk::mesh::field_data(*volSTKFieldPtr, node);
-
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    ws_coordinates[ni * SPATIAL_DIM + d] = coords[d];
-                    ws_nHat[ni * SPATIAL_DIM + d] = nHat[d];
-                }
-            }
-
-            // compute SCS area vectors
-            scalar scsError = 0.0;
-            meSCS->determinant(
-                1, &ws_coordinates[0], &ws_scsAreav[0], &scsError);
-
-            // loop over SCS integration points
-            for (label ip = 0; ip < numScsIp; ++ip)
-            {
-                const label il = lrscv[2 * ip];
-                const label ir = lrscv[2 * ip + 1];
-
-                // interpolate nHat to SCS ip
-                scalar nHatIp[SPATIAL_DIM] = {0};
+                // gather nodal data
                 for (label ni = 0; ni < nodesPerElement; ++ni)
                 {
-                    const scalar shp =
-                        ws_shape_function[ip * nodesPerElement + ni];
+                    stk::mesh::Entity node = nodeRels[ni];
+
+                    const scalar* coords =
+                        stk::mesh::field_data(*coordsSTKFieldPtr, node);
+                    const scalar* nHat =
+                        stk::mesh::field_data(*nHatSTKFieldPtr, node);
+                    ws_dualVolume[ni] =
+                        *stk::mesh::field_data(*volSTKFieldPtr, node);
+
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        nHatIp[d] += shp * ws_nHat[ni * SPATIAL_DIM + d];
+                        ws_coordinates[ni * SPATIAL_DIM + d] = coords[d];
+                        ws_nHat[ni * SPATIAL_DIM + d] = nHat[d];
                     }
                 }
 
-                // compute flux = nHat_ip . A_ip (dot product)
-                scalar flux = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
+                // compute SCS area vectors
+                scalar scsError = 0.0;
+                meSCS->determinant(
+                    1, &ws_coordinates[0], &ws_scsAreav[0], &scsError);
+
+                // loop over SCS integration points
+                for (label ip = 0; ip < numScsIp; ++ip)
                 {
-                    flux += nHatIp[d] * ws_scsAreav[ip * SPATIAL_DIM + d];
+                    const label il = lrscv[2 * ip];
+                    const label ir = lrscv[2 * ip + 1];
+
+                    // zero-out
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_nHatIp[j] = 0.0;
+                    }
+
+                    // interpolate nHat to SCS ip
+                    for (label ni = 0; ni < nodesPerElement; ++ni)
+                    {
+                        const scalar r =
+                            ws_shape_function[ip * nodesPerElement + ni];
+                        for (label d = 0; d < SPATIAL_DIM; ++d)
+                        {
+                            p_nHatIp[d] += r * ws_nHat[ni * SPATIAL_DIM + d];
+                        }
+                    }
+
+                    // compute flux = nHat_ip . A_ip (dot product)
+                    scalar flux = 0.0;
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        flux += p_nHatIp[d] * ws_scsAreav[ip * SPATIAL_DIM + d];
+                    }
+
+                    // kappa = -div(nHat): assemble as negative divergence
+                    stk::mesh::Entity nodeL = nodeRels[il];
+                    stk::mesh::Entity nodeR = nodeRels[ir];
+
+                    scalar* kappaL =
+                        stk::mesh::field_data(*kappaFieldPtr, nodeL);
+                    scalar* kappaR =
+                        stk::mesh::field_data(*kappaFieldPtr, nodeR);
+
+                    *kappaL -= flux / ws_dualVolume[il];
+                    *kappaR += flux / ws_dualVolume[ir];
                 }
-
-                // kappa = -div(nHat): assemble as negative divergence
-                stk::mesh::Entity nodeL = nodeRels[il];
-                stk::mesh::Entity nodeR = nodeRels[ir];
-
-                scalar* kappaL = stk::mesh::field_data(*kappaFieldPtr, nodeL);
-                scalar* kappaR = stk::mesh::field_data(*kappaFieldPtr, nodeR);
-
-                *kappaL -= flux / ws_dualVolume[il];
-                *kappaR += flux / ws_dualVolume[ir];
             }
         }
     }
 
-    // parallel sum and ghost communication
+    // ========================================
+    // Boundary IP contribution
+    // ========================================
+    {
+        // get fields
+        const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+            metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+        // scratch arrays
+        std::vector<scalar> ws_nHat;
+        std::vector<scalar> ws_shape_function;
+
+        // fixed-size arrays
+        std::vector<scalar> nHatIp(SPATIAL_DIM);
+
+        // pointers
+        scalar* p_nHatIp = &nHatIp[0];
+
+        std::vector<stk::topology> parentTopo;
+
+        for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+             iBoundary++)
+        {
+            stk::mesh::PartVector partVec =
+                domain->zonePtr()->boundaryRef(iBoundary).parts();
+
+            stk::mesh::Selector selAllSides =
+                metaData.universal_part() & stk::mesh::selectUnion(partVec);
+
+            stk::mesh::BucketVector const& sideBuckets =
+                bulkData.get_buckets(metaData.side_rank(), selAllSides);
+            for (stk::mesh::BucketVector::const_iterator ib =
+                     sideBuckets.begin();
+                 ib != sideBuckets.end();
+                 ++ib)
+            {
+                stk::mesh::Bucket& sideBucket = **ib;
+                const stk::mesh::Bucket::size_type nSidesPerBucket =
+                    sideBucket.size();
+
+                // extract connected element topology
+                sideBucket.parent_topology(stk::topology::ELEMENT_RANK,
+                                           parentTopo);
+                stk::topology theElemTopo = parentTopo[0];
+
+                // volume master element
+                MasterElement* meSCS =
+                    MasterElementRepo::get_surface_master_element(theElemTopo);
+
+                // face master element
+                MasterElement* meFC =
+                    MasterElementRepo::get_surface_master_element(
+                        sideBucket.topology());
+
+                const label nodesPerSide = sideBucket.topology().num_nodes();
+                const label numScsBip = meFC->numIntPoints_;
+
+                ws_nHat.resize(nodesPerSide * SPATIAL_DIM);
+                ws_shape_function.resize(numScsBip * nodesPerSide);
+
+                scalar* p_nHat = &ws_nHat[0];
+                scalar* p_shape_function = &ws_shape_function[0];
+
+                meFC->shape_fcn(&p_shape_function[0]);
+
+                for (stk::mesh::Bucket::size_type iSide = 0;
+                     iSide < nSidesPerBucket;
+                     ++iSide)
+                {
+                    // get face
+                    stk::mesh::Entity side = sideBucket[iSide];
+
+                    // gather nHat from face nodes
+                    stk::mesh::Entity const* sideNodeRels =
+                        bulkData.begin_nodes(side);
+                    const label numSideNodes = bulkData.num_nodes(side);
+
+                    for (label ni = 0; ni < numSideNodes; ++ni)
+                    {
+                        stk::mesh::Entity node = sideNodeRels[ni];
+                        const scalar* nHat =
+                            stk::mesh::field_data(*nHatSTKFieldPtr, node);
+
+                        const label offSet = ni * SPATIAL_DIM;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_nHat[offSet + j] = nHat[j];
+                        }
+                    }
+
+                    // face area vector
+                    const scalar* areaVec =
+                        stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+
+                    // get connected element and face
+                    // ordinal
+                    const stk::mesh::Entity* faceElemRels =
+                        bulkData.begin_elements(side);
+                    stk::mesh::Entity element = faceElemRels[0];
+                    const stk::mesh::ConnectivityOrdinal* face_elem_ords =
+                        bulkData.begin_element_ordinals(side);
+                    const label faceOrdinal = face_elem_ords[0];
+
+                    // mapping from ip to nodes for this
+                    // ordinal
+                    const label* ipNodeMap = meSCS->ipNodeMap(faceOrdinal);
+
+                    // element node relations
+                    stk::mesh::Entity const* elemNodeRels =
+                        bulkData.begin_nodes(element);
+
+                    // start assembly
+                    for (label ip = 0; ip < numScsBip; ++ip)
+                    {
+                        // nearest node
+                        const label nearestNode = ipNodeMap[ip];
+                        stk::mesh::Entity node = elemNodeRels[nearestNode];
+
+                        scalar* kappa =
+                            stk::mesh::field_data(*kappaFieldPtr, node);
+                        scalar vol =
+                            *stk::mesh::field_data(*volSTKFieldPtr, node);
+
+                        // interpolate nHat to IP
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_nHatIp[j] = 0.0;
+                        }
+
+                        const label offset = ip * nodesPerSide;
+                        for (label ic = 0; ic < nodesPerSide; ++ic)
+                        {
+                            const scalar r = p_shape_function[offset + ic];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_nHatIp[j] += r * p_nHat[ic * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // compute flux and accumulate
+                        scalar flux = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            flux += p_nHatIp[j] * areaVec[ip * SPATIAL_DIM + j];
+                        }
+
+                        *kappa -= flux / vol;
+                    }
+                }
+            }
+        }
+    }
+
+    // parallel communication
     if (messager::parallel())
     {
-        stk::mesh::parallel_sum(bulkData, {kappaFieldPtr});
         stk::mesh::communicate_field_data(bulkData, {kappaFieldPtr});
     }
 }
@@ -312,29 +484,35 @@ void freeSurfaceFlowModel::computeBodyForces(
     // get interior parts
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
 
-    // get geometry
-    const auto* coordsSTKFieldPtr = metaData.get_field<scalar>(
-        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
-
-    const auto* volSTKFieldPtr = metaData.get_field<scalar>(
-        stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
-
-    // Retrieve smoothing boolean from user input
-    const bool smooth = controlsRef()
-                            .solverRef()
-                            .solverControl_.advancedOptions_.equationControls_
-                            .volumeFractionSmoothing_.smoothVolumeFraction_;
-
     for (const auto& fpm : domain->fluidPairModels_)
     {
         if (fpm.surfaceTension_.option_ !=
             surfaceTensionModelOption::continuumSurfaceForce)
             continue;
 
-        const scalar sigma = fpm.surfaceTension_.coefficient_;
-
         // Use materialA as the phase for curvature/gradient
         const label phaseIndex = fpm.globalIndexA_;
+
+        // Retrieve smoothing boolean from user input
+        const bool smooth =
+            controlsRef()
+                .solverRef()
+                .solverControl_.advancedOptions_.equationControls_
+                .volumeFractionSmoothing_.smoothVolumeFraction_;
+
+        // get geometry
+        const auto* coordsSTKFieldPtr = metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+
+        const auto* volSTKFieldPtr = metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
+
+        // Get alpha field (smoothed or raw)
+        const STKScalarField* alphaSTKFieldPtr =
+            smooth ? this->alphaSmoothRef(phaseIndex).stkFieldPtr()
+                   : this->alphaRef(phaseIndex).stkFieldPtr();
+
+        const scalar sigma = fpm.surfaceTension_.coefficient_;
 
         // Look up the per-pair curvature field
         const std::string kappaName =
@@ -345,11 +523,6 @@ void freeSurfaceFlowModel::computeBodyForces(
 
         // Compute curvature for this pair
         computeCurvature_(domain, phaseIndex, kappaFieldPtr);
-
-        // Get alpha field (smoothed or raw)
-        const STKScalarField* alphaSTKFieldPtr =
-            smooth ? this->alphaSmoothRef(phaseIndex).stkFieldPtr()
-                   : this->alphaRef(phaseIndex).stkFieldPtr();
 
         // workspace
         std::vector<scalar> ws_coordinates;
@@ -362,11 +535,17 @@ void freeSurfaceFlowModel::computeBodyForces(
         std::vector<scalar> ws_det_j;
         std::vector<scalar> ws_shape_function;
 
-        stk::mesh::Selector selUniversalElements =
+        // ip values
+        std::vector<scalar> gradAlphaIp(SPATIAL_DIM);
+
+        // pointers for fast access
+        scalar* p_gradAlphaIp = &gradAlphaIp[0];
+
+        stk::mesh::Selector selAllElements =
             metaData.universal_part() & stk::mesh::selectUnion(partVec);
 
-        stk::mesh::BucketVector const& elementBuckets = bulkData.get_buckets(
-            stk::topology::ELEMENT_RANK, selUniversalElements);
+        stk::mesh::BucketVector const& elementBuckets =
+            bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
 
         for (auto ib = elementBuckets.begin(); ib != elementBuckets.end(); ++ib)
         {
@@ -445,8 +624,13 @@ void freeSurfaceFlowModel::computeBodyForces(
                             ws_kappa[ni];
                     }
 
+                    // zero-out
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        p_gradAlphaIp[d] = 0;
+                    }
+
                     // compute grad(alpha) at ip using dndx
-                    scalar gradAlphaIp[SPATIAL_DIM] = {0};
                     for (label ni = 0; ni < nodesPerElement; ++ni)
                     {
                         const label offsetDnDx =
@@ -454,40 +638,45 @@ void freeSurfaceFlowModel::computeBodyForces(
                             ni * SPATIAL_DIM;
                         for (label d = 0; d < SPATIAL_DIM; ++d)
                         {
-                            gradAlphaIp[d] +=
+                            p_gradAlphaIp[d] +=
                                 ws_dndx[offsetDnDx + d] * ws_alpha[ni];
                         }
                     }
 
                     // nearest node
                     stk::mesh::Entity nearestNode = nodeRels[nn];
-                    scalar* F_node =
-                        stk::mesh::field_data(*FSTKFieldPtr_, nearestNode);
+                    scalar* F_node = stk::mesh::field_data(
+                        *FOriginalSTKFieldPtr_, nearestNode);
 
                     // F_st = sigma * kappa * grad(alpha) * V_scv / V_dual
                     const scalar dualVol = ws_dualVolume[nn];
-                    const scalar weight =
-                        (dualVol > SMALL) ? sigma * ws_scVolume[ip] / dualVol
-                                          : 0.0;
+                    const scalar weight = ws_scVolume[ip] / dualVol;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        F_node[d] += weight * kappaIp * gradAlphaIp[d];
+                        F_node[d] +=
+                            weight * sigma * kappaIp * p_gradAlphaIp[d];
                     }
                 }
             }
         }
     }
+
+    // Sync F from owners: This is needed because computeBodyForces accumulates
+    // CSF surface tension via element-to-node scatter, and ghost nodes may not
+    // have received contributions from all surrounding elements.
+    if (messager::parallel())
+    {
+        stk::mesh::communicate_field_data(bulkData, {FOriginalSTKFieldPtr_});
+    }
+
+    // Copy FOrig values to F
+    ops::copy<scalar>(FOriginalSTKFieldPtr_, FSTKFieldPtr_, partVec);
 }
 
 void freeSurfaceFlowModel::redistributeBodyForces(
     const std::shared_ptr<domain> domain)
 {
-    auto& mesh = this->meshRef();
-    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-    stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    // Harmonic density-weighted body force redistribution for free surface
-    // (matches Fortran HARM_AVER):
+    // Harmonic density-weighted body force redistribution for free surface:
     //
     // For free surface flows, standard volume-weighted averaging smears
     // the body force across the density interface, creating spurious pressure
@@ -511,24 +700,15 @@ void freeSurfaceFlowModel::redistributeBodyForces(
             .solverRef()
             .solverControl_.expertParameters_.bodyForceRedistribution_)
     {
-        // Get interior parts the domain is defined on
+        auto& mesh = this->meshRef();
+        stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+        stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+        // get interior parts
         const stk::mesh::PartVector& partVec =
             domain->zonePtr()->interiorParts();
 
-        // Step 0: Sync F from owners to ghosts so that the gather in the
-        // element loop below reads correct body-force values on ghost nodes.
-        // This is needed because computeBodyForces accumulates CSF surface
-        // tension via element-to-node scatter, and ghost nodes may not have
-        // received contributions from all surrounding elements.
-        if (messager::parallel())
-        {
-            stk::mesh::communicate_field_data(bulkData, {FSTKFieldPtr_});
-        }
-
-        // Step 1: Copy current F values to FOrig
-        ops::copy<scalar>(FSTKFieldPtr_, FOriginalSTKFieldPtr_, partVec);
-
-        // Step 2: Reset F field to zero
+        // Reset F field to zero
         ops::zero(FSTKFieldPtr_, partVec);
 
         // Get coordinates field
@@ -552,10 +732,10 @@ void freeSurfaceFlowModel::redistributeBodyForces(
         std::vector<scalar> F_el(SPATIAL_DIM);
 
         // Define selectors
-        stk::mesh::Selector selOwnedElements =
-            metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
+        stk::mesh::Selector selAllElements =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
         stk::mesh::BucketVector const& elementBuckets =
-            bulkData.get_buckets(stk::topology::ELEMENT_RANK, selOwnedElements);
+            bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
 
         for (auto ib = elementBuckets.begin(); ib != elementBuckets.end(); ++ib)
         {
@@ -611,9 +791,11 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                 // Compute element volume
                 scalar V_el = 0.0;
                 for (label ip = 0; ip < numScvIp; ++ip)
+                {
                     V_el += ws_scv_volume[ip];
+                }
 
-                const scalar invV_el = (V_el > SMALL) ? 1.0 / V_el : 0.0;
+                const scalar invV_el = 1.0 / V_el;
 
                 // Compute volume-weighted element-centre density:
                 // rho_el = Σ_i (rho_i * V_scv_i) / V_el
@@ -628,14 +810,15 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                 // Compute harmonic density-weighted element-centre body force:
                 // B_el = rho_el * Σ_i (B_i/rho_i * V_scv_i) / V_el
                 for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
                     F_el[d] = 0.0;
+                }
 
                 for (label ip = 0; ip < numScvIp; ++ip)
                 {
                     const label nn = ipNodeMap[ip];
                     const scalar rho_node = ws_rho[nn];
-                    const scalar invRho =
-                        (rho_node > SMALL) ? 1.0 / rho_node : 0.0;
+                    const scalar invRho = 1.0 / rho_node;
                     const scalar scV = ws_scv_volume[ip];
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
@@ -644,7 +827,9 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                 }
 
                 for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
                     F_el[d] *= rho_el * invV_el;
+                }
 
                 // Scatter element-centre value back to nodes weighted by
                 // SCV volumes: F_node += B_el * V_scv
@@ -668,14 +853,14 @@ void freeSurfaceFlowModel::redistributeBodyForces(
         // Parallel communication
         if (messager::parallel())
         {
-            stk::mesh::parallel_sum(bulkData, {FSTKFieldPtr_});
+            stk::mesh::communicate_field_data(bulkData, {FSTKFieldPtr_});
         }
 
         // Normalize F by dual nodal volume: F /= dual_nodal_volume
-        stk::mesh::Selector selOwnedNodes =
-            metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
+        stk::mesh::Selector selAllNodes =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
         stk::mesh::BucketVector const& nodeBuckets =
-            bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
         for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
         {
             stk::mesh::Bucket& nodeBucket = **ib;
@@ -689,29 +874,13 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                  ++iNode)
             {
                 const scalar dualVol = dualVolb[iNode];
-                if (dualVol > SMALL)
+                const scalar invDualVol = 1.0 / dualVol;
+                for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    const scalar invDualVol = 1.0 / dualVol;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        Fb[SPATIAL_DIM * iNode + d] *= invDualVol;
-                    }
+                    Fb[SPATIAL_DIM * iNode + d] *= invDualVol;
                 }
             }
         }
-
-        // Sync F field from owners to ghost nodes for assembly
-        if (messager::parallel())
-        {
-            stk::mesh::communicate_field_data(bulkData, {FSTKFieldPtr_});
-        }
-    }
-    else
-    {
-        // No redistribution: just copy F to FOrig
-        const stk::mesh::PartVector& partVec =
-            domain->zonePtr()->interiorParts();
-        ops::copy<scalar>(FSTKFieldPtr_, FOriginalSTKFieldPtr_, partVec);
     }
 }
 
@@ -1754,11 +1923,11 @@ void freeSurfaceFlowModel::updateInterfaceNormal(
             stk::mesh::Entity const* nodeRels =
                 elementBucket.begin_nodes(iElement);
 
-            label num_nodes = elementBucket.num_nodes(iElement);
+            label numNodes = elementBucket.num_nodes(iElement);
 
             // sanity check on nb. of nodes per element before
             // proceeding
-            STK_ThrowAssert(num_nodes == nodesPerElement);
+            STK_ThrowAssert(numNodes == nodesPerElement);
 
             for (label iNode = 0; iNode < nodesPerElement; iNode++)
             {
@@ -1860,7 +2029,6 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
 
     scalar l_dxMin = 1.0e16;
     scalar g_dxMin = 1.0e16;
-    const label D = SPATIAL_DIM;
 
     ops::zero(this->rhsSmoothRef(iPhase).stkFieldPtr(),
               domain->zonePtr()->interiorParts());
@@ -1869,11 +2037,11 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
 
     // define some common selectors; select owned nodes
-    stk::mesh::Selector selUniversalElements =
+    stk::mesh::Selector selAllElements =
         metaData.universal_part() & stk::mesh::selectUnion(partVec);
 
     stk::mesh::BucketVector const& elementBuckets =
-        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selUniversalElements);
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
 
     // get geometry
     const auto* coordsSTKFieldPtr = metaData.get_field<scalar>(
@@ -1905,12 +2073,12 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
         const label* lrscv = meSCS->adjacentNodes();
 
         // allocate space for scratch spaces
-        ws_coordinates.resize(nodesPerElement * D);
+        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
         ws_alpha.resize(nodesPerElement);
         ws_dualVolume.resize(nodesPerElement);
-        ws_scsAreav.resize(numScsIp * D);
-        ws_dndx.resize(D * numScsIp * nodesPerElement);
-        ws_deriv.resize(D * numScsIp * nodesPerElement);
+        ws_scsAreav.resize(numScsIp * SPATIAL_DIM);
+        ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
+        ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_detj.resize(numScsIp);
 
         // define needed pointers
@@ -1927,10 +2095,10 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
             stk::mesh::Entity const* nodeRels =
                 elementBucket.begin_nodes(iElement);
 
-            label num_nodes = elementBucket.num_nodes(iElement);
+            label numNodes = elementBucket.num_nodes(iElement);
 
             // sanity check on nb. of nodes per element
-            STK_ThrowAssert(num_nodes == nodesPerElement);
+            STK_ThrowAssert(numNodes == nodesPerElement);
 
             for (label iNode = 0; iNode < nodesPerElement; iNode++)
             {
@@ -1967,10 +2135,10 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
 
                 // determine dx; edge distance magnitude
                 scalar dx = 0.0;
-                for (label j = 0; j < D; ++j)
+                for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    const scalar dxj =
-                        p_coordinates[ir * D + j] - p_coordinates[il * D + j];
+                    const scalar dxj = p_coordinates[ir * SPATIAL_DIM + j] -
+                                       p_coordinates[il * SPATIAL_DIM + j];
                     dx += dxj * dxj;
                 }
                 l_dxMin = std::min(l_dxMin, std::sqrt(dx));
@@ -1988,11 +2156,12 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
                 for (label ic = 0; ic < nodesPerElement; ++ic)
                 {
                     scalar lhsfacDiff = 0.0;
-                    const label offSetDnDx = D * nodesPerElement * ip + ic * D;
-                    for (label j = 0; j < D; ++j)
+                    const label offSetDnDx =
+                        SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
-                        lhsfacDiff +=
-                            -p_dndx[offSetDnDx + j] * p_scsAreav[ip * D + j];
+                        lhsfacDiff += -p_dndx[offSetDnDx + j] *
+                                      p_scsAreav[ip * SPATIAL_DIM + j];
                     }
                     qDiff += lhsfacDiff * p_alpha[ic];
                 }

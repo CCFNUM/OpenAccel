@@ -85,12 +85,15 @@ void volumeFractionEquation::initialize()
 
     // 3) update scale
     model_->alphaRef(phaseIndex_).updateScale();
-
-    equation::isInitialized_ = true;
 }
 
 void volumeFractionEquation::postInitialize()
 {
+    // Note: smoothing iters for alpha and interface normal
+    FOREACH_DOMAIN(model_->applyVOFSmoothing, phaseIndex_);
+    FOREACH_DOMAIN(model_->updateInterfaceNormal, phaseIndex_);
+
+    equation::isInitialized_ = true;
 }
 
 void volumeFractionEquation::preSolve()

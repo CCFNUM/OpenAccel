@@ -2908,15 +2908,15 @@ void flowModel::setupBodyForces(const std::shared_ptr<domain> domain)
     for (const stk::mesh::Part* part : partVec)
     {
         // check if already defined from a previous pass
-        if (!FSTKFieldPtr_->defined_on(*part))
-        {
-            stk::mesh::put_field_on_mesh(
-                *FSTKFieldPtr_, *part, SPATIAL_DIM, nullptr);
-        }
         if (!FOriginalSTKFieldPtr_->defined_on(*part))
         {
             stk::mesh::put_field_on_mesh(
                 *FOriginalSTKFieldPtr_, *part, SPATIAL_DIM, nullptr);
+        }
+        if (!FSTKFieldPtr_->defined_on(*part))
+        {
+            stk::mesh::put_field_on_mesh(
+                *FSTKFieldPtr_, *part, SPATIAL_DIM, nullptr);
         }
     }
 }
@@ -2927,13 +2927,16 @@ void flowModel::computeBodyForces(const std::shared_ptr<domain> domain)
     stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    // Get volumes
-    assert(FSTKFieldPtr_);
+    // Sanity
+    assert(FOriginalSTKFieldPtr_);
 
     // initialize: always set to uniform body force
-    ops::setValue(FSTKFieldPtr_,
+    ops::setValue(FOriginalSTKFieldPtr_,
                   domain->uniformBodyForce().data(),
                   domain->zonePtr()->interiorParts());
+
+    // get interior parts the domain is defined on
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
 
     // buoyancy force
     if (domain->buoyancy_.option_ == buoyancyOption::buoyant)
@@ -2950,10 +2953,6 @@ void flowModel::computeBodyForces(const std::shared_ptr<domain> domain)
 
                     // get fields
                     const auto* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
-
-                    // get interior parts the domain is defined on
-                    const stk::mesh::PartVector& partVec =
-                        domain->zonePtr()->interiorParts();
 
                     // define some common selectors; select All nodes
                     stk::mesh::Selector selAllNodes =
@@ -2976,8 +2975,8 @@ void flowModel::computeBodyForces(const std::shared_ptr<domain> domain)
                         // field chunks in bucket
                         const scalar* rhob =
                             stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
-                        scalar* Fb =
-                            stk::mesh::field_data(*FSTKFieldPtr_, nodeBucket);
+                        scalar* Fb = stk::mesh::field_data(
+                            *FOriginalSTKFieldPtr_, nodeBucket);
 
                         for (stk::mesh::Bucket::size_type iNode = 0;
                              iNode < nNodesPerBucket;
@@ -3033,8 +3032,8 @@ void flowModel::computeBodyForces(const std::shared_ptr<domain> domain)
                             stk::mesh::field_data(*betaSTKFieldPtr, nodeBucket);
                         const scalar* Tb =
                             stk::mesh::field_data(*TSTKFieldPtr, nodeBucket);
-                        scalar* Fb =
-                            stk::mesh::field_data(*FSTKFieldPtr_, nodeBucket);
+                        scalar* Fb = stk::mesh::field_data(
+                            *FOriginalSTKFieldPtr_, nodeBucket);
 
                         for (stk::mesh::Bucket::size_type iNode = 0;
                              iNode < nNodesPerBucket;
@@ -3053,15 +3052,14 @@ void flowModel::computeBodyForces(const std::shared_ptr<domain> domain)
                 break;
         }
     }
+
+    // Copy FOrig values to F
+    ops::copy<scalar>(FOriginalSTKFieldPtr_, FSTKFieldPtr_, partVec);
 }
 
 void flowModel::redistributeBodyForces(const std::shared_ptr<domain> domain)
 {
-    auto& mesh = this->meshRef();
-    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-    stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    // Volume-weighted body force redistribution (matches Fortran VOLW_AVER):
+    // Volume-weighted body force redistribution:
     //
     // Step 1: Average nodal body forces to element centre using SCV volumes:
     // B_el = Σ_i (B_i * V_scv_i) / V_el
@@ -3078,14 +3076,15 @@ void flowModel::redistributeBodyForces(const std::shared_ptr<domain> domain)
             .solverRef()
             .solverControl_.expertParameters_.bodyForceRedistribution_)
     {
-        // Get interior parts the domain is defined on
+        auto& mesh = this->meshRef();
+        stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+        stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+        // get interior parts
         const stk::mesh::PartVector& partVec =
             domain->zonePtr()->interiorParts();
 
-        // Step 1: Copy current F values to FOrig
-        ops::copy<scalar>(FSTKFieldPtr_, FOriginalSTKFieldPtr_, partVec);
-
-        // Step 2: Reset F field to zero
+        // Reset F field to zero
         ops::zero(FSTKFieldPtr_, partVec);
 
         // Get coordinates field
@@ -3105,10 +3104,10 @@ void flowModel::redistributeBodyForces(const std::shared_ptr<domain> domain)
         std::vector<scalar> F_el(SPATIAL_DIM);
 
         // Define selectors
-        stk::mesh::Selector selOwnedElements =
-            metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
+        stk::mesh::Selector selAllElements =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
         stk::mesh::BucketVector const& elementBuckets =
-            bulkData.get_buckets(stk::topology::ELEMENT_RANK, selOwnedElements);
+            bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
 
         for (auto ib = elementBuckets.begin(); ib != elementBuckets.end(); ++ib)
         {
@@ -3160,10 +3159,14 @@ void flowModel::redistributeBodyForces(const std::shared_ptr<domain> domain)
                 // average: B_el = Σ_i (B_i * V_scv_i) / V_el
                 scalar V_el = 0.0;
                 for (label ip = 0; ip < numScvIp; ++ip)
+                {
                     V_el += ws_scv_volume[ip];
+                }
 
                 for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
                     F_el[d] = 0.0;
+                }
 
                 for (label ip = 0; ip < numScvIp; ++ip)
                 {
@@ -3175,9 +3178,11 @@ void flowModel::redistributeBodyForces(const std::shared_ptr<domain> domain)
                     }
                 }
 
-                const scalar invV_el = (V_el > SMALL) ? 1.0 / V_el : 0.0;
+                const scalar invV_el = 1.0 / V_el;
                 for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
                     F_el[d] *= invV_el;
+                }
 
                 // Scatter element-centre value back to nodes weighted by
                 // SCV volumes: F_node += B_el * V_scv
@@ -3201,14 +3206,14 @@ void flowModel::redistributeBodyForces(const std::shared_ptr<domain> domain)
         // Parallel communication
         if (messager::parallel())
         {
-            stk::mesh::parallel_sum(bulkData, {FSTKFieldPtr_});
+            stk::mesh::communicate_field_data(bulkData, {FSTKFieldPtr_});
         }
 
         // Normalize F by dual nodal volume: F /= dual_nodal_volume
-        stk::mesh::Selector selOwnedNodes =
-            metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
+        stk::mesh::Selector selAllNodes =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
         stk::mesh::BucketVector const& nodeBuckets =
-            bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
         for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
         {
             stk::mesh::Bucket& nodeBucket = **ib;
@@ -3222,28 +3227,13 @@ void flowModel::redistributeBodyForces(const std::shared_ptr<domain> domain)
                  ++iNode)
             {
                 const scalar dualVol = dualVolb[iNode];
-                if (dualVol > SMALL)
+                const scalar invDualVol = 1.0 / dualVol;
+                for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    const scalar invDualVol = 1.0 / dualVol;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        Fb[SPATIAL_DIM * iNode + d] *= invDualVol;
-                    }
+                    Fb[SPATIAL_DIM * iNode + d] *= invDualVol;
                 }
             }
         }
-
-        // Sync F field from owners to ghost nodes for assembly
-        if (messager::parallel())
-        {
-            stk::mesh::communicate_field_data(bulkData, {FSTKFieldPtr_});
-        }
-    }
-    else
-    {
-        const stk::mesh::PartVector& partVec =
-            domain->zonePtr()->interiorParts();
-        ops::copy<scalar>(FSTKFieldPtr_, FOriginalSTKFieldPtr_, partVec);
     }
 }
 
