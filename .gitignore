@@ -5,6 +5,7 @@ examples/
 *.exe
 CMakeCache.txt
 CMakeFiles/
+*.txt*
 
 # IDE
 .vscode/
