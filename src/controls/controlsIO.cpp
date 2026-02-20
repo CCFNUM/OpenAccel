@@ -245,12 +245,6 @@ void controls::read(YAML::Node inputNode)
                             .template as<std::string>());
             }
 
-            if (basicSettings["reduced_stencil"])
-            {
-                solver_.solverControl_.basicSettings_.reducedStencil_ =
-                    basicSettings["reduced_stencil"].template as<bool>();
-            }
-
             if (analysisType_.transient_)
             {
                 if (basicSettings["transient_scheme"])
@@ -714,6 +708,14 @@ void controls::read(YAML::Node inputNode)
                         .verbose_ =
                         interfaceTransfer["verbose"].template as<label>();
                 }
+
+                if (interfaceTransfer["conservative_flux_transfer"])
+                {
+                    solver_.solverControl_.advancedOptions_.interfaceTransfer_
+                        .conservativeFluxTransfer_ =
+                        interfaceTransfer["conservative_flux_transfer"]
+                            .template as<bool>();
+                }
             }
 #endif /* HAS_INTERFACE */
 
@@ -984,6 +986,13 @@ void controls::read(YAML::Node inputNode)
                 solver_.solverControl_.expertParameters_
                     .volumeFractionBlendingFactorMax_ =
                     expertParameters["volume_fraction_compressive_beta_max"]
+                        .template as<scalar>();
+            }
+
+            if (expertParameters["bandwidth_reduction"])
+            {
+                solver_.solverControl_.expertParameters_.bandwidthReduction_ =
+                    expertParameters["bandwidth_reduction"]
                         .template as<scalar>();
             }
         }

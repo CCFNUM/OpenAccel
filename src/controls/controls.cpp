@@ -24,8 +24,6 @@ namespace accel
 
 controls::controls() : profiler_(messager::comm())
 {
-    solver_.solverControl_.basicSettings_.reducedStencil_ = false; // default
-
     // required states for correct restart
     restartParameter_.set_param(
         "timeStepCount", analysisType_.timeStepCount_, false, true);
@@ -46,7 +44,7 @@ controls::~controls()
 
 bool controls::isReducedStencil() const
 {
-    return solver_.solverControl_.basicSettings_.reducedStencil_;
+    return solver_.solverControl_.expertParameters_.bandwidthReduction_;
 }
 
 bool controls::isTransient() const

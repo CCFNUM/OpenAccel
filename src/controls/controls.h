@@ -65,7 +65,6 @@ struct solverDictionary
                 advectionSchemeType::upwind;
             transientSchemeType transientScheme_ =
                 transientSchemeType::firstOrderBackwardEuler;
-            bool reducedStencil_;
 
             struct relaxationParametersDictionary
             {
@@ -176,6 +175,7 @@ struct solverDictionary
                 scalar searchTolerance_ = 1e-4;
                 scalar searchExpansionFactor_ = 1.5;
                 bool forceResearch_ = false;
+                bool conservativeFluxTransfer_ = false;
                 label verbose_ = 0;
             };
 #endif /* HAS_INTERFACE */
@@ -243,6 +243,7 @@ struct solverDictionary
             bool geometricWallDistanceCalculation_ = false;
             bool strongDirichletWallScale_ = false;
             scalar volumeFractionBlendingFactorMax_ = 2.0;
+            bool bandwidthReduction_ = true;
         };
 
         basicSettingsDictionary basicSettings_;
