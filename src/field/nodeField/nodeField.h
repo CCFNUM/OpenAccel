@@ -500,6 +500,16 @@ public:
     {
         mediumIndependent_ = state;
     };
+
+    scalar gradURF() const
+    {
+        return gradURF_;
+    }
+
+    void setGradURF(scalar urf)
+    {
+        gradURF_ = urf;
+    }
 };
 
 // Out-of-line definitions
