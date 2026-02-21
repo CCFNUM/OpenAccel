@@ -90,9 +90,12 @@ void wallScale::update()
         }
         else
         {
-            wallScaleDiffusionEquation_->preSolve();
-            wallScaleDiffusionEquation_->solve();
-            wallScaleDiffusionEquation_->postSolve();
+            if (!wallScaleDiffusionEquation_->isConverged())
+            {
+                wallScaleDiffusionEquation_->preSolve();
+                wallScaleDiffusionEquation_->solve();
+                wallScaleDiffusionEquation_->postSolve();
+            }
         }
 
         // update minimum distance field
