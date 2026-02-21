@@ -541,8 +541,8 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                             p_scs_areav[ip * SPATIAL_DIM + j];
 
                     // body force stabilization: +ρ*D*(F_orig - F)·S
-                    // mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
-                    //         p_scs_areav[ip * SPATIAL_DIM + j];
+                    mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                            p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 
                 // transform mDot to relative frame

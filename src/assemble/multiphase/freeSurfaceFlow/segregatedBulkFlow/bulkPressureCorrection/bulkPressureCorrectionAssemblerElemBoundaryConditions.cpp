@@ -2388,7 +2388,6 @@ void bulkPressureCorrectionAssembler::
 
                     // interpolate to bip
                     scalar rhoBip = 0;
-                    scalar rhoIpArith = 0;
                     scalar alphaBip = 0;
                     const label offSetSF_face = ip * nodesPerSide;
                     for (label ic = 0; ic < nodesPerSide; ++ic)
@@ -2403,12 +2402,7 @@ void bulkPressureCorrectionAssembler::
 
                         // use velocity shape functions
                         rhoBip += r_vel * p_rho[ic];
-                        rhoIpArith += f * p_rho[ic];
                         alphaBip += r_vel * p_alpha[ic];
-
-                        // density weight for harmonic body force interpolation
-                        const scalar invRho =
-                            (p_rho[ic] > SMALL) ? 1.0 / p_rho[ic] : 0.0;
 
                         const label icNdim = ic * SPATIAL_DIM;
                         for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -2422,23 +2416,16 @@ void bulkPressureCorrectionAssembler::
                             p_coordBip[j] +=
                                 r_coord * p_coordinates[inn * SPATIAL_DIM + j];
 
+                            // face-centre average for original body force
+                            p_FOrigBip[j] += r_vel * p_FOrig[icNdim + j];
+
                             // arithmetic interpolation
                             p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
 
                             // interpolate redistributed body force using shape
                             // functions
-                            p_FBip[j] += r_vel * p_F[icNdim + j] * invRho;
-
-                            // face-centre average for original body force
-                            p_FOrigBip[j] += f * p_FOrig[icNdim + j] * invRho;
+                            p_FBip[j] += f * p_F[icNdim + j];
                         }
-                    }
-
-                    // recover harmonic density-weighted body forces
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        p_FBip[j] *= rhoBip;
-                        p_FOrigBip[j] *= rhoIpArith;
                     }
 
                     // form dpdxBip
@@ -3531,7 +3518,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
 
                 // interpolate to bip
                 scalar rhoBip = 0;
-                scalar rhoIpArith = 0;
                 scalar alphaBip = 0;
                 const label offSetSF_face = ip * nodesPerSide;
                 for (label ic = 0; ic < nodesPerSide; ++ic)
@@ -3545,12 +3531,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
 
                     // use velocity shape functions
                     rhoBip += r_vel * p_rho[ic];
-                    rhoIpArith += f * p_rho[ic];
                     alphaBip += r_vel * p_alpha[ic];
-
-                    // density weight for harmonic body force interpolation
-                    const scalar invRho =
-                        (p_rho[ic] > SMALL) ? 1.0 / p_rho[ic] : 0.0;
 
                     const label icNdim = ic * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -3564,23 +3545,16 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                         p_coordBip[j] +=
                             r_coord * p_coordinates[inn * SPATIAL_DIM + j];
 
+                        // face-centre average for original body force
+                        p_FOrigBip[j] += r_vel * p_FOrig[icNdim + j];
+
                         // arithmetic interpolation
                         p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
 
                         // interpolate redistributed body force using shape
                         // functions
-                        p_FBip[j] += r_vel * p_F[icNdim + j] * invRho;
-
-                        // face-centre average for original body force
-                        p_FOrigBip[j] += f * p_FOrig[icNdim + j] * invRho;
+                        p_FBip[j] += f * p_F[icNdim + j];
                     }
-                }
-
-                // recover harmonic density-weighted body forces
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    p_FBip[j] *= rhoBip;
-                    p_FOrigBip[j] *= rhoIpArith;
                 }
 
                 // form dpdxBip
@@ -4083,7 +4057,6 @@ void bulkPressureCorrectionAssembler::
 
                     // interpolate to bip
                     scalar rhoBip = 0;
-                    scalar rhoIpArith = 0;
                     scalar alphaBip = 0;
                     const label offSetSF_face = ip * nodesPerSide;
                     for (label ic = 0; ic < nodesPerSide; ++ic)
@@ -4098,12 +4071,7 @@ void bulkPressureCorrectionAssembler::
 
                         // use velocity shape functions
                         rhoBip += r_vel * p_rho[ic];
-                        rhoIpArith += f * p_rho[ic];
                         alphaBip += r_vel * p_alpha[ic];
-
-                        // density weight for harmonic body force interpolation
-                        const scalar invRho =
-                            (p_rho[ic] > SMALL) ? 1.0 / p_rho[ic] : 0.0;
 
                         const label icNdim = ic * SPATIAL_DIM;
                         for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -4117,23 +4085,16 @@ void bulkPressureCorrectionAssembler::
                             p_coordBip[j] +=
                                 r_coord * p_coordinates[inn * SPATIAL_DIM + j];
 
-                            // arithmetic interpolation for projected gradient
+                            // face-centre average for original body force
+                            p_FOrigBip[j] += r_vel * p_FOrig[icNdim + j];
+
+                            // arithmetic interpolation
                             p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
 
                             // interpolate redistributed body force using shape
                             // functions
-                            p_FBip[j] += r_vel * p_F[icNdim + j] * invRho;
-
-                            // face-centre average for original body force
-                            p_FOrigBip[j] += f * p_FOrig[icNdim + j] * invRho;
+                            p_FBip[j] += f * p_F[icNdim + j];
                         }
-                    }
-
-                    // recover harmonic density-weighted body forces
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        p_FBip[j] *= rhoBip;
-                        p_FOrigBip[j] *= rhoIpArith;
                     }
 
                     // form dpdxBip
