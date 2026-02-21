@@ -142,6 +142,31 @@ mpirun -np 8 ./build/accel-3D.exe -i case/input.yaml
 
 ---
 
+## Examples
+
+The repository includes a suite of test cases designed to demonstrate the various numerical features and physical models available in the package. Below is a categorized list of the available examples:
+
+### Fluid Dynamics & Turbulence
+* **cavity:** The classic lid-driven cavity problem; a closed domain with no inflow or outflow boundaries.
+* **airfoil:** Incompressible flow over an airfoil featuring **non-conformal interfaces**, where the airfoil is discretized in a separate mesh zone.
+* **elbow:** Incompressible laminar flow within a wedge-type mesh.
+* **pitzDaily:** Incompressible turbulent internal flow over a backward-facing step. This case utilizes the **k-ω SST** turbulence model.
+
+### Multiphase & Free Surface Flow
+* **damBreak:** A laminar multiphase free-surface flow simulation using the **Volume of Fluid (VOF)** method.
+* **staticDroplet:** A stationary water droplet in an air domain. This VOF case isolates and tests the **Continuum Surface Force (CSF)** model for surface tension without gravity.
+
+### Fluid-Structure Interaction (FSI) & Moving Meshes
+* **flexibleDamBreak:** A water column collapse where the fluid impacts an elastic obstacle. This demonstrates the coupling of **VOF** with **Arbitrary Lagrangian-Eulerian (ALE)** formulations.
+* **oscillatingBox:** A simple box in a closed cavity oscillating vertically, showcasing the **dynamic mesh** capabilities.
+* **perpendicularFlap:** Incompressible flow against a flexible bar, highlighting the **ALE** approach for FSI.
+
+### Heat Transfer & Buoyancy
+* **BénardCells:** Buoyancy-driven flow (natural convection) utilizing the **Boussinesq approximation**.
+* **slab:** Incompressible flow over a heated slab, demonstrating the **Conjugate Heat Transfer (CHT)** methodology.
+
+---
+
 ## License
 
 OpenAccel is licensed under the BSD 3-Clause License. See [LICENSE](LICENSE) for the full text.
