@@ -696,9 +696,14 @@ template <size_t N, size_t M>
 void nodeField<N, M>::setupGradientField()
 {
     assert(N * SPATIAL_DIM == M);
-    gradFieldPtr_ = std::make_unique<nodeField<M>>(
-        this->meshPtr(), this->name() + "_gradient", 1, false);
 
+    if (!gradFieldPtr_)
+    {
+        gradFieldPtr_ = std::make_unique<nodeField<M>>(
+            this->meshPtr(), this->name() + "_gradient", 1, false);
+    }
+
+    // populate gradient limiter field if required
     if (limitGradient_)
     {
         this->setupGradientLimiterField();
@@ -708,10 +713,16 @@ void nodeField<N, M>::setupGradientField()
 template <size_t N, size_t M>
 void nodeField<N, M>::setupGradientLimiterField()
 {
-    // populate gradient limiter field if required
-    gradientLimiterFieldPtr_ = std::make_unique<nodeField<N>>(
-        this->meshPtr(), this->name() + "_gradient_limiter", 1, true);
-    this->gradientLimiterRef().setToValue(std::vector<scalar>(N, 0));
+    assert(N * SPATIAL_DIM == M);
+
+    if (!gradientLimiterFieldPtr_)
+    {
+        gradientLimiterFieldPtr_ = std::make_unique<nodeField<N>>(
+            this->meshPtr(), this->name() + "_gradient_limiter", 1, true);
+
+        // initialize to 0
+        this->gradientLimiterRef().setToValue(std::vector<scalar>(N, 0));
+    }
 
     // Gradient field must be enabled already
     assert(gradFieldPtr_ != nullptr);
