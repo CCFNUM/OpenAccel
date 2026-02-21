@@ -661,6 +661,28 @@ void flowModel::initializePressure(const std::shared_ptr<domain> domain)
     // raw initialization
     fieldBroker::initializePressure(domain);
 
+    // Pressure Field Initialization and Storage Logic
+    //
+    // All user-defined pressure values from the YAML input (p_input) are
+    // treated as relative. The computational pressure (p_stored) is shifted
+    // based on the flow regime:
+    //
+    // 1) Incompressible Flows:
+    //    - With Buoyancy:    p_stored = p_input - rho_ref * (g . R)
+    //      (Piezometric pressure: removes hydrostatic head to improve numerical
+    //      stability)
+    //    - Without Buoyancy: p_stored = p_input
+    //      (Standard relative pressure)
+    //
+    // 2) Compressible Flows:
+    //    - With Buoyancy:    p_stored = (p_input + p_ref) - rho_ref * (g . R)
+    //      (Perturbation pressure: absolute pressure minus the hydrostatic
+    //      background) Note: Absolute pressure must be recovered [p_abs =
+    //      p_stored + rho_ref * (g . R)] before updating density via the
+    //      Equation of State (EoS).
+    //    - Without Buoyancy: p_stored = p_input + p_ref
+    //      (Full absolute pressure for direct EoS coupling)
+
     auto option =
         domain->materialRef().thermodynamicProperties_.equationOfState_.option_;
 
@@ -1422,6 +1444,27 @@ void flowModel::updatePressure(const std::shared_ptr<domain> domain)
     // model-based side updates
     updatePressureSideFields_(domain);
 
+    // Boundary pressure field update
+    //
+    // All user-defined boundary pressure values from the YAML input (p_input)
+    // are treated as relative. The computational pressure (p_stored) is shifted
+    // based on the flow regime:
+    //
+    // 1) Incompressible Flows:
+    //    - With Buoyancy:    p_stored = p_input - rho_ref * (g . R)
+    //      (Piezometric pressure: removes hydrostatic head to improve numerical
+    //      stability)
+    //    - Without Buoyancy: p_stored = p_input
+    //      (Standard relative pressure)
+    //
+    // 2) Compressible Flows:
+    //    - With Buoyancy:    p_stored = (p_input + p_ref) - rho_ref * (g . R)
+    //      (Perturbation pressure: absolute pressure minus the hydrostatic
+    //      background) Note: Absolute pressure must be recovered [p_abs =
+    //      p_stored + rho_ref * (g . R)] before updating density via the
+    //      Equation of State (EoS).
+    //    - Without Buoyancy: p_stored = p_input + p_ref
+    //      (Full absolute pressure for direct EoS coupling)
     auto option =
         domain->materialRef().thermodynamicProperties_.equationOfState_.option_;
 
