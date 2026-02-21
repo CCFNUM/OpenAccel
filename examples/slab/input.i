@@ -115,8 +115,9 @@ simulation:
                 linear_solver_settings:
                     default:
                         family: Trilinos
-                        max_iterations: 200
-                        rtol: 1.0e-6
+                        min_iterations: 3
+                        max_iterations: 50
+                        rtol: 1.0e-2
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
