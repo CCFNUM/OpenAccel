@@ -49,6 +49,7 @@ simulation:
           - name: interface1
             option: general_connection
             search_tolerance: 0.01
+            gauss_lobatto_quadrature: true
             type: fluid_fluid
             side1:
                 domain: default_domain
@@ -59,17 +60,17 @@ simulation:
     solver:
         solver_control:
             basic_settings:
-                advection_scheme: upwind
+                advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 300
-                    physical_timescale: 0.1
+                    max_iterations: 1000
+                    physical_timescale: 0.001
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.7
-                        pressure_relaxation_factor: 0.3
+                        velocity_relaxation_factor: 0.8
+                        pressure_relaxation_factor: 0.2
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-10
+                    residual_target: 1e-6
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:
@@ -82,7 +83,26 @@ simulation:
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
-                            preconditioner: ilu   
+                            preconditioner: ilu  
+                    pressure_correction:
+                        family: HYPRE
+                        min_iterations: 3
+                        max_iterations: 20
+                        rtol: 1.0e-3
+                        atol: 1.0e-12
+                        options:
+                            solver:
+                                type: GMRES
+                            precond:
+                                type: BoomerAMG
+                                coarsen_type: 10      # HMIS (Excellent parallel scaling)
+                                interp_type: 6        # Extended+i (Robust for stretched grids)
+                                relax_type: 18        # L1-Gauss-Seidel (Stable/Smooth)
+                                strong_threshold: 0.25
+                                num_sweeps: 1
+                                max_levels: 20
+                                aggressive_levels: 1  # Reduces memory overhead
+                                trunc_factor: 0.3     # Keeps the solver lean                              
         output_control:
             file_path: results.e
             output_frequency: 50
