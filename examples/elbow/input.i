@@ -68,8 +68,6 @@ simulation:
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-6
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
             advanced_options:
                 linear_solver_settings:
                     default:
