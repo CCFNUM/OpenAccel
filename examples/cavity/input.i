@@ -41,7 +41,6 @@ simulation:
         solver_control:
             basic_settings:
                 advection_scheme: upwind
-                reduced_stencil: true
                 convergence_controls:
                     min_iterations: 1
                     max_iterations: 100
