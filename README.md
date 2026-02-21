@@ -28,7 +28,7 @@
 ### Optional (Backend Solvers)
 * **PETSc:** Optional high-performance solver backend. (Some examples are
   configured with PETSc solvers. See [`examples/cavity/input.i`](./examples/cavity/input.i) and [`examples/elbow/input.i`](./examples/elbow/input.i).)
-* **HYPRE:** Optional multigrid preconditioner support.
+* **HYPRE:** Optional multigrid preconditioner support. (See [`examples/pitzDaily/input.i`](./examples/pitzDaily/input.i).)
 * **gnuplot:** Optional live residual plotting.
 
 ### Submodules
