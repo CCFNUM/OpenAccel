@@ -46,11 +46,11 @@ simulation:
                     max_iterations: 100
                     physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.8
-                        pressure_relaxation_factor: 0.2
+                        velocity_relaxation_factor: 0.9
+                        pressure_relaxation_factor: 0.1
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-10
+                    residual_target: 1e-6
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:
