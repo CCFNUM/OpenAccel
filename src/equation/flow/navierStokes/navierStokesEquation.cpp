@@ -139,7 +139,7 @@ void navierStokesEquation::preSolve()
     FOREACH_DOMAIN(model_->updateVelocity);
 
     // properties update
-    FOREACH_DOMAIN(model_->updateDensity);
+    FOREACH_DOMAIN_IF(model_->updateDensity, domain->isMaterialCompressible());
     FOREACH_DOMAIN(model_->updateDynamicViscosity);
     FOREACH_DOMAIN(model_->updateEffectiveDynamicViscosity); // laminar
 
