@@ -3615,7 +3615,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
 
                     // // buoyancy stabilization: +rho*D*(F_orig - F)·S
                     // mDot +=
-                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) *
+                    //     axj;
                 }
 
                 // transform mDot to relative frame
