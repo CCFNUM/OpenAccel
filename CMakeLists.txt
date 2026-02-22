@@ -118,45 +118,50 @@ else()
     endif()
 endif()
 
-# HYPRE (Optimized for system/apt installations)
+# HYPRE (Strict Version Check)
+set(HYPRE_FOUND FALSE)
+
 if(DEFINED HYPRE_DIR)
-    message("HYPRE_DIR (${HYPRE_DIR}) is provided. HYPRE functionalities are enabled.")
-    add_compile_definitions(HAS_HYPRE)
-    include_directories(${HYPRE_DIR}/include)
+    set(HYPRE_SEARCH_PATHS ${HYPRE_DIR}/include)
 else()
-    # 1. Try PkgConfig (Ubuntu/Debian often don't provide a .pc for hypre)
-    if(PKG_CONFIG_FOUND)
-        pkg_check_modules(HYPRE hypre)
-    endif()
+    set(HYPRE_SEARCH_PATHS /usr/include/hypre /usr/local/include/hypre /usr/include)
+endif()
 
-    # 2. Manual Search Fallback (Specifically for 'apt' layout)
-    if(NOT HYPRE_FOUND)
-        # Search for header - Note the 'hypre' suffix in the search path
-        find_path(HYPRE_INCLUDE_DIR 
-                  NAMES HYPRE.h hypre.h
-                  PATHS /usr/include/hypre /usr/local/include/hypre /usr/include)
-        
-        # Search for library - Look for both case variations
-        find_library(HYPRE_LIB 
-                     NAMES HYPRE hypre
-                     PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib /usr/lib)
+# 1. Look for the header and library
+find_path(HYPRE_INCLUDE_DIR NAMES HYPRE.h hypre.h PATHS ${HYPRE_SEARCH_PATHS})
+find_library(HYPRE_LIB NAMES HYPRE hypre PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib /usr/lib)
 
-        if(HYPRE_INCLUDE_DIR AND HYPRE_LIB)
-            set(HYPRE_FOUND TRUE)
-            set(HYPRE_INCLUDE_DIRS ${HYPRE_INCLUDE_DIR})
-            set(HYPRE_LIBRARIES ${HYPRE_LIB})
+if(HYPRE_INCLUDE_DIR AND HYPRE_LIB)
+    # 2. Extract version from HYPRE_config.h for compatibility check
+    find_path(HYPRE_CONFIG_PATH NAMES HYPRE_config.h PATHS ${HYPRE_INCLUDE_DIR})
+    
+    if(HYPRE_CONFIG_PATH)
+        file(STRINGS "${HYPRE_CONFIG_PATH}/HYPRE_config.h" HYPRE_VER_LINE REGEX "HYPRE_RELEASE_NUMBER")
+        if(HYPRE_VER_LINE MATCHES "([0-9]+)")
+            set(HYPRE_VERSION_VAL ${CMAKE_MATCH_1})
+            
+            # 3. Enforce Version 2.29.0 (22900) or higher
+            if(${HYPRE_VERSION_VAL} LESS 22900)
+                message(WARNING "HYPRE version ${HYPRE_VERSION_VAL} is too old. Required: 2.29.0+. Disabling HYPRE.")
+                set(HYPRE_FOUND FALSE)
+            else()
+                set(HYPRE_FOUND TRUE)
+                set(HYPRE_INCLUDE_DIRS ${HYPRE_INCLUDE_DIR})
+                set(HYPRE_LIBRARIES ${HYPRE_LIB})
+            endif()
         endif()
-    endif()
-
-    if(HYPRE_FOUND)
-        message("-- HYPRE functionalities are enabled.")
-        message("   HYPRE Include: ${HYPRE_INCLUDE_DIRS}")
-        message("   HYPRE Library: ${HYPRE_LIBRARIES}")
-        add_compile_definitions(HAS_HYPRE)
-        include_directories(${HYPRE_INCLUDE_DIRS})
     else()
-        message("-- HYPRE functionalities are disabled (not found).")
+        message(WARNING "Found HYPRE headers but could not find HYPRE_config.h to verify version.")
     endif()
+endif()
+
+# 4. Final Activation Logic
+if(HYPRE_FOUND)
+    message("-- HYPRE version ${HYPRE_VERSION_VAL} found and enabled.")
+    add_compile_definitions(HAS_HYPRE)
+    include_directories(${HYPRE_INCLUDE_DIRS})
+else()
+    message("-- HYPRE functionalities are DISABLED (Version mismatch or not found).")
 endif()
 
 # Interface support (enabled by default)
