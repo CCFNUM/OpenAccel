@@ -195,6 +195,8 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
                 scalar* duTilde =
                     stk::mesh::field_data(*duTildeSTKFieldPtr, node);
 
+                const auto& diagOffset = A.diagOffsetRef();
+
                 for (label i = 0; i < SPATIAL_DIM; i++)
                 {
                     const scalar& di = A.dofDiag(localID, i);
@@ -204,11 +206,14 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
                          icol < static_cast<label>(rowCols.size());
                          icol++)
                     {
+                        if (diagOffset[localID] == icol)
+                            continue;
+
                         sumOffDiagi += rowVals[BLOCKSIZE * BLOCKSIZE * icol +
                                                BLOCKSIZE * i + i];
                     }
 
-                    duTilde[i] = vol / (2.0 * di - sumOffDiagi + SMALL);
+                    duTilde[i] = vol / (di + sumOffDiagi + SMALL);
                 }
             }
         }
