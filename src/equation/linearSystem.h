@@ -111,6 +111,7 @@ protected:
     double convergence_tolerance_; // final tolerance for control residual
     residualType residual_type_ = residualType::RMS;
     std::vector<std::string> equation_name_; // descriptive names for equations
+    bool plot_res_ = true;
 
     LinearSolver* lsolver_;
 
@@ -601,7 +602,7 @@ void linearSystem<N>::initializeHistory_()
         auto in_time_t = std::chrono::system_clock::to_time_t(now);
 
         auto& fout = *residual_stream_;
-        fout << COMMENT << "cN-CVFEM solver timestamp: "
+        fout << COMMENT << "Accel solver timestamp: "
              << std::put_time(std::localtime(&in_time_t), "%c\n");
         fout << COMMENT << "Git revision: " << accel::git_revision << '\n';
         fout << COMMENT << '\n';
@@ -624,15 +625,18 @@ void linearSystem<N>::initializeHistory_()
         fout << std::endl;
 
         // append to region plot list
-        unsigned int k = 0;
-        for (const auto& eq_name : equation_name_)
+        if (plot_res_)
         {
-            simulation::residualPlotItem item;
-            item.data_file = residual_file_name_;
-            item.legend_name = eq_name;
-            item.xdata_idx = 0;                    // global iteration
-            item.ydata_idx = residual_start + k++; // residual component(s)
-            sim_.addPlotItem(item);
+            unsigned int k = 0;
+            for (const auto& eq_name : equation_name_)
+            {
+                simulation::residualPlotItem item;
+                item.data_file = residual_file_name_;
+                item.legend_name = eq_name;
+                item.xdata_idx = 0;                    // global iteration
+                item.ydata_idx = residual_start + k++; // residual component(s)
+                sim_.addPlotItem(item);
+            }
         }
     }
 }
