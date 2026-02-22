@@ -64,9 +64,6 @@ simulation:
                 convergence_controls:
                     min_iterations: 1
                     max_iterations: 1
-                    relaxation_parameters:
-                        velocity_relaxation_factor: 0.8
-                        pressure_relaxation_factor: 0.2
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-10
