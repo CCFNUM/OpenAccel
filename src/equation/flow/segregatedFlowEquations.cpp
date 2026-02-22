@@ -127,8 +127,9 @@ void segregatedFlowEquations::solve()
             // Adjusts velocity to satisfy the continuity equation at
             // sub-control volume faces. The term (grad_p_new - grad_p_old) /
             // lambda reconstructs the "true" pressure increment (p') by
-            // reversing the under-relaxation applied during the pressure correction.
-            // D is the momentum influence coefficient: v_corr = -D * grad(p')
+            // reversing the under-relaxation applied during the pressure
+            // correction. D is the momentum influence coefficient: v_corr = -D
+            // * grad(p')
 
             // correct velocity field step 1
             FOREACH_DOMAIN_RAW({
