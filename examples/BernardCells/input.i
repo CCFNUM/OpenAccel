@@ -7,7 +7,7 @@ simulation:
             option: transient
             time_steps:
                 option: constant
-                timestep: 1
+                timestep: 10
             total_time: 1000
         domains:
           - name: default_domain
@@ -63,10 +63,13 @@ simulation:
                 advection_scheme: upwind
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 1
+                    max_iterations: 10
+                    relaxation_parameters:
+                        velocity_relaxation_factor: 0.9
+                        pressure_relaxation_factor: 0.1
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-10
+                    residual_target: 1e-5
             advanced_options:
                 pressure_level_information:
                     option: cartesian_coordinates
@@ -86,7 +89,7 @@ simulation:
             file_path: results.e
             output_frequency:
                 option: timestep_interval
-                timestep_interval: 50
+                timestep_interval: 5
             output_fields: [velocity, pressure, temperature]
     material_library:
       - name: fluid_1
