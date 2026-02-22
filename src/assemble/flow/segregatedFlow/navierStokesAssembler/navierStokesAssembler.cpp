@@ -59,7 +59,7 @@ void navierStokesAssembler::setupDUCoefficients(const domain* domain)
         if (!duTildeSTKFieldPtr)
         {
             duTildeSTKFieldPtr = &metaData.declare_field<scalar>(
-                stk::topology::NODE_RANK, flowModel::du_ID);
+                stk::topology::NODE_RANK, flowModel::duTilde_ID);
 
             // Set field output type
             stk::io::set_field_output_type(*duTildeSTKFieldPtr,
