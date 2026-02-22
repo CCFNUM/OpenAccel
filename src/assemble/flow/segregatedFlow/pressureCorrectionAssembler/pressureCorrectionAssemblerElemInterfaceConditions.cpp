@@ -108,6 +108,8 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
     std::vector<scalar> cUmBip(SPATIAL_DIM);
     std::vector<scalar> cDuBip(SPATIAL_DIM);
     std::vector<scalar> oDuBip(SPATIAL_DIM);
+    std::vector<scalar> cDuRhsBip(SPATIAL_DIM);
+    std::vector<scalar> oDuRhsBip(SPATIAL_DIM);
     std::vector<scalar> currentCoordsBip(SPATIAL_DIM);
 
     // pressure stabilization
@@ -149,6 +151,8 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
     std::vector<scalar> ws_o_elem_coordinates;
     std::vector<scalar> ws_c_du;
     std::vector<scalar> ws_o_du;
+    std::vector<scalar> ws_c_duRhs;
+    std::vector<scalar> ws_o_duRhs;
 
     // master element data
     std::vector<scalar> ws_c_dndx;
@@ -180,8 +184,14 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                    : nullptr;
 #endif /* NDEBUG */
 
-    // Get pressure diffusivity coefficient field
-    const auto& duSTKFieldRef =
+    // Pressure diffusivity: duTilde for LHS (SIMPLEC), du for RHS
+    const bool consistent = model_->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& duLhsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK,
+        consistent ? flowModel::duTilde_ID : flowModel::du_ID);
+    const auto& duRhsSTKFieldRef =
         *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
 
     // Get geometric fields
@@ -259,6 +269,8 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             ws_o_p.resize(opposingNodesPerSide);
             ws_c_du.resize(currentNodesPerSide * SPATIAL_DIM);
             ws_o_du.resize(opposingNodesPerSide * SPATIAL_DIM);
+            ws_c_duRhs.resize(currentNodesPerSide * SPATIAL_DIM);
+            ws_o_duRhs.resize(opposingNodesPerSide * SPATIAL_DIM);
             ws_c_Gjp.resize(currentNodesPerSide * SPATIAL_DIM);
             ws_o_Gjp.resize(opposingNodesPerSide * SPATIAL_DIM);
             ws_c_rhoU.resize(currentNodesPerSide * SPATIAL_DIM);
@@ -292,6 +304,8 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             scalar* p_o_p = &ws_o_p[0];
             scalar* p_c_du = &ws_c_du[0];
             scalar* p_o_du = &ws_o_du[0];
+            scalar* p_c_duRhs = &ws_c_duRhs[0];
+            scalar* p_o_duRhs = &ws_o_duRhs[0];
             scalar* p_c_Gjp = &ws_c_Gjp[0];
             scalar* p_o_Gjp = &ws_o_Gjp[0];
             scalar* p_c_rhoU = &ws_c_rhoU[0];
@@ -343,7 +357,10 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                     stk::mesh::field_data(gradPSTKFieldRef, node);
                 const scalar* coords =
                     stk::mesh::field_data(coordsSTKFieldRef, node);
-                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                const scalar* du =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                const scalar* duRhs =
+                    stk::mesh::field_data(duRhsSTKFieldRef, node);
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     const label offSet = i * current_num_face_nodes + ni;
@@ -351,6 +368,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                     p_c_Gjp[offSet] = Gjp[i];
                     p_c_face_coordinates[offSet] = coords[i];
                     p_c_du[offSet] = du[i];
+                    p_c_duRhs[offSet] = duRhs[i];
                 }
 
                 if (meshMoving)
@@ -397,13 +415,17 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
                 const scalar* Gjp =
                     stk::mesh::field_data(gradPSTKFieldRef, node);
-                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                const scalar* du =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                const scalar* duRhs =
+                    stk::mesh::field_data(duRhsSTKFieldRef, node);
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     const label offSet = i * opposing_num_face_nodes + ni;
                     p_o_rhoU[offSet] = U[i];
                     p_o_Gjp[offSet] = Gjp[i];
                     p_o_du[offSet] = du[i];
+                    p_o_duRhs[offSet] = duRhs[i];
                 }
             }
 
@@ -664,7 +686,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                           &ws_c_Um[0],
                                           &cUmBip[0]);
 
-            // interpolate pressure diffusivity
+            // interpolate pressure diffusivity (LHS: duTilde for SIMPLEC)
             meFCCurrent->interpolatePoint(sizeOfVectorField,
                                           &currentIsoParCoords[0],
                                           &ws_c_du[0],
@@ -674,6 +696,17 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                            &opposingIsoParCoords[0],
                                            &ws_o_du[0],
                                            &oDuBip[0]);
+
+            // interpolate pressure diffusivity (RHS: always du)
+            meFCCurrent->interpolatePoint(sizeOfVectorField,
+                                          &currentIsoParCoords[0],
+                                          &ws_c_duRhs[0],
+                                          &cDuRhsBip[0]);
+
+            meFCOpposing->interpolatePoint(sizeOfVectorField,
+                                           &opposingIsoParCoords[0],
+                                           &ws_o_duRhs[0],
+                                           &oDuRhsBip[0]);
 
             // projected nodal gradient: use arithmetic interpolations: zero-out
             // first
@@ -741,9 +774,9 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 ncFlux += 0.5 * (cRhoU * p_cNx[j] - oRhoU * p_oNx[j]);
 
                 const scalar cPstab =
-                    cRhoBip * cDuBip[j] * (cDpdxBip[j] - cGjpBip[j]);
+                    cRhoBip * cDuRhsBip[j] * (cDpdxBip[j] - cGjpBip[j]);
                 const scalar oPstab =
-                    oRhoBip * oDuBip[j] * (oDpdxBip[j] - oGjpBip[j]);
+                    oRhoBip * oDuRhsBip[j] * (oDpdxBip[j] - oGjpBip[j]);
                 ncPstabFlux += 0.5 * (cPstab * p_cNx[j] - oPstab * p_oNx[j]);
             }
 

@@ -62,6 +62,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_gradRho;
     std::vector<scalar> ws_psi;
     std::vector<scalar> ws_du;
+    std::vector<scalar> ws_duRhs;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_scv_volume;
@@ -82,6 +83,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> GpdxIp(SPATIAL_DIM);
     std::vector<scalar> dpdxIp(SPATIAL_DIM);
     std::vector<scalar> duIp(SPATIAL_DIM);
+    std::vector<scalar> duRhsIp(SPATIAL_DIM);
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
 
@@ -92,6 +94,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
     scalar* p_GpdxIp = &GpdxIp[0];
     scalar* p_dpdxIp = &dpdxIp[0];
     scalar* p_duIp = &duIp[0];
+    scalar* p_duRhsIp = &duRhsIp[0];
     scalar* p_FIp = &FIp[0];
     scalar* p_FOrigIp = &FOrigIp[0];
 
@@ -120,8 +123,14 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                    : nullptr;
 #endif /* NDEBUG */
 
-    // Get pressure diffusivity coefficient field
-    const auto& duSTKFieldRef =
+    // Pressure diffusivity coefficient: duTilde for LHS (SIMPLEC), du for RHS
+    const bool consistent = model_->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& duLhsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK,
+        consistent ? flowModel::duTilde_ID : flowModel::du_ID);
+    const auto& duRhsSTKFieldRef =
         *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
 
     // Get body force fields for buoyancy pressure stabilization
@@ -190,6 +199,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
         ws_gradRho.resize(nodesPerElement * SPATIAL_DIM);
         ws_psi.resize(nodesPerElement);
         ws_du.resize(nodesPerElement * SPATIAL_DIM);
+        ws_duRhs.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
         ws_scv_volume.resize(numScvIp);
@@ -214,6 +224,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
         scalar* p_gradRho = &ws_gradRho[0];
         scalar* p_psi = &ws_psi[0];
         scalar* p_du = &ws_du[0];
+        scalar* p_duRhs = &ws_duRhs[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
         scalar* p_scs_areav = &ws_scs_areav[0];
@@ -273,7 +284,10 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                 const scalar* coords =
                     stk::mesh::field_data(coordinatesRef, node);
                 const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
-                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                const scalar* du =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                const scalar* duRhs =
+                    stk::mesh::field_data(duRhsSTKFieldRef, node);
                 const scalar* gradRho =
                     stk::mesh::field_data(gradRhoSTKFieldRef, node);
 
@@ -294,6 +308,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                     p_Gpdx[niNdim + j] = Gjp[j];
                     p_coordinates[niNdim + j] = coords[j];
                     p_du[niNdim + j] = du[j];
+                    p_duRhs[niNdim + j] = duRhs[j];
                     p_gradRho[niNdim + j] = gradRho[j];
                 }
 
@@ -396,6 +411,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                     p_GpdxIp[j] = 0.0;
                     p_dpdxIp[j] = 0.0;
                     p_duIp[j] = 0.0;
+                    p_duRhsIp[j] = 0.0;
                     p_FIp[j] = 0.0;
                     p_FOrigIp[j] = 0.0;
                 }
@@ -417,6 +433,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                         p_uIp[j] += r_vel * p_U[SPATIAL_DIM * ic + j];
                         p_umIp[j] += r_vel * p_Um[SPATIAL_DIM * ic + j];
                         p_duIp[j] += r_vel * p_du[SPATIAL_DIM * ic + j];
+                        p_duRhsIp[j] += r_vel * p_duRhs[SPATIAL_DIM * ic + j];
 
                         // use coordinates shape functions
                         p_coordIp[j] +=
@@ -537,11 +554,11 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                         rhoHR * p_uIp[j] * p_scs_areav[ip * SPATIAL_DIM + j];
 
                     // pressure Rhie-Chow: -ρ*D*(∇p - Gp)·S
-                    mDot -= rhoHR * p_duIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
+                    mDot -= rhoHR * p_duRhsIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
                             p_scs_areav[ip * SPATIAL_DIM + j];
 
                     // body force stabilization: +ρ*D*(F_orig - F)·S
-                    mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                    mDot += rhoHR * p_duRhsIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
                             p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 

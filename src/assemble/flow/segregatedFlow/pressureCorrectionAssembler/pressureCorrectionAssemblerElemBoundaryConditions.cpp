@@ -1935,6 +1935,7 @@ void pressureCorrectionAssembler::
     std::vector<scalar> GpdxBip(SPATIAL_DIM);
     std::vector<scalar> dpdxBip(SPATIAL_DIM);
     std::vector<scalar> duBip(SPATIAL_DIM);
+    std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
 
@@ -1945,6 +1946,7 @@ void pressureCorrectionAssembler::
     scalar* p_GpdxBip = &GpdxBip[0];
     scalar* p_dpdxBip = &dpdxBip[0];
     scalar* p_duBip = &duBip[0];
+    scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
 
@@ -1955,6 +1957,7 @@ void pressureCorrectionAssembler::
     std::vector<scalar> ws_Um;
     std::vector<scalar> ws_Gpdx;
     std::vector<scalar> ws_du;
+    std::vector<scalar> ws_duRhs;
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_bcMultiplier;
     std::vector<scalar> ws_F;
@@ -1977,7 +1980,14 @@ void pressureCorrectionAssembler::
     const auto& reversalFlowFlagSTKFieldRef =
         model_->URef().reversalFlagRef().stkFieldRef();
 
-    const auto& duSTKFieldRef =
+    // Pressure diffusivity: duTilde for LHS (SIMPLEC), du for RHS
+    const bool consistent = model_->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& duLhsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK,
+        consistent ? flowModel::duTilde_ID : flowModel::du_ID);
+    const auto& duRhsSTKFieldRef =
         *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
 
     const auto* UmSTKFieldPtr =
@@ -2057,6 +2067,7 @@ void pressureCorrectionAssembler::
         ws_Um.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
         ws_du.resize(nodesPerSide * SPATIAL_DIM);
+        ws_duRhs.resize(nodesPerSide * SPATIAL_DIM);
         ws_rho.resize(nodesPerSide);
         ws_bcMultiplier.resize(nodesPerElement);
         ws_F.resize(nodesPerSide * SPATIAL_DIM);
@@ -2076,6 +2087,7 @@ void pressureCorrectionAssembler::
         scalar* p_bcMultiplier = &ws_bcMultiplier[0];
         scalar* p_Gpdx = &ws_Gpdx[0];
         scalar* p_du = &ws_du[0];
+        scalar* p_duRhs = &ws_duRhs[0];
         scalar* p_rho = &ws_rho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
@@ -2195,7 +2207,10 @@ void pressureCorrectionAssembler::
                 const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
                 const scalar* Gjp =
                     stk::mesh::field_data(gradPSTKFieldRef, node);
-                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                const scalar* du =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                const scalar* duRhs =
+                    stk::mesh::field_data(duRhsSTKFieldRef, node);
 
                 const label offSet = ni * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -2203,6 +2218,7 @@ void pressureCorrectionAssembler::
                     p_U[offSet + j] = U[j];
                     p_Gpdx[offSet + j] = Gjp[j];
                     p_du[offSet + j] = du[j];
+                    p_duRhs[offSet + j] = duRhs[j];
                 }
 
                 // overwrite pressure value at boundary with dirichlet value
@@ -2275,6 +2291,7 @@ void pressureCorrectionAssembler::
                         p_GpdxBip[j] = 0.0;
                         p_dpdxBip[j] = 0.0;
                         p_duBip[j] = 0.0;
+                        p_duRhsBip[j] = 0.0;
                         p_FBip[j] = 0.0;
                         p_FOrigBip[j] = 0.0;
                     }
@@ -2301,6 +2318,7 @@ void pressureCorrectionAssembler::
                             // use velocity shape functions
                             p_uBip[j] += r_vel * p_U[icNdim + j];
                             p_duBip[j] += r_vel * p_du[icNdim + j];
+                            p_duRhsBip[j] += r_vel * p_duRhs[icNdim + j];
                             p_umBip[j] += r_vel * p_Um[icNdim + j];
 
                             // use coordinates shape functions
@@ -2370,14 +2388,14 @@ void pressureCorrectionAssembler::
                     {
                         const scalar axj = areaVec[ip * SPATIAL_DIM + j];
 
-                        // divergence + pressure Rhie-Chow
+                        // divergence + pressure Rhie-Chow (D for RHS)
                         mDot += (rhoBip * p_uBip[j] -
-                                 rhoBip * p_duBip[j] *
+                                 rhoBip * p_duRhsBip[j] *
                                      (p_dpdxBip[j] - p_GpdxBip[j])) *
                                 axj;
 
                         // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                        mDot += rhoBip * p_duBip[j] *
+                        mDot += rhoBip * p_duRhsBip[j] *
                                 (p_FOrigBip[j] - p_FBip[j]) * axj;
                     }
 
@@ -3048,6 +3066,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     std::vector<scalar> GpdxBip(SPATIAL_DIM);
     std::vector<scalar> dpdxBip(SPATIAL_DIM);
     std::vector<scalar> duBip(SPATIAL_DIM);
+    std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
 
@@ -3058,6 +3077,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     scalar* p_GpdxBip = &GpdxBip[0];
     scalar* p_dpdxBip = &dpdxBip[0];
     scalar* p_duBip = &duBip[0];
+    scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
 
@@ -3068,6 +3088,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     std::vector<scalar> ws_Um;
     std::vector<scalar> ws_Gpdx;
     std::vector<scalar> ws_du;
+    std::vector<scalar> ws_duRhs;
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_bcMultiplier;
     std::vector<scalar> ws_F;
@@ -3088,7 +3109,14 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         model_->pRef().nodeSideFieldRef().stkFieldRef();
     const auto& gradPSTKFieldRef = model_->pRef().gradRef().stkFieldRef();
 
-    const auto& duSTKFieldRef =
+    // Pressure diffusivity: duTilde for LHS (SIMPLEC), du for RHS
+    const bool consistent = model_->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& duLhsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK,
+        consistent ? flowModel::duTilde_ID : flowModel::du_ID);
+    const auto& duRhsSTKFieldRef =
         *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
 
     const auto* UmSTKFieldPtr =
@@ -3168,6 +3196,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         ws_Um.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
         ws_du.resize(nodesPerSide * SPATIAL_DIM);
+        ws_duRhs.resize(nodesPerSide * SPATIAL_DIM);
         ws_rho.resize(nodesPerSide);
         ws_bcMultiplier.resize(nodesPerElement);
         ws_F.resize(nodesPerSide * SPATIAL_DIM);
@@ -3187,6 +3216,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         scalar* p_bcMultiplier = &ws_bcMultiplier[0];
         scalar* p_Gpdx = &ws_Gpdx[0];
         scalar* p_du = &ws_du[0];
+        scalar* p_duRhs = &ws_duRhs[0];
         scalar* p_rho = &ws_rho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
@@ -3305,7 +3335,10 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                 const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
                 const scalar* Gjp =
                     stk::mesh::field_data(gradPSTKFieldRef, node);
-                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                const scalar* du =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                const scalar* duRhs =
+                    stk::mesh::field_data(duRhsSTKFieldRef, node);
 
                 const label offSet = ni * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -3313,6 +3346,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                     p_U[offSet + j] = U[j];
                     p_Gpdx[offSet + j] = Gjp[j];
                     p_du[offSet + j] = du[j];
+                    p_duRhs[offSet + j] = duRhs[j];
                 }
 
                 if (meshMoving)
@@ -3378,6 +3412,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                     p_GpdxBip[j] = 0.0;
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
+                    p_duRhsBip[j] = 0.0;
                     p_FBip[j] = 0.0;
                     p_FOrigBip[j] = 0.0;
                 }
@@ -3403,6 +3438,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                         // use velocity shape functions
                         p_uBip[j] += r_vel * p_U[icNdim + j];
                         p_duBip[j] += r_vel * p_du[icNdim + j];
+                        p_duRhsBip[j] += r_vel * p_duRhs[icNdim + j];
                         p_umBip[j] += r_vel * p_Um[icNdim + j];
 
                         // use coordinates
@@ -3470,15 +3506,15 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                 {
                     const scalar axj = areaVec[ip * SPATIAL_DIM + j];
 
-                    // divergence + pressure Rhie-Chow
-                    mDot +=
-                        (rhoBip * p_uBip[j] -
-                         rhoBip * p_duBip[j] * (p_dpdxBip[j] - p_GpdxBip[j])) *
-                        axj;
+                    // divergence + pressure Rhie-Chow (D for RHS)
+                    mDot += (rhoBip * p_uBip[j] -
+                             rhoBip * p_duRhsBip[j] *
+                                 (p_dpdxBip[j] - p_GpdxBip[j])) *
+                            axj;
 
                     // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    mDot +=
-                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                    mDot += rhoBip * p_duRhsBip[j] *
+                            (p_FOrigBip[j] - p_FBip[j]) * axj;
                 }
 
                 // transform mDot to relative frame
@@ -3570,6 +3606,7 @@ void pressureCorrectionAssembler::
     std::vector<scalar> GpdxBip(SPATIAL_DIM);
     std::vector<scalar> dpdxBip(SPATIAL_DIM);
     std::vector<scalar> duBip(SPATIAL_DIM);
+    std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
 
@@ -3580,6 +3617,7 @@ void pressureCorrectionAssembler::
     scalar* p_GpdxBip = &GpdxBip[0];
     scalar* p_dpdxBip = &dpdxBip[0];
     scalar* p_duBip = &duBip[0];
+    scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
 
@@ -3590,6 +3628,7 @@ void pressureCorrectionAssembler::
     std::vector<scalar> ws_Um;
     std::vector<scalar> ws_Gpdx;
     std::vector<scalar> ws_du;
+    std::vector<scalar> ws_duRhs;
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_bcMultiplier;
     std::vector<scalar> ws_F;
@@ -3612,7 +3651,14 @@ void pressureCorrectionAssembler::
     const auto& reversalFlowFlagSTKFieldRef =
         model_->URef().reversalFlagRef().stkFieldRef();
 
-    const auto& duSTKFieldRef =
+    // Pressure diffusivity: duTilde for LHS (SIMPLEC), du for RHS
+    const bool consistent = model_->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& duLhsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK,
+        consistent ? flowModel::duTilde_ID : flowModel::du_ID);
+    const auto& duRhsSTKFieldRef =
         *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
 
     const auto* UmSTKFieldPtr =
@@ -3692,6 +3738,7 @@ void pressureCorrectionAssembler::
         ws_Um.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
         ws_du.resize(nodesPerSide * SPATIAL_DIM);
+        ws_duRhs.resize(nodesPerSide * SPATIAL_DIM);
         ws_rho.resize(nodesPerSide);
         ws_bcMultiplier.resize(nodesPerElement);
         ws_F.resize(nodesPerSide * SPATIAL_DIM);
@@ -3711,6 +3758,7 @@ void pressureCorrectionAssembler::
         scalar* p_bcMultiplier = &ws_bcMultiplier[0];
         scalar* p_Gpdx = &ws_Gpdx[0];
         scalar* p_du = &ws_du[0];
+        scalar* p_duRhs = &ws_duRhs[0];
         scalar* p_rho = &ws_rho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
@@ -3831,7 +3879,10 @@ void pressureCorrectionAssembler::
                 const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
                 const scalar* Gjp =
                     stk::mesh::field_data(gradPSTKFieldRef, node);
-                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                const scalar* du =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                const scalar* duRhs =
+                    stk::mesh::field_data(duRhsSTKFieldRef, node);
 
                 const label offSet = ni * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -3839,6 +3890,7 @@ void pressureCorrectionAssembler::
                     p_U[offSet + j] = U[j];
                     p_Gpdx[offSet + j] = Gjp[j];
                     p_du[offSet + j] = du[j];
+                    p_duRhs[offSet + j] = duRhs[j];
                 }
 
                 if (meshMoving)
@@ -3906,6 +3958,7 @@ void pressureCorrectionAssembler::
                         p_GpdxBip[j] = 0.0;
                         p_dpdxBip[j] = 0.0;
                         p_duBip[j] = 0.0;
+                        p_duRhsBip[j] = 0.0;
                         p_FBip[j] = 0.0;
                         p_FOrigBip[j] = 0.0;
                     }
@@ -3933,6 +3986,7 @@ void pressureCorrectionAssembler::
                             p_uBip[j] += r_vel * p_U[icNdim + j];
                             p_umBip[j] += r_vel * p_Um[icNdim + j];
                             p_duBip[j] += r_vel * p_du[icNdim + j];
+                            p_duRhsBip[j] += r_vel * p_duRhs[icNdim + j];
 
                             // use coordinates shape functions
                             p_coordBip[j] +=
@@ -4001,14 +4055,14 @@ void pressureCorrectionAssembler::
                     {
                         const scalar axj = areaVec[ip * SPATIAL_DIM + j];
 
-                        // divergence + pressure Rhie-Chow
+                        // divergence + pressure Rhie-Chow (D for RHS)
                         mDot += (rhoBip * p_uBip[j] -
-                                 rhoBip * p_duBip[j] *
+                                 rhoBip * p_duRhsBip[j] *
                                      (p_dpdxBip[j] - p_GpdxBip[j])) *
                                 axj;
 
                         // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                        mDot += rhoBip * p_duBip[j] *
+                        mDot += rhoBip * p_duRhsBip[j] *
                                 (p_FOrigBip[j] - p_FBip[j]) * axj;
                     }
 
