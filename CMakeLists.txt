@@ -118,19 +118,45 @@ else()
     endif()
 endif()
 
-# HYPRE
+# HYPRE (Optimized for system/apt installations)
 if(DEFINED HYPRE_DIR)
     message("HYPRE_DIR (${HYPRE_DIR}) is provided. HYPRE functionalities are enabled.")
-    find_library(HYPRE_LIBRARIES NAMES HYPRE PATHS ${HYPRE_DIR}/lib
-    ${HYPRE_DIR}/lib64)
-    if(DEFINED HYPRE_LIBRARIES)
-        include_directories(${HYPRE_DIR}/include)
-        set(HYPRE_FOUND TRUE)
-    endif()
-endif()
-if(HYPRE_FOUND)
     add_compile_definitions(HAS_HYPRE)
-    message("-- Found HYPRE = ${HYPRE_DIR}")
+    include_directories(${HYPRE_DIR}/include)
+else()
+    # 1. Try PkgConfig (Ubuntu/Debian often don't provide a .pc for hypre)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(HYPRE hypre)
+    endif()
+
+    # 2. Manual Search Fallback (Specifically for 'apt' layout)
+    if(NOT HYPRE_FOUND)
+        # Search for header - Note the 'hypre' suffix in the search path
+        find_path(HYPRE_INCLUDE_DIR 
+                  NAMES HYPRE.h hypre.h
+                  PATHS /usr/include/hypre /usr/local/include/hypre /usr/include)
+        
+        # Search for library - Look for both case variations
+        find_library(HYPRE_LIB 
+                     NAMES HYPRE hypre
+                     PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib /usr/lib)
+
+        if(HYPRE_INCLUDE_DIR AND HYPRE_LIB)
+            set(HYPRE_FOUND TRUE)
+            set(HYPRE_INCLUDE_DIRS ${HYPRE_INCLUDE_DIR})
+            set(HYPRE_LIBRARIES ${HYPRE_LIB})
+        endif()
+    endif()
+
+    if(HYPRE_FOUND)
+        message("-- HYPRE functionalities are enabled.")
+        message("   HYPRE Include: ${HYPRE_INCLUDE_DIRS}")
+        message("   HYPRE Library: ${HYPRE_LIBRARIES}")
+        add_compile_definitions(HAS_HYPRE)
+        include_directories(${HYPRE_INCLUDE_DIRS})
+    else()
+        message("-- HYPRE functionalities are disabled (not found).")
+    endif()
 endif()
 
 # Interface support (enabled by default)
@@ -216,19 +242,24 @@ else()
 endif()
 
 # Link to HYPRE libraries
-if(DEFINED HYPRE_DIR)
-    if(DEFINED HYPRE_ARCH)
-        target_link_libraries(main_obj PUBLIC ${HYPRE_DIR}/${HYPRE_ARCH}/lib/libHYPRE.so)
+if(HYPRE_FOUND)
+    if(${CMAKE_SYSTEM_NAME} MATCHES Darwin)
+        # Assuming a similar version-specific path style if needed, 
+        # but usually ${HYPRE_LIBRARIES} works best for pkg-config
+        target_link_libraries(main_obj PUBLIC ${HYPRE_LIBRARIES})
     else()
-        target_link_libraries(main_obj PUBLIC HYPRE)
-        target_link_directories(main_obj PUBLIC ${HYPRE_DIR}/lib ${HYPRE_DIR}/lib64)
+        target_link_libraries(main_obj PUBLIC ${HYPRE_LIBRARIES})
     endif()
 else()
-    if(HYPRE_FOUND)
+    if(DEFINED HYPRE_DIR)
+        # HYPRE usually follows standard /lib or /lib64 structures
+        target_link_directories(main_obj PUBLIC ${HYPRE_DIR}/lib ${HYPRE_DIR}/lib64)
+        
         if(${CMAKE_SYSTEM_NAME} MATCHES Darwin)
-            target_link_libraries(main_obj PUBLIC ${HYPRE_INCLUDE_DIRS}/../lib/libHYPRE.3.20.1.dylib)
+            target_link_libraries(main_obj PUBLIC HYPRE)
         else()
-            target_link_libraries(main_obj PUBLIC ${HYPRE_LIBRARIES})
+            # Standard Linux link
+            target_link_libraries(main_obj PUBLIC HYPRE)
         endif()
     endif()
 endif()
