@@ -286,7 +286,9 @@ private:
             // nothing to do
         }
 
-        ~fromMesh() {};
+        ~fromMesh()
+        {
+        }
 
         struct BoundingBoxCompare
         {
@@ -542,7 +544,7 @@ private:
             // nothing to do
         }
 
-        ~toMesh() {};
+        ~toMesh(){};
 
         struct BoundingBoxCompare
         {
