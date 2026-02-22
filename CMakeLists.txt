@@ -248,25 +248,20 @@ endif()
 
 # Link to HYPRE libraries
 if(HYPRE_FOUND)
-    if(${CMAKE_SYSTEM_NAME} MATCHES Darwin)
-        # Assuming a similar version-specific path style if needed, 
-        # but usually ${HYPRE_LIBRARIES} works best for pkg-config
-        target_link_libraries(main_obj PUBLIC ${HYPRE_LIBRARIES})
+    # If we found it via the custom HYPRE_DIR path
+    if(DEFINED HYPRE_DIR)
+        # Find the actual library file in the custom directory
+        find_library(HYPRE_CUSTOM_LIB NAMES HYPRE hypre 
+                     PATHS ${HYPRE_DIR}/lib ${HYPRE_DIR}/lib64 
+                     NO_DEFAULT_PATH)
+        target_link_libraries(main_obj PUBLIC ${HYPRE_CUSTOM_LIB})
+        message("-- Linking against custom HYPRE: ${HYPRE_CUSTOM_LIB}")
     else()
+        # Fallback for system-wide/pkg-config installs
         target_link_libraries(main_obj PUBLIC ${HYPRE_LIBRARIES})
     endif()
 else()
-    if(DEFINED HYPRE_DIR)
-        # HYPRE usually follows standard /lib or /lib64 structures
-        target_link_directories(main_obj PUBLIC ${HYPRE_DIR}/lib ${HYPRE_DIR}/lib64)
-        
-        if(${CMAKE_SYSTEM_NAME} MATCHES Darwin)
-            target_link_libraries(main_obj PUBLIC HYPRE)
-        else()
-            # Standard Linux link
-            target_link_libraries(main_obj PUBLIC HYPRE)
-        endif()
-    endif()
+    # ... your existing 'disabled' logic ...
 endif()
 
 if(DEFINED WITH_FASTMATH AND WITH_FASTMATH)
