@@ -63,8 +63,8 @@ simulation:
                 advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 1000
-                    physical_timescale: 0.001
+                    max_iterations: 1500
+                    physical_timescale: 1e-3
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.8
                         pressure_relaxation_factor: 0.2
@@ -102,7 +102,7 @@ simulation:
                                 num_sweeps: 1
                                 max_levels: 20
                                 aggressive_levels: 1  # Reduces memory overhead
-                                trunc_factor: 0.3     # Keeps the solver lean                              
+                                trunc_factor: 0.3     # Keeps the solver lean  
         output_control:
             file_path: results.e
             output_frequency: 50
