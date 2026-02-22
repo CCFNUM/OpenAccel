@@ -1164,6 +1164,13 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
     {
         pRef().setZone(domain->index());
 
+        // FIXME: pressure correction gradient is not stored hence we
+        // reconstruct it at correction level, the fact which requires a
+        // non-relaxed pressure gradient. This puts a limitation but works well,
+        // at time no extra storage has to be dedicated to a pressure correction
+        // field and its gradient
+        pRef().setGradURF(1);
+
         // set initial conditions from input
         initialCondition::setupFieldInitializationOverDomainFromInput(
             pRef(), realm::p_ID, domain);

@@ -101,6 +101,34 @@ void segregatedFlowEquations::solve()
 
             pCorr_eq_->preSolve();
             pCorr_eq_->solve();
+            pCorr_eq_->postSolve();
+
+            // correct density (only if compressible)
+            FOREACH_DOMAIN_IF(updateDensity, domain->isMaterialCompressible());
+
+            // update density-related fields
+            FOREACH_DOMAIN_IF(updateDensityGradientField,
+                              domain->isMaterialCompressible());
+            FOREACH_DOMAIN_IF(updateDensityBlendingFactorField,
+                              domain->isMaterialCompressible());
+
+            // correct mass flux and do updates:
+            // 1) mass divergence
+            // 2) flow reversal flag side field
+            FOREACH_DOMAIN(updateSideMassFlowRateFraction);
+            FOREACH_DOMAIN(transformMassFlowRateToAbsolute);
+            FOREACH_DOMAIN(updateMassFlowRate);
+            FOREACH_DOMAIN(transformMassFlowRateToRelative);
+            FOREACH_DOMAIN(updateFlowReversalFlag);
+            FOREACH_DOMAIN(updateMassDivergenceField);
+
+            // velocity Correction Step (Pressure-Velocity Coupling)
+
+            // Adjusts velocity to satisfy the continuity equation at
+            // sub-control volume faces. The term (grad_p_new - grad_p_old) /
+            // lambda reconstructs the "true" pressure increment (p') by
+            // reversing the under-relaxation applied during the pressure correction.
+            // D is the momentum influence coefficient: v_corr = -D * grad(p')
 
             // correct velocity field step 1
             FOREACH_DOMAIN_RAW({
@@ -253,32 +281,11 @@ void segregatedFlowEquations::solve()
             this->URef().updateScale();
             this->updatePressureScale();
 
-            // correct density (only if compressible)
-            FOREACH_DOMAIN_IF(updateDensity, domain->isMaterialCompressible());
-
-            // update density-related fields
-            FOREACH_DOMAIN_IF(updateDensityGradientField,
-                              domain->isMaterialCompressible());
-            FOREACH_DOMAIN_IF(updateDensityBlendingFactorField,
-                              domain->isMaterialCompressible());
-
             // update velocity gradient
             FOREACH_DOMAIN(updateVelocityGradientField);
 
             // update velocity high-res fields
             FOREACH_DOMAIN(updateVelocityBlendingFactorField);
-
-            // correct mass flux and do updates:
-            // 1) mass divergence
-            // 2) flow reversal flag side field
-            FOREACH_DOMAIN(updateSideMassFlowRateFraction);
-            FOREACH_DOMAIN(transformMassFlowRateToAbsolute);
-            FOREACH_DOMAIN(updateMassFlowRate);
-            FOREACH_DOMAIN(transformMassFlowRateToRelative);
-            FOREACH_DOMAIN(updateFlowReversalFlag);
-            FOREACH_DOMAIN(updateMassDivergenceField);
-
-            pCorr_eq_->postSolve();
 
             // if converged .. break sub-iter loop
             if (pCorr_eq_->isConverged())
