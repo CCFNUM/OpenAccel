@@ -554,7 +554,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     mDot -= rhoHR * p_duIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
                             p_scs_areav[ip * SPATIAL_DIM + j];
 
-                    // body force RC: +ρ*D*(FOrig - F_ip)·S
+                    // // body force RC: +ρ*D*(FOrig - F_ip)·S
                     // mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
                     //         p_scs_areav[ip * SPATIAL_DIM + j];
                 }

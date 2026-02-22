@@ -2486,9 +2486,9 @@ void bulkPressureCorrectionAssembler::
                                      (p_dpdxBip[j] - p_GpdxBip[j])) *
                                 axj;
 
-                        // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                        mDot += rhoBip * p_duBip[j] *
-                                (p_FOrigBip[j] - p_FBip[j]) * axj;
+                        // // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                        // mDot += rhoBip * p_duBip[j] *
+                        //         (p_FOrigBip[j] - p_FBip[j]) * axj;
                     }
 
                     // transform mDot to relative frame
@@ -3613,9 +3613,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                          rhoBip * p_duBip[j] * (p_dpdxBip[j] - p_GpdxBip[j])) *
                         axj;
 
-                    // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    mDot +=
-                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                    // // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                    // mDot +=
+                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
                 }
 
                 // transform mDot to relative frame
@@ -4155,9 +4155,9 @@ void bulkPressureCorrectionAssembler::
                                      (p_dpdxBip[j] - p_GpdxBip[j])) *
                                 axj;
 
-                        // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                        mDot += rhoBip * p_duBip[j] *
-                                (p_FOrigBip[j] - p_FBip[j]) * axj;
+                        // // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                        // mDot += rhoBip * p_duBip[j] *
+                        //         (p_FOrigBip[j] - p_FBip[j]) * axj;
                     }
 
                     // transform mDot to relative frame
