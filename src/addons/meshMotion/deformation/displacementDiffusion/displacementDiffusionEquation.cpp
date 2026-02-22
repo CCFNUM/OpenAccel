@@ -31,6 +31,9 @@ displacementDiffusionEquation::displacementDiffusionEquation(realm* realm)
 
     // set
     this->setEquationName(eqNames);
+
+    // disable residual plot of the equation
+    plot_res_ = false;
 }
 
 bool displacementDiffusionEquation::isConverged() const

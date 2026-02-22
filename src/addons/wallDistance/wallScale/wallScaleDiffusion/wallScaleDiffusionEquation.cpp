@@ -38,6 +38,12 @@ wallScaleDiffusionEquation::wallScaleDiffusionEquation(realm* realm)
             .solverRef()
             .solverControl_.basicSettings_.interpolationSchemeType_
             .wallScaleGradientInterpolationType_);
+
+    // disable residual plot of the equation for transient cases
+    if (this->meshRef().controlsRef().isTransient())
+    {
+        plot_res_ = false;
+    }
 }
 
 void wallScaleDiffusionEquation::checkDomain(
