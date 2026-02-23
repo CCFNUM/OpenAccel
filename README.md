@@ -146,6 +146,9 @@ mpirun -np 8 ./build/accel-3D.exe -i case/input.yaml
 
 The repository includes a suite of test cases designed to demonstrate the various numerical features and physical models available in the package. Below is a categorized list of the available examples:
 
+### Basic Transport Phenomena
+* **flange:** A pure thermal diffusion case in a solid flange part.
+
 ### Fluid Dynamics & Turbulence
 * **cavity:** The classic lid-driven cavity problem; a closed domain with no inflow or outflow boundaries.
 * **airfoil:** Incompressible flow over an airfoil featuring **non-conformal interfaces**, where the airfoil is discretized in a separate mesh zone.
