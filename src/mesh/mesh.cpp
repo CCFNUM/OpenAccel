@@ -399,7 +399,7 @@ void mesh::reportLoadImbalance_() const
                         min_locally_owned.nodes,
                         min_locally_owned.rank);
         }
-        std::printf("Load imbalance: %.2f%%\n", global_load_imbalance * 100);
+        std::printf("Load imbalance: %.2f%%\n\n", global_load_imbalance * 100);
     }
 }
 
