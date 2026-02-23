@@ -959,6 +959,9 @@ void domain::read_()
                                 deformation
                                     .setDisplacementRelativeToPreviousMesh(
                                         false);
+
+                                equations_[static_cast<int>(
+                                    equationID::solidDisplacement)] = true;
                             }
                         }
                         break;
