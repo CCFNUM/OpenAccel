@@ -16,6 +16,20 @@
 * **Modern Foundation:** Built using the **C++20** standard.
 * **High Performance:** Optimized for massive parallelism via Trilinos-STK.
 
+## 📖 Documentation
+
+A **Theory Guide** covering the mathematical foundations of OpenAccel is available in [`tools/docs/theory/`](./tools/docs/theory/).
+
+The guide is automatically compiled to PDF on every commit via GitHub Actions. To get the latest PDF:
+
+1. Go to the **Actions** tab of this repository.
+2. Open the most recent **Build Theory Guide** workflow run.
+3. Download the `theory-guide-pdf` artifact.
+
+Topics covered include governing equations, turbulence models (k-ε, k-ω SST, Transition SST), heat transfer, mesh deformation (ALE/displacement diffusion), free surface flow (VoF + FCT/cMULES), and discretisation schemes.
+
+---
+
 ## 📚 Dependencies
 
 ### Required
