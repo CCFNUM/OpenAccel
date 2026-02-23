@@ -67,7 +67,6 @@ simulation:
                     physical_timescale: 1e-2
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.9
-                    #     pressure_relaxation_factor: 0.1
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-6
