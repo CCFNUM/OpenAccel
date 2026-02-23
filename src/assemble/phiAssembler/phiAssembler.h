@@ -793,6 +793,12 @@ protected:
     virtual void assembleElemTermsBoundary_(const domain* domain, Context* ctx);
 
     // boundary conditions
+    virtual void assembleElemTermsBoundarySymmetry_(const domain* domain,
+                                                    const boundary* boundary,
+                                                    Context* ctx)
+    {
+    }
+
     virtual void
     assembleElemTermsBoundaryWallFixedValue_(const domain* domain,
                                              const boundary* boundary,

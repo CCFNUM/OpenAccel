@@ -992,8 +992,7 @@ void controls::read(YAML::Node inputNode)
             if (expertParameters["bandwidth_reduction"])
             {
                 solver_.solverControl_.expertParameters_.bandwidthReduction_ =
-                    expertParameters["bandwidth_reduction"]
-                        .template as<bool>();
+                    expertParameters["bandwidth_reduction"].template as<bool>();
             }
         }
 

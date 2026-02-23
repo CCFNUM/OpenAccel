@@ -27,6 +27,7 @@ void phiAssembler<N>::assembleElemTermsBoundary_(const domain* domain,
         switch (type)
         {
             case boundaryPhysicalType::symmetry:
+                assembleElemTermsBoundarySymmetry_(domain, boundary, ctx);
                 break;
 
             case boundaryPhysicalType::wall:
