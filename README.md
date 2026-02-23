@@ -1,5 +1,5 @@
 # OpenAccel
-**OpenAccel** is a CPU-parallel, vertex-based finite volume (**CVFEM**) solver built on the **Trilinos-STK** mesh infrastructure. It employs a **pressure-based, segregated approach** to solve the governing equations, making it well-suited for incompressible and low-Mach compressible flows. The solver addresses a broad range of physics, including fluid flow, heat transfer, turbulence, solid mechanics, and multiphase free-surface flows.
+**OpenAccel** is a CPU-parallel, vertex-based finite volume (**CVFEM**) solver built on the **Trilinos-STK** mesh infrastructure. It employs a **pressure-based, segregated approach** to solve the governing equations, making it well-suited for incompressible and low-Mach compressible flows. The solver addresses a broad range of physics, including fluid flow, heat transfer, turbulence, multiphase free-surface flows and solid mechanics--while providing a framework for multiphysics applications, including Arbitrary Lagrangian-Eulerian (ALE) methods and Conjugate Heat Transfer (CHT).
 
 > **Note:** This project is under active development. APIs, features, and documentation may change without notice.
 
@@ -160,7 +160,7 @@ mpirun -np 8 ./build/accel-3D.exe -i case/input.yaml
 
 The repository includes a suite of test cases designed to demonstrate the various numerical features and physical models available in the package. Below is a categorized list of the available examples:
 
-### Basic Transport Phenomena
+### Elementary Transport Phenomena
 * **flange:** A pure thermal diffusion case in a solid flange part.
 
 ### Fluid Dynamics & Turbulence
@@ -173,6 +173,9 @@ The repository includes a suite of test cases designed to demonstrate the variou
 ### Multiphase & Free Surface Flow
 * **damBreak:** A laminar multiphase free-surface flow simulation using the **Volume of Fluid (VOF)** method.
 * **staticDroplet:** A stationary water droplet in an air domain. This VOF case isolates and tests the **Continuum Surface Force (CSF)** model for surface tension without gravity.
+
+### Solid Mechanics
+* **palteHole:** The Kirsch Problem benchmark uses a quarter-symmetry model to validate stress concentration at a circular hole against analytical solutions.
 
 ### Fluid-Structure Interaction (FSI) & Moving Meshes
 * **flexibleDamBreak:** A water column collapse where the fluid impacts an elastic obstacle. This demonstrates the coupling of **VOF** with **Arbitrary Lagrangian-Eulerian (ALE)** formulations.
