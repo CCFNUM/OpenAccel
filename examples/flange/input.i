@@ -50,7 +50,6 @@ simulation:
         solver_control:
             basic_settings:
                 transient_scheme: first_order_backward_euler
-                reduced_stencil: true
                 convergence_controls:
                     min_iterations: 1
                     max_iterations: 5               
