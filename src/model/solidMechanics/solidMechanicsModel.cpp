@@ -591,6 +591,10 @@ void solidMechanicsModel::setupDisplacement(
                     }
                     break;
 
+                case boundaryPhysicalType::symmetry:
+                    bc.setType(boundaryConditionType::symmetry);
+                    break;
+
                 default:
                     break;
             }
@@ -1126,12 +1130,14 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
         metaData.get_field<scalar>(metaData.side_rank(),
                                    mesh::exposed_area_vector_ID);
     const STKScalarField* originalExposedAreaVecSTKFieldPtr =
-        metaData.get_field<scalar>(
-            metaData.side_rank(),
-            domain->solidMechanics_.formulation_ ==
-                    kinematicFormulationType::updatedLagrangian
-                ? this->getExposedAreaVectorID_(domain)
-                : mesh::original_exposed_area_vector_ID);
+        this->meshRef().controlsRef().isTransient()
+            ? (metaData.get_field<scalar>(
+                  metaData.side_rank(),
+                  domain->solidMechanics_.formulation_ ==
+                          kinematicFormulationType::updatedLagrangian
+                      ? this->getExposedAreaVectorID_(domain)
+                      : mesh::original_exposed_area_vector_ID))
+            : exposedAreaVecSTKFieldPtr;
 
     for (const stk::mesh::Bucket* bucket : sideBuckets)
     {

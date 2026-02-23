@@ -58,28 +58,42 @@ protected:
     std::string
     getCoordinatesID_(const std::shared_ptr<domain> domain) const override
     {
-        return domain->solidMechanics_.formulation_ ==
-                       kinematicFormulationType::totalLagrangian
-                   ? mesh::original_coordinates_ID
-                   : mesh::coordinates_ID;
+        bool useOrig = false;
+        if (domain->solidMechanics_.formulation_ ==
+                kinematicFormulationType::totalLagrangian &&
+            this->controlsRef().isTransient())
+        {
+            useOrig = true;
+        }
+        return useOrig ? mesh::original_coordinates_ID : mesh::coordinates_ID;
     }
 
     std::string
     getDualNodalVolumeID_(const std::shared_ptr<domain> domain) const override
     {
-        return domain->solidMechanics_.formulation_ ==
-                       kinematicFormulationType::totalLagrangian
-                   ? mesh::original_dual_nodal_volume_ID
-                   : mesh::dual_nodal_volume_ID;
+        bool useOrig = false;
+        if (domain->solidMechanics_.formulation_ ==
+                kinematicFormulationType::totalLagrangian &&
+            this->controlsRef().isTransient())
+        {
+            useOrig = true;
+        }
+        return useOrig ? mesh::original_dual_nodal_volume_ID
+                       : mesh::dual_nodal_volume_ID;
     }
 
     std::string
     getExposedAreaVectorID_(const std::shared_ptr<domain> domain) const override
     {
-        return domain->solidMechanics_.formulation_ ==
-                       kinematicFormulationType::totalLagrangian
-                   ? mesh::original_exposed_area_vector_ID
-                   : mesh::exposed_area_vector_ID;
+        bool useOrig = false;
+        if (domain->solidMechanics_.formulation_ ==
+                kinematicFormulationType::totalLagrangian &&
+            this->controlsRef().isTransient())
+        {
+            useOrig = true;
+        }
+        return useOrig ? mesh::original_exposed_area_vector_ID
+                       : mesh::exposed_area_vector_ID;
     }
 };
 

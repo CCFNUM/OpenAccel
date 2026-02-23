@@ -960,9 +960,6 @@ void domain::read_()
                                     .setDisplacementRelativeToPreviousMesh(
                                         false);
                             }
-
-                            equations_[static_cast<int>(
-                                equationID::solidDisplacement)] = true;
                         }
                         break;
 
@@ -997,6 +994,11 @@ void domain::read_()
                         }
                         break;
                 }
+            }
+            else
+            {
+                equations_[static_cast<int>(equationID::solidDisplacement)] =
+                    true;
             }
 
             if (solidMechanicsBlock["plane_stress"])

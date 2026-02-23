@@ -61,7 +61,7 @@ protected:
                                      Vector& b,
                                      const scalar urf) override;
 
-    void applySymmetryConditions_(const domain* domain, Vector& b);
+    void applySymmetryConditions_(const domain* domain, Context* ctx) override;
 
 private:
     flowModel* model_;

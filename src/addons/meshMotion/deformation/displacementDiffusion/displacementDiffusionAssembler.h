@@ -24,7 +24,7 @@ public:
 protected:
     void postAssemble_(const domain* domain, Context* ctx) override;
 
-    void applySymmetryConditions_(const domain* domain, Vector& b);
+    void applySymmetryConditions_(const domain* domain, Context* ctx) override;
 
 protected:
     // kernel drivers

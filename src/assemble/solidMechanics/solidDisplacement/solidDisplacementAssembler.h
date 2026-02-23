@@ -31,26 +31,40 @@ protected:
 
     std::string getCoordinatesID_(const domain* domain) const override
     {
-        return domain->solidMechanics_.formulation_ ==
-                       kinematicFormulationType::updatedLagrangian
-                   ? mesh::coordinates_ID
-                   : mesh::original_coordinates_ID;
+        bool useOrig = false;
+        if (domain->solidMechanics_.formulation_ ==
+                kinematicFormulationType::totalLagrangian &&
+            field_broker_->controlsRef().isTransient())
+        {
+            useOrig = true;
+        }
+        return useOrig ? mesh::original_coordinates_ID : mesh::coordinates_ID;
     }
 
     std::string getDualNodalVolumeID_(const domain* domain) const override
     {
-        return domain->solidMechanics_.formulation_ ==
-                       kinematicFormulationType::updatedLagrangian
-                   ? mesh::dual_nodal_volume_ID
-                   : mesh::original_dual_nodal_volume_ID;
+        bool useOrig = false;
+        if (domain->solidMechanics_.formulation_ ==
+                kinematicFormulationType::totalLagrangian &&
+            field_broker_->controlsRef().isTransient())
+        {
+            useOrig = true;
+        }
+        return useOrig ? mesh::original_dual_nodal_volume_ID
+                       : mesh::dual_nodal_volume_ID;
     }
 
     std::string getExposedAreaVectorID_(const domain* domain) const override
     {
-        return domain->solidMechanics_.formulation_ ==
-                       kinematicFormulationType::updatedLagrangian
-                   ? mesh::exposed_area_vector_ID
-                   : mesh::original_exposed_area_vector_ID;
+        bool useOrig = false;
+        if (domain->solidMechanics_.formulation_ ==
+                kinematicFormulationType::totalLagrangian &&
+            field_broker_->controlsRef().isTransient())
+        {
+            useOrig = true;
+        }
+        return useOrig ? mesh::original_exposed_area_vector_ID
+                       : mesh::exposed_area_vector_ID;
     }
 
 public:
@@ -62,7 +76,7 @@ public:
 protected:
     void postAssemble_(const domain* domain, Context* ctx) override;
 
-    void applySymmetryConditions_(const domain* domain, Vector& b);
+    void applySymmetryConditions_(const domain* domain, Context* ctx) override;
 
 private:
     void assembleNodeTermsFusedSteady_(const domain* domain,

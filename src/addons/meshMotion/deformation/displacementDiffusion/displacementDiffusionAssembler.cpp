@@ -14,13 +14,16 @@ void displacementDiffusionAssembler::postAssemble_(const domain* domain,
                                                    Context* ctx)
 {
     phiAssembler<SPATIAL_DIM>::postAssemble_(domain, ctx);
-    applySymmetryConditions_(domain, ctx->getBVector());
+    applySymmetryConditions_(domain, ctx);
 }
 
 void displacementDiffusionAssembler::applySymmetryConditions_(
     const domain* domain,
-    Vector& b)
+    Context* ctx)
 {
+    // get rhs vector
+    Vector& b = ctx->getBVector();
+
     // select all locally owned nodes for this domain
     const auto& mesh = field_broker_->meshRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();

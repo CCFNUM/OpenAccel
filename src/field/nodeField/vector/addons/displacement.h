@@ -33,44 +33,60 @@ protected:
     {
         auto* zonePtr = this->meshPtr()->zonePtr(iZone);
 
-        bool relDisp = true;
+        bool useCurrent = true;
         if (zonePtr->meshDeforming() &&
             !zonePtr->deformationRef().displacementRelativeToPreviousMesh())
         {
-            relDisp = false;
+            useCurrent = false;
         }
 
-        return relDisp ? mesh::coordinates_ID : mesh::original_coordinates_ID;
+        if (!this->meshRef().controlsRef().isTransient())
+        {
+            useCurrent = true;
+        }
+
+        return useCurrent ? mesh::coordinates_ID
+                          : mesh::original_coordinates_ID;
     }
 
     std::string getDualNodalVolumeID_(label iZone) const override
     {
         auto* zonePtr = this->meshPtr()->zonePtr(iZone);
 
-        bool relDisp = true;
+        bool useCurrent = true;
         if (zonePtr->meshDeforming() &&
             !zonePtr->deformationRef().displacementRelativeToPreviousMesh())
         {
-            relDisp = false;
+            useCurrent = false;
         }
 
-        return relDisp ? mesh::dual_nodal_volume_ID
-                       : mesh::original_dual_nodal_volume_ID;
+        if (!this->meshRef().controlsRef().isTransient())
+        {
+            useCurrent = true;
+        }
+
+        return useCurrent ? mesh::dual_nodal_volume_ID
+                          : mesh::original_dual_nodal_volume_ID;
     }
 
     std::string getExposedAreaVectorID_(label iZone) const override
     {
         auto* zonePtr = this->meshPtr()->zonePtr(iZone);
 
-        bool relDisp = true;
+        bool useCurrent = true;
         if (zonePtr->meshDeforming() &&
             !zonePtr->deformationRef().displacementRelativeToPreviousMesh())
         {
-            relDisp = false;
+            useCurrent = false;
         }
 
-        return relDisp ? mesh::exposed_area_vector_ID
-                       : mesh::original_exposed_area_vector_ID;
+        if (!this->meshRef().controlsRef().isTransient())
+        {
+            useCurrent = true;
+        }
+
+        return useCurrent ? mesh::exposed_area_vector_ID
+                          : mesh::original_exposed_area_vector_ID;
     }
 };
 

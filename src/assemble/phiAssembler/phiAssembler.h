@@ -766,6 +766,10 @@ protected:
                                              Vector& b,
                                              const scalar urf);
 
+    virtual void applySymmetryConditions_(const domain* domain, Context* ctx)
+    {
+    }
+
     // kernel drivers
     virtual void assembleNodeTermsFused_(const domain* domain, Context* ctx);
     virtual void assembleNodeTermsFusedSteady_(const domain* domain,

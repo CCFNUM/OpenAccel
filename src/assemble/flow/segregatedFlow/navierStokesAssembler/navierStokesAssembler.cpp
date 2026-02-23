@@ -235,7 +235,7 @@ void navierStokesAssembler::postAssemble_(const domain* domain, Context* ctx)
 {
     phiAssembler::postAssemble_(domain, ctx);
     assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
-    applySymmetryConditions_(domain, ctx->getBVector());
+    applySymmetryConditions_(domain, ctx);
 }
 
 void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
@@ -385,8 +385,11 @@ void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
 }
 
 void navierStokesAssembler::applySymmetryConditions_(const domain* domain,
-                                                     Vector& b)
+                                                     Context* ctx)
 {
+    // get rhs vector
+    Vector& b = ctx->getBVector();
+
     // select all locally owned nodes for this domain
     const auto& mesh = model_->meshRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
