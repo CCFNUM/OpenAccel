@@ -183,7 +183,7 @@ The repository includes a suite of test cases designed to demonstrate the variou
 
 ### Heat Transfer & Buoyancy
 * **BénardCells:** Buoyancy-driven flow (natural convection) utilizing the **Boussinesq approximation**.
-* **slab:** Incompressible flow over a heated slab, demonstrating the **Conjugate Heat Transfer (CHT)** methodology.
+* **slab:** Incompressible flow over a heated slab, demonstrating the **CHT** methodology.
 
 ---
 
