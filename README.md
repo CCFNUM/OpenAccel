@@ -168,7 +168,6 @@ The repository includes a suite of test cases designed to demonstrate the variou
 * **airfoil:** Incompressible flow over an airfoil featuring **non-conformal interfaces**, where the airfoil is discretized in a separate mesh zone.
 * **elbow:** Incompressible laminar flow within a wedge-type mesh.
 * **circularArc:** Compressible inviscid flow over a bump (circular arc) at subsonic speed.
-* **pitzDaily:** Incompressible turbulent internal flow over a backward-facing step. This case utilizes the **k-ω SST** turbulence model.
 
 ### Multiphase & Free Surface Flow
 * **damBreak:** A laminar multiphase free-surface flow simulation using the **Volume of Fluid (VOF)** method.
