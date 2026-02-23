@@ -127,8 +127,8 @@ simulation:
                     min_iterations: 1
                     max_iterations: 10
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.8
-                        pressure_relaxation_factor: 0.2                   
+                        velocity_relaxation_factor: 0.7
+                        pressure_relaxation_factor: 0.3                   
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-8
@@ -141,17 +141,17 @@ simulation:
                         smoothing_iterations: 3
                         fourier_number: 0.25
                     sub_iterations:
-                        segregated_flow: 3
-                        solid_displacement: 3
+                        segregated_flow: 1
+                        solid_displacement: 1
                     acceleration:
                         solid_displacement:
                             option: aitken
-                            initial_omega: 0.01
+                            initial_omega: 0.05
                             omega_min: 0.01
-                            omega_max: 0.1
+                            omega_max: 0.5
                     mesh_motion:
                         freeze_per_timestep: false
-                        max_smoothing_iters: 10
+                        max_smoothing_iters: 25
                 interface_transfer:
                     verbose: 1
                 linear_solver_settings:
