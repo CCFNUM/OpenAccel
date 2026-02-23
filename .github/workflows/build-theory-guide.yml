@@ -25,9 +25,7 @@ jobs:
         with:
           root_file: solver_theory_guide.tex
           working_directory: tools/docs/theory
-          latexmk_use_xelatex: false
-          extra_system_packages: "cm-super"
-          args: -pdf -file-line-error -halt-on-error -interaction=nonstopmode -bibtex
+          args: -pdf -bibtex -halt-on-error
 
       - name: Upload PDF artifact
         uses: actions/upload-artifact@v4
