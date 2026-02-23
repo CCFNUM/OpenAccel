@@ -1,5 +1,5 @@
 # OpenAccel
-**OpenAccel** is a parallel vertex-based finite volume fluid flow solver (**CVFEM**) powered by the **STK library**.
+**OpenAccel** is a CPU-parallel, vertex-based finite volume (**CVFEM**) solver built on the **Trilinos-STK** mesh infrastructure. It employs a **pressure-based, segregated approach** to solve the governing equations, making it well-suited for incompressible and low-Mach compressible flows. The solver addresses a broad range of physics, including fluid flow, heat transfer, turbulence, solid mechanics, and multiphase free-surface flows.
 
 > **Note:** This project is under active development. APIs, features, and documentation may change without notice.
 
