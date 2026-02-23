@@ -268,6 +268,9 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
         // Check if plane stress or plane strain
         const bool planeStress = domain->solidMechanics_.planeStress_;
 
+        const solidMechanicsOption solidMechOption =
+            domain->solidMechanics_.option_;
+
         // rotation matrix (in case of rotational periodicity)
         const auto& rotMat = interfaceSideInfoPtr->rotationMatrix_;
 
@@ -643,10 +646,115 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                                                &ws_o_lambda[0],
                                                &opposingLambdaBip);
 
-                // compute average stiffness for penalty (using bulk modulus)
-                currentStiffness = currentLambdaBip + 2.0 * currentMuBip / 3.0;
-                opposingStiffness =
-                    opposingLambdaBip + 2.0 * opposingMuBip / 3.0;
+                // compute average stiffness for penalty
+                if (solidMechOption == solidMechanicsOption::linearElastic)
+                {
+                    currentStiffness =
+                        currentLambdaBip + 2.0 * currentMuBip / 3.0;
+                    opposingStiffness =
+                        opposingLambdaBip + 2.0 * opposingMuBip / 3.0;
+                }
+                else if (solidMechOption ==
+                         solidMechanicsOption::simplifiedNeoHookean)
+                {
+                    // Gradient tensor F = I + grad(u) at interface BIP,
+                    // current side. Layout from general_face_grad_op (1 IP):
+                    // p_c_dndx[ic * SPATIAL_DIM + j] = dN_ic/dx_j
+                    scalar c_gradTens[SPATIAL_DIM * SPATIAL_DIM] = {};
+                    for (label ic = 0; ic < current_num_elem_nodes; ++ic)
+                    {
+                        const label offSet = ic * SPATIAL_DIM;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            const scalar dxi =
+                                p_c_elem_disp[ic * SPATIAL_DIM + i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                                c_gradTens[i * SPATIAL_DIM + j] +=
+                                    p_c_dndx[offSet + j] * dxi;
+                        }
+                    }
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                        c_gradTens[i * SPATIAL_DIM + i] += 1.0;
+
+                    // Gradient tensor F = I + grad(u), opposing side
+                    scalar o_gradTens[SPATIAL_DIM * SPATIAL_DIM] = {};
+                    for (label ic = 0; ic < opposing_num_elem_nodes; ++ic)
+                    {
+                        const label offSet = ic * SPATIAL_DIM;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            const scalar dxi =
+                                p_o_elem_disp[ic * SPATIAL_DIM + i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                                o_gradTens[i * SPATIAL_DIM + j] +=
+                                    p_o_dndx[offSet + j] * dxi;
+                        }
+                    }
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                        o_gradTens[i * SPATIAL_DIM + i] += 1.0;
+
+                    // I1 = tr(F^T F), beta = 1 - 1/(1+I1), J = det(F)
+                    scalar c_Iconst = 0.0;
+                    scalar o_Iconst = 0.0;
+                    if (SPATIAL_DIM == 3)
+                    {
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            c_Iconst += c_gradTens[i] * c_gradTens[i] +
+                                        c_gradTens[i + 3] * c_gradTens[i + 3] +
+                                        c_gradTens[i + 6] * c_gradTens[i + 6];
+                            o_Iconst += o_gradTens[i] * o_gradTens[i] +
+                                        o_gradTens[i + 3] * o_gradTens[i + 3] +
+                                        o_gradTens[i + 6] * o_gradTens[i + 6];
+                        }
+                    }
+                    else
+                    {
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            c_Iconst += c_gradTens[i] * c_gradTens[i] +
+                                        c_gradTens[i + 2] * c_gradTens[i + 2];
+                            o_Iconst += o_gradTens[i] * o_gradTens[i] +
+                                        o_gradTens[i + 2] * o_gradTens[i + 2];
+                        }
+                    }
+
+                    const scalar c_beta = 1.0 - 1.0 / (1.0 + c_Iconst);
+                    const scalar o_beta = 1.0 - 1.0 / (1.0 + o_Iconst);
+
+                    scalar c_J;
+                    scalar o_J;
+                    if (SPATIAL_DIM == 3)
+                    {
+                        c_J = c_gradTens[0] * (c_gradTens[4] * c_gradTens[8] -
+                                               c_gradTens[7] * c_gradTens[5]) -
+                              c_gradTens[1] * (c_gradTens[3] * c_gradTens[8] -
+                                               c_gradTens[6] * c_gradTens[5]) +
+                              c_gradTens[2] * (c_gradTens[3] * c_gradTens[7] -
+                                               c_gradTens[6] * c_gradTens[4]);
+                        o_J = o_gradTens[0] * (o_gradTens[4] * o_gradTens[8] -
+                                               o_gradTens[7] * o_gradTens[5]) -
+                              o_gradTens[1] * (o_gradTens[3] * o_gradTens[8] -
+                                               o_gradTens[6] * o_gradTens[5]) +
+                              o_gradTens[2] * (o_gradTens[3] * o_gradTens[7] -
+                                               o_gradTens[6] * o_gradTens[4]);
+                    }
+                    else
+                    {
+                        c_J = c_gradTens[0] * c_gradTens[3] -
+                              c_gradTens[2] * c_gradTens[1];
+                        o_J = o_gradTens[0] * o_gradTens[3] -
+                              o_gradTens[2] * o_gradTens[1];
+                    }
+
+                    // Effective tangent stiffness: lambda + 2*(mu*beta/J)/3
+                    currentStiffness =
+                        currentLambdaBip +
+                        2.0 * (currentMuBip * c_beta / c_J) / 3.0;
+                    opposingStiffness =
+                        opposingLambdaBip +
+                        2.0 * (opposingMuBip * o_beta / o_J) / 3.0;
+                }
 
                 // penalty computation (similar to diffusion penalty)
                 penaltyIp = penaltyFactor *
