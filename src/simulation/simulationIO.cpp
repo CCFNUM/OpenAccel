@@ -946,7 +946,7 @@ void simulation::initializeResidualPlot()
 {
     try
     {
-        gp_ptr_ = std::make_unique<Gnuplot>();
+        gp_ptr_ = std::make_unique<Gnuplot>("gnuplot", false);
         if (!gp_ptr_->ok())
         {
             std::cout << "Warning: gnuplot executable not found. "
