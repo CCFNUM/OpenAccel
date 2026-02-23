@@ -1,5 +1,5 @@
 # Build
-build/
+build*/
 examples/
 *.o
 *.exe
@@ -16,3 +16,15 @@ CMakeFiles/
 
 # Claude
 .claude/
+
+# Tools
+*.bib
+*.bib.clean
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.pdf
+
