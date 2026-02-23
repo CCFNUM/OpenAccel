@@ -185,6 +185,12 @@ The repository includes a suite of test cases designed to demonstrate the variou
 
 ---
 
+## Acknowledgments
+
+The development of OpenAccel is supported by the **Swiss National Science Foundation** under the project *"Immersed Methods for Fluid-Structure-Contact-Interaction Simulations and Complex Geometries"* (grant nr. 215627), and by the **Platform for Advanced Scientific Computing (PASC)** Program under the project *"XSES-FSI: towards eXtreme Scale Semi-Structured discretizations for Fluid-Structure Interaction."*
+
+---
+
 ## License
 
 OpenAccel is licensed under the BSD 3-Clause License. See [LICENSE](LICENSE) for the full text.
