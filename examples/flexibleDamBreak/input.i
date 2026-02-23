@@ -202,4 +202,4 @@ simulation:
                 young_modulus: 1e6
             poisson_ratio:
                 option: value
-                poisson_ratio: 0.3       
+                poisson_ratio: 0     
