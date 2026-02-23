@@ -8,7 +8,7 @@
 ## 🔬 Capabilities
 * **Incompressible and compressible single-phase flows**
 * **Incompressible multiphase flows** using the Volume of Fluid (VOF) method
-* **Fluid-Structure Interaction (FSI)** via a partitioned Arbitrary Lagrangian-Eulerian (ALE) approach
+* **Fluid-Structure Interaction (FSI)** via a partitioned ALE approach
 * **Heat Transfer** including Conjugate Heat Transfer (CHT)
 * **Turbulence Modeling** with support for RANS (e.g., k-ω SST and transition SST)
 
@@ -177,7 +177,7 @@ The repository includes a suite of test cases designed to demonstrate the variou
 * **palteHole:** The Kirsch Problem benchmark uses a quarter-symmetry model to validate stress concentration at a circular hole against analytical solutions.
 
 ### Fluid-Structure Interaction (FSI) & Moving Meshes
-* **flexibleDamBreak:** A water column collapse where the fluid impacts an elastic obstacle. This demonstrates the coupling of **VOF** with **Arbitrary Lagrangian-Eulerian (ALE)** formulations.
+* **flexibleDamBreak:** A water column collapse where the fluid impacts an elastic obstacle. This demonstrates the coupling of **VOF** with **ALE** formulations.
 * **oscillatingBox:** A simple box in a closed cavity oscillating vertically, showcasing the **dynamic mesh** capabilities.
 * **perpendicularFlap:** Incompressible flow against a flexible bar, highlighting the **ALE** approach for FSI.
 
