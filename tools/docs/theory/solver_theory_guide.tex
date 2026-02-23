@@ -1,0 +1,1322 @@
+\documentclass[12pt]{extarticle}
+%Some packages I commonly use.
+\usepackage[english]{babel}
+\usepackage{graphicx}
+\usepackage{framed}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{enumerate}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{siunitx}
+\usepackage[utf8]{inputenc}
+\usepackage[top=1 in,bottom=1in, left=1 in, right=1 in]{geometry}
+
+%A bunch of definitions that make my life easier
+\newcommand{\matlab}{{\sc Matlab} }
+\newcommand{\cvec}[1]{{\mathbf #1}}
+\newcommand{\rvec}[1]{\vec{\mathbf #1}}
+\newcommand{\ihat}{\hat{\textbf{\i}}}
+\newcommand{\jhat}{\hat{\textbf{\j}}}
+\newcommand{\khat}{\hat{\textbf{k}}}
+\newcommand{\minor}{{\rm minor}}
+\newcommand{\trace}{{\rm trace}}
+\newcommand{\spn}{{\rm Span}}
+\newcommand{\rem}{{\rm rem}}
+\newcommand{\ran}{{\rm range}}
+\newcommand{\range}{{\rm range}}
+\newcommand{\mdiv}{{\rm div}}
+\newcommand{\proj}{{\rm proj}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\<}{\langle}
+\renewcommand{\>}{\rangle}
+\renewcommand{\emptyset}{\varnothing}
+\newcommand{\attn}[1]{\textbf{#1}}
+\theoremstyle{definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{corollary}{Corollary}
+\newtheorem*{definition}{Definition}
+\newtheorem*{example}{Example}
+\newtheorem*{note}{Note}
+\newtheorem{exercise}{Exercise}
+\newcommand{\bproof}{\bigskip {\bf Proof. }}
+\newcommand{\eproof}{\hfill\qedsymbol}
+\newcommand{\Disp}{\displaystyle}
+\newcommand{\qe}{\hfill\(\bigtriangledown\)}
+\setlength{\columnseprule}{1 pt}
+\usepackage[caption=false]{subfig}
+\usepackage{float}
+\usepackage{url,multirow,morefloats,floatflt,cancel}
+\usepackage{listings}
+\usepackage{xcolor}
+\lstset { %
+    language=C++,
+    %backgroundcolor=\color{black!5}, % set backgroundcolor
+    basicstyle=\footnotesize,% basic font setting
+  %basicstyle=\small,
+  breaklines=true    
+}
+
+
+\title{OpenAccel Theory Guide}
+\author{CCFNUM Team\\Lucerne University of Applied Sciences and Arts}
+\date{February 2026}
+
+\begin{document}
+
+\maketitle
+
+\noindent\textbf{License:} OpenAccel and this documentation are distributed under the BSD 3-Clause License:
+\begin{quotation}
+\noindent Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met: (1) Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer. (2) Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution. (3) Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+\smallskip\noindent THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+\end{quotation}
+
+\section{Overview}
+
+The CVFEM theory and implementation in the \textit{OpenAccel} C++ framework is addressed in this guide.
+
+\section{Preliminaries}
+\subsection{Basic Calculus}
+
+Consider a vector $\textbf{u}=[u_x,u_y,u_z]$ and a vector $\textbf{v}=[v_x,v_y,v_z]$, the inner product is computed as:
+\begin{equation}
+    \textbf{u} \cdot \textbf{v} = u_x v_x + u_y v_y + u_z v_z
+\end{equation}
+while the outer product is:
+\begin{equation}
+    \textbf{u} \textbf{v} = 
+    \begin{bmatrix}
+        u_xv_x & u_xv_y & u_xv_z \\[0.5em]
+        u_yv_x & u_yv_y & u_yv_z \\[0.5em]
+        u_zv_x & u_zv_y & u_zv_z
+    \end{bmatrix}
+\end{equation}
+An important identity to use is:
+\begin{equation}
+    \textbf{u}\textbf{v} = \left(\textbf{v}\textbf{u}\right)^T    
+\end{equation}
+Also, considering a tensor $\textbf{T}$, given as:
+\begin{equation}
+    \textbf{T} = 
+    \begin{bmatrix}
+        T_{xx} & T_{xy} & T_{xz} \\[0.5em]
+        T_{yx} & T_{yy} & T_{yz} \\[0.5em]
+        T_{zx} & T_{zy} & T_{zz}
+    \end{bmatrix}
+\end{equation}
+the following commutative identity holds:
+\begin{equation}
+    \textbf{u} \cdot \textbf{T} = \textbf{T}^T \cdot \textbf{u}
+\end{equation}
+
+\subsection{Gradient Computation}
+
+\subsubsection{Scalar Field Gradient}
+At a node $i$, the gradient of a scalar field $\phi$ is calculated as:
+\begin{equation}
+    \nabla \phi_i = \frac{\sum\limits_{ip} \textbf{S}_{ip} \phi_{ip}}{V_i}
+\end{equation}
+and the storage layout can be expressed as:
+\begin{equation}
+    \nabla \phi_i = 
+    \begin{bmatrix}
+        \frac{\partial \phi}{\partial x},
+        \frac{\partial \phi}{\partial y},
+        \frac{\partial \phi}{\partial z}
+    \end{bmatrix}_i
+\end{equation}
+
+
+\subsubsection{Vector Field Gradient}
+Similarly at a node $i$, the gradient of a vector field $\boldsymbol{\phi} = \left[\phi_x,\phi_y,\phi_z\right]$ is:
+\begin{equation}
+    \nabla \boldsymbol{\phi}_i = \frac{\sum\limits_{ip} \textbf{S}_{ip} \boldsymbol{\phi}_{ip} }{V_i}
+\end{equation}
+and the storage layout can be expressed as:
+\begin{equation}
+    \nabla \boldsymbol{\phi}_i = 
+    \begin{bmatrix}
+    \frac{\partial \phi_x}{\partial x} & \frac{\partial \phi_y}{\partial x} & \frac{\partial \phi_z}{\partial x} \\[0.5em]
+    \frac{\partial \phi_x}{\partial y} & \frac{\partial \phi_y}{\partial y} & \frac{\partial \phi_z}{\partial y} \\[0.5em]
+    \frac{\partial \phi_x}{\partial z} & \frac{\partial \phi_y}{\partial z} & \frac{\partial \phi_z}{\partial z}
+    \end{bmatrix}_i
+\end{equation}
+
+\subsubsection{Gradient Correction at Symmetry Planes}
+
+At symmetry planes (or slip walls), the gradient of a field must be corrected to ensure compatibility with the physical boundary conditions. This is crucial in preserving zero shear stress and preventing artificial fluxes through the boundary. The physical constraints for a symmetry plane are well established (cf.~\cite{blazek2015computational}, Section 8.6), and can be summarized as follows:
+
+\begin{enumerate}
+  \item No flux through the boundary.
+  \item Vanishing scalar quantity gradient in the normal direction: \( \boldsymbol{n} \cdot \nabla \phi = 0 \).
+  \item Vanishing normal derivative of tangential vector quantity: \( \boldsymbol{n} \cdot \nabla (\boldsymbol{\phi} \cdot \boldsymbol{t}) = 0 \).
+  \item Vanishing tangential derivative of normal vector quantity: \( \boldsymbol{t} \cdot \nabla (\boldsymbol{\phi} \cdot \boldsymbol{n}) = 0 \).
+\end{enumerate}
+
+Points (2)–(4) relate to gradient behavior and are handled at the discrete level by projecting the computed gradient onto the subspace compatible with these constraints.
+
+\paragraph{Scalar Gradient Correction.}
+Let \( \boldsymbol{n}_i \) be the unit normal vector at boundary node \( i \), and let \( \nabla \phi_i \) be the computed gradient of a scalar field. To enforce \( \boldsymbol{n}_i \cdot \nabla \phi_i = 0 \), we project out the normal component:
+\[
+\nabla \phi_i^{\,\text{corrected}} = \nabla \phi_i - (\boldsymbol{n}_i \cdot \nabla \phi_i)\, \boldsymbol{n}_i.
+\]
+
+\paragraph{Vector Gradient Correction.}
+For vector fields (e.g., velocity), the full gradient tensor \( \nabla \boldsymbol{\phi}_i \in \mathbb{R}^{d \times d} \) must be corrected to eliminate the following undesired components:
+\begin{itemize}
+  \item Normal derivative of tangential components (to eliminate shear stress),
+  \item Tangential derivative of the normal component (to preserve zero normal velocity along the surface).
+\end{itemize}
+
+We denote:
+\begin{align*}
+\phi_{n,i} &= \boldsymbol{\phi}_i \cdot \boldsymbol{n}_i, \\
+\boldsymbol{\phi}_{t,i} &= \boldsymbol{\phi}_i - \phi_{n,i}\, \boldsymbol{n}_i.
+\end{align*}
+
+The corrected gradient tensor is given by:
+\begin{equation}
+(\nabla \boldsymbol{\phi}_i)^{\,\text{corrected}}_{mn} =
+(\nabla \boldsymbol{\phi}_i)_{mn}
+- (\nabla \phi_{i,m} \cdot \boldsymbol{n}_i)\, n_{i,n}
+- n_{i,m} (\nabla \phi_{i,n} \cdot \boldsymbol{n}_i)
++ 2\, n_{i,m} n_{i,n} \left(\boldsymbol{n}_i \cdot \nabla (\boldsymbol{\phi}_i \cdot \boldsymbol{n}_i)\right).
+\end{equation}
+
+Where:
+\begin{align*}
+\nabla \phi_{i,m} \cdot \boldsymbol{n}_i &= \sum_{k=1}^d \frac{\partial \phi_{i,m}}{\partial x_k} n_{i,k}, \\
+\nabla (\boldsymbol{\phi}_i \cdot \boldsymbol{n}_i)_n &= \sum_{k=1}^d \frac{\partial \phi_{i,k}}{\partial x_n} n_{i,k}, \\
+\boldsymbol{n}_i \cdot \nabla (\boldsymbol{\phi}_i \cdot \boldsymbol{n}_i) &= \sum_{m=1}^d \sum_{n=1}^d n_{i,m} \frac{\partial \phi_{i,m}}{\partial x_n} n_{i,n}.
+\end{align*}
+
+This projection removes cross terms between normal and tangential directions and retains only the components compatible with symmetry-plane behavior. It is equivalent to applying a tensor projection operator:
+\[
+\nabla \boldsymbol{\phi}^{\,\text{corrected}} = \boldsymbol{P}_\tau \cdot \nabla \boldsymbol{\phi} \cdot \boldsymbol{P}_\tau
++ (\boldsymbol{n} \cdot \nabla \phi_n) \boldsymbol{n} \otimes \boldsymbol{n},
+\]
+where \( \boldsymbol{P}_\tau = \boldsymbol{I} - \boldsymbol{n} \otimes \boldsymbol{n} \) projects onto the tangential plane.
+
+
+\section{Mathematical Representation of Physical Phenomena}
+
+\subsection{General Transport Equation}
+
+The general transport equation of a scalar quantity $\phi$ is as follows:
+\begin{equation}
+    \underbrace{\frac{\partial \rho \phi}{\partial t}}_{\text{transient}} + \underbrace{\nabla \cdot (\rho \textbf{v} \phi)}_{\text{advection}} = \underbrace{\nabla \cdot (\Gamma^{\phi} \nabla \phi)}_{\text{diffusion}} + \underbrace{S^\phi}_{\text{source}} \label{eq:phi_eq}
+\end{equation}
+All conservation equations have this same form.
+
+\subsection{Fundamental Flow Equations}
+
+The fundamental equations governing a single-phase flow are the continuity and momentum conservation equations given by
+\begin{align}
+\frac{\partial\rho}{\partial t} + \nabla \cdot (\rho \textbf{v}) &= 0 \label{eq:cont_full} \\
+\frac{\partial \rho \textbf{v}}{\partial t} + \nabla \cdot (\rho \textbf{v} \textbf{v}) &= \nabla \cdot \boldsymbol{\tau} - \nabla p + \textbf{F}\label{eq:mom_full}
+\end{align}
+where $\boldsymbol{\tau}$ in Eq.~\ref{eq:mom_full} is the full stress tensor that combines laminar and turbulent stresses. Adopting a Boussinesq eddy viscosity assumption, which is the basis for all two-equation turbulence models, $\boldsymbol{\tau}$ for an incompressible flow is expressed as
+\begin{equation}
+     \boldsymbol{\tau} = \mu_{eff} \big(\nabla \textbf{v}+\nabla \textbf{v}^{T}\big)
+\end{equation}
+while for a compressible flow, additional terms related to bulk viscosity and kinetic energy are involved:
+\begin{equation}
+     \boldsymbol{\tau} = \mu_{eff} \big(\nabla \textbf{v}+\nabla \textbf{v}^{T}\big) - \frac{2}{3} \mu_{eff} (\nabla \cdot \textbf{v}) \textbf{I} - \frac{2}{3} \rho k \textbf{I}
+\end{equation}
+where $\mu_{eff}$ is the effective viscosity defined as
+\begin{equation}  
+\mu_{eff} = \mu+\mu_t
+\end{equation}
+$k$ is the turbulent kinetic energy predicted by a turbulence model and $\textbf{F}$ is any body force term, like gravitational force.
+
+\subsection{Turbulence Closure Problem}
+To close the above system of equations, the turbulent viscosity $\mu_t$ should be calculated through the use of a turbulence model. 
+
+\subsubsection{$k$-$\epsilon$ Model}
+
+The standard $k$-$\varepsilon$ model~\cite{launder1974numerical} is a two-equation turbulence model that introduces transport equations for the turbulent kinetic energy $k$ and its dissipation rate $\varepsilon$:
+\begin{align}
+\frac{\partial \rho k}{\partial t} + \nabla\cdot(\rho \textbf{v} k) &= P_k - \rho\varepsilon + \nabla\cdot\left[\left(\mu+\frac{\mu_t}{\sigma_k}\right) \nabla k\right] \\
+\frac{\partial \rho \varepsilon}{\partial t} + \nabla\cdot(\rho \textbf{v} \varepsilon) &= C_{\varepsilon 1}\frac{\varepsilon}{k}P_k - C_{\varepsilon 2}\frac{\rho\varepsilon^2}{k} + \nabla\cdot\left[\left(\mu+\frac{\mu_t}{\sigma_\varepsilon}\right) \nabla \varepsilon\right]
+\end{align}
+where $k$ is the turbulent kinetic energy and $\varepsilon$ is its dissipation rate. The turbulence production $P_k$ is defined as:
+\begin{equation}
+    P_k = \overline{\tau}_{ij} \nabla \textbf{v} = \mu_t \left(\nabla\textbf{v}+\nabla\textbf{v}^T\right):\nabla\textbf{v}
+\end{equation}
+The turbulent eddy viscosity is computed as:
+\begin{equation}
+    \mu_t = \rho C_\mu \frac{k^2}{\varepsilon}
+\end{equation}
+The model constants take the following standard values:
+\begin{equation}
+    C_\mu = 0.09,\quad C_{\varepsilon 1} = 1.44,\quad C_{\varepsilon 2} = 1.92,\quad \sigma_k = 1.0,\quad \sigma_\varepsilon = 1.3
+\end{equation}
+
+\subsubsection{$k$-$\omega$ SST Model}
+
+The SST $k-\omega$ model adopted in \textit{OpenAccel} aligns with ref.~\cite{menter1994two} that requires solving the following two conservation equations:
+\begin{align}
+\frac{\partial \rho k}{\partial t} + \nabla\cdot(\rho \textbf{v} k) &= \overline{\tau}_{ij} \nabla \textbf{v} - \beta^*\rho\omega k + \nabla\cdot\big[(\mu+\sigma_k\mu_t) \nabla k\big]\\
+\begin{split}
+\frac{\partial \rho \omega}{\partial t} + \nabla\cdot(\rho \textbf{v} \omega) &= \frac{\rho \gamma \overline{\tau}_{ij} \nabla \textbf{v}}{\mu_t} - \beta\rho\omega^2 + \nabla\cdot\big[(\mu+\sigma_{\omega}\mu_t) \nabla \omega\big]\\
+&\quad + 2(1-F_1)\frac{\rho\sigma_{\omega 2}}{\omega} \nabla k \cdot \nabla \omega
+\end{split}
+\end{align}
+where $k$ is the turbulence kinetic energy and $\omega$ is the turbulence specific dissipation rate. The model's parameters, blending functions, and variables can be retrieved from reference~\cite{menter1994two}.
+
+
+\subsubsection{$k$-$\omega$ SST Transition Model}
+
+The $\gamma$-$Re_{\theta t}$ transition model~\cite{menter2006correlation}, also known as the Transition SST model, extends the SST $k$-$\omega$ model with two additional transport equations: one for the intermittency $\gamma$ and one for the transition-onset momentum-thickness Reynolds number $\widetilde{Re}_{\theta t}$. The intermittency equation is:
+\begin{equation}
+\frac{\partial \rho \gamma}{\partial t} + \nabla\cdot(\rho\textbf{v}\gamma) = P_\gamma - E_\gamma + \nabla\cdot\left[\left(\mu+\frac{\mu_t}{\sigma_f}\right)\nabla\gamma\right]
+\end{equation}
+and the transition-onset momentum-thickness Reynolds number equation is:
+\begin{equation}
+\frac{\partial \rho\widetilde{Re}_{\theta t}}{\partial t} + \nabla\cdot(\rho\textbf{v}\widetilde{Re}_{\theta t}) = P_{\theta t} + \nabla\cdot\left[\sigma_{\theta t}\left(\mu+\mu_t\right)\nabla\widetilde{Re}_{\theta t}\right]
+\end{equation}
+The intermittency production and destruction terms are:
+\begin{align}
+    P_\gamma &= F_{length}\,\rho\,S\,\gamma(1-\gamma)\,F_{onset} \\
+    E_\gamma &= C_{e2}\,\rho\,\Omega\,\gamma\,F_{turb}(c_{e2}\gamma-1)
+\end{align}
+where $S$ is the magnitude of the strain rate tensor, $\Omega$ is the magnitude of the vorticity, and $F_{onset}$, $F_{turb}$ are blending functions controlling the onset of transition. The source term for $\widetilde{Re}_{\theta t}$ is:
+\begin{equation}
+    P_{\theta t} = c_{\theta t}\frac{\rho}{t}\left(Re_{\theta t}-\widetilde{Re}_{\theta t}\right)(1-F_{\theta t})
+\end{equation}
+where $Re_{\theta t}$ is the empirical correlation for the critical transition Reynolds number, $t = 500\mu/(\rho U^2)$ is a local time scale, and $F_{\theta t}$ is a blending function that prevents the source from acting inside the boundary layer.
+
+The intermittency modifies the production and destruction terms of the $k$ equation of the underlying SST model:
+\begin{align}
+    \widetilde{P}_k &= \gamma_{eff}\, P_k \\
+    \widetilde{D}_k &= \min\!\left(\max(\gamma_{eff},\,0.1),\,1.0\right)\rho\beta^*\omega k
+\end{align}
+where $\gamma_{eff} = \max(\gamma,\,\gamma_{sep})$ is the effective intermittency, combining freestream transition with separation-induced transition. All model constants, blending functions, and empirical correlations are given in reference~\cite{menter2006correlation}.
+
+\subsection{Heat Transfer Considerations}
+In case of any possible heat transfer phenomena, or in the case of a compressible flow, the energy conservation is employed.
+
+\subsubsection{Incompressible Scenario}
+For heat transfer modeling in incompressible scenarios, the thermal energy equation is employed. This equation uses the specific enthalpy $h$ as the transported scalar, which is related to temperature through the differential relation $\mathrm{d}h = c_p\,\mathrm{d}T$. The thermal energy equation reads:
+\begin{equation}
+    \frac{\partial \rho h}{\partial t} + \nabla \cdot (\rho \textbf{v} h) = \nabla \cdot \left(\frac{\lambda_{eff}}{c_p} \nabla h \right) + S^h \label{eq:ener_full_ter}
+\end{equation}
+where $\lambda_{eff} = \lambda + \mu_t c_p / Pr_t$ is the effective thermal conductivity combining laminar and turbulent contributions, $Pr_t$ is the turbulent Prandtl number, and $S^h$ represents volumetric energy sources. This equation follows the general transport equation form (Eq.~\ref{eq:phi_eq}) with diffusion coefficient $\Gamma^h = \lambda_{eff}/c_p$. For a constant specific heat capacity $c_p$, the temperature is recovered from the specific enthalpy as:
+\begin{equation}
+    T = T_{ref} + \frac{h - h_{ref}}{c_p} \label{eq:ener_full_ter_f2}
+\end{equation}
+
+\subsubsection{Compressible Scenario}
+For a compressible flow, the source term $S^T$ will involve, among other contributions, a pressure work, which arises due to change of density:
+\begin{equation}
+    S^T = \frac{Dp}{Dt} = \frac{\partial p}{\partial t} + \textbf{v} \cdot \nabla p
+\end{equation}
+\textit{OpenAccel} also allows for a total energy equation solution rather than a thermal energy equation. The total energy equation features specific total enthalpy $h_0$ as the solution field:
+\begin{equation}
+    \frac{\partial \rho h_{0}}{\partial t} + \nabla \cdot (\rho \textbf{v} h_{0}) = \nabla \cdot (\lambda_{eff} \nabla T) + \frac{\partial p}{\partial t} +S^{h_{0}} \label{eq:ener_full_tot}
+\end{equation}
+$S^{h_{0}}$ in the total enthalpy equation represents energy sources such as viscous dissipation. The specific total enthalpy $h_0$ is related to the specific enthalpy $h$ according to the following relation:
+\begin{equation}
+    h = h_0 - \frac{1}{2} \textbf{v} \cdot \textbf{v}
+\end{equation}
+where $h$, for an ideal gas, is a function of temperature and is given by:
+\begin{equation}\label{h_eq}
+    h(T) = h_{\text{ref}} + \int_{T_{\text{ref}}}^{T} c_p(T) \, dT
+\end{equation}
+The specific heat capacity at constant pressure, $c_p$, for an ideal gas can be expressed as a $p$-order polynomial in $T$, such as the following:
+\begin{equation}
+    c_p(T) = a_0 + a_1 T + a_2 T^2 + a_3 T^3 + \dots + a_p T^p
+\end{equation}
+Therefore, the enthalpy can be further evaluated by substituting the above polynomial into equation~\eqref{h_eq}:
+\begin{equation}
+    h(T) = h_{\text{ref}} + \int_{T_{\text{ref}}}^{T} \left( a_0 + a_1 T + a_2 T^2 + \dots + a_p T^p \right) dT
+\end{equation}
+Evaluating the integral gives:
+\begin{equation}\label{h_formula}
+    h(T) = h_{\text{ref}} + \sum_{k=0}^{p} \frac{a_k}{k+1} \left( T^{k+1} - T_{\text{ref}}^{k+1} \right)
+\end{equation}
+To determine the temperature corresponding to a given specific enthalpy $h$, this requires solving for $T$ in equation~\ref{h_formula}. Letting the right-hand side be a function of $T$, this becomes a nonlinear algebraic equation:
+\begin{equation}
+    f(T) = \sum_{k=0}^{p} \frac{a_k}{k+1} T^{k+1} - C = 0
+\end{equation}
+where the constant $C$ is given by:
+\begin{equation}
+    C = h - h_{\text{ref}} + \sum_{k=0}^{p} \frac{a_k}{k+1} T_{\text{ref}}^{k+1}
+\end{equation}
+This equation generally does not admit an analytical solution, especially for $p > 3$, and must be solved numerically. The problem thus reduces to finding the root of the nonlinear polynomial equation $f(T) = 0$. The diffusion term in the specific total enthalpy equation explicitly involves the temperature \( T \). However, it can be reformulated in terms of the total enthalpy \( h_0 \). 
+
+Starting from the thermodynamic relation:
+\begin{equation}
+    \mathrm{d}h = c_p \, \mathrm{d}T,
+\end{equation}
+we obtain the corresponding gradient form:
+\begin{equation}
+    \nabla h = c_p \nabla T.
+\end{equation}
+
+The specific total enthalpy \( h_0 \) is defined as:
+\begin{equation}
+    h_0 = h + \frac{1}{2} \mathbf{v} \cdot \mathbf{v},
+\end{equation}
+where \( \mathbf{v} \) is the velocity vector.
+
+Taking the gradient of both sides gives:
+\begin{equation}
+    \nabla h_0 = \nabla h + \frac{1}{2} \nabla \left( \mathbf{v} \cdot \mathbf{v} \right).
+\end{equation}
+
+Substituting \( \nabla h = c_p \nabla T \), we get:
+\begin{equation}
+    \nabla h_0 = c_p \nabla T + \frac{1}{2} \nabla \left( \mathbf{v} \cdot \mathbf{v} \right).
+\end{equation}
+
+Solving for \( \nabla T \), we obtain:
+\begin{equation}
+    \nabla T = \frac{1}{c_p} \nabla h_0 - \frac{1}{2 c_p} \nabla \left( \mathbf{v} \cdot \mathbf{v} \right).
+\end{equation}
+
+
+% For a perfect gas where $c_p$ is a constant, $h = c_p T$, therefore,
+% \begin{equation}
+%     h_0 = c_p T + \frac{1}{2} \textbf{v} \cdot \textbf{v}
+% \end{equation}
+% applying a gradient operator to the whole equation:
+% \begin{equation}
+%     \nabla h_0 = c_p \nabla T + \frac{1}{2} \nabla \left(\textbf{v} \cdot \textbf{v}\right)
+% \end{equation}
+% then, re-arranging:
+% \begin{equation}
+%     \nabla T = \frac{\nabla h_0}{c_p} - \frac{1}{2}\frac{\nabla \left(\textbf{v} \cdot \textbf{v}\right)}{c_p}
+% \end{equation}
+% The latter expression can be employed in the equation to involve more implicitness to the discretisation process. On another hand, for an ideal gas with, where $c_p$ may vary with $T$ according to an established polynomial of $p$-order, as mentioned earlier, the following formula appears when substituting with the formula of $h$:
+% \begin{equation}
+%     h_0 = h_{\text{ref}} + \sum_{k=0}^{p} \frac{a_k}{k+1} \left(T^{k+1} - T_{\text{ref}}^{k+1} \right) + \frac{1}{2} \textbf{v} \cdot \textbf{v} 
+% \end{equation}
+% Applying a gradient operator leads to the following:
+% \begin{equation}
+%     \nabla h_0 = \sum_{k=0}^{p} \frac{a_k}{k+1} \nabla T^{k+1} + \frac{1}{2} \nabla \left(\textbf{v} \cdot \textbf{v}\right)
+% \end{equation}
+% manipulating,
+% \begin{equation}
+%     \nabla h_0 = \nabla T\sum_{k=0}^{p} a_k T^{k} + \frac{1}{2} \nabla \left(\textbf{v} \cdot \textbf{v}\right)    
+% \end{equation}
+% and $\nabla T$:
+% \begin{equation}
+%     \nabla T = \frac{\nabla h_0 - \frac{1}{2} \nabla \left(\textbf{v} \cdot \textbf{v}\right)}{\sum_{k=0}^{p} a_k T^{k}}
+% \end{equation}
+A constitutive relation, i.e. the ideal gas law, is required to relate density to pressure and temperature; it is stated here:
+\begin{equation}\label{ideal_gas_law}
+\rho=\frac{p}{RT} = \psi p
+\end{equation}
+where $\psi$ is called the compressibility field, which for an ideal gas case, as is the case above, has the following formula:
+\begin{equation}
+    \psi = \frac{1}{RT}
+\end{equation}
+
+\subsection{Adjustments to Moving Domain}
+
+\subsubsection{Steady-State Scenario}
+
+For a moving reference frame, suitable for nearly steady-state rotational flows, the momentum conservation equation is adjusted to account for a Coriolis acceleration term resulting from an angular velocity $\Omega$, and another adjustment related to the mass flux field used in the calculation of the advection of transport quantities for all variables (i.e., velocity, turbulent kinetic energy, and turbulent eddy frequency). The resultant system appears as:
+\begin{align}
+\nabla \cdot (\rho \textbf{v}_{r}) &= 0 \label{eq:cont_full_mfr} \\
+\nabla \cdot (\rho \textbf{v}_{r} \textbf{v}) + \rho\Omega \times \textbf{v} &= \nabla \cdot \tau - \nabla p + \textbf{F}\label{eq:mom_full_mfr}
+\end{align}
+where $\textbf{v}_r$ is the relative velocity defined as
+\begin{equation}
+    \textbf{v}_r = \textbf{v} - \Omega \times \textbf{r}
+\end{equation}
+The discretization of this additional term in the momentum conservation equation is performed implicitly following the approach developed in \cite{mangani2014development}. Similar adjustments are required for any transport equation, say transport of some quantity $\phi$, for the advection term:
+\begin{equation}
+    \nabla \cdot (\rho \textbf{v}_{r} \phi) = \nabla \cdot \left(\Gamma^{\phi} \nabla \phi \right) + S^{\phi}\label{eq:sca_eq_mfr}
+\end{equation}
+The advective mass flux entails the relative mass flux, which modifies the absolute mass flux $\dot{m}_{ip}$ by a shifting term due to frame motion and leading to the following:   
+\begin{equation}
+    \dot{m}_{ip,r} = \dot{m}_{ip} - \rho_{ip} \Omega \times \textbf{r}_{ip} \cdot \textbf{S}_{ip}
+    \label{rhie_chow_relative}
+\end{equation}
+
+\subsubsection{Transient Scenario}
+
+In case of a transient case, the domain motion (rotation) is applied explicitly, where the domain mesh itself will rotate. In this case, the Coriolis acceleration term in the momentum conservation equation drops out. The equations are as follows:
+\begin{align}
+\frac{\partial \rho}{\partial t} + \nabla \cdot (\rho \textbf{v}_{r}) &= 0 \label{eq:cont_full_mot} \\
+\frac{\partial \rho \textbf{v}}{\partial t} + \nabla \cdot (\rho \textbf{v}_{r} \textbf{v}) &= \nabla \cdot \tau - \nabla p + \textbf{F}\label{eq:mom_full_mot}
+\end{align}
+where $\textbf{v}_r$ is the relative velocity defined above and re-stated here as
+\begin{equation}
+    \textbf{v}_r = \textbf{v} - \Omega \times \textbf{r}
+\end{equation}
+Similar adjustments are required for any transport equation, say transport of some quantity $\phi$, for the advection term:
+\begin{equation}
+    \frac{\partial \rho \phi}{\partial t} + \nabla \cdot (\rho \textbf{v}_{r} \phi) = \nabla \cdot \left(\Gamma^{\phi} \nabla \phi \right) + S^{\phi}\label{eq:sca_eq_mot}
+\end{equation}
+
+
+\subsection{Free Surface Flow Equations}
+The free surface flow solver in \textit{OpenAccel} follows the VoF model; it assumes a homogeneous flow model, where all phases $p$ share the same velocity field:
+\begin{equation}
+    \textbf{v}^p = \textbf{v}
+\end{equation}
+The model also assumes a pressure constraint, that is, all phases share same pressure:
+\begin{equation}
+    p^p = p
+\end{equation}
+The same fundamental equations mentioned before are adopted, but considering mixture properties rather than pure properties, namely $\rho$ and $\mu$. The transport mixture properties $\rho$ and $\mu$ are determined as
+\begin{equation}\label{mixture-rho}
+\rho = \sum\limits_{p=1}^{m} \alpha^{p} \rho^{p},\qquad \mu = \sum\limits_{p=1}^{m} \alpha^{p} \mu^{p}
+\end{equation}
+where $\alpha^{p}$ is the volume fraction of phase $p$ in a flow which involves $m$ phases. The body force term \textbf{F} in the momentum equation involves, in the context of VoF, a gravitational force and/or a surface tension force. $\alpha^{p}$ is computed for each phase by solving a scalar convection equation defined according to Hirt and Nichols \cite{hirt1981volume} by
+\begin{equation}\label{phasic_equation}
+\frac{\partial \rho^{p} \alpha^{p}}{\partial t} + \nabla\cdot (\rho^{p}\textbf{v}\alpha^{p}) = 0
+\end{equation}
+Equation \ref{phasic_equation} is currently discretized using the Upwind Differencing (UD) scheme, however UD is diffusive in nature and the phase boundary smears out over time leading to the loss of sharpness. This requires the addition of a compressive term in Equation \ref{phasic_equation} that limits interface diffusion. The modified phasic equations is given by:
+\begin{equation}\label{phasic_equation_compress}
+    \frac{\partial \rho^{p} \alpha^{p}}{\partial t} + \nabla\cdot (\rho^{p}\textbf{v}\alpha^{p}) + \underbrace{\nabla \cdot \left[\rho^p\mathbf{v_{cr}}\alpha^p(1-\alpha^p)\right]}_{\text{anti-diffusion term}}= 0
+\end{equation}
+where $\mathbf{v_{cr}}$ is the compressive velocity acting at the interface and it is expressed as
+\begin{equation}\label{compressive_vel}
+    \mathbf{v_{cr}} = \gamma \ ||\mathbf{v}|| \ \mathbf{\hat{n}} \quad .
+\end{equation}
+In Equation \ref{compressive_vel}, $\gamma$ is the compression factor and $\mathbf{\hat{n}}$ is the unit interface normal calculated as
+\begin{equation*}
+    \mathbf{\hat{n}} = \frac{\nabla \alpha^p}{||\nabla \alpha^p||+\delta}
+\end{equation*}
+where $\delta$ is a tolerance factor $O(10^{-6})$ that is chosen to avoid division by zero. The value of $\gamma$ is typically chosen such that $0\le\gamma\le1$, where $\gamma=0$ recovers Equation \ref{phasic_equation} and $\gamma=1$ leads to the maximum acceptable compression of the interface beyond which the location, shape and stability of the interface are adversely affected.
+
+\subsubsection{Flux Corrected Transport (cMULES)}
+
+An alternative interface-sharpening strategy is the Flux Corrected Transport (FCT) algorithm, also referred to as cMULES. FCT guarantees strict boundedness of the volume fraction $\alpha^p \in [0,1]$ while permitting compressive high-resolution fluxes at the interface. The algorithm proceeds in two steps:
+
+\begin{enumerate}
+    \item \textbf{Bounded (upwind) predictor:} A bounded solution $\alpha^{p,UD}$ is obtained by solving Eq.~\ref{phasic_equation} using a first-order upwind differencing scheme. This solution is guaranteed to remain within $[0,1]$ but introduces numerical diffusion at the interface.
+
+    \item \textbf{Flux correction (Zalesak limiter):} The anti-diffusive compressive fluxes from Eq.~\ref{phasic_equation_compress} are applied as a corrective step. Each flux is limited by the Zalesak limiter \cite{zalesak1979fully} to ensure the corrected solution does not introduce new extrema or violate the physical bounds:
+    \begin{equation}
+        \alpha^{p,**} = \alpha^{p,UD} + \sum_{ip} C_{ip}\,F^+_{ip}
+    \end{equation}
+    where $F^+_{ip}$ are the anti-diffusive flux contributions and $C_{ip} \in [0,1]$ are the FCT correction factors that limit each flux to the largest amount admissible without violating $\alpha^p \in [0,1]$.
+\end{enumerate}
+
+The result is a strictly bounded volume fraction field with a sharp, compressive interface. FCT combines the robustness of the upwind scheme with the accuracy of the high-resolution compressive scheme, and is the recommended method for flows with complex interface dynamics.
+
+\subsection{Buoyancy-Driven Flows}
+For cases where temperature variations are not large, the density can be safely assumed to be constant, even though there exist small changes. However, gravitational effects caused by little density changes might be significant. In such situations, a Boussinesq approximation is used to model the buoyancy force. The force has the following formula:
+\begin{equation}
+    \textbf{F}_{B} = -\rho_{ref} \beta \left(T - T_{ref}\right) \textbf{g}
+\end{equation}
+
+\subsection{Pressure Decomposition and Offsets}
+
+Depending on the flow regime and the presence of gravitational body forces, \textit{OpenAccel} employs different decompositions of the pressure variable to improve numerical conditioning and physical interpretability.
+
+\subsubsection{Incompressible Flows}
+
+For incompressible flows, the continuity equation is independent of the absolute pressure level, and only pressure differences are physically meaningful. Therefore, \textit{OpenAccel} always solves for the \textit{relative} (gauge) pressure $p_{rel}$, defined with respect to a user-specified reference pressure $p_{ref}$:
+\begin{equation}
+    p_{abs} = p_{rel} + p_{ref}
+\end{equation}
+This avoids round-off errors that would arise from working with absolute pressure values (e.g.\ atmospheric) in flow problems where only local pressure differences drive the flow.
+
+\subsubsection{Incompressible Flows with Boussinesq Buoyancy}
+
+When the Boussinesq approximation is active, the large hydrostatic pressure gradient $\rho_{ref}\,\textbf{g}$ is present in the momentum equation but carries no hydrodynamic information. Retaining it in the solved pressure variable leads to poor numerical conditioning. \textit{OpenAccel} therefore further decomposes the relative pressure into a \textit{modified pressure} $p_{mod}$ that excludes the hydrostatic contribution:
+\begin{equation}\label{eq:p_mod_incomp}
+    p_{mod} = p_{rel} - \rho_{ref}\,\textbf{g} \cdot \left(\textbf{R} - \textbf{R}_{ref}\right)
+\end{equation}
+where $\rho_{ref}$ is the reference density, $\textbf{g}$ is the gravitational acceleration vector, and $\textbf{R} - \textbf{R}_{ref}$ is the position vector relative to a user-specified reference location $\textbf{R}_{ref}$. The solver advances $p_{mod}$ as the primary pressure unknown. The pressure gradient in the momentum equation is recovered as:
+\begin{equation}
+    \nabla p_{rel} = \nabla p_{mod} + \rho_{ref}\,\textbf{g}
+\end{equation}
+so the hydrostatic body force $\rho_{ref}\,\textbf{g}$ cancels exactly with the hydrostatic pressure gradient, and only the dynamic (hydrodynamic) pressure gradient drives the flow.
+
+\subsubsection{Compressible Flows}
+
+For compressible flows, the pressure appears explicitly in the equation of state and must be tracked as an absolute quantity. \textit{OpenAccel} solves for the \textit{absolute pressure}:
+\begin{equation}
+    p_{abs} = p_{rel} + p_{ref}
+\end{equation}
+where $p_{ref}$ is the user-specified reference pressure (typically the far-field or ambient pressure). The equation of state (e.g.\ the ideal gas law, Eq.~\ref{ideal_gas_law}) and all thermodynamic property evaluations use $p_{abs}$.
+
+\subsubsection{Compressible Flows with Gravitational Effects}
+
+In compressible flows where gravitational body forces are significant, a modified absolute pressure analogous to Eq.~\eqref{eq:p_mod_incomp} is employed:
+\begin{equation}
+    p_{mod,abs} = p_{abs} - \rho_{ref}\,\textbf{g} \cdot \left(\textbf{R} - \textbf{R}_{ref}\right) = p_{rel} + p_{ref} - \rho_{ref}\,\textbf{g} \cdot \left(\textbf{R} - \textbf{R}_{ref}\right)
+\end{equation}
+The solver advances $p_{mod,abs}$ as the primary pressure variable. This removes the hydrostatic contribution from the pressure field, improving numerical conditioning while preserving the correct absolute pressure level needed by the equation of state.
+
+\subsection{Post-Process Quantities}
+
+\subsubsection{Total Pressure}
+Total pressure $p_0$ has different formulas depending in the flow model, all of which are functions of the static pressure $p$. For incompressible cases:
+\begin{equation}
+    p_0 = p + \frac{1}{2} \rho v^2
+\end{equation}
+For compressible cases, where the ideal gas law is employed:
+\begin{equation}
+    p_0 = p \left[1+\left(\frac{\gamma-1}{2} M_a^2\right)\right]^{\left(\frac{\gamma}{\gamma-1}\right)}
+\end{equation}
+
+\subsubsection{Total Temperature}
+Total temperature $T_0$ has different formulas depending on the flow model, all of which are functions of the static temperature $T$. For incompressible cases, the total temperature is equal to the static temperature since no temperature changes take place due to changes in kinetic energy:
+\begin{equation}
+    T_0 = T
+\end{equation}
+while for a compressible flow employing the ideal gas law with constant specific heat capacity ($c_p$), named usually a perfect gas law, the formula is as follows:
+\begin{equation}
+    T_0 = T + \frac{\textbf{v} \cdot \textbf{v}}{2 c_p}
+\end{equation}
+If \( c_p \) varies with temperature, a different formulation is required. For a polynomial-based \( c_p(T) \), the specific total enthalpy \( h_0 \) is given by:
+\begin{equation}
+    h_0 = h + \frac{1}{2} \mathbf{v} \cdot \mathbf{v},
+\end{equation}
+where \( h \) is the static specific enthalpy and \( \mathbf{v} \cdot \mathbf{v} = |\mathbf{v}|^2 \) is the square of the velocity magnitude.
+
+Using the enthalpy expression for a variable \( c_p(T) \),
+\begin{equation}
+    h(T) = h_{\text{ref}} + \int_{T_{\text{ref}}}^{T} c_p(T) \, \mathrm{d}T,
+\end{equation}
+we can express the total enthalpy as:
+\begin{equation}
+    h(T_0) = h(T) + \frac{1}{2} \mathbf{v} \cdot \mathbf{v}.
+\end{equation}
+
+Substituting the integral expressions for both \( h(T_0) \) and \( h(T) \), we obtain:
+\begin{equation}
+    h_{\text{ref}} + \int_{T_{\text{ref}}}^{T_0} c_p(T) \, \mathrm{d}T
+    = h_{\text{ref}} + \int_{T_{\text{ref}}}^{T} c_p(T) \, \mathrm{d}T + \frac{1}{2} \mathbf{v} \cdot \mathbf{v}.
+\end{equation}
+
+Canceling \( h_{\text{ref}} \) from both sides gives:
+\begin{equation}
+    \int_{T_{\text{ref}}}^{T_0} c_p(T) \, \mathrm{d}T
+    = \int_{T_{\text{ref}}}^{T} c_p(T) \, \mathrm{d}T + \frac{1}{2} \mathbf{v} \cdot \mathbf{v}.
+\end{equation}
+
+Assuming \( c_p(T) \) is expressed as a fourth-order polynomial:
+\[
+    c_p(T) = a_0 + a_1 T + a_2 T^2 + a_3 T^3 + a_4 T^4,
+\]
+the integral can be evaluated analytically as:
+\begin{align}
+    \int_{T_{\text{ref}}}^{T} c_p(T) \, \mathrm{d}T
+    ={}& a_0 (T - T_{\text{ref}}) + \frac{a_1}{2}(T^2 - T_{\text{ref}}^2)
+    + \frac{a_2}{3}(T^3 - T_{\text{ref}}^3) \nonumber \\
+    & + \frac{a_3}{4}(T^4 - T_{\text{ref}}^4)
+    + \frac{a_4}{5}(T^5 - T_{\text{ref}}^5).
+\end{align}
+
+Thus, the total temperature \( T_0 \) satisfies:
+\begin{align}
+    a_0 (T_0 - T_{\text{ref}}) + \frac{a_1}{2}(T_0^2 - T_{\text{ref}}^2)
+    + \frac{a_2}{3}(T_0^3 - T_{\text{ref}}^3)
+    + \frac{a_3}{4}(T_0^4 - T_{\text{ref}}^4) \nonumber \\
+    + \frac{a_4}{5}(T_0^5 - T_{\text{ref}}^5)
+    = h(T) - h_{\text{ref}} + \frac{1}{2} \mathbf{v} \cdot \mathbf{v}.
+\end{align}
+
+This equation must be solved numerically for \( T_0 \), given the static temperature \( T \) and the velocity magnitude \( |\mathbf{v}| \).
+
+
+\subsubsection{Mach Number}
+\begin{equation}
+    M_a = \frac{v}{a}
+\end{equation}
+where $a$ is the speed of sound, which for an ideal gas is given as:
+\begin{equation}
+    a = \sqrt{\gamma R T / M}
+\end{equation}
+$\gamma$ is the ratio of specific heats, $R$ is the universal gas constant (\SI{0.008314}{\kilo\joule\per\mol\per\kelvin}), and $M$ is the molar mass.
+
+\subsection{Mesh Deformation Theory}
+
+There are cases where walls and possibly other patches move in time, a situation which requires the whole mesh to re-adapt to the new patch position. The mesh, however, has to move in a way which preserves the quality of the mesh. The displacement diffusion equation is one of the most popular cheap ways to deform a mesh. The equation has the following form:
+\begin{equation}
+    -\nabla \cdot \left( \Gamma^{\textbf{D}} \nabla \textbf{D} \right ) = 0
+\end{equation}
+where $\Gamma^{\textbf{D}}$ is the displacement diffusion coefficient (mesh stiffness). A spatially varying $\Gamma^{\textbf{D}}$ is desirable to concentrate mesh deformation in regions of large control volumes while protecting fine near-wall regions. Four formulations are supported in \textit{OpenAccel}:
+
+\paragraph{1. Constant stiffness.}
+The simplest option assigns a uniform user-specified value throughout the moving domain:
+\begin{equation}
+    \Gamma^{\textbf{D}}_i = c
+\end{equation}
+where $c$ is the prescribed mesh stiffness value.
+
+\paragraph{2. Inverse-volume stiffness.}
+Stiffness is increased near small control volumes, protecting the fine mesh regions near boundaries:
+\begin{equation}
+    \Gamma^{\textbf{D}}_i = \left(\frac{V_{ref}}{V_i}\right)^n
+\end{equation}
+where $V_{ref}$ is the mean nodal dual control volume computed over all nodes of the moving domain, $V_i$ is the local dual control volume at node $i$, and $n$ is a user-specified model exponent.
+
+\paragraph{3. Inverse-distance stiffness.}
+Stiffness is increased near boundaries using the minimum wall distance $y_{min,i}$:
+\begin{equation}
+    \Gamma^{\textbf{D}}_i = \left(\frac{L_{ref}}{y_{min,i}}\right)^n
+\end{equation}
+where $L_{ref}$ is a user-specified reference length scale (e.g.\ a characteristic mesh size or boundary layer thickness), and $n$ is a model exponent.
+
+\paragraph{4. Blended volume--distance stiffness.}
+A combined formulation that blends the contributions from both local volume and wall distance:
+\begin{equation}
+    \Gamma^{\textbf{D}}_i = A\left(\frac{V_{ref}}{V_i}\right)^{C_{vol}} + B\left(\frac{L_{ref}}{\max(y_{min,i},\,d_{wall})}\right)^{C_{dis}}
+\end{equation}
+where $A$ and $B$ are user-specified blending weights for the volume and distance contributions respectively, $C_{vol}$ and $C_{dis}$ are the corresponding exponents, and $d_{wall}$ is a minimum effective wall distance computed as:
+\begin{equation}
+    d_{wall} = 10\,V_{min}^{1/3}, \qquad L_{ref} = \tfrac{1}{2}\,V_{domain}^{1/3}
+\end{equation}
+with $V_{min}$ the minimum nodal control volume in the domain and $V_{domain}$ the total domain volume. The floor $d_{wall}$ prevents singularities in the distance term for nodes very close to the wall. In all four formulations, the computed stiffness is clipped to the interval $[10^{-15},\,10^{15}]$ to prevent ill-conditioning.
+
+\paragraph{Mesh Velocity Computation.}
+Once the displacement diffusion equation is solved for the total displacement $\textbf{D}$, the mesh velocity $\textbf{v}_m$ is computed using a second-order backward difference formula (BDF2):
+\begin{equation}
+    \textbf{v}_{m}^{n} = \frac{c_0\,\textbf{D}^{n} + c_1\,\textbf{D}^{n-1} + c_2\,\textbf{D}^{n-2}}{\Delta t^n}
+    \label{eq:mesh_velocity_bdf2}
+\end{equation}
+where the BDF2 coefficients are
+\begin{equation}
+    c_0 = \frac{1+2\omega}{1+\omega},\qquad
+    c_1 = -(1+\omega),\qquad
+    c_2 = \frac{\omega^2}{1+\omega},\qquad
+    \omega = \frac{\Delta t^n}{\Delta t^{n-1}},
+\end{equation}
+with $\Delta t^n$ and $\Delta t^{n-1}$ denoting the current and previous time-step sizes, respectively. When the time-step size is constant ($\omega=1$), the coefficients reduce to $c_0=3/2$, $c_1=-2$, $c_2=1/2$, recovering the standard uniform BDF2 stencil.
+
+Therefore, flow equations exhibit changes in the advection fluxes, such that a relative advecting velocity is used:
+\begin{align}
+\frac{\partial \rho}{\partial t} + \nabla \cdot (\rho \textbf{v}_{r}) &= 0 \label{eq:cont_full_def} \\
+\frac{\partial \rho \textbf{v}}{\partial t} + \nabla \cdot (\rho \textbf{v}_{r} \textbf{v}) &= \nabla \cdot \tau - \nabla p + \textbf{F}\label{eq:mom_full_def}
+\end{align}
+where $\textbf{v}_r$ is the relative velocity defined as
+\begin{equation}
+    \textbf{v}_r = \textbf{v} - \textbf{v}_m
+\end{equation}
+and $\textbf{v}_m$ is the mesh velocity. Similar adjustments are required for any transport equation, say transport of some quantity $\phi$, for the advection term:
+\begin{equation}
+    \frac{\partial \rho \phi}{\partial t} + \nabla \cdot (\rho \textbf{v}_{r} \phi) = \nabla \cdot \left(\Gamma^{\phi} \nabla \phi \right) + S^{\phi}\label{eq:sca_eq_def}
+\end{equation}
+
+\subsection{Solid Mechanics: Linear Elasticity}
+
+For structural analysis of solid materials undergoing small deformations, the solid displacement equation is employed. This equation models the mechanical behavior of isotropic linear elastic materials and is applicable to scenarios such as stress analysis, fluid-structure interaction, and thermo-mechanical coupling.
+
+\subsubsection{Governing Equation}
+
+The quasi-static equilibrium equation for solid displacement $\textbf{u}$ in the absence of body forces is given by:
+\begin{equation}
+    \nabla \cdot \boldsymbol{\sigma} = 0 \label{eq:equilibrium}
+\end{equation}
+where $\boldsymbol{\sigma}$ is the Cauchy stress tensor. For transient problems, the inertial term is included:
+\begin{equation}
+    \rho_s \frac{\partial^2 \textbf{u}}{\partial t^2} + \nabla \cdot \boldsymbol{\sigma} = \textbf{F}_b \label{eq:solid_transient}
+\end{equation}
+where $\rho_s$ is the solid density and $\textbf{F}_b$ represents body forces.
+
+\subsubsection{Constitutive Relation}
+
+For isotropic linear elastic materials, the stress tensor is related to the strain tensor $\boldsymbol{\varepsilon}$ through Hooke's law:
+\begin{equation}
+    \boldsymbol{\sigma} = 2\mu \boldsymbol{\varepsilon} + \lambda (\nabla \cdot \textbf{u}) \textbf{I} \label{eq:hookes_law}
+\end{equation}
+where $\mu$ and $\lambda$ are the Lam\'e parameters, and $\textbf{I}$ is the identity tensor. The strain tensor is defined as the symmetric part of the displacement gradient:
+\begin{equation}
+    \boldsymbol{\varepsilon} = \frac{1}{2}\left(\nabla \textbf{u} + (\nabla \textbf{u})^T\right) \label{eq:strain}
+\end{equation}
+
+Substituting Eq.~\ref{eq:strain} into Eq.~\ref{eq:hookes_law} and then into Eq.~\ref{eq:equilibrium}, the displacement-based formulation becomes:
+\begin{equation}
+    \nabla \cdot \left[2\mu \boldsymbol{\varepsilon} + \lambda (\nabla \cdot \textbf{u}) \textbf{I}\right] = 0 \label{eq:solid_disp_full}
+\end{equation}
+
+\subsubsection{Material Properties}
+
+The Lam\'e parameters $\mu$ and $\lambda$ are related to the engineering constants Young's modulus $E$ and Poisson's ratio $\nu$ through:
+\begin{equation}
+    \mu = \frac{E}{2(1+\nu)} \label{eq:lame_mu}
+\end{equation}
+
+For three-dimensional and plane strain conditions:
+\begin{equation}
+    \lambda = \frac{\nu E}{(1+\nu)(1-2\nu)} \label{eq:lame_lambda_3d}
+\end{equation}
+
+For plane stress conditions (thin structures):
+\begin{equation}
+    \lambda = \frac{\nu E}{(1+\nu)(1-\nu)} \label{eq:lame_lambda_ps}
+\end{equation}
+
+The parameter $\mu$ is also known as the shear modulus. The combination $2\mu + \lambda$ appearing in the diffusion coefficient represents the material's resistance to volumetric deformation.
+
+\subsubsection{Plane Stress vs. Plane Strain}
+
+The choice between plane stress and plane strain formulations depends on the geometry and loading conditions:
+
+\begin{itemize}
+    \item \textbf{Plane Stress:} Valid for thin structures where the out-of-plane stress component is negligible (e.g., thin plates, shells). In this case, $\sigma_{zz} = 0$.
+
+    \item \textbf{Plane Strain:} Valid for thick structures where the out-of-plane strain is constrained (e.g., long cylinders, dams). In this case, $\varepsilon_{zz} = 0$.
+\end{itemize}
+
+The formulation used in \textit{OpenAccel} allows for either assumption through the appropriate selection of the Lam\'e parameter $\lambda$ as shown in Equations~\ref{eq:lame_lambda_3d} and \ref{eq:lame_lambda_ps}.
+
+\section{Discretization Theory}
+
+\subsection{CVFEM Approach}
+
+Figure~\ref{extended-graph} shows the control volume associated with the node $i$ in dark gray. An integration point ($ip$) is located on the control surface of the aforementioned control volume, connecting the control volume of node $i$ to the neighbouring control volumes of nodes $j=2$, $j=3$, and $j=4$, which together form the element containing the $ip$. It is worth mentioning that these indices of the nodes are said to be global indices as opposed to local indices, which will be addressed next. The $ip$ shown in Fig.~\ref{extended-graph} involves interpolations from all the neighbouring nodes of its corresponding element. This is clarified in Fig.~\ref{integration_pt}; the $ip$ is interpolated from its surrounding nodes, which are now assigned local indices $k$. Figure~\ref{extended-graph-2} highlights the concept of the physical connection of a control volume of node $i$ with its neighbouring control volume of node $j$. As shown in the figure, the subset of integration points surrounding $i$ that physically connect it to $j$ is highlighted; some of these integration points are classified as shared $ip$'s, while others are non-shared. A shared $ip$ is located on a control surface that is common to the control volumes of both nodes $i$ and $j$, while a non-shared $ip$ resides solely on the control surface of the control volume associated with node $i$. The fluxes passing through these integration points, as indicated in the figure, are influenced by the value at node $j$. This influence will be reflected in the upcoming list of coefficients. Additionally, for clarity, the subscript $ip$ will denote any integration point located on the control surface of node $i$'s control volume. The superscripts $*$ and $\circ$ will designate the latest available value and the value from the previous time step, respectively. Referring back to Fig.~\ref{integration_pt}, interpolations to an $ip$ from the straddling nodes are done using first-order shape functions. For any scalar $\phi$, the interpolation formula of $\phi_{ip}$ from all values $\phi_k$, $k$ being a local index of a node of the element encapsulating $ip$, is given by
+\begin{equation}\label{ip_formula}
+    \phi_{ip} = \sum_{k=1}^n N_k^{ip} \phi_k
+\end{equation}
+while for a spatial derivative (gradient) of the scalar $\phi$, the formula is written as
+\begin{equation}
+    \nabla \phi_{ip} = \sum_{k=1}^n \nabla N_k^{ip} \phi_k
+\end{equation}
+where $N_k^{ip}$ is the shape function coefficient at a node $k$ corresponding to the integration point $ip$, and $\nabla N_k^{ip}$ is its spatial derivative.
+\begin{figure}
+    \centering
+    \subfloat[]{\label{extended-graph}[Figure placeholder: vertex-centered-ip-extended-mod]} \quad\quad
+    \subfloat[]{\label{integration_pt}[Figure placeholder: integration point]} \\
+    \subfloat[]{\label{extended-graph-2}[Figure placeholder: vertex-centered-ip-extended-mod-2]}
+    \caption{(a) Illustration of a sample mesh depicting a dual mesh with a focus on the control volume centered at the node $i$ (in dark gray). Also shown in the figure is an integration point located on the control surface of the dual volume, labeled as $ip$. (b) A schematic of the integration point $ip$ within a quadrilateral element, defined by its four nodes with local indices $k=1$ through $k=4$. (c) A schematic of the dual mesh showing the control volume for node $i$ (dark gray) and the control volume for a neighbouring node $j$ (light gray) with emphasis on a subset of integration points around $i$ that connect it to $j$, denoted as $ip/i\text{-}j$. These integration points, linking node $i$ to node $j$, may be either shared or non-shared $ip$'s.}
+    \label{CVFEM}
+\end{figure}
+
+\subsection{The Discretization of General Scalar Transport Equation}
+
+The same discretization approach applies to all scalar conservation equations, including those for specific total energy $h_0$ or turbulent transport quantities like turbulent kinetic energy $k$ and turbulent eddy frequency $\omega$. Thus, the conservation equation of any general transport variable $\phi$ takes the following discrete residual form:
+\begin{equation}
+    a_{ii}^{\phi} \phi_i^\prime + \sum_{j} a_{ij}^{\phi} \phi_j^\prime = r_i^{\phi}
+    \label{eq:phi_discrete}
+\end{equation}
+where $\phi^\prime$ is the correction of $\phi$ such that $\phi = \phi^* + \phi^\prime$ and $\phi^*$ is the most recent approximate value for $\phi$ at node $i$. $r_i^\phi$ is the residual value at node $i$, and has the following formula: 
+\begin{equation}
+    r_i^\phi = b_i^\phi - a_{ii}^{\phi} \phi_i^* - \sum_{j} a_{ij}^{\phi} \phi_j^*
+\end{equation}
+with the central coefficient given by
+\begin{equation}
+    a_{ii}^{\phi} = \underbrace{\frac{\rho_i V_i}{\Delta t}}_\text{transient}+\sum_{ip} \left( \underbrace{\frac{\dot{m}_{ip}^* + |\dot{m}_{ip}^*|}{2}}_{\text{advection}}-\underbrace{\Gamma^\phi_{ip}\nabla N_i^{ip} \cdot \textbf{S}_{ip}}_\text{diffusion} \right)
+\end{equation}
+In addition, the off-diagonal coefficients, considering only the $ip$'s indicated in Fig.~\ref{extended-graph-2}, are expressed as
+\begin{equation}
+    a_{ij}^{\phi} = \sum_{ip/i\text{-}j} \left( \underbrace{\frac{\dot{m}_{ip}^* - |\dot{m}_{ip}^*|}{2}}_{\text{advection (0 if non-shared ip)}}- \underbrace{\Gamma^\phi_{ip} \nabla N_j^{ip} \cdot \textbf{S}_{ip}}_\text{diffusion} \right)
+\end{equation}
+while the source is given by
+\begin{equation}
+    b_i^{\phi} = \underbrace{\frac{\rho_i V_i}{\Delta t}\phi_i^{\circ}}_\text{transient} + \underbrace{S_i^{\phi} V_i}_\text{source}
+\end{equation}
+
+\subsection{High-Resolution Advection: Barth-Jespersen Limiter}
+
+To improve accuracy beyond the first-order upwind scheme while preserving boundedness, \textit{OpenAccel} employs a slope-limited linear reconstruction following the Barth-Jespersen criterion~\cite{barth1989design}. This approach reconstructs the value of a transported scalar $\phi$ at each integration point $ip$ from the upwind nodal value $\phi_U$ using a limited gradient:
+\begin{equation}
+    \phi_{ip} = \phi_U + \beta_{ip}\,\nabla\phi_U \cdot \left(\textbf{r}_{ip} - \textbf{r}_U\right)
+\end{equation}
+where $\nabla\phi_U$ is the unlimited gradient at the upwind node $U$, $\textbf{r}_{ip} - \textbf{r}_U$ is the vector from the upwind node to the integration point, and $\beta_{ip} \in [0, \beta_{max}]$ is the Barth-Jespersen limiter. The limiter at node $i$ is computed as:
+\begin{equation}
+    \beta_i = \min_{j \in \mathcal{N}(i)} \begin{cases}
+        \min\!\left(1,\, \dfrac{\phi_{max,i} - \phi_i}{\Delta\phi_j}\right) & \text{if } \Delta\phi_j > 0 \\[1em]
+        \min\!\left(1,\, \dfrac{\phi_{min,i} - \phi_i}{\Delta\phi_j}\right) & \text{if } \Delta\phi_j < 0 \\[1em]
+        1 & \text{if } \Delta\phi_j = 0
+    \end{cases}
+\end{equation}
+where $\Delta\phi_j = \nabla\phi_i \cdot (\textbf{r}_j - \textbf{r}_i)$ is the reconstructed increment toward neighbouring node $j$, and $\phi_{max,i}$, $\phi_{min,i}$ are the maximum and minimum values of $\phi$ over node $i$ and its immediate neighbours $\mathcal{N}(i)$.
+
+The upper bound $\beta_{max}$ controls the allowable steepness of the reconstruction:
+\begin{itemize}
+    \item For all general scalar and momentum transport equations (velocity, turbulence quantities, enthalpy, etc.), $\beta_{max} = 1$. This enforces strict monotonicity and prevents the introduction of new local extrema.
+    \item For the volume fraction equation, $\beta_{max} = 2$. The relaxed bound permits super-linear reconstructions at the phase interface, producing a more compressive interface profile and improving interface sharpness without violating global conservation.
+\end{itemize}
+
+\subsection{Considerations due to Mesh Deformation}
+
+The general conservation equation for the quantity \(\phi\) in differential form, assuming no sources, is
+\begin{equation}
+\frac{\partial (\rho \phi)}{\partial t} + \nabla \cdot (\rho \phi \, \textbf{v}) = 0,
+\end{equation}
+which expresses the local conservation of \(\phi\). Integrating this equation over a moving control volume \(V(t)\) yields
+\begin{equation}
+\int_{V(t)} \frac{\partial (\rho \phi)}{\partial t} \, dV + \int_{S(t)} \rho \phi \, \textbf{v} \cdot \textbf{n} \, dS = 0,
+\end{equation}
+representing the integral balance of \(\phi\) within the control volume bounded by the moving surface \(S(t)\).
+
+Applying the Leibniz rule (also known as the Reynolds transport theorem) gives the relationship
+\begin{equation}
+\frac{d}{dt} \int_{V(t)} \rho \phi \, dV = \int_{V(t)} \frac{\partial (\rho \phi)}{\partial t} \, dV + \int_{S(t)} \rho \phi \, \textbf{v}_m \cdot \textbf{n} \, dS,
+\end{equation}
+which relates the time derivative of the integral over the moving volume to the local time derivative and the flux due to mesh velocity \(\textbf{v}_m\).
+
+Rearranging, the local time derivative integral term can be decomposed as
+\begin{equation}
+\int_{V(t)} \frac{\partial (\rho \phi)}{\partial t} \, dV = \frac{d}{dt} \int_{V(t)} \rho \phi \, dV - \int_{S(t)} \rho \phi \, \textbf{v}_m \cdot \textbf{n} \, dS,
+\end{equation}
+separating the rate of change of \(\phi\) inside the volume and the contribution due to mesh movement (the geometric conservation law term).
+
+Substituting this back into the integral conservation equation yields the final integral transport equation
+\begin{equation}
+\frac{d}{dt} \int_{V(t)} \rho \phi \, dV + \int_{S(t)} \rho \phi \, (\textbf{v} - \textbf{v}_m) \cdot \textbf{n} \, dS = 0,
+\end{equation}
+which clearly shows the advection term involving the relative velocity \(\textbf{v} - \textbf{v}_m\) and accounts for the moving control volume.
+
+Further manipulation of the first term is required. Starting from the application of the Leibniz rule to a moving control volume, we write:
+\begin{equation}
+\frac{d}{dt} \int_{V(t)} \rho \phi \, dV = \int_{V(t)} \frac{\partial (\rho \phi)}{\partial t} \, dV + \int_{V(t)} \nabla \cdot (\rho \phi \, \textbf{v}_m) \, dV.
+\end{equation}
+Expanding the divergence term using the product rule, we have:
+\[
+\nabla \cdot (\rho \phi \, \textbf{v}_m) = \rho \phi \, \nabla \cdot \textbf{v}_m + \textbf{v}_m \cdot \nabla (\rho \phi),
+\]
+which leads to the expression:
+\begin{equation}
+\frac{d}{dt} \int_{V(t)} \rho \phi \, dV = \int_{V(t)} \frac{\partial (\rho \phi)}{\partial t} \, dV + \int_{V(t)} \rho \phi \, \nabla \cdot \textbf{v}_m \, dV + \int_{V(t)} \textbf{v}_m \cdot \nabla (\rho \phi) \, dV.
+\end{equation}
+Now, by recognizing the sum of the first and third integrals on the right-hand side as the material derivative of \(\rho \phi\) with respect to the mesh velocity \(\textbf{v}_m\), we obtain:
+\begin{equation}
+\frac{d}{dt} \int_{V(t)} \rho \phi \, dV = \int_{V(t)} \frac{D}{Dt}\bigg|_{\textbf{v}_m} (\rho \phi) \, dV + \int_{V(t)} \rho \phi \, \nabla \cdot \textbf{v}_m \, dV.
+\end{equation}
+
+We start from the general integral form of the conservation law for a scalar quantity \( \phi \) with density \( \rho \), over a control volume \( V(t) \) that may be moving with mesh velocity \( \textbf{v}_m \):
+\begin{equation}
+\frac{d}{dt} \int_{V(t)} \rho \phi \, dV + \int_{S(t)} \rho \phi (\textbf{v} - \textbf{v}_m) \cdot \textbf{n} \, dS = 0.
+\end{equation}
+We substitute the total time derivative of the integral using the identity derived from the Leibniz rule and product expansion:
+\begin{equation}
+\frac{d}{dt} \int_{V(t)} \rho \phi \, dV = \int_{V(t)} \frac{D}{Dt}\bigg|_{\textbf{v}_m} (\rho \phi) \, dV + \int_{V(t)} \rho \phi \, \nabla \cdot \textbf{v}_m \, dV.
+\end{equation}
+Substituting this into the conservation equation, we obtain:
+\begin{equation}
+\int_{V(t)} \frac{D}{Dt}\bigg|_{\textbf{v}_m} (\rho \phi) \, dV + \underbrace{\int_{V(t)} \rho \phi \, \nabla \cdot \textbf{v}_m \, dV}_{\text{GCL}} + \int_{S(t)} \rho \phi (\textbf{v} - \textbf{v}_m) \cdot \textbf{n} \, dS = 0.
+\end{equation}
+
+
+In equations~\ref{eq:cont_full_def},~\ref{eq:mom_full_def}, and~\ref{eq:sca_eq_def} where the mesh deforms, the unsteady term must account for the GCL term. The GCL term is added to the right-hand-side of the discrete equation as such:
+\begin{equation}
+    b_i^{\phi} = \underbrace{\frac{\rho_i V_i}{\Delta t}\phi_i^{\circ}}_\text{transient}-\underbrace{\rho_i V_i \phi_i \left(\nabla \cdot \textbf{v}_{m,i} \right)}_\text{GCL} + \underbrace{S_i^{\phi} V_i}_\text{source}
+\end{equation}
+
+
+\section{Velocity-Pressure Coupling}
+
+Velocity and pressure are physically strongly coupled to each other. The pressure-based approach is adopted in \textit{OpenAccel}, which reformulates the mass conservation equation into a Poisson-like pressure-correction equation. The latter acts as a constraint equation for the velocity field predicted by the momentum conservation equation. The mass flow rate at an integration point is expressed using the Rhie-Chow interpolation~\cite{rhie1983numerical}:
+\begin{equation}
+    \dot{m}_{ip} = \rho_{ip} \left[\textbf{v}_{ip} - \textbf{D}^{\textbf{v}}_{ip} \left ( \nabla p_{ip} - \overline{\nabla p}_{ip} \right)\right] \cdot \textbf{S}_{ip}
+    \label{rhie_chow}
+\end{equation}
+In the above equation, $\overline{\nabla p}_{ip}$ is the projected pressure gradient at $ip$, computed as:
+\begin{equation}
+    \overline{\nabla p}_{ip} = \sum_{k=1}^n N_k^{ip} \nabla p_k
+\end{equation}
+\(\textbf{D}^{\textbf{v}}_{ip}\) is an adaptive pressure-diffusivity tensor interpolated to an integration point from the surrounding nodal values as follows:
+\begin{equation}
+\textbf{D}^{\textbf{v}}_{ip}=\sum_{k=1}^n N_k^{ip} \textbf{D}^{\textbf{v}}_k
+\end{equation}
+At node \(i\), \(\textbf{D}^{\textbf{v}}_{i}\) is a diagonal tensor given by:
+\begin{equation}
+\textbf{D}^{\textbf{v}}_{i}=
+\begin{bmatrix}
+D^{v_x}_i & 0 & 0\\
+0 & D^{v_y}_i & 0 \\
+0 & 0 & D^{v_z}_i\\
+\end{bmatrix}=
+\begin{bmatrix}
+V_i/a_{ii}^{v_xv_x} & 0 & 0\\
+0 & V_i/a_{ii}^{v_yv_y} & 0\\
+0 & 0 & V_i/a_{ii}^{v_zv_z}\\
+\end{bmatrix}
+\end{equation}
+where \({v_x}\), \({v_y}\) and \({v_z}\) are the Cartesian velocity components and \(a_{ii}^{v_xv_x}\), \(a_{ii}^{v_yv_y}\), \(a_{ii}^{v_zv_z}\) are the diagonal entries of the momentum equation central coefficient matrix.
+
+\subsection{Segregated Approach (SIMPLE Algorithm)}
+
+For transient simulations, where the time step is sufficiently small, a segregated approach might be a better choice for avoiding memory overhead.
+
+\subsubsection{The Discretized Momentum Equation}
+
+The discrete momentum conservation equation is written here, in its residual form, as follows:
+\begin{equation}
+    \textbf{a}_{ii}^{\textbf{v}} \textbf{v}_i^\prime + \sum_{j} \textbf{a}_{ij}^{\textbf{v}} \textbf{v}_j^\prime = \textbf{r}_i^{\textbf{v}}
+    \label{eq:seg_mom}
+\end{equation}
+where $\textbf{r}_i^\textbf{v}$ is the residual vector at node $i$ for the momentum conservation equation, and is given by:
+\begin{equation}
+    \textbf{r}_i^{\textbf{v}} = \textbf{b}_i^{\textbf{v}} - \textbf{a}_{ii}^{\textbf{v}} \textbf{v}_i^* - \sum_{j} \textbf{a}_{ij}^{\textbf{v}} \textbf{v}_j^*
+\end{equation}
+The coefficients above are stated here below.
+\begin{align}
+    \mathbf{a}_{ii}^{\mathbf{v}} &= \left[
+    \underbrace{\frac{\rho_i V_i}{\Delta t}}_{\text{transient}} 
+    + \sum_{ip} \left(
+    \underbrace{\frac{\dot{m}_{ip}^* + |\dot{m}_{ip}^*|}{2}}_{\text{advection}}
+    - \underbrace{\mu_{ip} \nabla N_i^{ip} \cdot \mathbf{S}_{ip}}_{\text{stress-part 1}}
+    \right)
+    \right] \mathbf{I}  - \sum_{ip} \underbrace{\mu_{ip} \nabla N_i^{ip} \mathbf{S}_{ip}}_{\text{stress-part 2}}
+    \label{eq:seg_mom_coeff1a}
+\end{align}
+Moreover, the off-diagonal coefficients in the row, corresponding to the neighbouring nodes $j$ connected to node $i$ and considering exclusively the $ip$'s indicated in Fig.~\ref{extended-graph-2} (denoted as $ip/i\text{-}j$), are represented by
+\begin{align}
+    \mathbf{a}_{ij}^{\mathbf{v}} &= \sum_{ip/i\text{-}j} \left[\left(\underbrace{\frac{\dot{m}_{ip}^* - |\dot{m}_{ip}^*|}{2}}_{\text{advection (0 if non-shared ip)}}-\underbrace{\mu_{ip} \nabla N_j^{ip} \cdot \mathbf{S}_{ip}}_{\text{stress-part 1}}
+    \right) \mathbf{I}
+    - \underbrace{\mu_{ip} \nabla N_j^{ip} \mathbf{S}_{ip}}_{\text{stress-part 2}} \right] \label{seg_aijvv_mom}
+\end{align}
+Finally, the source is given by
+\begin{equation}
+    \mathbf{b}_i^{\mathbf{v}} = \underbrace{\frac{\rho_i V_i}{\Delta t} \mathbf{v}^{\circ}_i}_{\text{transient}} - \underbrace{\nabla p_i^* V_i}_{\text{pressure gradient}}
+    \label{eq:seg_mom_coeff3}
+\end{equation}
+
+\subsubsection{{The Discretized Mass Conservation Equation}}
+
+The discrete mass conservation equation is written here, in its residual form, as follows:
+\begin{equation}
+    a_{ii}^{p} p_i^\prime + \sum_{j} a_{ij}^{p} p_j^\prime = r_i^p
+    \label{eq:seg_mass}
+\end{equation}
+where $r_i^p$ is the residual at node $i$ for the mass conservation equation, and is given by:
+\begin{equation}
+    r_i^p = b_i^p - a_{ii}^{p} p_i^* + \sum_{j} a_{ij}^{p} p_j^*
+\end{equation}
+and the coefficients are stated below:
+\begin{align}
+    a_{ii}^{p} &= -\sum_{ip}\underbrace{\rho_{ip}\textbf{D}^{\textbf{v}}_{ip} \nabla N_i^{ip} \cdot \textbf{S}_{ip}}_\text{diffusion-like}
+\end{align}
+Moreover, the off-diagonal coefficients, considering only the $ip$'s indicated in Fig.~\ref{extended-graph-2}, are written as
+\begin{align}
+    a_{ij}^{p} &= -\sum_{ip/i\text{-}j}\underbrace{\rho_{ip} \textbf{D}^{\textbf{v}}_{ip} \nabla N_j^{ip} \cdot \textbf{S}_{ip}}_\text{diffusion-like}
+\end{align}
+while the source is given by
+\begin{equation}
+    b_i^{p} = -\sum_{ip}\underbrace{\rho_{ip}\textbf{D}^{\textbf{v}}_{ip} \overline{\nabla p}_{ip} \cdot \textbf{S}_{ip}}_{\text{explicit}}-\sum_{ip} \underbrace{\rho_{ip}\textbf{v}^*_{ip} \cdot \textbf{S}_{ip}}_{\text{mass divergence}}
+\end{equation}
+The fields are then corrected as:
+\begin{align}
+p_i^{**} &= p_i^{*} + \lambda^p p_i^{\prime} \\
+\textbf{v}_i^{**} &= \textbf{v}_i^{*}  - \textbf{D}^{\textbf{v}}_i \nabla p^\prime_i
+\end{align}
+For the velocity correction, a more intuitive formula that avoids storing and calculating a new gradient is shown here:
+\begin{equation}
+    \textbf{v}_i^{**} = \textbf{v}_i^{*}  - \textbf{D}^{\textbf{v}}_i \left(\nabla p^{**}_i - \nabla p^{*}_i\right) / \lambda^p
+\end{equation}
+
+\subsubsection{Compressibility Considerations}
+
+For compressible flows, the density variation couples to the pressure equation through the compressibility field $\psi$ (see Eq.~\ref{ideal_gas_law}). Re-visiting the Rhie-Chow formulation of Eq.~\ref{rhie_chow}, the full mass flow rate including a density correction term reads:
+\begin{align}
+    \dot{m}_{ip} &= \rho^{*}_{ip} \textbf{v}^{**}_{ip} \cdot \textbf{S}_{ip} - \rho^{*}_{ip} \textbf{D}^{\textbf{v}}_{ip} \left ( \nabla p^{**}_{ip} - \overline{\nabla p}_{ip} \right) \cdot \textbf{S}_{ip} + \dot{m}^{(n)}_{ip}\frac{\psi^{*}_{ip} p^{**}_{ip}}{\rho^{*}_{ip}} - \dot{m}^{(n)}_{ip}
+\end{align}
+Splitting into previous and correction terms:
+\begin{align}
+    \dot{m}^{**}_{ip} &= \dot{m}^{*}_{ip} + \dot{m}^{\prime}_{ip}
+\end{align}
+where
+\begin{align}
+    \dot{m}^{*}_{ip} &= \rho^{*}_{ip} \textbf{v}^{*}_{ip} \cdot \textbf{S}_{ip} - \rho^{*}_{ip}\textbf{D}^{\textbf{v}}_{ip} \left ( \nabla p^{*}_{ip} - \overline{\nabla p}_{ip} \right) \cdot \textbf{S}_{ip} + \dot{m}^{(n)}_{ip}\frac{\psi^{*}_{ip} p^{*}_{ip}}{\rho^{*}_{ip}} - \dot{m}^{(n)}_{ip}
+\end{align}
+and
+\begin{align}
+    \dot{m}^{\prime}_{ip} &= \rho^{*}_{ip} \textbf{v}^{\prime}_{ip}  \cdot \textbf{S}_{ip} + \dot{m}^{*}_{ip}\frac{\psi^{*}_{ip} p^{\prime}_{ip}}{\rho^{*}_{ip}} - \rho^{*}_{ip} \textbf{D}^{\textbf{v}}_{ip} \nabla p^{\prime}_{ip} \cdot \textbf{S}_{ip}
+\end{align}
+The pressure equation central coefficient is augmented with an additional compressibility contribution:
+\begin{align}
+    a_{ii}^{p} &:= a_{ii}^{p} + \sum_{ip}\left(\frac{\dot{m}_{ip}^* + |\dot{m}_{ip}^*|}{2}\right) \frac{\psi^{*}_{ip}}{\rho^{*}_{ip}}
+\end{align}
+and the off-diagonal coefficient, considering only the $ip$'s indicated in Fig.~\ref{extended-graph-2}, is adjusted as:
+\begin{align}
+    a_{ij}^{p} &:= a_{ij}^{p} - \sum_{ip/i\text{-}j}\left(\frac{\dot{m}_{ip}^* - |\dot{m}_{ip}^*|}{2}\right) \frac{\psi^{*}_{ip}}{\rho^{*}_{ip}}
+\end{align}
+
+\subsubsection{Decoupling and Stabilization}
+
+The SIMPLE algorithm solves the incompressible Navier-Stokes equations by decoupling the momentum conservation and pressure-correction equations and iterating between them until convergence is achieved. In this algorithm, an implicit under-relaxation for the momentum conservation equation is essential to ensure stability and convergence; it controls the updates from the non-linear momentum equations, preventing oscillations and divergence by limiting changes with a relaxation factor (\(\lambda^\textbf{v}\), typically 0.5–0.8). An additional explicit pressure field relaxation, with a factor \(\lambda^p\), would stabilize updates from the pressure-correction equation, ensuring mass conservation and preventing overcorrection, typically 0.1–0.3). Together, these relaxations balance the iterative updates, allowing the coupled velocity and pressure fields to converge smoothly and efficiently.
+
+In transient simulations, relaxation can still be important to stabilize the iterative solution process and ensure convergence, especially for problems with large time steps, strong non-linearity, or complex geometries. However, the need for relaxation is often less pronounced than in steady-state cases due to the inherent stability provided by implicit time-stepping schemes. Choosing appropriate relaxation factors is essential for balancing stability and convergence speed.
+
+\subsection{The SIMPLE-Consistent Algorithm}
+
+On another hand, the SIMPLEC algorithm (SIMPLE-Consistent) is an improved version of the SIMPLE algorithm, as it retains the neighbouring velocity correction terms in the pressure-correction equation, making the pressure update more consistent with the momentum equations. Hence, it is a better choice in certain scenarios. The pressure-diffusivity coefficient \(\textbf{D}^{\textbf{v}}_{i}\), is modified in the SIMPLEC algorithm, denoting it as $\Tilde{\textbf{D}}^{\textbf{v}}_i$. It appears as follows:
+\begin{equation}
+\Tilde{\textbf{D}}^{\textbf{v}}_{i}=
+\begin{bmatrix}
+\Tilde{D}^{v_x}_i & 0 & 0\\
+0 & \Tilde{D}^{v_y}_i & 0 \\
+0 & 0 & \Tilde{D}^{v_z}_i\\
+\end{bmatrix}
+\end{equation}
+where
+\begin{align}
+    \Tilde{D}^{v_x}_i &= \frac{V_i}{a_{ii}^{v_xv_x} - \sum\limits_{j} a^{v_xv_x}_{ij}} \\
+    \Tilde{D}^{v_y}_i &= \frac{V_i}{a_{ii}^{v_yv_y} - \sum\limits_{j} a^{v_yv_y}_{ij}} \\
+    \Tilde{D}^{v_z}_i &= \frac{V_i}{a_{ii}^{v_zv_z} - \sum\limits_{j} a^{v_zv_z}_{ij}} \\
+\end{align}
+The discrete mass conservation equation is written here, in its residual form, as follows:
+\begin{equation}
+    a_{ii}^{p} p_i^\prime + \sum_{j} a_{ij}^{p} p_j^\prime = r_i^p
+    \label{eq:simplec_mass}
+\end{equation}
+where
+\begin{align}
+    a_{ii}^{p} &= -\sum_{ip}\rho_{ip}\Tilde{\textbf{D}}^{\textbf{v}}_{ip} \nabla N_i^{ip} \cdot \textbf{S}_{ip}
+\end{align}
+and, the off-diagonal coefficients, considering only the $ip$'s indicated in Fig.~\ref{extended-graph-2}, are written as
+\begin{align}
+    a_{ij}^{p} &= -\sum_{ip/i\text{-}j}\rho_{ip} \Tilde{\textbf{D}}^{\textbf{v}}_{ip} \nabla N_j^{ip} \cdot \textbf{S}_{ip}
+\end{align}
+while $r^p_i$ is given by
+\begin{equation}
+    r_i^{p} = -\sum_{ip} \dot{m}^{*}_{ip}
+\end{equation}
+and
+\begin{equation}
+    \dot{m}^{*}_{ip} = \rho_{ip} \left[\textbf{v}^{*}_{ip} - \textbf{D}^{\textbf{v}}_{ip} \left ( \nabla p_{ip}^{*} - \overline{\nabla p}_{ip}^{*} \right)\right] \cdot \textbf{S}_{ip}
+\end{equation}
+The fields are then corrected as:
+\begin{align}
+p_i^{**} &= p_i^{*} + p_i^{\prime} \\
+\textbf{v}_i^{**} &= \textbf{v}_i^{*}  - \Tilde{\textbf{D}}^{\textbf{v}}_i \nabla p^\prime_i
+\end{align}
+For the velocity correction, a more intuitive formula that avoids storing a new gradient field is shown here:
+\begin{equation}
+    \textbf{v}_i^{**} = \textbf{v}_i^{*}  - \Tilde{\textbf{D}}^{\textbf{v}}_i \left(\nabla p^{**}_i - \nabla p^{*}_i\right)
+\end{equation}
+The mass flow rate is re-calculated using corrected field values as such:
+\begin{equation}
+    \dot{m}^{**}_{ip} = \rho_{ip} \left[\textbf{v}^{*}_{ip} - \textbf{D}^{\textbf{v}}_{ip} \left ( \nabla p_{ip}^{**} - \overline{\nabla p}_{ip}^{*} \right)\right] \cdot \textbf{S}_{ip}
+\end{equation}
+
+\subsection{The Fractional Step Method}
+In the fractional step method, the pressure-diffusivity tensor components are as follows:
+\begin{equation}
+    D^{v_x}_i = D^{v_y}_i = D^{v_z}_i =\frac{\Delta t}{\rho_i}
+\end{equation}
+
+\section{Implementation}
+
+\subsection{STK Terminology}
+\begin{itemize}
+    \item \textit{Bucket} -- a bucket refers to a collection of mesh entities (e.g. elements) that share the same topology (e.g., all hexahedra, all tetrahedra). By grouping data into buckets, the code can perform computational operations more efficiently, and in a way that is scalable. A \textit{Part} can be divided into \textit{Buckets}.
+
+   \item \textit{Part} -- a part refers to a collection of mesh entities that \textbf{might} have different topologies. Parts could be "interior parts" (referred to as element blocks in Exodus terminology), or "boundary parts" (referred to as side sets in Exodus terminology).  
+
+   \begin{enumerate}
+       \item Interior parts are specified explicitly in the original mesh and they always represent a collection of mesh entities that share the same topology. For example, I could have a mesh divided into two interior parts, the first interior part (i.e. first element block) is tetrahedral elements and the second interior part (i.e. second element block) is hexahedral elements.
+
+       \item Boundary parts, also known as side sets, represent the collection of elements used to define the boundaries of the computational domain where boundary conditions are typically applied. A boundary part may contain different types of elements that are contained in different interior parts. For instance, a single boundary part may contain hexahedra \textbf{and} tetrahedra.
+   \end{enumerate}
+
+\end{itemize}
+
+\subsection{Field Definitions}
+
+OpenAccel registers solution fields on the STK mesh using a structured naming convention. All fields are stored as double-precision floating-point values. There are two primary storage locations: \textit{node fields}, stored at mesh nodes, and \textit{element fields}, stored at the integration points of each element. Both types support scalar (rank-0), vector (rank-1), and tensor (rank-2) quantities. The geometry field \texttt{coordinates} and the dual control volume field \texttt{dual\_nodal\_volume} are always present on all parts. The tables below list a representative subset of the fields available in \textit{OpenAccel}; the full set depends on the active physics modules.
+
+\subsubsection{Node Fields}
+
+Node fields are quantities stored at mesh nodes. They form the primary unknowns and material/derived properties accessed during assembly. Each entry shows the internal field name as used in the code.
+
+\medskip
+\noindent\textbf{Flow and thermodynamic transport fields:}
+\begin{itemize}
+    \item \texttt{velocity} -- Vector. Fluid velocity $\textbf{v} = (u,v,w)$, in \si{\metre\per\second}. Primary momentum unknown.
+    \item \texttt{pressure} -- Scalar. Solved pressure variable $p$ (gauge for incompressible, absolute for compressible), in \si{\pascal}.
+    \item \texttt{specific\_enthalpy} -- Scalar. Specific enthalpy $h$, in \si{\joule\per\kilogram}. Primary unknown of the thermal energy equation.
+    \item \texttt{temperature} -- Scalar. Static temperature $T$, in \si{\kelvin}. Derived from \texttt{specific\_enthalpy}.
+    \item \texttt{specific\_total\_enthalpy} -- Scalar. Specific total enthalpy $h_0 = h + \tfrac{1}{2}|\textbf{v}|^2$, in \si{\joule\per\kilogram}. Primary unknown of the total energy equation (compressible flows).
+    \item \texttt{volume\_fraction} -- Scalar. Phase volume fraction $\alpha^p \in [0,1]$. Solved for each phase in VoF simulations.
+\end{itemize}
+
+\medskip
+\noindent\textbf{Physical property fields:}
+\begin{itemize}
+    \item \texttt{density} -- Scalar. Fluid (or mixture) density $\rho$, in \si{\kilogram\per\cubic\metre}.
+    \item \texttt{dynamic\_viscosity} -- Scalar. Laminar dynamic viscosity $\mu$, in \si{\pascal\second}.
+    \item \texttt{turbulent\_viscosity} -- Scalar. Turbulent eddy viscosity $\mu_t$, in \si{\pascal\second}.
+    \item \texttt{effective\_viscosity} -- Scalar. Effective viscosity $\mu_{eff} = \mu + \mu_t$, in \si{\pascal\second}.
+    \item \texttt{thermal\_conductivity} -- Scalar. Laminar thermal conductivity $\lambda$, in \si{\watt\per\metre\per\kelvin}.
+    \item \texttt{effective\_thermal\_conductivity} -- Scalar. Effective thermal conductivity $\lambda_{eff} = \lambda + \mu_t c_p / Pr_t$, in \si{\watt\per\metre\per\kelvin}.
+    \item \texttt{specific\_heat\_capacity} -- Scalar. Specific heat capacity at constant pressure $c_p$, in \si{\joule\per\kilogram\per\kelvin}.
+    \item \texttt{compressibility} -- Scalar. Compressibility $\psi = \rho/p$, in \si{\second\squared\per\square\metre}. For an ideal gas, $\psi = 1/(RT)$.
+    \item \texttt{thermal\_expansivity} -- Scalar. Thermal expansion coefficient $\beta$, in \si{\per\kelvin}. Used in Boussinesq buoyancy.
+\end{itemize}
+
+\medskip
+\noindent\textbf{Turbulence transport fields:}
+\begin{itemize}
+    \item \texttt{turbulent\_kinetic\_energy} -- Scalar. Turbulent kinetic energy $k$, in \si{\square\metre\per\square\second}.
+    \item \texttt{turbulent\_eddy\_frequency} -- Scalar. Specific dissipation rate $\omega$, in \si{\per\second} ($k$-$\omega$ SST model).
+    \item \texttt{turbulent\_dissipation\_rate} -- Scalar. Turbulent dissipation rate $\varepsilon$, in \si{\square\metre\per\cubic\second} ($k$-$\varepsilon$ model).
+    \item \texttt{turbulent\_intermittency} -- Scalar. Intermittency $\gamma \in [0,1]$ (Transition SST model).
+    \item \texttt{transition\_onset\_reynolds\_number} -- Scalar. Transition onset momentum-thickness Reynolds number $\widetilde{Re}_{\theta t}$ (Transition SST model).
+\end{itemize}
+
+\medskip
+\noindent\textbf{Mesh motion fields:}
+\begin{itemize}
+    \item \texttt{displacement} -- Vector. Node displacement $\textbf{D}$, in \si{\metre}. Solved by the displacement diffusion equation.
+    \item \texttt{velocity\_mesh} -- Vector. Mesh velocity $\textbf{v}_m$, in \si{\metre\per\second}. Derived from the displacement field.
+\end{itemize}
+
+\medskip
+\noindent\textbf{Wall and distance fields:}
+\begin{itemize}
+    \item \texttt{minimum\_distance\_to\_wall} -- Scalar. Minimum wall distance $y_{min,i}$, in \si{\metre}. Used in turbulence wall functions and mesh stiffness formulations.
+    \item \texttt{wall\_scale} -- Scalar. A normalised wall distance used in near-wall turbulence modelling.
+    \item \texttt{y\_plus} -- Scalar. Dimensionless wall distance $y^+ = \rho u_\tau y / \mu$.
+\end{itemize}
+
+\medskip
+\noindent\textbf{Post-processing and diagnostic fields:}
+\begin{itemize}
+    \item \texttt{total\_pressure} -- Scalar. Total pressure $p_0$, in \si{\pascal}.
+    \item \texttt{total\_temperature} -- Scalar. Total temperature $T_0$, in \si{\kelvin}.
+    \item \texttt{mach\_number} -- Scalar. Local Mach number $M_a$.
+    \item \texttt{courant\_number} -- Scalar. Local Courant number $Co = |\textbf{v}|\,\Delta t / \Delta x$.
+\end{itemize}
+
+\subsubsection{Element Fields}
+
+Element fields are quantities associated with the integration points (IPs) of each mesh element. They are computed during assembly and are not directly stored on nodes.
+
+\begin{itemize}
+    \item \texttt{mass\_flow\_rate} -- Scalar. Mass flux $\dot{m}_{ip}$ at each element integration point, in \si{\kilogram\per\second}. Computed via the Rhie-Chow interpolation (Eq.~\ref{rhie_chow}) and used in the advection terms of all transport equations.
+    \item \texttt{heat\_flow\_rate} -- Scalar. Thermal energy flux at each element integration point, in \si{\watt}. Used during assembly of the thermal energy equation.
+\end{itemize}
+
+\section{Mesh Quality and Element Correction}
+
+The quality of the computational mesh significantly affects the accuracy, stability, and convergence of the CVFEM solution. Poor quality elements can lead to numerical errors, convergence issues, and unphysical results. This section describes the mesh quality assessment and element correction algorithms implemented in OpenAccel, which are based on methodologies ported from the flash CVFEM framework.
+
+\subsection{Element Quality Assessment}
+
+\subsubsection{Quality Metrics}
+
+The element validation system evaluates mesh quality using several geometric criteria:
+
+\begin{enumerate}
+    \item \textbf{Aspect Ratio}: The ratio of the longest edge to the shortest edge within an element. For a well-conditioned element, this ratio should be close to unity.
+    
+    \item \textbf{Element Volume}: The volumetric measure of the element. Elements with near-zero or negative volumes indicate severely degenerate geometry.
+    
+    \item \textbf{Flatness}: A measure of element deformation where the element approaches a planar configuration, losing its three-dimensional character.
+\end{enumerate}
+
+\subsubsection{Quality Classification}
+
+Elements are classified into three categories based on their geometric properties:
+
+\begin{description}
+    \item[Normal Elements (quality = 10)] Well-conditioned elements that meet all quality criteria and do not require correction.
+    
+    \item[High Aspect Ratio Elements (quality = 0)] Elements where the aspect ratio exceeds a specified threshold (default: 1.5 for testing, typically 10-100 in production). These elements may cause numerical issues but can often be handled through special numerical treatment.
+    
+    \item[Flat Elements (quality = -1)] Severely degenerate elements with near-zero volume or extreme geometric distortion. These elements require immediate correction or will cause solution failure.
+\end{description}
+
+\subsection{Element Correction Algorithms}
+
+The correction algorithms are based on methodologies from the flash CVFEM code, specifically the \texttt{FETETF} (flat tetrahedral correction) and \texttt{BETA\_BAD\_EL} (bad element handling) routines.
+
+\subsubsection{Flat Element Correction}
+
+For flat tetrahedral elements, the correction algorithm implements a vertex movement strategy:
+
+\begin{algorithm}
+\caption{Flat Element Correction (FETETF)}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Flat tetrahedral element $E$
+\State Identify element nodes $\{n_1, n_2, n_3, n_4\}$
+\State Compute element centroid: $\mathbf{c} = \frac{1}{4}\sum_{i=1}^{4} \mathbf{x}_i$
+\State Calculate node distances from centroid
+\State \textbf{for} each node $n_i$ \textbf{do}
+    \State \quad \textbf{if} $|\mathbf{x}_i - \mathbf{c}| > 1.5 \times \text{average distance}$ \textbf{then}
+        \State \quad \quad Move node toward centroid: $\mathbf{x}_i^{new} = \mathbf{x}_i + \alpha(\mathbf{c} - \mathbf{x}_i)$
+        \State \quad \quad where $\alpha = 0.1$ (smoothing factor)
+    \State \quad \textbf{end if}
+\State \textbf{end for}
+\State Recompute element quality
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{High Aspect Ratio Element Treatment}
+
+For elements with high aspect ratios, the system employs two strategies:
+
+\begin{enumerate}
+    \item \textbf{Geometric Correction}: For severely distorted elements (aspect ratio $> 2 \times$ threshold), vertex smoothing is applied similar to the flat element correction.
+    
+    \item \textbf{Numerical Treatment}: For moderately distorted elements, special numerical schemes are employed (such as reduced blending factors) without modifying the mesh geometry.
+\end{enumerate}
+
+\subsection{Implementation Details}
+
+\subsubsection{Integration with STK Mesh}
+
+The element validation system is fully integrated with the STK mesh infrastructure:
+
+\begin{itemize}
+    \item Element quality is stored as an STK field (\texttt{element\_quality}) on all element parts
+    \item Coordinate modifications use STK's \texttt{modification\_begin()} and \texttt{modification\_end()} framework
+    \item Parallel processing is supported through STK's parallel mesh operations
+\end{itemize}
+
+\subsubsection{Workflow Integration}
+
+Element validation and correction are automatically performed during mesh initialization when enabled via the \texttt{check\_mesh: true} option in the input file:
+
+\begin{enumerate}
+    \item \textbf{Setup Phase}: Element validator is created and STK fields are allocated
+    \item \textbf{Initialization Phase}: 
+    \begin{enumerate}
+        \item Initial quality assessment of all elements
+        \item Validation report generation
+        \item Element correction attempts for poor quality elements
+        \item Post-correction validation and reporting
+    \end{enumerate}
+\end{enumerate}
+
+\subsubsection{Performance Considerations}
+
+\begin{itemize}
+    \item Element validation adds minimal overhead during mesh initialization
+    \item For production runs with verified mesh quality, validation can be disabled using \texttt{check\_mesh: false}
+    \item Correction algorithms are designed to be conservative to avoid introducing new geometric issues
+    \item Parallel efficiency is maintained through proper STK mesh modification protocols
+\end{itemize}
+
+\subsection{Validation Output}
+
+The system provides comprehensive reporting of mesh quality and correction activities:
+
+\begin{verbatim}
+============================================================
+          MESH ELEMENT QUALITY VALIDATION REPORT
+============================================================
+Total Elements:                  918
+Normal Elements:                 178 (19.4%)
+Flat Elements:                     0 (0.0%)
+High Aspect Ratio:               740 (80.6%)
+
+Aspect Ratio Statistics:
+Average Aspect Ratio:      1.812e+00
+Worst Aspect Ratio:        3.022e+00
+
+Correction Statistics:
+Corrected Elements:                0
+Failed Corrections:                0
+============================================================
+\end{verbatim}
+
+When corrections are applied, additional detailed output shows which elements and nodes were modified, providing full traceability of mesh modifications.
+
+\bibliographystyle{ieeetr}
+\bibliography{references}
+
+\end{document}
+
