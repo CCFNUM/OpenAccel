@@ -54,6 +54,10 @@ simulation::simulation(const int argc, const char* argv[]) : verbose_(0)
 
 simulation::~simulation()
 {
+    if (gp_ptr_)
+    {
+        gp_ptr_->sendcommand("quit");
+    }
 }
 
 // Methods

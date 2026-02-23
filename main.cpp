@@ -5,6 +5,7 @@
 
 #include <mpi.h>
 #include <Kokkos_Core.hpp>
+#include <csignal>
 #ifdef HAS_PETSC
 #include <petscsys.h>
 #if PETSC_VERSION_LT(3, 18, 1)
@@ -20,6 +21,22 @@
 // code libraries
 #include "macros.h"
 #include "simulation.h"
+
+namespace
+{
+// Global pointer used by the signal handler to trigger a clean shutdown.
+::accel::simulation* g_realm = nullptr;
+
+void handleSignal(int sig)
+{
+    delete g_realm;
+    g_realm = nullptr;
+    // Restore the default handler and re-raise so the process exits with the
+    // correct status (e.g. SIGINT still shows as interrupted to the shell).
+    std::signal(sig, SIG_DFL);
+    std::raise(sig);
+}
+} // namespace
 
 int main(int argc, char* argv[])
 {
@@ -48,8 +65,17 @@ int main(int argc, char* argv[])
         // create and run simulation
         Sim* realm = new Sim(argc, const_cast<const char**>(argv));
 
+        // Register signal handlers so that SIGINT/SIGTERM trigger the
+        // simulation destructor (which closes any open gnuplot windows).
+        g_realm = realm;
+        std::signal(SIGINT, handleSignal);
+        std::signal(SIGTERM, handleSignal);
+
         realm->run();
 
+        g_realm = nullptr;
+        std::signal(SIGINT, SIG_DFL);
+        std::signal(SIGTERM, SIG_DFL);
         delete realm;
     }
 
