@@ -96,9 +96,6 @@ private:
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx) override;
 #endif /* HAS_INTERFACE */
-
-    void assembleElemTermsBoundary_(const domain* domain,
-                                    Context* ctx) override;
 };
 
 } /* namespace accel */

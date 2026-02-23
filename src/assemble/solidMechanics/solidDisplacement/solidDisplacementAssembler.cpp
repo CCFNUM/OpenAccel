@@ -28,7 +28,6 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
     const auto& mesh = model_->meshRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-
     const zone* zonePtr = domain->zonePtr();
 
     const auto& assembledSymmSTKFieldRef = *metaData.template get_field<scalar>(
@@ -37,7 +36,6 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
 
-    // Collect all symmetry boundary parts
     stk::mesh::PartVector partVec;
     for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
     {
@@ -50,11 +48,19 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
             continue;
 
         for (auto* part : zonePtr->boundaryRef(iBoundary).parts())
+        {
             partVec.push_back(part);
+        }
     }
 
     if (partVec.empty())
         return;
+
+    // fixed-size containers
+    std::vector<scalar> n(SPATIAL_DIM);
+
+    // pointers ..
+    scalar* p_n = &n[0];
 
     stk::mesh::Selector selOwnedNodes =
         metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
@@ -68,59 +74,61 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
             stk::mesh::Entity node = (*bucket)[iNode];
             const auto lid = bulkData.local_id(node);
 
-            // Compute unit normal from the assembled symmetry area vector
             const scalar* aarea =
                 stk::mesh::field_data(assembledSymmSTKFieldRef, node);
-
-            scalar asq = 0.0;
+            scalar amagSq = 0.0;
             for (label j = 0; j < SPATIAL_DIM; ++j)
-                asq += aarea[j] * aarea[j];
-            const scalar amag = std::sqrt(asq);
-
-            if (amag < 1.0e-30)
-                continue;
-
-            scalar n_hat[SPATIAL_DIM];
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-                n_hat[j] = aarea[j] / amag;
-
-            // Choose the row to replace: the Cartesian DOF with the largest
-            // normal component. This maximises diagonal dominance.
-            label constrained_dof = 0;
-            scalar maxAbs = std::abs(n_hat[0]);
-            for (label j = 1; j < SPATIAL_DIM; ++j)
             {
-                if (std::abs(n_hat[j]) > maxAbs)
+                amagSq += aarea[j] * aarea[j];
+            }
+
+            if (amagSq < 1.0e-30)
+                continue;
+            const scalar amag = std::sqrt(amagSq);
+
+            // 1. Compute Unit Normal n
+            scalar n[SPATIAL_DIM];
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                p_n[j] = aarea[j] / amag;
+            }
+
+            // 2. Identify the characteristic scale (stiffness) for this node
+            scalar* const diag = A.diag(lid);
+            scalar scale = 0.0;
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                scale = std::max(scale, std::abs(diag[BLOCKSIZE * j + j]));
+            }
+
+            // 3. Project the RHS: b = b - (b \cdot n)n
+            // This removes any "force" component pushing out of the plane.
+            scalar b_dot_n = 0.0;
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                b_dot_n += b[BLOCKSIZE * lid + j] * p_n[j];
+            }
+
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                b[BLOCKSIZE * lid + j] -= b_dot_n * p_n[j];
+            }
+
+            // 4. Modify the Diagonal Block to enforce u \cdot n = 0
+            // We use a "Penalty-lite" approach:
+            // We strip the diagonal's normal stiffness and replace it with
+            // 'scale'. This is equivalent to u_n = 0 without biasing a specific
+            // Cartesian axis.
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    maxAbs = std::abs(n_hat[j]);
-                    constrained_dof = j;
+                    // This creates a contribution proportional to n_i * n_j
+                    // effectively adding stiffness only in the normal
+                    // direction.
+                    diag[BLOCKSIZE * i + j] += scale * p_n[i] * p_n[j];
                 }
             }
-
-            // Zero row constrained_dof across all blocks (rowVals includes
-            // the diagonal block), then write n_hat into the diagonal entry.
-            // The diagonal write must come after the zero sweep because
-            // rowVals and diag alias the same storage.
-            auto rowVals = A.rowVals(lid);
-            auto rowCols = A.rowCols(lid);
-            for (label icol = 0; icol < static_cast<label>(rowCols.size());
-                 ++icol)
-            {
-                for (label j = 0; j < BLOCKSIZE; ++j)
-                    rowVals[BLOCKSIZE * BLOCKSIZE * icol +
-                            BLOCKSIZE * constrained_dof + j] = 0.0;
-            }
-
-            // Replace row constrained_dof of the diagonal block with n_hat.
-            // For axis-aligned normals this reduces to the standard Dirichlet
-            // row (1 on the diagonal, 0 elsewhere). For oblique normals it
-            // enforces the general constraint n_hat · u = 0.
-            auto* diag = A.diag(lid);
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-                diag[BLOCKSIZE * constrained_dof + j] = n_hat[j];
-
-            // Zero the RHS entry for the constrained DOF
-            b[BLOCKSIZE * lid + constrained_dof] = 0.0;
         }
     }
 #else

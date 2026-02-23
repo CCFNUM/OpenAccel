@@ -58,7 +58,6 @@ target_sources(main_obj PRIVATE
     ${DIR}/turbulence/RANS/shearStressTransport/segregatedCorrelationTransitionShearStressTransport/turbulentKineticEnergyCorrelationTransitionSST/turbulentKineticEnergyCorrelationTransitionSSTAssemblerElemBoundaryConditions.cpp
     ############################################################################
     ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssembler.cpp
-    ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssemblerElemBoundaryConditions.cpp
     ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssemblerElemInterfaceConditions.cpp
     ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssemblerElemTerms.cpp
     ${DIR}/solidMechanics/solidDisplacement/solidDisplacementAssemblerNodeTerms.cpp
