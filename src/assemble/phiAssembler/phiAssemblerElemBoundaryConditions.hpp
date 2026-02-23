@@ -435,9 +435,6 @@ void phiAssembler<N>::assembleElemTermsBoundaryWallSpecifiedFlux_(
     std::vector<scalar> scratchVals;
     std::vector<stk::mesh::Entity> connectedNodes;
 
-    // master element
-    std::vector<scalar> ws_shape_function;
-
     // Get transport fields/side fields
     const auto& sidePhiFluxSTKFieldRef = phi_->sideFluxFieldRef().stkFieldRef();
 
@@ -485,23 +482,9 @@ void phiAssembler<N>::assembleElemTermsBoundaryWallSpecifiedFlux_(
         scratchVals.resize(rhsSize);
         connectedNodes.resize(nodesPerSide);
 
-        // algorithm related; element
-        ws_shape_function.resize(numScsBip * nodesPerSide);
-
         // pointers
         scalar* p_lhs = &lhs[0];
         scalar* p_rhs = &rhs[0];
-        scalar* p_shape_function = &ws_shape_function[0];
-
-        // shape functions
-        if (isShifted)
-        {
-            meFC->shifted_shape_fcn(&p_shape_function[0]);
-        }
-        else
-        {
-            meFC->shape_fcn(&p_shape_function[0]);
-        }
 
         const stk::mesh::Bucket::size_type nBoundarySides = sideBucket.size();
 

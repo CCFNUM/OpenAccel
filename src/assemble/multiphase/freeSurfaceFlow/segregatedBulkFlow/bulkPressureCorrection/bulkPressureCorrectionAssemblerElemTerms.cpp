@@ -63,6 +63,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_gradRho;
     std::vector<scalar> ws_psi;
     std::vector<scalar> ws_du;
+    std::vector<scalar> ws_duRhs;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_scv_volume;
@@ -83,8 +84,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> GpdxIp(SPATIAL_DIM);
     std::vector<scalar> dpdxIp(SPATIAL_DIM);
     std::vector<scalar> duIp(SPATIAL_DIM);
+    std::vector<scalar> duRhsIp(SPATIAL_DIM);
     std::vector<scalar> FIp(SPATIAL_DIM);
-    std::vector<scalar> FOrigElIp(SPATIAL_DIM);
+    std::vector<scalar> FOrigIp(SPATIAL_DIM);
 
     // pointers to everyone...
     scalar* p_coordIp = &coordIp[0];
@@ -93,8 +95,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     scalar* p_GpdxIp = &GpdxIp[0];
     scalar* p_dpdxIp = &dpdxIp[0];
     scalar* p_duIp = &duIp[0];
+    scalar* p_duRhsIp = &duRhsIp[0];
     scalar* p_FIp = &FIp[0];
-    scalar* p_FOrigIp = &FOrigElIp[0];
+    scalar* p_FOrigIp = &FOrigIp[0];
 
     // Get transport fields/side fields
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
@@ -123,14 +126,17 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                    : nullptr;
 #endif /* NDEBUG */
 
-    // Get pressure diffusivity coefficient field
-    const auto& duSTKFieldRef = *metaData.get_field<scalar>(
-        stk::topology::NODE_RANK, freeSurfaceFlowModel::du_ID);
+    // Pressure diffusivity coefficient: duTilde for LHS (SIMPLEC), du for RHS
+    const bool consistent = model_->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& duLhsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK,
+        consistent ? flowModel::duTilde_ID : flowModel::du_ID);
+    const auto& duRhsSTKFieldRef =
+        *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
 
-    // Get body force fields for buoyancy pressure stabilization:
-    //   F     = redistributed (HARM_AVER smoothed) body force → smooth IP term
-    //   FOrig = original (pre-redistribution) body force     → compact elem
-    //   term
+    // Get body force fields for buoyancy pressure stabilization
     const auto* FSTKFieldPtr =
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
@@ -150,10 +156,10 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         metaData.universal_part() & stk::mesh::selectUnion(partVec);
 
     // shifted ip's for fields?
-    bool isUShifted = model_->URef().isShifted();
+    const bool isUShifted = model_->URef().isShifted();
 
     // shifted ip's for gradients?
-    bool isPGradientShifted = model_->pRef().isGradientShifted();
+    const bool isPGradientShifted = model_->pRef().isGradientShifted();
 
     stk::mesh::BucketVector const& elementBuckets =
         bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
@@ -199,6 +205,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         ws_gradRho.resize(nodesPerElement * SPATIAL_DIM);
         ws_psi.resize(nodesPerElement);
         ws_du.resize(nodesPerElement * SPATIAL_DIM);
+        ws_duRhs.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
         ws_scv_volume.resize(numScvIp);
@@ -224,6 +231,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         scalar* p_gradRho = &ws_gradRho[0];
         scalar* p_psi = &ws_psi[0];
         scalar* p_du = &ws_du[0];
+        scalar* p_duRhs = &ws_duRhs[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
         scalar* p_scs_areav = &ws_scs_areav[0];
@@ -283,7 +291,10 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 const scalar* coords =
                     stk::mesh::field_data(coordinatesRef, node);
                 const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
-                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                const scalar* du =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                const scalar* duRhs =
+                    stk::mesh::field_data(duRhsSTKFieldRef, node);
                 const scalar* gradRho =
                     stk::mesh::field_data(gradRhoSTKFieldRef, node);
 
@@ -305,6 +316,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     p_Gpdx[niNdim + j] = Gjp[j];
                     p_coordinates[niNdim + j] = coords[j];
                     p_du[niNdim + j] = du[j];
+                    p_duRhs[niNdim + j] = duRhs[j];
                     p_gradRho[niNdim + j] = gradRho[j];
                 }
 
@@ -407,6 +419,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     p_GpdxIp[j] = 0.0;
                     p_dpdxIp[j] = 0.0;
                     p_duIp[j] = 0.0;
+                    p_duRhsIp[j] = 0.0;
                     p_FIp[j] = 0.0;
                     p_FOrigIp[j] = 0.0;
                 }
@@ -423,7 +436,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
 
                     alphaIp += r_vel * p_alpha[ic];
 
-                    scalar lhsfac = 0.0;
                     const label offSetDnDx =
                         SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -432,6 +444,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                         p_uIp[j] += r_vel * p_U[SPATIAL_DIM * ic + j];
                         p_umIp[j] += r_vel * p_Um[SPATIAL_DIM * ic + j];
                         p_duIp[j] += r_vel * p_du[SPATIAL_DIM * ic + j];
+                        p_duRhsIp[j] += r_vel * p_duRhs[SPATIAL_DIM * ic + j];
 
                         // use coordinates shape functions
                         p_coordIp[j] +=
@@ -493,7 +506,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 scalar rhoHR = rhoUpwind + dcorr;
 
                 //================================
-                // rhie-chow 2: -rhoip*Dip*(Gpn-Gp_p).Sip
+                // rhie-chow: -rhoip*Dip*(Gpn-Gp_p).Sip
                 //================================
                 for (label ic = 0; ic < nodesPerElement; ++ic)
                 {
@@ -540,9 +553,10 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 p_lhs[rLiR_i] += alhsfacR * alphaIp / densityScale;
 
                 // assemble mDot
-                // mDot = ρ*U·S - ρ*D*(∇p - Gp)·S + ρ*D*(FOrigEl - F_ip)·S
-                //        ╰───╯   ╰──────────────╯   ╰───────────────────────╯
-                //      divergence   pressure RC           body force RC
+                // mDot = ρ*U·S - ρ*D*(∇p - Gp)·S + ρ*D*(F_orig - F)·S
+                //        ╰───╯   ╰──────────────╯   ╰─────────────────╯
+                //      divergence   pressure RC       body force stab
+                //
                 scalar mDot = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -551,11 +565,12 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                         rhoHR * p_uIp[j] * p_scs_areav[ip * SPATIAL_DIM + j];
 
                     // pressure Rhie-Chow: -ρ*D*(∇p - Gp)·S
-                    mDot -= rhoHR * p_duIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
+                    mDot -= rhoHR * p_duRhsIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
                             p_scs_areav[ip * SPATIAL_DIM + j];
 
-                    // // body force RC: +ρ*D*(FOrig - F_ip)·S
-                    // mDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                    // // body force stabilization: +ρ*D*(F_orig - F)·S
+                    // mDot += rhoHR * p_duRhsIp[j] * (p_FOrigIp[j] - p_FIp[j])
+                    // *
                     //         p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 
