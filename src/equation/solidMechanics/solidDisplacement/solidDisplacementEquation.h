@@ -37,6 +37,16 @@ public:
 
     bool isConverged() const override;
 
+    scalar fsiResidualNorm() const
+    {
+        return fsiResidualNorm_;
+    }
+
+    bool fsiActive() const
+    {
+        return fsiActive_;
+    }
+
     void setup() override;
 
     void initialize() override;
@@ -80,6 +90,24 @@ private:
     Vector aitkenResidualPrev_;
 
     scalar computeAitkenOmega_(const Vector& correction);
+
+    void initializeFsiResidualFile_(label interfIdx,
+                                    const std::string& interfName);
+
+    void
+    writeFsiResidualLine_(label interfIdx, scalar omega, scalar residualNorm);
+
+    // FSI-level Aitken state (per interface, indexed by interface index)
+    std::map<label, std::shared_ptr<std::ofstream>> fsiResidualStreams_;
+    std::map<label, std::vector<scalar>> fsiDfluidPrev_;
+    std::map<label, std::vector<scalar>> fsiResidualPrev_;
+    std::map<label, scalar> fsiAitkenOmega_;
+    std::map<label, scalar> fsiResidualNormMax_;
+    scalar fsiResidualNorm_ = 0.0;
+    bool fsiActive_ = false;
+    scalar fsiOmegaInit_ = 0.4;
+    scalar fsiOmegaMin_ = 0.01;
+    scalar fsiOmegaMax_ = 1.0;
 };
 
 } /* namespace accel */
