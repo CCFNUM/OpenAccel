@@ -128,8 +128,16 @@ else()
 endif()
 
 # 1. Look for the header and library
-find_path(HYPRE_INCLUDE_DIR NAMES HYPRE.h hypre.h PATHS ${HYPRE_SEARCH_PATHS})
-find_library(HYPRE_LIB NAMES HYPRE hypre PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib /usr/lib)
+find_path(HYPRE_INCLUDE_DIR NAMES HYPRE.h hypre.h PATHS ${HYPRE_SEARCH_PATHS} NO_DEFAULT_PATH)
+
+if(DEFINED HYPRE_DIR)
+    find_library(HYPRE_LIB NAMES HYPRE hypre
+                 PATHS ${HYPRE_DIR}/lib ${HYPRE_DIR}/lib64
+                 NO_DEFAULT_PATH)
+else()
+    find_library(HYPRE_LIB NAMES HYPRE hypre
+                 PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib /usr/lib /usr/lib64)
+endif()
 
 if(HYPRE_INCLUDE_DIR AND HYPRE_LIB)
     # 2. Extract version from HYPRE_config.h for compatibility check
@@ -139,7 +147,7 @@ if(HYPRE_INCLUDE_DIR AND HYPRE_LIB)
         file(STRINGS "${HYPRE_CONFIG_PATH}/HYPRE_config.h" HYPRE_VER_LINE REGEX "HYPRE_RELEASE_NUMBER")
         if(HYPRE_VER_LINE MATCHES "([0-9]+)")
             set(HYPRE_VERSION_VAL ${CMAKE_MATCH_1})
-            
+
             # 3. Enforce Version 2.29.0 (22900) or higher
             if(${HYPRE_VERSION_VAL} LESS 22900)
                 message(WARNING "HYPRE version ${HYPRE_VERSION_VAL} is too old. Required: 2.29.0+. Disabling HYPRE.")
