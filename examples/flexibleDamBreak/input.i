@@ -5,10 +5,18 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 0.5
+            total_time: 1
             time_steps:
-                option: constant
-                timestep: 0.001
+                option: adaptive
+                initial_timestep: 0.001
+                timestep_update_frequency: 1
+                timestep_adaptation:
+                    option: max_courant
+                    courant_number: 0.5
+                    min_timestep: 1.0e-6
+                    max_timestep: 1
+                    timestep_decrease_factor: 0.8
+                    timestep_increase_factor: 1.06
         domains:
           - name: fluid
             location: [fluid-hex]
@@ -125,7 +133,7 @@ simulation:
                 transient_scheme: first_order_backward_euler
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 10
+                    max_iterations: 20
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.7
                         pressure_relaxation_factor: 0.3                   
@@ -142,13 +150,15 @@ simulation:
                         fourier_number: 0.25
                     sub_iterations:
                         segregated_flow: 1
+                        pressure_correction: 4
+                        volume_fraction: 1
                         solid_displacement: 1
                     acceleration:
                         solid_displacement:
-                            option: aitken
-                            initial_omega: 0.05
+                            option: none
+                            initial_omega: 1.0
                             omega_min: 0.01
-                            omega_max: 0.5
+                            omega_max: 1.0
                     mesh_motion:
                         freeze_per_timestep: false
                         max_smoothing_iters: 25
@@ -195,7 +205,7 @@ simulation:
         thermodynamic_properties:
             equation_of_state:
                 option: value
-                density: 2.5e3
+                density: 2.7e3
         mechanical_properties:
             young_modulus:
                 option: value
