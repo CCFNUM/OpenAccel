@@ -40,9 +40,9 @@ Topics covered include governing equations, turbulence models (k-ε, k-ω SST, T
   [OpenMPI](https://www.open-mpi.org/) implementations are tested.
 
 ### Optional (Backend Solvers)
-* **PETSc:** Optional high-performance solver backend. (Some examples are
+* **PETSc** (>= 3.18): Optional high-performance solver backend. (Some examples are
   configured with PETSc solvers. See [`examples/cavity/input.i`](./examples/cavity/input.i) and [`examples/elbow/input.i`](./examples/elbow/input.i).)
-* **HYPRE:** Optional multigrid preconditioner support. (See [`examples/airfoil/input.i`](./examples/airfoil/input.i) and [`examples/pitzDaily/input.i`](./examples/pitzDaily/input.i).)
+* **HYPRE** (>= 3.0): Optional multigrid preconditioner support. (See [`examples/airfoil/input.i`](./examples/airfoil/input.i) and [`examples/pitzDaily/input.i`](./examples/pitzDaily/input.i).)
 * **gnuplot:** Optional live residual plotting.
 
 ### Submodules
