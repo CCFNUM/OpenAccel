@@ -152,6 +152,70 @@ void segregatedFreeSurfaceFlowEquations::postInitialize()
 
 void segregatedFreeSurfaceFlowEquations::solve()
 {
+    // solve volume fraction
+    {
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+        {
+            if (!this->phaseRef(iPhase).primaryPhase_)
+            {
+                assert(alpha_eq_[iPhase]);
+                alpha_eq_[iPhase]->preSolve();
+            }
+            else
+            {
+                // update primary phase (i.e. boundary conditions)
+                FOREACH_DOMAIN(updateVolumeFraction, phaseIndex(iPhase));
+            }
+        }
+
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+        {
+            if (!this->phaseRef(iPhase).primaryPhase_)
+            {
+                assert(alpha_eq_[iPhase]);
+                alpha_eq_[iPhase]->solve();
+            }
+        }
+
+        // deduce the volume fraction of the last phase from volume conservation
+        FOREACH_DOMAIN(applyVolumeConservation);
+
+        // update gradient and beta field for primary phases
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+        {
+            if (this->phaseRef(iPhase).primaryPhase_)
+            {
+                // 1) update alpha gradient
+                FOREACH_DOMAIN(updateVolumeFractionGradientField,
+                               phaseIndex(iPhase));
+
+                // 2) update alpha scale
+                this->alphaRef(phaseIndex(iPhase)).updateScale();
+            }
+        }
+
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+        {
+            if (!this->phaseRef(iPhase).primaryPhase_)
+            {
+                assert(alpha_eq_[iPhase]);
+                alpha_eq_[iPhase]->postSolve();
+            }
+        }
+
+        // bulk properties update
+        FOREACH_DOMAIN(updateDensity);
+        FOREACH_DOMAIN(updateDynamicViscosity);
+
+        // update bulk mass flux: flow reversal field is updated above and in
+        // case of any zero mass flux at outlet this will be implicitly be
+        // calculated upon the following update
+        FOREACH_DOMAIN(updateMassFlowRate);
+
+        // update div for the mixture mass flux and others
+        FOREACH_DOMAIN(flowModel::updateMassDivergenceField);
+    }
+
     // predictor step: solve bulk momentum
     {
         U_eq_->preSolve();
@@ -394,70 +458,6 @@ void segregatedFreeSurfaceFlowEquations::solve()
                 break;
             }
         }
-    }
-
-    // solve volume fraction
-    {
-        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
-        {
-            if (!this->phaseRef(iPhase).primaryPhase_)
-            {
-                assert(alpha_eq_[iPhase]);
-                alpha_eq_[iPhase]->preSolve();
-            }
-            else
-            {
-                // update primary phase (i.e. boundary conditions)
-                FOREACH_DOMAIN(updateVolumeFraction, phaseIndex(iPhase));
-            }
-        }
-
-        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
-        {
-            if (!this->phaseRef(iPhase).primaryPhase_)
-            {
-                assert(alpha_eq_[iPhase]);
-                alpha_eq_[iPhase]->solve();
-            }
-        }
-
-        // deduce the volume fraction of the last phase from volume conservation
-        FOREACH_DOMAIN(applyVolumeConservation);
-
-        // update gradient and beta field for primary phases
-        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
-        {
-            if (this->phaseRef(iPhase).primaryPhase_)
-            {
-                // 1) update alpha gradient
-                FOREACH_DOMAIN(updateVolumeFractionGradientField,
-                               phaseIndex(iPhase));
-
-                // 2) update alpha scale
-                this->alphaRef(phaseIndex(iPhase)).updateScale();
-            }
-        }
-
-        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
-        {
-            if (!this->phaseRef(iPhase).primaryPhase_)
-            {
-                assert(alpha_eq_[iPhase]);
-                alpha_eq_[iPhase]->postSolve();
-            }
-        }
-
-        // bulk properties update
-        FOREACH_DOMAIN(updateDensity);
-        FOREACH_DOMAIN(updateDynamicViscosity);
-
-        // update bulk mass flux: flow reversal field is updated above and in
-        // case of any zero mass flux at outlet this will be implicitly be
-        // calculated upon the following update
-        FOREACH_DOMAIN(updateMassFlowRate);
-
-        // update div for the mixture mass flux and others
-        FOREACH_DOMAIN(flowModel::updateMassDivergenceField);
     }
 }
 
