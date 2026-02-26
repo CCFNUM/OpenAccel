@@ -37,16 +37,6 @@ public:
 
     bool isConverged() const override;
 
-    scalar fsiResidualNorm() const
-    {
-        return fsiResidualNorm_;
-    }
-
-    bool fsiActive() const
-    {
-        return fsiActive_;
-    }
-
     void setup() override;
 
     void initialize() override;
@@ -79,6 +69,8 @@ protected:
 
 private:
     std::unique_ptr<Assembler> assembler_;
+
+    // ALE-FSI
 
     // Aitken acceleration state
     bool useAitken_ = false;
