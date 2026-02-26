@@ -125,7 +125,9 @@ simulation:
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
-                            preconditioner: ilu
+                            preconditioner: ilu 
+            expert_parameters: 
+                body_force_redistribution: false
         output_control:
             file_path: results.e
             output_frequency:
