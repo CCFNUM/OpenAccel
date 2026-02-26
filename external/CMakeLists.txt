@@ -1,3 +1,10 @@
+# File       : CMakeLists.txt
+# Created    : Thu Oct 16 2025 08:17:36 (+0200)
+# Author     : Fabian Wermelinger
+# Description: CMake build definitions
+# Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
+# SPDX-License-Identifier: BSD-3-Clause
+
 target_include_directories(main_obj SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/eigen
     ${CMAKE_CURRENT_SOURCE_DIR}/exprtk
