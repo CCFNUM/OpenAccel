@@ -385,6 +385,59 @@ void controls::read(YAML::Node inputNode)
                 solver_.solverControl_.basicSettings_.convergenceCriteria_
                     .residualTarget_ =
                     convCriteria["residual_target"].template as<scalar>();
+
+                if (convCriteria["physics_convergence"])
+                {
+                    const auto& physConv = convCriteria["physics_convergence"];
+
+                    if (physConv["enabled"])
+                    {
+                        solver_.solverControl_.basicSettings_
+                            .convergenceCriteria_.physicsConvergence_.enabled_ =
+                            physConv["enabled"].template as<bool>();
+                    }
+
+                    if (physConv["write_residuals"])
+                    {
+                        solver_.solverControl_.basicSettings_
+                            .convergenceCriteria_.physicsConvergence_
+                            .writeResiduals_ =
+                            physConv["write_residuals"].template as<bool>();
+                    }
+
+                    if (physConv["criteria"])
+                    {
+                        for (const auto& item : physConv["criteria"])
+                        {
+                            solver_.solverControl_.basicSettings_
+                                .convergenceCriteria_.physicsConvergence_
+                                .criteria_.push_back(
+                                    convertPhysicsConvergenceTypeFromString(
+                                        item.template as<std::string>()));
+                        }
+                    }
+
+                    if (physConv["targets"])
+                    {
+                        const auto& targets = physConv["targets"];
+                        if (targets["fsi_interface_residual"])
+                        {
+                            solver_.solverControl_.basicSettings_
+                                .convergenceCriteria_.physicsConvergence_
+                                .fsiInterfaceResidualTarget_ =
+                                targets["fsi_interface_residual"]
+                                    .template as<scalar>();
+                        }
+                        if (targets["fsi_force_residual"])
+                        {
+                            solver_.solverControl_.basicSettings_
+                                .convergenceCriteria_.physicsConvergence_
+                                .fsiForceResidualTarget_ =
+                                targets["fsi_force_residual"]
+                                    .template as<scalar>();
+                        }
+                    }
+                }
             }
             else
             {
@@ -765,56 +818,6 @@ void controls::read(YAML::Node inputNode)
                             advancedOptions["equation_controls"]
                                            ["sub_iterations"]["volume_fraction"]
                                                .template as<label>();
-                    }
-                }
-
-                if (advancedOptions["equation_controls"]["acceleration"])
-                {
-                    const auto& accel =
-                        advancedOptions["equation_controls"]["acceleration"];
-
-                    if (accel["solid_displacement"])
-                    {
-                        const auto& solidDispAccel =
-                            accel["solid_displacement"];
-
-                        if (solidDispAccel["option"])
-                        {
-                            const std::string option =
-                                solidDispAccel["option"]
-                                    .template as<std::string>();
-                            solver_.solverControl_.advancedOptions_
-                                .equationControls_.acceleration_
-                                .solidDisplacement_.aitkenEnabled_ =
-                                (option == "aitken");
-                        }
-
-                        if (solidDispAccel["initial_omega"])
-                        {
-                            solver_.solverControl_.advancedOptions_
-                                .equationControls_.acceleration_
-                                .solidDisplacement_.aitkenInitialOmega_ =
-                                solidDispAccel["initial_omega"]
-                                    .template as<scalar>();
-                        }
-
-                        if (solidDispAccel["omega_min"])
-                        {
-                            solver_.solverControl_.advancedOptions_
-                                .equationControls_.acceleration_
-                                .solidDisplacement_.aitkenOmegaMin_ =
-                                solidDispAccel["omega_min"]
-                                    .template as<scalar>();
-                        }
-
-                        if (solidDispAccel["omega_max"])
-                        {
-                            solver_.solverControl_.advancedOptions_
-                                .equationControls_.acceleration_
-                                .solidDisplacement_.aitkenOmegaMax_ =
-                                solidDispAccel["omega_max"]
-                                    .template as<scalar>();
-                        }
                     }
                 }
 

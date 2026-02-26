@@ -25,6 +25,8 @@
 namespace accel
 {
 
+class physicsConvergence;
+
 class simulation
 {
 public:
@@ -38,6 +40,7 @@ public:
 
 private:
     friend class domain;
+    friend class physicsConvergence;
 
     // Primary members
 
@@ -112,6 +115,9 @@ private:
 
     std::unordered_map<std::string, scalar> scalarResiduals_;
 
+    // Physics-based convergence (FSI)
+    std::unique_ptr<physicsConvergence> physicsConvergencePtr_;
+
     // Private methods
 
     // read and create settings/directories
@@ -161,6 +167,8 @@ private:
 
     // Initialize output structure and detect output fields to be written
     void initializeOutput_();
+
+    physicsConvergence* getPhysicsConvergence_();
 
 public:
     // Constructors

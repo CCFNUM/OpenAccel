@@ -7,11 +7,43 @@
 
 #include "equation.h"
 #include "boundary.h"
+#include "convergenceAcceleration.h"
 #include "mesh.h"
+#include "simulation.h"
 #include "zone.h"
+
+#include <cctype>
 
 namespace accel
 {
+
+namespace
+{
+std::string equationKeyFromName_(const std::string& name)
+{
+    std::string key;
+    key.reserve(name.size());
+    for (unsigned char c : name)
+    {
+        if (std::isalnum(c))
+        {
+            key.push_back(static_cast<char>(std::tolower(c)));
+        }
+        else if (c == ' ' || c == '-' || c == '_')
+        {
+            if (key.empty() || key.back() != '_')
+            {
+                key.push_back('_');
+            }
+        }
+    }
+    if (!key.empty() && key.back() == '_')
+    {
+        key.pop_back();
+    }
+    return key;
+}
+} // namespace
 
 stk::mesh::PartVector equation::collectInactiveInteriorParts()
 {
@@ -95,6 +127,121 @@ stk::mesh::PartVector equation::collectStationaryParts()
     }
 
     return statPartVec;
+}
+
+void equation::initializeAcceleration_()
+{
+    if (accelerationInitialized_)
+    {
+        return;
+    }
+    accelerationInitialized_ = true;
+
+    if (domainVector_.empty())
+    {
+        return;
+    }
+
+    const auto& sim = domainVector_[0]->simulationRef();
+    const auto solverNode = sim.getYAMLSolverControlNode();
+    if (!solverNode || !solverNode["advanced_options"] ||
+        !solverNode["advanced_options"]["equation_controls"] ||
+        !solverNode["advanced_options"]["equation_controls"]["acceleration"])
+    {
+        return;
+    }
+
+    const auto accelNode =
+        solverNode["advanced_options"]["equation_controls"]["acceleration"];
+    const std::string eqKey = equationKeyFromName_(name_);
+    if (!accelNode[eqKey])
+    {
+        return;
+    }
+
+    const auto eqAccel = accelNode[eqKey];
+    if (!eqAccel["option"])
+    {
+        return;
+    }
+
+    convergenceAcceleration::Config cfg;
+    cfg.type = convertAccelerationTypeFromString(
+        eqAccel["option"].template as<std::string>());
+    if (cfg.type == accelerationType::none)
+    {
+        return;
+    }
+
+    if (eqAccel["initial_omega"])
+    {
+        cfg.aitkenInitialOmega = eqAccel["initial_omega"].template as<scalar>();
+    }
+    if (eqAccel["omega_min"])
+    {
+        cfg.aitkenOmegaMin = eqAccel["omega_min"].template as<scalar>();
+    }
+    if (eqAccel["omega_max"])
+    {
+        cfg.aitkenOmegaMax = eqAccel["omega_max"].template as<scalar>();
+    }
+    if (eqAccel["iqn_ils_window"])
+    {
+        cfg.iqnIlsWindow = eqAccel["iqn_ils_window"].template as<label>();
+    }
+    if (eqAccel["iqn_ils_regularization"])
+    {
+        cfg.iqnIlsRegularization =
+            eqAccel["iqn_ils_regularization"].template as<scalar>();
+    }
+
+    accelerationPtr_ = std::make_unique<convergenceAcceleration>(cfg);
+}
+
+const Vector& equation::applyAcceleration_(const Vector& correction,
+                                           const scalar relaxValue,
+                                           scalar& outRelaxValue)
+{
+    outRelaxValue = relaxValue;
+
+    initializeAcceleration_();
+    if (!accelerationPtr_ || !accelerationPtr_->enabled())
+    {
+        return correction;
+    }
+
+    if (domainVector_.empty())
+    {
+        return correction;
+    }
+
+    auto& sim = domainVector_[0]->simulationRef();
+    const label timeStep = sim.controlsRef().getTimeStepCount();
+    if (timeStep != lastAccelTimeStep_)
+    {
+        accelerationPtr_->resetForTimeStep();
+        lastAccelTimeStep_ = timeStep;
+        lastAccelIter_ = -1;
+        lastAccelCorrectionPtr_ = nullptr;
+        lastAccelUsesScratch_ = false;
+    }
+
+    const label iter = sim.controlsRef().iter;
+    if (lastAccelCorrectionPtr_ == &correction && lastAccelIter_ == iter)
+    {
+        outRelaxValue = lastAccelRelaxValue_;
+        return lastAccelUsesScratch_ ? accelerationScratch_[0] : correction;
+    }
+
+    const Vector& result = accelerationPtr_->apply(
+        correction, relaxValue, accelerationScratch_, outRelaxValue);
+
+    lastAccelCorrectionPtr_ = &correction;
+    lastAccelIter_ = iter;
+    lastAccelRelaxValue_ = outRelaxValue;
+    lastAccelUsesScratch_ = (&result != &correction);
+
+    return result;
 }
 
 } /* namespace accel */

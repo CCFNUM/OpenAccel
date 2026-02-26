@@ -10,6 +10,7 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 # project sources
 target_sources(main_obj PRIVATE
     ${DIR}/equation.cpp
+    ${DIR}/auxiliary/convergenceAcceleration.cpp
     ############################################################################
     ${DIR}/flow/navierStokes/navierStokesEquation.cpp
     ${DIR}/flow/pressureCorrection/pressureCorrectionEquation.cpp
@@ -48,6 +49,7 @@ target_sources(main_obj PRIVATE
 # full path and location of headers is inside src)
 target_include_directories(main_obj PUBLIC
     ${DIR}
+    ${DIR}/auxiliary
     ############################################################################
     ${DIR}/flow
     ${DIR}/flow/navierStokes

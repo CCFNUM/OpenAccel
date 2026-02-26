@@ -151,6 +151,17 @@ struct solverDictionary
             {
                 residualType residualType_ = residualType::RMS;
                 scalar residualTarget_ = 1e-4;
+
+                struct physicsConvergenceDictionary
+                {
+                    bool enabled_ = false;
+                    bool writeResiduals_ = false;
+                    std::vector<physicsConvergenceType> criteria_;
+                    scalar fsiInterfaceResidualTarget_ = 1e-3;
+                    scalar fsiForceResidualTarget_ = 1e-3;
+                };
+
+                physicsConvergenceDictionary physicsConvergence_;
             };
 
             convergenceControlDictionary convergenceControl_;
@@ -190,19 +201,6 @@ struct solverDictionary
                     label volumeFraction_ = 1;
                 };
 
-                struct accelerationDictionary
-                {
-                    struct solidDisplacementAccelerationDictionary
-                    {
-                        bool aitkenEnabled_ = false;
-                        scalar aitkenInitialOmega_ = 1.0;
-                        scalar aitkenOmegaMin_ = 0.1;
-                        scalar aitkenOmegaMax_ = 1.0;
-                    };
-
-                    solidDisplacementAccelerationDictionary solidDisplacement_;
-                };
-
                 struct volumeFractionSmoothingDictionary
                 {
                     bool smoothVolumeFraction_ = false;
@@ -217,7 +215,6 @@ struct solverDictionary
                 };
 
                 subIterationsDictionary subIterations_;
-                accelerationDictionary acceleration_;
                 volumeFractionSmoothingDictionary volumeFractionSmoothing_;
                 meshMotionDictionary meshMotion_;
             };

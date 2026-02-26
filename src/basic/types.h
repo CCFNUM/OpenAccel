@@ -62,6 +62,7 @@
 #include <cassert>
 #include <cmath>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -616,6 +617,25 @@ enum class residualType
 };
 
 residualType convertResidualTypeFromString(std::string s);
+
+// Acceleration type
+enum class accelerationType
+{
+    none,
+    aitken,
+    iqn_ils
+};
+
+accelerationType convertAccelerationTypeFromString(std::string s);
+
+// Physics convergence type
+enum class physicsConvergenceType
+{
+    fsiInterfaceResidual,
+    fsiForceResidual
+};
+
+physicsConvergenceType convertPhysicsConvergenceTypeFromString(std::string s);
 
 // Pressure level information specification
 enum class pressureLevelInformationSpecification

@@ -9,10 +9,13 @@
 #define EQUATION_H
 
 // code
+#include "convergenceAcceleration.h"
 #include "domain.h"
 #include "mesh.h"
 #include "types.h"
 #include "zone.h"
+
+#include <memory>
 
 namespace accel
 {
@@ -181,6 +184,23 @@ protected:
 
     std::vector<std::shared_ptr<domain>> domainVector_;
 
+private:
+    std::unique_ptr<convergenceAcceleration> accelerationPtr_;
+    std::vector<Vector> accelerationScratch_;
+    const Vector* lastAccelCorrectionPtr_ = nullptr;
+    label lastAccelIter_ = -1;
+    label lastAccelTimeStep_ = -1;
+    scalar lastAccelRelaxValue_ = 1.0;
+    bool lastAccelUsesScratch_ = false;
+    bool accelerationInitialized_ = false;
+
+    void initializeAcceleration_();
+
+    const Vector& applyAcceleration_(const Vector& correction,
+                                     const scalar relaxValue,
+                                     scalar& outRelaxValue);
+
+protected:
     template <int BLOCKSIZE,
               int FIELD_DIM = 1,
               int STRIDE = 0,
@@ -219,6 +239,10 @@ protected:
 
         const BucketVec& buckets = bulkData.get_buckets(entityRank, selection);
 
+        scalar effectiveRelaxValue = relaxValue;
+        const Vector& effectiveCorrection =
+            applyAcceleration_(correction, relaxValue, effectiveRelaxValue);
+
         for (size_t ib = 0; ib < buckets.size(); ib++)
         {
             const Bucket& bucket = *buckets[ib];
@@ -232,8 +256,9 @@ protected:
                 {
                     scalar newVal =
                         fieldVal[i * FIELD_DIM + k] +
-                        relaxValue * (correction[id * BLOCKSIZE + STRIDE + k] +
-                                      OFFSET * offset);
+                        effectiveRelaxValue *
+                            (effectiveCorrection[id * BLOCKSIZE + STRIDE + k] +
+                             OFFSET * offset);
 
                     if (CLIP)
                     {

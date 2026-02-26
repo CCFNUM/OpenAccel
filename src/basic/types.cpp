@@ -805,6 +805,51 @@ residualType convertResidualTypeFromString(std::string s)
     return residualType::RMS; // useless
 }
 
+// Acceleration type
+
+std::unordered_map<std::string, accelerationType> accelerationTypeMap{
+    {"none", accelerationType::none},
+    {"aitken", accelerationType::aitken},
+    {"iqn_ils", accelerationType::iqn_ils}};
+
+accelerationType convertAccelerationTypeFromString(std::string s)
+{
+    auto it = accelerationTypeMap.find(s);
+    if (it != accelerationTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid acceleration type: " + s);
+    }
+
+    return accelerationType::none; // useless
+}
+
+// Physics convergence type
+
+std::unordered_map<std::string, physicsConvergenceType>
+    physicsConvergenceTypeMap{
+        {"fsi_interface_residual",
+         physicsConvergenceType::fsiInterfaceResidual},
+        {"fsi_force_residual", physicsConvergenceType::fsiForceResidual}};
+
+physicsConvergenceType convertPhysicsConvergenceTypeFromString(std::string s)
+{
+    auto it = physicsConvergenceTypeMap.find(s);
+    if (it != physicsConvergenceTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid physics convergence type: " + s);
+    }
+
+    return physicsConvergenceType::fsiInterfaceResidual; // useless
+}
+
 // Pressure level information specification
 
 std::unordered_map<std::string, pressureLevelInformationSpecification>

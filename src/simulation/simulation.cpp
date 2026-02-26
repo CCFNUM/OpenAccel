@@ -9,11 +9,11 @@
 #include "simulation.h"
 #include "domain.h"
 #include "elementField.h"
-#ifdef HAS_INTERFACE
-#include "interfaceSideInfo.h"
-#endif /* HAS_INTERFACE */
 #include "mesh.h"
+#include "physicsConvergence.h"
 #include "realm.h"
+
+#include <chrono>
 
 namespace accel
 {
@@ -380,6 +380,11 @@ void simulation::preWork()
 {
     if (controlsRef().isTransient())
     {
+        if (physicsConvergence* physConv = getPhysicsConvergence_())
+        {
+            physConv->resetForTimeStep();
+        }
+
         // equation dependent pre-timestep tasks for transient simulations
         // (typically updating temporal fields)
         for (auto& equation : equationVector_)
@@ -458,6 +463,16 @@ void simulation::postWork()
 
 bool simulation::checkConvergence()
 {
+    physicsConvergence* physConv = getPhysicsConvergence_();
+    if (physConv)
+    {
+        physConv->update();
+        if (physConv->enabled())
+        {
+            return physConv->isConverged();
+        }
+    }
+
     bool convergence = true;
     for (auto& equation : equationVector_)
     {
@@ -465,6 +480,25 @@ bool simulation::checkConvergence()
     }
 
     return convergence;
+}
+
+physicsConvergence* simulation::getPhysicsConvergence_()
+{
+    const auto& physConv = controlsRef()
+                               .solverRef()
+                               .solverControl_.basicSettings_
+                               .convergenceCriteria_.physicsConvergence_;
+
+    if (!physConv.enabled_ || physConv.criteria_.empty())
+    {
+        return nullptr;
+    }
+
+    if (!physicsConvergencePtr_)
+    {
+        physicsConvergencePtr_ = std::make_unique<physicsConvergence>(*this);
+    }
+    return physicsConvergencePtr_.get();
 }
 
 // Access

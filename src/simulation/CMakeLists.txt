@@ -11,10 +11,12 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(main_obj PRIVATE
     ${DIR}/simulation.cpp
     ${DIR}/simulationIO.cpp
+    ${DIR}/auxiliary/physicsConvergence.cpp
 )
 
 # define header directories (required since #include statements do not quote
 # full path and location of headers is inside src)
 target_include_directories(main_obj PUBLIC
     ${DIR}
+    ${DIR}/auxiliary
 )
