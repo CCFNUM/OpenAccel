@@ -5,7 +5,7 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 1
+            total_time: 0.3
             time_steps:
                 option: adaptive
                 initial_timestep: 0.001
@@ -133,13 +133,10 @@ simulation:
                 transient_scheme: first_order_backward_euler
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 20
-                    relaxation_parameters:
-                        velocity_relaxation_factor: 0.7
-                        pressure_relaxation_factor: 0.3                   
+                    max_iterations: 5                
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-8
+                    residual_target: 1e-8                  
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear             
             advanced_options: 
@@ -149,16 +146,13 @@ simulation:
                         smoothing_iterations: 3
                         fourier_number: 0.25
                     sub_iterations:
-                        segregated_flow: 1
                         pressure_correction: 4
-                        volume_fraction: 1
-                        solid_displacement: 1
                     acceleration:
                         solid_displacement:
-                            option: none
-                            initial_omega: 1.0
+                            option: aitken
+                            initial_omega: 0.1
                             omega_min: 0.01
-                            omega_max: 1.0
+                            omega_max: 0.5
                     mesh_motion:
                         freeze_per_timestep: false
                         max_smoothing_iters: 25
@@ -173,7 +167,9 @@ simulation:
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
-                            preconditioner: ilu
+                            preconditioner: ilu 
+            expert_parameters:
+                body_force_redistribution: false
         output_control:
             file_path: results.e
             output_frequency:
