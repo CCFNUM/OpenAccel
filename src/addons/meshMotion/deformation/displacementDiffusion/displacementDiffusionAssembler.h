@@ -1,6 +1,6 @@
-// File : displacementDiffusionAssembler.h
-// Created : Tue Nov 26 2024
-// Author : Mhamad Mahdi Alloush
+// File       : displacementDiffusionAssembler.h
+// Created    : Tue Nov 26 2024
+// Author     : Mhamad Mahdi Alloush
 // Description: Assembly of the displacement diffusion linear system
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
@@ -90,4 +90,4 @@ protected:
 
 } /* namespace accel */
 
-#endif /* DISPLACEMENTDIFFUSIONASSEMBLER_H */
+#endif // DISPLACEMENTDIFFUSIONASSEMBLER_H

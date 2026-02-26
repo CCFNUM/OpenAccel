@@ -1,3 +1,11 @@
+// File       : realm.cpp
+// Created    :
+// Author     :
+// Description:
+// Copyright (c) 2023 CCFNUM, Lucerne University of Applied
+// Sciences and Arts.
+// SPDX-License-Identifier: BSD-3-Clause
+
 // code
 #include "realm.h"
 #include "domain.h"

@@ -1,6 +1,6 @@
-// File : transitionOnsetReynoldsNumberTransitionSSTEquation.h
-// Created : Tue Jan 14 2025
-// Author : Adam Fares
+// File       : transitionOnsetReynoldsNumberTransitionSSTEquation.h
+// Created    : Tue Jan 14 2025
+// Author     : Adam Fares
 // Description: Transition onset Reynolds number equation for the transition SST
 // model
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and

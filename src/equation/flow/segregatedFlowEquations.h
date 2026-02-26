@@ -1,6 +1,6 @@
-// File : segregatedFlowEquations.h
-// Created : Fri Mar 15 2024 15:06:38 (+0100)
-// Author : Fabian Wermelinger
+// File       : segregatedFlowEquations.h
+// Created    : Fri Mar 15 2024 15:06:38 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Navier-Stokes convenience wrapper to solve coupled momentum and
 // pressure correction separately. Alternatively, these two
 // equations can be solved by defining them explicitly in the YAML

@@ -1,6 +1,6 @@
-// File : solidMechanicsModel.cpp
-// Created : Thu Dec 04 2025 08:42:10 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : solidMechanicsModel.cpp
+// Created    : Thu Dec 04 2025 08:42:10 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description:
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
@@ -92,12 +92,12 @@ void solidMechanicsModel::setupDisplacement(
             if (messager::master())
             {
                 // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
+		std::cout << "Setting boundary conditions:\n";
+		std::cout << "\tdomain name: " << domain->name() << "\n";
+		std::cout << "\tdomain index: " << domain->index() << "\n";
+		std::cout << "\tpatch index: " << iBoundary << "\n";
+		std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
+		std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
                 // clang-format on
             }
 #endif /* NDEBUG */

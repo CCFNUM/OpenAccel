@@ -1,8 +1,9 @@
-// File : realm.h
-// Created :
-// Author :
-// Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied
+// File       : realm.h
+// Created    :
+// Author     :
+// Description: Declares the central realm class that owns mesh, fields, and
+// model registration for a simulation.
+// Copyright (c) 2023 CCFNUM, Lucerne University of Applied
 // Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 

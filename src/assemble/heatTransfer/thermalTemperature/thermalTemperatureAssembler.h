@@ -1,6 +1,6 @@
-// File : thermalTemperatureAssembler.h
-// Created : Thu Apr 14 2024 8:36:38 (+0100)
-// Author : Fabian Wermelinger
+// File       : thermalTemperatureAssembler.h
+// Created    : Thu Apr 14 2024 8:36:38 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Assembler for the temperature-based heat transfer equation
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

@@ -1,6 +1,6 @@
-// File : linearSystem.h
-// Created : Fri Jan 26 2024 09:35:23 (+0100)
-// Author : Fabian Wermelinger
+// File       : linearSystem.h
+// Created    : Fri Jan 26 2024 09:35:23 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Abstract base for a linear system of equation(s)
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

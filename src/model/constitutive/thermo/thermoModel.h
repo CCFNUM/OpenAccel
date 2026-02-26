@@ -1,6 +1,6 @@
-// File : thermoModel.h
-// Created : Thu Apr 03 2025 17:05:11 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : thermoModel.h
+// Created    : Thu Apr 03 2025 17:05:11 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Base thermodynamic model for density, enthalpy, and temperature
 // properties
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences

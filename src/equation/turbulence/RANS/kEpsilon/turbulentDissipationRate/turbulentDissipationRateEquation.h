@@ -1,6 +1,6 @@
-// File : turbulentDissipationRateEquation.h
-// Created : Thu Feb 22 2025 13:38:51 (+0100)
-// Author : ACHRAF NAGIHI
+// File       : turbulentDissipationRateEquation.h
+// Created    : Thu Feb 22 2025 13:38:51 (+0100)
+// Author     : ACHRAF NAGIHI
 // Description: Turbulent dissipation rate equation for the k-epsilon model
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

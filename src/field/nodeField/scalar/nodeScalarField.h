@@ -1,6 +1,6 @@
-// File : nodeScalarField.h
-// Created : Tue Apr 20 2024 12:55:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : nodeScalarField.h
+// Created    : Tue Apr 20 2024 12:55:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Base class for scalar-valued node fields with gradient
 // correction
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences

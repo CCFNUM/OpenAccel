@@ -1,6 +1,6 @@
-﻿// File : totalEnergyAssemblerNodeTerms.cpp
-// Created : Mon Jun 09 2025 12:23:38 (+0100)
-// Author : Mhamad Mahdi Alloush
+﻿// File       : totalEnergyAssemblerNodeTerms.cpp
+// Created    : Mon Jun 09 2025 12:23:38 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description:
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

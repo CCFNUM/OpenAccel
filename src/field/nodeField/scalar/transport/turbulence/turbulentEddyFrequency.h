@@ -1,6 +1,6 @@
-// File : turbulentEddyFrequency.h
-// Created : Tue Apr 20 2024 12:55:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : turbulentEddyFrequency.h
+// Created    : Tue Apr 20 2024 12:55:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Node scalar transport field for turbulent eddy frequency (omega)
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

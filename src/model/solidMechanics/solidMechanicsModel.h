@@ -1,6 +1,6 @@
-// File : solidMechanicsModel.h
-// Created : Thu Dec 04 2025 08:42:10 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : solidMechanicsModel.h
+// Created    : Thu Dec 04 2025 08:42:10 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Solid mechanics model for displacement, stress, and strain
 // computations
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied

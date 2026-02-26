@@ -1,6 +1,6 @@
-// File : controls.h
-// Created : Fri Aug 25 2023 12:55:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : controls.h
+// Created    : Fri Aug 25 2023 12:55:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Simulation controls for time stepping, solver settings, and
 // output
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and

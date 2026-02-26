@@ -1,6 +1,6 @@
-// File : solidDisplacementAssemblerNodeTerms.cpp
-// Created : Fri Jan 31 2026 10:00:00 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : solidDisplacementAssemblerNodeTerms.cpp
+// Created    : Fri Jan 31 2026 10:00:00 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description:
 // Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

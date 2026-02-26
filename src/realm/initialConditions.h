@@ -1,6 +1,6 @@
-// File : initialConditions.h
-// Created : Wed Mar 06 2024 16:19:10 (+0100)
-// Author : Fabian Wermelinger
+// File       : initialConditions.h
+// Created    : Wed Mar 06 2024 16:19:10 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Initial conditions utilities
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

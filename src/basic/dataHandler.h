@@ -1,6 +1,6 @@
-// File : dataHandler.h
-// Created : Tue Apr 30 2024 12:55:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : dataHandler.h
+// Created    : Tue Apr 30 2024 12:55:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Templated input data storage with interpolation and time table
 // support
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and

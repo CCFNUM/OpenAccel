@@ -1,6 +1,6 @@
-// File : thermalTemperatureAssemblerElemTerms.cpp
-// Created : Thu Apr 14 2024 8:36:38 (+0100)
-// Author : Fabian Wermelinger
+// File       : thermalTemperatureAssemblerElemTerms.cpp
+// Created    : Thu Apr 14 2024 8:36:38 (+0100)
+// Author     : Fabian Wermelinger
 // Description:
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

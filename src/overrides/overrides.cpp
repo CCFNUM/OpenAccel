@@ -1,6 +1,6 @@
-// File : overrides.cpp
-// Created : Mon Feb 09 2026 08:42:10 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : overrides.cpp
+// Created    : Mon Feb 09 2026 08:42:10 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description:
 // Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

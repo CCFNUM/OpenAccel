@@ -1,6 +1,6 @@
-// File : segregatedCorrelationTransitionShearStressTransportEquations.cpp
-// Created : Sun Dec 29 2024
-// Author : Adam Fares
+// File       : segregatedCorrelationTransitionShearStressTransportEquations.cpp
+// Created    : Sun Dec 29 2024
+// Author     : Adam Fares
 // Description: Segregated equations for correlation-based transition SST
 // model (Menter 2015)
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.

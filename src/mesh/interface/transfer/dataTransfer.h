@@ -1,7 +1,8 @@
 // File       : dataTransfer.h
 // Created    : Fri Nov 21 2025 14:01:11 (+0100)
 // Author     : Mhamad Mahdi Alloush
-// Description:
+// Description: Interface data-transfer utilities for exchanging field values
+// between regions.
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 

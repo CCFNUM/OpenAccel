@@ -1,20 +1,11 @@
-// File : solidDisplacementEquation.cpp
-// Created : Thu Dec 04 2025 08:42:10 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : solidDisplacementEquation.cpp
+// Created    : Thu Dec 04 2025 08:42:10 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description:
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "solidDisplacementEquation.h"
-#include "git_revision.h"
-
-#ifdef HAS_INTERFACE
-#include "interface.h"
-#include "interfaceSideInfo.h"
-#endif /* HAS_INTERFACE */
-
-#include <chrono>
-#include <iomanip>
 
 namespace accel
 {

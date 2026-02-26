@@ -1,6 +1,6 @@
-// File : sutherlandsFormulaModel.h
-// Created : Thu Apr 03 2025 17:05:11 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : sutherlandsFormulaModel.h
+// Created    : Thu Apr 03 2025 17:05:11 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Sutherland's formula for temperature-dependent viscosity and
 // conductivity
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied

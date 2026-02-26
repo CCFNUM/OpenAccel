@@ -1,6 +1,6 @@
-// File : turbulentIntermittencyTransitionSSTAssembler.h
-// Created : Wed Jan 15 2025
-// Author : Adam Fares
+// File       : turbulentIntermittencyTransitionSSTAssembler.h
+// Created    : Wed Jan 15 2025
+// Author     : Adam Fares
 // Description: Assembler for the intermittency equation in the transition SST
 // model
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and

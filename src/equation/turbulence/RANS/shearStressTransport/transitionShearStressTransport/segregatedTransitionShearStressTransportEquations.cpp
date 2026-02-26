@@ -1,6 +1,6 @@
-// File : segregatedTransitionShearStressTransportEquations.cpp
-// Created : Mon Jan 14 2025
-// Author : Adam Fares
+// File       : segregatedTransitionShearStressTransportEquations.cpp
+// Created    : Mon Jan 14 2025
+// Author     : Adam Fares
 // Description:
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

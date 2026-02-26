@@ -1,6 +1,6 @@
-// File : types.h
-// Created : Wed Jan 03 2024 13:38:51 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : types.h
+// Created    : Wed Jan 03 2024 13:38:51 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Fundamental type aliases, enumerations, and constants for the
 // solver
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and

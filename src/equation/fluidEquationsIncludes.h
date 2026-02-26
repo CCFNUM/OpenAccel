@@ -1,6 +1,6 @@
-// File : fluidEquations.h
-// Created : Wed Feb 21 2024 12:34:15 (+0100)
-// Author : Fabian Wermelinger
+// File       : fluidEquations.h
+// Created    : Wed Feb 21 2024 12:34:15 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Convenience header that includes all fluid physical equations
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

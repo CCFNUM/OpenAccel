@@ -1,6 +1,6 @@
-// File : flowModel.cpp
-// Created : Mon Mar 25 2024 16:48:19 (+0100)
-// Author : Fabian Wermelinger
+// File       : flowModel.cpp
+// Created    : Mon Mar 25 2024 16:48:19 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Navier-Stokes base model implementation details
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
@@ -5674,8 +5674,8 @@ void flowModel::updateMassFlowRateInterior_(
                              p_scs_areav[ip * SPATIAL_DIM + j];
 
                     // body force stabilization: +ρ*D*(F_orig - F)·S
-                    tmDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
-                             p_scs_areav[ip * SPATIAL_DIM + j];
+                    // tmDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                    //          p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 
                 // store with relaxation: mDot[ip] at this point must be in
@@ -6942,8 +6942,9 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
                         axj;
 
                     // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    tmDot +=
-                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                    // tmDot +=
+                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) *
+                    //     axj;
                 }
 
                 // store with relaxation
@@ -7675,8 +7676,9 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
                         axj;
 
                     // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    tmDot +=
-                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                    // tmDot +=
+                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) *
+                    //     axj;
                 }
 
                 // store with relaxation
@@ -8429,8 +8431,9 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                         axj;
 
                     // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    tmDot +=
-                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                    // tmDot +=
+                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) *
+                    //     axj;
                 }
 
                 // store with relaxation

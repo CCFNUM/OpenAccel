@@ -1,6 +1,6 @@
-// File : transitionShearStressTransportModel.h
-// Created : Mon Jan 14 2025
-// Author : Adam Fares
+// File       : transitionShearStressTransportModel.h
+// Created    : Mon Jan 14 2025
+// Author     : Adam Fares
 // Description: Langtry-Menter transition SST model coefficients and
 // correlations
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied

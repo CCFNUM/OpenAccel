@@ -1,6 +1,6 @@
-// File : velocity.h
-// Created : Tue Apr 20 2024 12:55:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : velocity.h
+// Created    : Tue Apr 20 2024 12:55:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Velocity vector field with flow reversal detection and direction
 // fields
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and

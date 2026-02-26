@@ -1,6 +1,6 @@
-// File : turbulentIntermittencyCorrelationTransitionSSTEquation.h
-// Created : Sun Dec 29 2024
-// Author : Adam Fares
+// File       : turbulentIntermittencyCorrelationTransitionSSTEquation.h
+// Created    : Sun Dec 29 2024
+// Author     : Adam Fares
 // Description: Gamma equation for correlation-based transition SST (Menter
 // 2015)
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and

@@ -1,6 +1,6 @@
-// File : thermalTemperatureEquation.h
-// Created : Thu Feb 22 2024 08:42:10 (+0100)
-// Author : Fabian Wermelinger
+// File       : thermalTemperatureEquation.h
+// Created    : Thu Feb 22 2024 08:42:10 (+0100)
+// Author     : Fabian Wermelinger
 // Description: System to solve scalar temperature equation
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

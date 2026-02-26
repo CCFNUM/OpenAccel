@@ -1,6 +1,6 @@
-// File : navierStokesEquation.h
-// Created : Wed Mar 13 2024 10:02:56 (+0100)
-// Author : Fabian Wermelinger
+// File       : navierStokesEquation.h
+// Created    : Wed Mar 13 2024 10:02:56 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Coupled momentum equations
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

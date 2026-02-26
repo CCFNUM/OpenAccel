@@ -1,6 +1,6 @@
-// File : bulkPressureCorrectionAssembler.h
-// Created : Wed Feb 05 2025 01:09:51 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : bulkPressureCorrectionAssembler.h
+// Created    : Wed Feb 05 2025 01:09:51 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Assembler for the bulk pressure correction in free-surface flows
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

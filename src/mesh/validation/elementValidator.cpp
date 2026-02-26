@@ -1,6 +1,6 @@
-// File : elementValidator.cpp
-// Created : Mon Oct 7 2025
-// Author : Mhamad Mahdi Alloush
+// File       : elementValidator.cpp
+// Created    : Mon Oct 7 2025
+// Author     : Mhamad Mahdi Alloush
 // Description: Element quality validation and correction system implementation
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

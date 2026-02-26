@@ -1,6 +1,6 @@
-// File : assembler.h
-// Created : Thu Feb 22 2024 10:10:15 (+0100)
-// Author : Fabian Wermelinger
+// File       : assembler.h
+// Created    : Thu Feb 22 2024 10:10:15 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Abstract base class for equation assembly
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

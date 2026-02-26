@@ -1,6 +1,6 @@
-// File : zoneTransformation.h
-// Created : Sat Jan 11 2025 20:15:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : zoneTransformation.h
+// Created    : Sat Jan 11 2025 20:15:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Rigid body translation and rotation motion for mesh zones
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

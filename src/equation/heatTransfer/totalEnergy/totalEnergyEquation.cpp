@@ -1,6 +1,6 @@
-// File : totalEnergyEquation.cpp
-// Created : Thu Mar 27 2025 10:42:10 (+0100)
-// Author : Fabian Wermelinger
+// File       : totalEnergyEquation.cpp
+// Created    : Thu Mar 27 2025 10:42:10 (+0100)
+// Author     : Fabian Wermelinger
 // Description:
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

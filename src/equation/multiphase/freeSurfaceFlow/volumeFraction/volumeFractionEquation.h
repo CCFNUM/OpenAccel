@@ -1,6 +1,6 @@
-// File : volumeFractionEquation.h
-// Created : Sun Jan 26 2025 22:57:38 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : volumeFractionEquation.h
+// Created    : Sun Jan 26 2025 22:57:38 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Volume fraction transport equation for multiphase free-surface
 // flow
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and

@@ -1,6 +1,6 @@
-// File : sideField.cpp
-// Created : Tue Sep 02 2025 17:52:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : sideField.cpp
+// Created    : Tue Sep 02 2025 17:52:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description:
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

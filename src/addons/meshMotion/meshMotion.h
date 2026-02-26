@@ -1,6 +1,6 @@
-// File : meshMotion.h
-// Created : Fri Dec 13 2024 12:55:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : meshMotion.h
+// Created    : Fri Dec 13 2024 12:55:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Mesh motion manager combining deformation and transformation
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

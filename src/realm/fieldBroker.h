@@ -1,6 +1,6 @@
-// File : fieldBroker.h
-// Created : Tue Feb 20 2024 12:55:24 (+0100)
-// Author : Fabian Wermelinger
+// File       : fieldBroker.h
+// Created    : Tue Feb 20 2024 12:55:24 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Field broker is the interface between a realm and the fields
 // owned by the realm
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.

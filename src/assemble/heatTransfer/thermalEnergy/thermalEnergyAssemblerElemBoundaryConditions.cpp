@@ -1,6 +1,6 @@
-// File : thermalEnergyAssemblerElemBoundaryConditions.cpp
-// Created : Mon Apr 14 2025 10:36:38 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : thermalEnergyAssemblerElemBoundaryConditions.cpp
+// Created    : Mon Apr 14 2025 10:36:38 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description:
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

@@ -1,6 +1,6 @@
-// File : turbulentKineticEnergyTransitionSSTAssembler.h
-// Created : Wed Jan 15 2025
-// Author : Adam Fares
+// File       : turbulentKineticEnergyTransitionSSTAssembler.h
+// Created    : Wed Jan 15 2025
+// Author     : Adam Fares
 // Description: Assembler for the turbulent kinetic energy in transition SST
 // model
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and

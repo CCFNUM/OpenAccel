@@ -1,6 +1,6 @@
-// File : shearStressTransportModel.h
-// Created : Fri Mar 15 2024 15:06:38 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : shearStressTransportModel.h
+// Created    : Fri Mar 15 2024 15:06:38 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Menter SST k-omega turbulence model coefficients and blending
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

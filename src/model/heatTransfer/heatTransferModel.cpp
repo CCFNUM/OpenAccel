@@ -1,6 +1,6 @@
-// File : heatTransferModel.cpp
-// Created : Thu Feb 01 2024 16:41:11 (+0100)
-// Author : Fabian Wermelinger
+// File       : heatTransferModel.cpp
+// Created    : Thu Feb 01 2024 16:41:11 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Heat transfer base class implementation details
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

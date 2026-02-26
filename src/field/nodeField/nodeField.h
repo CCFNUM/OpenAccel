@@ -1,6 +1,6 @@
-// File : nodeField.h
-// Created : Fri Aug 25 2023 12:55:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : nodeField.h
+// Created    : Fri Aug 25 2023 12:55:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Templated node field with boundary/initial conditions and
 // gradient support
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied

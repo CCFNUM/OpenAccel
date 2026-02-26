@@ -1,6 +1,6 @@
-// File : equation.h
-// Created : Fri Jan 26 2024 09:07:47 (+0100)
-// Author : Fabian Wermelinger
+// File       : equation.h
+// Created    : Fri Jan 26 2024 09:07:47 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Abstract base class for a physics equation
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

@@ -1,6 +1,6 @@
-// File : turbulentIntermittencyCorrelationTransitionSSTEquation.cpp
-// Created : Sun Dec 29 2024
-// Author : Adam Fares
+// File       : turbulentIntermittencyCorrelationTransitionSSTEquation.cpp
+// Created    : Sun Dec 29 2024
+// Author     : Adam Fares
 // Description:
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

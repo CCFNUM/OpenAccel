@@ -1,6 +1,6 @@
-// File : thermalExpansivity.h
-// Created : Mon Apr 21 2025 09:18:24 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : thermalExpansivity.h
+// Created    : Mon Apr 21 2025 09:18:24 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Material property field for thermal expansivity
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

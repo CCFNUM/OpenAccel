@@ -1,6 +1,6 @@
-// File : poissonRatio.h
-// Created : Thu Dec 04 2025 08:42:10 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : poissonRatio.h
+// Created    : Thu Dec 04 2025 08:42:10 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: Node scalar property field for Poisson's ratio in solid
 // mechanics
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences

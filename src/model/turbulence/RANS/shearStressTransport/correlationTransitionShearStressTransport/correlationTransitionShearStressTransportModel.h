@@ -1,8 +1,8 @@
-// File : correlationTransitionShearStressTransportModel.h
-// Created : Sun Dec 29 2024
-// Author : Adam Fares
-// Description: Correlation-based transition SST model (Menter 2015)
-// Solves only gamma transport equation with local correlations
+// File       : correlationTransitionShearStressTransportModel.h
+// Created    : Sun Dec 29 2024
+// Author     : Adam Fares
+// Description: Correlation-based transition SST model (Menter 2015) Solves only
+// gamma transport equation with local correlations
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 

@@ -1,6 +1,6 @@
-// File : turbulentIntermittencyCorrelationTransitionSSTAssembler.h
-// Created : Sun Dec 29 2024
-// Author : Adam Fares
+// File       : turbulentIntermittencyCorrelationTransitionSSTAssembler.h
+// Created    : Sun Dec 29 2024
+// Author     : Adam Fares
 // Description: Assembler for gamma equation in correlation-based
 // transition SST model (Menter 2015)
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.

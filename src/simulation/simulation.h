@@ -1,6 +1,6 @@
-// File : simulation.h
-// Created : Tue Jun 11 2024 15:06:38 (+0100)
-// Author : Mhamad Mahdi Alloush
+// File       : simulation.h
+// Created    : Tue Jun 11 2024 15:06:38 (+0100)
+// Author     : Mhamad Mahdi Alloush
 // Description: This is the universe in which a full simulation can be made
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause

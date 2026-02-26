@@ -1,6 +1,8 @@
-// File :
-// turbulentIntermittencyCorrelationTransitionSSTAssemblerNodeTerms.cpp Created
-// : Sun Dec 29 2024 Author : Adam Fares Description: Node terms for gamma
+// File       :
+// turbulentIntermittencyCorrelationTransitionSSTAssemblerNodeTerms.cpp
+// Created    : Sun Dec 29 2024
+// Author     : Adam Fares
+// Description: Node terms for gamma
 // equation in correlation-based
 // transition SST model (Menter 2015)
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.

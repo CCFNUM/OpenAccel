@@ -1,6 +1,6 @@
-// File : fieldBroker.cpp
-// Created : Tue Feb 20 2024 12:55:24 (+0100)
-// Author : Fabian Wermelinger
+// File       : fieldBroker.cpp
+// Created    : Tue Feb 20 2024 12:55:24 (+0100)
+// Author     : Fabian Wermelinger
 // Description: Field broker implementation details
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
@@ -1190,12 +1190,12 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
             if (messager::master())
             {
                 // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
+		std::cout << "Setting boundary conditions:\n";
+		std::cout << "\tdomain name:   " << domain->name() << "\n";
+		std::cout << "\tdomain index:  " << domain->index() << "\n";
+		std::cout << "\tpatch index:   " << iBoundary << "\n";
+		std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
+		std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
                 // clang-format on
             }
 #endif /* NDEBUG */
@@ -1494,12 +1494,12 @@ void fieldBroker::setupTemperature(const std::shared_ptr<domain> domain)
             if (messager::master())
             {
                 // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
+		std::cout << "Setting boundary conditions:\n";
+		std::cout << "\tdomain name: " << domain->name() << "\n";
+		std::cout << "\tdomain index: " << domain->index() << "\n";
+		std::cout << "\tpatch index: " << iBoundary << "\n";
+		std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
+		std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
                 // clang-format on
             }
 #endif /* NDEBUG */
@@ -2043,12 +2043,12 @@ void fieldBroker::setupTurbulentKineticEnergy(
             if (messager::master())
             {
                 // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
+		std::cout << "Setting boundary conditions:\n";
+		std::cout << "\tdomain name: " << domain->name() << "\n";
+		std::cout << "\tdomain index: " << domain->index() << "\n";
+		std::cout << "\tpatch index: " << iBoundary << "\n";
+		std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
+		std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
                 // clang-format on
             }
 #endif /* NDEBUG */
@@ -2609,12 +2609,12 @@ void fieldBroker::setupTurbulentDissipationRate(
             if (messager::master())
             {
                 // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
+		std::cout << "Setting boundary conditions:\n";
+		std::cout << "\tdomain name: " << domain->name() << "\n";
+		std::cout << "\tdomain index: " << domain->index() << "\n";
+		std::cout << "\tpatch index: " << iBoundary << "\n";
+		std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
+		std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
                 // clang-format on
             }
 #endif /* NDEBUG */
@@ -3093,12 +3093,12 @@ void fieldBroker::setupDisplacement(const std::shared_ptr<domain> domain)
             if (messager::master())
             {
                 // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
+		std::cout << "Setting boundary conditions:\n";
+		std::cout << "\tdomain name: " << domain->name() << "\n";
+		std::cout << "\tdomain index: " << domain->index() << "\n";
+		std::cout << "\tpatch index: " << iBoundary << "\n";
+		std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
+		std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
                 // clang-format on
             }
 #endif /* NDEBUG */
