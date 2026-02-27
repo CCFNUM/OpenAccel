@@ -5,14 +5,14 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 0.3
+            total_time: 0.5
             time_steps:
                 option: adaptive
                 initial_timestep: 0.001
                 timestep_update_frequency: 1
                 timestep_adaptation:
                     option: max_courant
-                    courant_number: 0.5
+                    courant_number: 1.0
                     min_timestep: 1.0e-6
                     max_timestep: 1
                     timestep_decrease_factor: 0.8
@@ -46,6 +46,11 @@ simulation:
                         flux_corrected_transport: true
                         interface_compression_level: 2
                         n_alpha_corrections: 2
+            fluid_pair_models:
+              - pair: [water, air]
+                surface_tension:
+                    option: continuum_surface_force
+                    surface_tension_coefficient: 0.07
             boundaries:
               - name: walls
                 type: wall
@@ -173,8 +178,8 @@ simulation:
         output_control:
             file_path: results.e
             output_frequency:
-                option: timestep_interval
-                timestep_interval: 10
+                option: time_interval
+                time_interval: 0.01
             write_timestep_info: true
             output_fields: [velocity, pressure, volume_fraction.water, displacement_mesh, velocity_mesh, density, dynamic_viscosity]
             corrected_boundary_values: true
