@@ -545,7 +545,10 @@ private:
             // nothing to do
         }
 
-        ~toMesh() {};
+        ~toMesh()
+        {
+            // empty
+        }
 
         struct BoundingBoxCompare
         {
