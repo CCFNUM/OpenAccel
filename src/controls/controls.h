@@ -237,7 +237,8 @@ struct solverDictionary
             bool fractionalStepMethod_ = false;
             bool coriolisProductionTurbulence_ = false;
             bool bodyForceRedistribution_ = true;
-            bool geometricWallDistanceCalculation_ = false;
+            wallDistanceMethod wallDistanceMethod_ =
+                wallDistanceMethod::poisson;
             bool strongDirichletWallScale_ = false;
             scalar volumeFractionBlendingFactorMax_ = 2.0;
             bool bandwidthReduction_ = true;

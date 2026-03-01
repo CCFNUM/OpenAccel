@@ -968,12 +968,26 @@ void controls::read(YAML::Node inputNode)
                         .template as<bool>();
             }
 
-            if (expertParameters["geometric_wall_distance_calculation"])
+            if (expertParameters["wall_distance_method"])
             {
-                solver_.solverControl_.expertParameters_
-                    .geometricWallDistanceCalculation_ =
-                    expertParameters["geometric_wall_distance_calculation"]
-                        .template as<bool>();
+                solver_.solverControl_.expertParameters_.wallDistanceMethod_ =
+                    convertWallDistanceMethodFromString(
+                        expertParameters["wall_distance_method"]
+                            .template as<std::string>());
+            }
+            else if (expertParameters["geometric_wall_distance_calculation"])
+            {
+                // backward compatibility
+                messager::print(
+                    "WARNING: 'geometric_wall_distance_calculation' is "
+                    "deprecated. Use 'wall_distance_method: mesh_wave' "
+                    "instead.");
+                if (expertParameters["geometric_wall_distance_calculation"]
+                        .template as<bool>())
+                {
+                    solver_.solverControl_.expertParameters_
+                        .wallDistanceMethod_ = wallDistanceMethod::meshWave;
+                }
             }
 
             if (expertParameters["strong_dirichlet_wall_scale"])

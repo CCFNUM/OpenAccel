@@ -19,6 +19,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/meshMotion/transformation/transformation.cpp
     ${DIR}/rigidBody/rigidBody.cpp
     ${DIR}/wallDistance/wallDistance.cpp
+    ${DIR}/wallDistance/meshWave/meshWave.cpp
     ${DIR}/wallDistance/wallScale/wallScale.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionModel.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionEquation.cpp
@@ -37,6 +38,7 @@ target_include_directories(main_obj PUBLIC
     ${DIR}/meshMotion/transformation
     ${DIR}/rigidBody
     ${DIR}/wallDistance
+    ${DIR}/wallDistance/meshWave
     ${DIR}/wallDistance/wallScale
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion
 )

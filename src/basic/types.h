@@ -581,6 +581,16 @@ enum class wallFunctionType
 
 wallFunctionType convertWallFunctionTypeFromString(std::string s);
 
+// Wall-distance method
+enum class wallDistanceMethod
+{
+    poisson,
+    meshWave,
+    signedDistanceFunction
+};
+
+wallDistanceMethod convertWallDistanceMethodFromString(std::string s);
+
 // Zone type
 enum class domainType
 {

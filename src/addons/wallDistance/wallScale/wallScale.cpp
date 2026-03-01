@@ -49,6 +49,68 @@ void wallScale::initialize()
     if (wallScaleDiffusionEquation_)
     {
         wallScaleDiffusionEquation_->initialize();
+
+        // initialize minimum distance field
+        for (auto domain :
+             wallDistancePtr_->realmRef().simulationRef().domainVector())
+        {
+            if (domain->isWallDistanceRequired())
+            {
+                auto& mesh = wallDistancePtr_->meshRef();
+                stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+                stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+                // required fields
+                STKScalarField* yScaleSTKFieldPtr =
+                    wallDistancePtr_->yScaleRef().stkFieldPtr();
+                STKScalarField* gradYScaleSTKFieldPtr =
+                    wallDistancePtr_->yScaleRef().gradRef().stkFieldPtr();
+
+                STKScalarField* minDistanceToWallSTKFieldPtr =
+                    wallDistancePtr_->yMinRef().stkFieldPtr();
+
+                // define some common selectors
+                stk::mesh::Selector selAllNodes =
+                    metaData.universal_part() &
+                    stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+
+                stk::mesh::BucketVector const& node_buckets =
+                    bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+                for (stk::mesh::BucketVector::const_iterator ib =
+                         node_buckets.begin();
+                     ib != node_buckets.end();
+                     ++ib)
+                {
+                    stk::mesh::Bucket& b = **ib;
+                    const stk::mesh::Bucket::size_type length = b.size();
+
+                    scalar* yScaleb =
+                        stk::mesh::field_data(*yScaleSTKFieldPtr, b);
+                    scalar* yMinDistb =
+                        stk::mesh::field_data(*minDistanceToWallSTKFieldPtr, b);
+                    scalar* gradYScaleb =
+                        stk::mesh::field_data(*gradYScaleSTKFieldPtr, b);
+
+                    for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
+                    {
+                        const scalar yScale = yScaleb[k];
+                        const scalar* gradYScale =
+                            &gradYScaleb[SPATIAL_DIM * k];
+
+                        scalar dpdxsq = 0;
+                        for (label i = 0; i < SPATIAL_DIM; i++)
+                        {
+                            dpdxsq += gradYScale[i] * gradYScale[i];
+                        }
+
+                        yMinDistb[k] =
+                            fmax(-std::sqrt(dpdxsq) +
+                                     std::sqrt(dpdxsq + 2.0 * yScale),
+                                 0.0);
+                    }
+                }
+            }
+        }
     }
 }
 

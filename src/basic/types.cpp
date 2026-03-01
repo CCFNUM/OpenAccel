@@ -720,6 +720,28 @@ wallFunctionType convertWallFunctionTypeFromString(std::string s)
     return wallFunctionType::standard; // useless
 }
 
+// Wall-distance method
+
+std::unordered_map<std::string, wallDistanceMethod> wallDistanceMethodMap{
+    {"poisson", wallDistanceMethod::poisson},
+    {"mesh_wave", wallDistanceMethod::meshWave},
+    {"signed_distance_function", wallDistanceMethod::signedDistanceFunction}};
+
+wallDistanceMethod convertWallDistanceMethodFromString(std::string s)
+{
+    auto it = wallDistanceMethodMap.find(s);
+    if (it != wallDistanceMethodMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid wall-distance method: " + s);
+    }
+
+    return wallDistanceMethod::poisson; // useless
+}
+
 // Domain type
 
 std::unordered_map<std::string, domainType> domainTypeMap{

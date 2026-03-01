@@ -15,75 +15,117 @@ wallDistance::wallDistance(realm* realm) : fieldBroker(realm)
 {
     yMinRef();
 
-    // create deformation
-    if (this->controlsRef()
+    const auto method =
+        this->controlsRef()
             .solverRef()
-            .solverControl_.expertParameters_.geometricWallDistanceCalculation_)
+            .solverControl_.expertParameters_.wallDistanceMethod_;
+
+    switch (method)
     {
-        errorMsg("Geometric wall distance calculator not implemented yet");
-    }
-    else
-    {
-        wallScalePtr_ = std::make_unique<wallScale>(this);
+        case wallDistanceMethod::poisson:
+            wallScalePtr_ = std::make_unique<wallScale>(this);
+            break;
+        case wallDistanceMethod::meshWave:
+            meshWavePtr_ = std::make_unique<meshWave>(this);
+            break;
+        case wallDistanceMethod::signedDistanceFunction:
+            errorMsg("Signed distance function wall distance method not "
+                     "implemented yet");
+            break;
     }
 }
 
 void wallDistance::setup()
 {
-    if (this->controlsRef()
+    const auto method =
+        this->controlsRef()
             .solverRef()
-            .solverControl_.expertParameters_.geometricWallDistanceCalculation_)
+            .solverControl_.expertParameters_.wallDistanceMethod_;
+
+    switch (method)
     {
-        errorMsg("Geometric wall distance calculator not implemented yet");
-    }
-    else
-    {
-        assert(wallScalePtr_);
-        wallScalePtr_->setup();
+        case wallDistanceMethod::poisson:
+            assert(wallScalePtr_);
+            wallScalePtr_->setup();
+            break;
+        case wallDistanceMethod::meshWave:
+            assert(meshWavePtr_);
+            meshWavePtr_->setup();
+            break;
+        case wallDistanceMethod::signedDistanceFunction:
+            errorMsg("Signed distance function wall distance method not "
+                     "implemented yet");
+            break;
     }
 }
 
 void wallDistance::reset()
 {
-    if (this->controlsRef()
+    const auto method =
+        this->controlsRef()
             .solverRef()
-            .solverControl_.expertParameters_.geometricWallDistanceCalculation_)
+            .solverControl_.expertParameters_.wallDistanceMethod_;
+
+    switch (method)
     {
-        errorMsg("Geometric wall distance calculator not implemented yet");
-    }
-    else
-    {
-        assert(wallScalePtr_);
+        case wallDistanceMethod::poisson:
+            assert(wallScalePtr_);
+            break;
+        case wallDistanceMethod::meshWave:
+            assert(meshWavePtr_);
+            break;
+        case wallDistanceMethod::signedDistanceFunction:
+            errorMsg("Signed distance function wall distance method not "
+                     "implemented yet");
+            break;
     }
 }
 
 void wallDistance::initialize()
 {
-    if (this->controlsRef()
+    const auto method =
+        this->controlsRef()
             .solverRef()
-            .solverControl_.expertParameters_.geometricWallDistanceCalculation_)
+            .solverControl_.expertParameters_.wallDistanceMethod_;
+
+    switch (method)
     {
-        errorMsg("Geometric wall distance calculator not implemented yet");
-    }
-    else
-    {
-        assert(wallScalePtr_);
-        wallScalePtr_->initialize();
+        case wallDistanceMethod::poisson:
+            assert(wallScalePtr_);
+            wallScalePtr_->initialize();
+            break;
+        case wallDistanceMethod::meshWave:
+            assert(meshWavePtr_);
+            meshWavePtr_->initialize();
+            break;
+        case wallDistanceMethod::signedDistanceFunction:
+            errorMsg("Signed distance function wall distance method not "
+                     "implemented yet");
+            break;
     }
 }
 
 void wallDistance::update()
 {
-    if (this->controlsRef()
+    const auto method =
+        this->controlsRef()
             .solverRef()
-            .solverControl_.expertParameters_.geometricWallDistanceCalculation_)
+            .solverControl_.expertParameters_.wallDistanceMethod_;
+
+    switch (method)
     {
-        errorMsg("Geometric wall distance calculator not implemented yet");
-    }
-    else
-    {
-        assert(wallScalePtr_);
-        wallScalePtr_->update();
+        case wallDistanceMethod::poisson:
+            assert(wallScalePtr_);
+            wallScalePtr_->update();
+            break;
+        case wallDistanceMethod::meshWave:
+            assert(meshWavePtr_);
+            meshWavePtr_->update();
+            break;
+        case wallDistanceMethod::signedDistanceFunction:
+            errorMsg("Signed distance function wall distance method not "
+                     "implemented yet");
+            break;
     }
 }
 
