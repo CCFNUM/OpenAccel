@@ -597,6 +597,8 @@ void shearStressTransportModel::updateTurbulentProduction(
 void shearStressTransportModel::updateTurbulentDynamicViscosity(
     const std::shared_ptr<domain> domain)
 {
+    scalar urf = this->mutRef().urf();
+
     // get common data
     stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
     stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
@@ -611,6 +613,10 @@ void shearStressTransportModel::updateTurbulentDynamicViscosity(
         this->URef().gradRef().stkFieldRef();
     const STKScalarField* minDistanceToWallSTKFieldPtr =
         yMinRef().stkFieldPtr();
+
+    // constants
+    scalar a1 = this->aOne();
+    scalar betaStar = this->betaStar();
 
     // define some common selectors
     stk::mesh::Selector selAllNodes =
@@ -654,18 +660,17 @@ void shearStressTransportModel::updateTurbulentDynamicViscosity(
 
             // some temps
             const scalar minDSq = minDb[k] * minDb[k];
-            const scalar trbDiss = std::sqrt(tkeb[k]) / betaStar() /
+            const scalar trbDiss = std::sqrt(tkeb[k]) / betaStar /
                                    (tefb[k] + SMALL) / (minDb[k] + SMALL);
             const scalar lamDiss =
                 500.0 * mub[k] / rhob[k] / (tefb[k] + SMALL) / (minDSq + SMALL);
             const scalar fArgTwo = std::max(2.0 * trbDiss, lamDiss);
             const scalar fTwo = std::tanh(fArgTwo * fArgTwo);
 
-            scalar mut_val =
-                aOne() * rhob[k] * tkeb[k] /
-                (std::max(aOne() * tefb[k], sijMag * fTwo) + SMALL);
+            scalar mut_val = a1 * rhob[k] * tkeb[k] /
+                             (std::max(a1 * tefb[k], sijMag * fTwo) + SMALL);
 
-            mutb[k] = 0.75 * mut_val + 0.25 * mutb[k];
+            mutb[k] = urf * mut_val + (1.0 - urf) * mutb[k];
         }
     }
 }
