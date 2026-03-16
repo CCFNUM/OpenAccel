@@ -107,12 +107,12 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
             if (messager::master())
             {
                 // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
+                std::cout << "Setting boundary conditions:\n";
+                std::cout << "\tdomain name: " << domain->name() << "\n";
+                std::cout << "\tdomain index: " << domain->index() << "\n";
+                std::cout << "\tpatch index: " << iBoundary << "\n";
+                std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
+                std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
                 // clang-format on
             }
 #endif /* NDEBUG */
