@@ -15,11 +15,11 @@ simulation:
                 reference_pressure: 101325
             fluid_models:
                 turbulence:     
-                    option: shear-stress-transport
+                    option: shear_stress_transport
             boundaries:
               - name: wall
                 type: wall
-                location: [wall]
+                location: [lower_wall,upper_wall]
               - name: inlet
                 type: inlet
                 location: [inlet]
@@ -42,7 +42,7 @@ simulation:
                         relative_pressure: 0
               - name: front_and_back
                 type: symmetry
-                location: [front,back]
+                location: [front_and_back]
             initialization:
                 velocity:
                     option: value
@@ -59,32 +59,50 @@ simulation:
     solver:
         solver_control:
             basic_settings:
-                advection_scheme: upwind
+                advection_scheme: high_resolution
                 turbulence_numerics: upwind
                 convergence_controls:
                     min_iterations: 1
                     max_iterations: 2500
                     physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.7
+                        velocity_relaxation_factor: 0.5
                         pressure_relaxation_factor: 0.3
-                        turbulence_relaxation_factor: 0.9
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-6
+                    residual_target: 1e-8
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear           
             advanced_options:  
                 linear_solver_settings:
                     default:
-                        family: Trilinos
+                        family: PETSc
                         min_iterations: 3
                         max_iterations: 20
-                        rtol: 1.0e-2
+                        rtol: 1.0e-1
                         atol: 1.0e-12
                         options:
-                            belos_solver: gmres
-                            preconditioner: ilu 
+                            ksp_type: fgmres
+                            pc_type: bjacobi                
+                    pressure_correction:
+                        family: HYPRE
+                        min_iterations: 3
+                        max_iterations: 20
+                        rtol: 1.0e-3
+                        atol: 1.0e-12
+                        options:
+                            solver:
+                                type: GMRES
+                            precond:
+                                type: BoomerAMG
+                                coarsen_type: 10
+                                interp_type: 6
+                                relax_type: 18
+                                strong_threshold: 0.25
+                                num_sweeps: 1
+                                max_levels: 20
+                                aggressive_levels: 1
+                                trunc_factor: 0.3
             expert_parameters:  
                 wall_distance_method: mesh_wave  
         output_control:
