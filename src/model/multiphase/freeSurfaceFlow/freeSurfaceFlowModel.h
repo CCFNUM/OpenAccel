@@ -224,6 +224,39 @@ protected:
                                           const boundary* boundary,
                                           label iPhase) override;
 
+    // Field-parameter overrides: free-surface uses pure harmonic for Gp and F,
+    // and vector harmonic for FOrig
+    void updateMassFlowRateInterior_(
+        const std::shared_ptr<domain> domain,
+        elementField<scalar, 1>& mDotField,
+        const nodeField<1, SPATIAL_DIM>& rhoField) override;
+
+#ifdef HAS_INTERFACE
+    void updateMassFlowRateInterfaceSideField_(
+        const std::shared_ptr<domain> domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        sideField<scalar, 1>& mDotSideField,
+        const nodeField<1, SPATIAL_DIM>& rhoField) override;
+#endif /* HAS_INTERFACE */
+
+    void updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary,
+        sideField<scalar, 1>& mDotSideField,
+        const nodeField<1, SPATIAL_DIM>& rhoField) override;
+
+    void updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary,
+        sideField<scalar, 1>& mDotSideField,
+        const nodeField<1, SPATIAL_DIM>& rhoField) override;
+
+    void updateMassFlowRateBoundaryFieldOpeningPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary,
+        sideField<scalar, 1>& mDotSideField,
+        const nodeField<1, SPATIAL_DIM>& rhoField) override;
+
     // Protected methods (iPhase is global to the simulation)
 
     void computeSmoothRHS_(const std::shared_ptr<domain> domain, label iPhase);

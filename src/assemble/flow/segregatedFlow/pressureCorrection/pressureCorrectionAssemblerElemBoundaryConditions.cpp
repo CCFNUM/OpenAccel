@@ -1962,6 +1962,12 @@ void pressureCorrectionAssembler::
     std::vector<scalar> ws_bcMultiplier;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_scv_weight;
+    std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
     std::vector<scalar> ws_velocity_face_shape_function;
@@ -2025,6 +2031,7 @@ void pressureCorrectionAssembler::
 
     // shifted ip's for gradients?
     const bool isPGradientShifted = model_->pRef().isGradientShifted();
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     stk::mesh::BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -2042,14 +2049,18 @@ void pressureCorrectionAssembler::
         // volume master element
         MasterElement* meSCS =
             MasterElementRepo::get_surface_master_element(theElemTopo);
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
-        const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
+        const label* faceIpNodeMap = meFC->ipNodeMap();
 
         // resize some things; matrix related
         const label lhsSize = nodesPerElement * nodesPerElement;
@@ -2072,6 +2083,11 @@ void pressureCorrectionAssembler::
         ws_bcMultiplier.resize(nodesPerElement);
         ws_F.resize(nodesPerSide * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
+        ws_scv_weight.resize(nodesPerElement);
         ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -2091,6 +2107,9 @@ void pressureCorrectionAssembler::
         scalar* p_rho = &ws_rho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_velocity_face_shape_function =
             &ws_velocity_face_shape_function[0];
         scalar* p_coordinate_face_shape_function =
@@ -2181,6 +2200,42 @@ void pressureCorrectionAssembler::
                 {
                     p_coordinates[offSet + j] = coords[j];
                 }
+                const scalar* Gjp_elem =
+                    stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_elem_data =
+                    stk::mesh::field_data(FSTKFieldRef, node);
+                const scalar* FOrig_elem_data =
+                    stk::mesh::field_data(FOrigSTKFieldRef, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_Gpdx_elem[offSet + j] = Gjp_elem[j];
+                    p_F_elem[offSet + j] = F_elem_data[j];
+                    p_FOrig_elem[offSet + j] = FOrig_elem_data[j];
+                }
+            }
+
+            // sector-volume-weighted element average of FOrig
+            {
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
+                scalar V_el = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                    V_el += ws_scv_volume[ip];
+                const scalar invV_el = 1.0 / V_el;
+                for (label i = 0; i < nodesPerElement; ++i)
+                    ws_scv_weight[i] = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                    ws_scv_weight[scvIpNodeMap[ip]] +=
+                        ws_scv_volume[ip] * invV_el;
+            }
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+                B_el[d] = 0.0;
+            for (label ic = 0; ic < nodesPerElement; ++ic)
+            {
+                const scalar w = ws_scv_weight[ic];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                    B_el[d] += w * p_FOrig_elem[ic * SPATIAL_DIM + d];
             }
 
             //======================================
@@ -2324,16 +2379,39 @@ void pressureCorrectionAssembler::
                             // use coordinates shape functions
                             p_coordBip[j] +=
                                 r_coord * p_coordinates[inn * SPATIAL_DIM + j];
+                        }
+                    }
 
-                            // face-centre average for original body force
-                            p_FOrigBip[j] += r_vel * p_FOrig[icNdim + j];
+                    // 2-node arithmetic/harmonic blend for Gpdx, F, FOrig
+                    {
+                        const label localFaceNode = faceIpNodeMap[ip];
+                        const label opposingNode =
+                            meSCS->opposingNodes(faceOrdinal, ip);
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar gFace =
+                                p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                            const scalar gOpp =
+                                p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                            const scalar gArith = 0.5 * (gFace + gOpp);
+                            const scalar gHarm =
+                                (std::abs(gFace) * gOpp +
+                                 gFace * std::abs(gOpp)) /
+                                (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                            p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
 
-                            // arithmetic interpolation
-                            p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
+                            const scalar fFace =
+                                p_F[localFaceNode * SPATIAL_DIM + j];
+                            const scalar fOpp =
+                                p_F_elem[opposingNode * SPATIAL_DIM + j];
+                            const scalar fArith = 0.5 * (fFace + fOpp);
+                            const scalar fHarm =
+                                (std::abs(fFace) * fOpp +
+                                 fFace * std::abs(fOpp)) /
+                                (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                            p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
 
-                            // interpolate redistributed body force using shape
-                            // functions
-                            p_FBip[j] += f * p_F[icNdim + j];
+                            p_FOrigBip[j] = B_el[j];
                         }
                     }
 
@@ -2394,9 +2472,9 @@ void pressureCorrectionAssembler::
                                      (p_dpdxBip[j] - p_GpdxBip[j])) *
                                 axj;
 
-                        // // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                        // mDot += rhoBip * p_duRhsBip[j] *
-                        //         (p_FOrigBip[j] - p_FBip[j]) * axj;
+                        // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                        mDot += rhoBip * p_duRhsBip[j] *
+                                (p_FOrigBip[j] - p_FBip[j]) * axj;
                     }
 
                     // transform mDot to relative frame
@@ -3093,6 +3171,12 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     std::vector<scalar> ws_bcMultiplier;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_scv_weight;
+    std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
     std::vector<scalar> ws_velocity_face_shape_function;
@@ -3154,6 +3238,7 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
 
     // shifted ip's for gradients?
     const bool isPGradientShifted = model_->pRef().isGradientShifted();
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     stk::mesh::BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -3171,14 +3256,18 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         // volume master element
         MasterElement* meSCS =
             MasterElementRepo::get_surface_master_element(theElemTopo);
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
-        const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
+        const label* faceIpNodeMap = meFC->ipNodeMap();
 
         // resize some things; matrix related
         const label lhsSize = nodesPerElement * nodesPerElement;
@@ -3201,6 +3290,11 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         ws_bcMultiplier.resize(nodesPerElement);
         ws_F.resize(nodesPerSide * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
+        ws_scv_weight.resize(nodesPerElement);
         ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -3220,6 +3314,9 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         scalar* p_rho = &ws_rho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_velocity_face_shape_function =
             &ws_velocity_face_shape_function[0];
         scalar* p_coordinate_face_shape_function =
@@ -3308,6 +3405,42 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                 {
                     p_coordinates[offSet + j] = coords[j];
                 }
+                const scalar* Gjp_elem =
+                    stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_elem_data =
+                    stk::mesh::field_data(FSTKFieldRef, node);
+                const scalar* FOrig_elem_data =
+                    stk::mesh::field_data(FOrigSTKFieldRef, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_Gpdx_elem[offSet + j] = Gjp_elem[j];
+                    p_F_elem[offSet + j] = F_elem_data[j];
+                    p_FOrig_elem[offSet + j] = FOrig_elem_data[j];
+                }
+            }
+
+            // sector-volume-weighted element average of FOrig
+            {
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
+                scalar V_el = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                    V_el += ws_scv_volume[ip];
+                const scalar invV_el = 1.0 / V_el;
+                for (label i = 0; i < nodesPerElement; ++i)
+                    ws_scv_weight[i] = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                    ws_scv_weight[scvIpNodeMap[ip]] +=
+                        ws_scv_volume[ip] * invV_el;
+            }
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+                B_el[d] = 0.0;
+            for (label ic = 0; ic < nodesPerElement; ++ic)
+            {
+                const scalar w = ws_scv_weight[ic];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                    B_el[d] += w * p_FOrig_elem[ic * SPATIAL_DIM + d];
             }
 
             //======================================
@@ -3444,16 +3577,37 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                         // use coordinates
                         p_coordBip[j] +=
                             r_coord * p_coordinates[inn * SPATIAL_DIM + j];
+                    }
+                }
 
-                        // face-centre average for original body force
-                        p_FOrigBip[j] += r_vel * p_FOrig[icNdim + j];
+                // 2-node arithmetic/harmonic blend for Gpdx, F, FOrig
+                {
+                    const label localFaceNode = faceIpNodeMap[ip];
+                    const label opposingNode =
+                        meSCS->opposingNodes(faceOrdinal, ip);
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar gFace =
+                            p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                        const scalar gOpp =
+                            p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                        const scalar gArith = 0.5 * (gFace + gOpp);
+                        const scalar gHarm =
+                            (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
+                            (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                        p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
 
-                        // arithmetic interpolation
-                        p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
+                        const scalar fFace =
+                            p_F[localFaceNode * SPATIAL_DIM + j];
+                        const scalar fOpp =
+                            p_F_elem[opposingNode * SPATIAL_DIM + j];
+                        const scalar fArith = 0.5 * (fFace + fOpp);
+                        const scalar fHarm =
+                            (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
+                            (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                        p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
 
-                        // interpolate redistributed body force using shape
-                        // functions
-                        p_FBip[j] += f * p_F[icNdim + j];
+                        p_FOrigBip[j] = B_el[j];
                     }
                 }
 
@@ -3512,9 +3666,9 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                                  (p_dpdxBip[j] - p_GpdxBip[j])) *
                             axj;
 
-                    // // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    // mDot += rhoBip * p_duRhsBip[j] *
-                    //         (p_FOrigBip[j] - p_FBip[j]) * axj;
+                    // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                    mDot += rhoBip * p_duRhsBip[j] *
+                            (p_FOrigBip[j] - p_FBip[j]) * axj;
                 }
 
                 // transform mDot to relative frame
@@ -3633,6 +3787,12 @@ void pressureCorrectionAssembler::
     std::vector<scalar> ws_bcMultiplier;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_scv_weight;
+    std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
     std::vector<scalar> ws_velocity_face_shape_function;
@@ -3696,6 +3856,7 @@ void pressureCorrectionAssembler::
 
     // shifted ip's for gradients?
     const bool isPGradientShifted = model_->pRef().isGradientShifted();
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     stk::mesh::BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -3713,14 +3874,18 @@ void pressureCorrectionAssembler::
         // volume master element
         MasterElement* meSCS =
             MasterElementRepo::get_surface_master_element(theElemTopo);
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
-        const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
+        const label* faceIpNodeMap = meFC->ipNodeMap();
 
         // resize some things; matrix related
         const label lhsSize = nodesPerElement * nodesPerElement;
@@ -3743,6 +3908,11 @@ void pressureCorrectionAssembler::
         ws_bcMultiplier.resize(nodesPerElement);
         ws_F.resize(nodesPerSide * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
+        ws_scv_weight.resize(nodesPerElement);
         ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -3762,6 +3932,9 @@ void pressureCorrectionAssembler::
         scalar* p_rho = &ws_rho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_velocity_face_shape_function =
             &ws_velocity_face_shape_function[0];
         scalar* p_coordinate_face_shape_function =
@@ -3852,6 +4025,42 @@ void pressureCorrectionAssembler::
                 {
                     p_coordinates[offSet + j] = coords[j];
                 }
+                const scalar* Gjp_elem =
+                    stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_elem_data =
+                    stk::mesh::field_data(FSTKFieldRef, node);
+                const scalar* FOrig_elem_data =
+                    stk::mesh::field_data(FOrigSTKFieldRef, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_Gpdx_elem[offSet + j] = Gjp_elem[j];
+                    p_F_elem[offSet + j] = F_elem_data[j];
+                    p_FOrig_elem[offSet + j] = FOrig_elem_data[j];
+                }
+            }
+
+            // sector-volume-weighted element average of FOrig
+            {
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
+                scalar V_el = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                    V_el += ws_scv_volume[ip];
+                const scalar invV_el = 1.0 / V_el;
+                for (label i = 0; i < nodesPerElement; ++i)
+                    ws_scv_weight[i] = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                    ws_scv_weight[scvIpNodeMap[ip]] +=
+                        ws_scv_volume[ip] * invV_el;
+            }
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+                B_el[d] = 0.0;
+            for (label ic = 0; ic < nodesPerElement; ++ic)
+            {
+                const scalar w = ws_scv_weight[ic];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                    B_el[d] += w * p_FOrig_elem[ic * SPATIAL_DIM + d];
             }
 
             //======================================
@@ -3991,16 +4200,39 @@ void pressureCorrectionAssembler::
                             // use coordinates shape functions
                             p_coordBip[j] +=
                                 r_coord * p_coordinates[inn * SPATIAL_DIM + j];
+                        }
+                    }
 
-                            // face-centre average for original body force
-                            p_FOrigBip[j] += r_vel * p_FOrig[icNdim + j];
+                    // 2-node arithmetic/harmonic blend for Gpdx, F, FOrig
+                    {
+                        const label localFaceNode = faceIpNodeMap[ip];
+                        const label opposingNode =
+                            meSCS->opposingNodes(faceOrdinal, ip);
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar gFace =
+                                p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                            const scalar gOpp =
+                                p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                            const scalar gArith = 0.5 * (gFace + gOpp);
+                            const scalar gHarm =
+                                (std::abs(gFace) * gOpp +
+                                 gFace * std::abs(gOpp)) /
+                                (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                            p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
 
-                            // arithmetic interpolation
-                            p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
+                            const scalar fFace =
+                                p_F[localFaceNode * SPATIAL_DIM + j];
+                            const scalar fOpp =
+                                p_F_elem[opposingNode * SPATIAL_DIM + j];
+                            const scalar fArith = 0.5 * (fFace + fOpp);
+                            const scalar fHarm =
+                                (std::abs(fFace) * fOpp +
+                                 fFace * std::abs(fOpp)) /
+                                (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                            p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
 
-                            // interpolate redistributed body force using shape
-                            // functions
-                            p_FBip[j] += f * p_F[icNdim + j];
+                            p_FOrigBip[j] = B_el[j];
                         }
                     }
 
@@ -4061,9 +4293,9 @@ void pressureCorrectionAssembler::
                                      (p_dpdxBip[j] - p_GpdxBip[j])) *
                                 axj;
 
-                        // // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                        // mDot += rhoBip * p_duRhsBip[j] *
-                        //         (p_FOrigBip[j] - p_FBip[j]) * axj;
+                        // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                        mDot += rhoBip * p_duRhsBip[j] *
+                                (p_FOrigBip[j] - p_FBip[j]) * axj;
                     }
 
                     // transform mDot to relative frame

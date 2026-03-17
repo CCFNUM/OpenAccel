@@ -21,8 +21,8 @@ void wallScaleDiffusionAssembler::assembleElemTermsInterior_(
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    // TODO: Account for BLOCKSIZE in
-    // space for LHS/RHS; nodesPerElem*nodesPerElem* and nodesPerElem
+    // TODO: Account for BLOCKSIZE in space for LHS/RHS;
+    // nodesPerElem*nodesPerElem* and nodesPerElem
     std::vector<scalar> lhs;
     std::vector<scalar> rhs;
     std::vector<label> scratchIds;

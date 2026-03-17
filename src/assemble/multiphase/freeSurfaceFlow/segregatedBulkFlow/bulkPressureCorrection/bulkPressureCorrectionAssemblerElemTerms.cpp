@@ -87,6 +87,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> duRhsIp(SPATIAL_DIM);
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
+    std::vector<scalar> B_el(SPATIAL_DIM);
 
     // pointers to everyone...
     scalar* p_coordIp = &coordIp[0];
@@ -375,6 +376,60 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 }
             }
 
+            // projection-based harmonic mean for FOrig
+            {
+                // Step 1: arithmetic mean direction
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                    B_el[d] = 0.0;
+                for (label ni = 0; ni < nodesPerElement; ++ni)
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        B_el[d] += p_FOrig[ni * SPATIAL_DIM + d];
+                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                    B_el[d] *= invN;
+
+                // Step 2: unit direction
+                scalar mag = 0.0;
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                    mag += B_el[d] * B_el[d];
+                mag = std::sqrt(mag);
+
+                if (mag < SMALL)
+                {
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        B_el[d] = 0.0;
+                }
+                else
+                {
+                    scalar uhat[SPATIAL_DIM];
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        uhat[d] = B_el[d] / mag;
+
+                    // Step 3: recursive harmonic of scalar projections
+                    scalar h = 0.0;
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        h += uhat[d] * p_FOrig[d];
+                    h = std::max(h, 0.0);
+
+                    for (label ni = 1; ni < nodesPerElement; ++ni)
+                    {
+                        scalar dk = 0.0;
+                        for (label d = 0; d < SPATIAL_DIM; ++d)
+                            dk += uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
+                        dk = std::max(dk, 0.0);
+                        if (h > 0.0)
+                            h = static_cast<scalar>(ni + 1) * dk * h /
+                                (static_cast<scalar>(ni) * dk + h);
+                        else
+                            h = 0.0;
+                    }
+
+                    // Step 4: result vector
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        B_el[d] = h * uhat[d];
+                }
+            }
+
             // compute dndx for residual
             if (isPGradientShifted)
             {
@@ -420,8 +475,16 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     p_dpdxIp[j] = 0.0;
                     p_duIp[j] = 0.0;
                     p_duRhsIp[j] = 0.0;
-                    p_FIp[j] = 0.0;
-                    p_FOrigIp[j] = 0.0;
+                    p_FOrigIp[j] = B_el[j];
+                }
+
+                // 2-node component-wise harmonic for FIp
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar fL = p_F[SPATIAL_DIM * il + j];
+                    const scalar fR = p_F[SPATIAL_DIM * ir + j];
+                    p_FIp[j] = (std::abs(fL) * fR + fL * std::abs(fR)) /
+                               (std::abs(fL) + std::abs(fR) + SMALL);
                 }
 
                 scalar alphaIp = 0;
@@ -453,18 +516,17 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                         // use pressure shape function derivative
                         p_dpdxIp[j] += p_dndx[offSetDnDx + j] * p_p[ic];
 
-                        // volume-weighted average of original body force
-                        // to element centre
-                        p_FOrigIp[j] += r_vel * p_FOrig[SPATIAL_DIM * ic + j];
-
-                        // volume-weighted average of pressure gradient
-                        // to element centre
-                        p_GpdxIp[j] += w_scv * p_Gpdx[SPATIAL_DIM * ic + j];
-
-                        // interpolate redistributed body force to IP
-                        // using velocity shape functions
-                        p_FIp[j] += w_scv * p_F[SPATIAL_DIM * ic + j];
+                        // (Gpdx moved to 2-node harmonic below)
                     }
+                }
+
+                // 2-node harmonic for Gpdx
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar gL = p_Gpdx[SPATIAL_DIM * il + j];
+                    const scalar gR = p_Gpdx[SPATIAL_DIM * ir + j];
+                    p_GpdxIp[j] = (std::abs(gL) * gR + gL * std::abs(gR)) /
+                                  (std::abs(gL) + std::abs(gR) + SMALL);
                 }
 
                 scalar dcorr = 0;
@@ -568,10 +630,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     mDot -= rhoHR * p_duRhsIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
                             p_scs_areav[ip * SPATIAL_DIM + j];
 
-                    // // body force stabilization: +ρ*D*(F_orig - F)·S
-                    // mDot += rhoHR * p_duRhsIp[j] * (p_FOrigIp[j] - p_FIp[j])
-                    // *
-                    //         p_scs_areav[ip * SPATIAL_DIM + j];
+                    // body force stabilization: +ρ*D*(F_orig - F)·S
+                    mDot += rhoHR * p_duRhsIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                            p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 
                 // transform mDot to relative frame

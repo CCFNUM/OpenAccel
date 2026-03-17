@@ -9,16 +9,16 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # project sources
 target_sources(main_obj PRIVATE
-    ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssembler.cpp
-    ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssemblerElemBoundaryConditions.cpp
-    ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssemblerElemInterfaceConditions.cpp
-    ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssemblerElemTerms.cpp
-    ${DIR}/flow/segregatedFlow/navierStokesAssembler/navierStokesAssemblerNodeTerms.cpp
-    ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssembler.cpp
-    ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssemblerElemBoundaryConditions.cpp
-    ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssemblerElemInterfaceConditions.cpp
-    ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssemblerElemTerms.cpp
-    ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler/pressureCorrectionAssemblerNodeTerms.cpp
+    ${DIR}/flow/segregatedFlow/navierStokes/navierStokesAssembler.cpp
+    ${DIR}/flow/segregatedFlow/navierStokes/navierStokesAssemblerElemBoundaryConditions.cpp
+    ${DIR}/flow/segregatedFlow/navierStokes/navierStokesAssemblerElemInterfaceConditions.cpp
+    ${DIR}/flow/segregatedFlow/navierStokes/navierStokesAssemblerElemTerms.cpp
+    ${DIR}/flow/segregatedFlow/navierStokes/navierStokesAssemblerNodeTerms.cpp
+    ${DIR}/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssembler.cpp
+    ${DIR}/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssemblerElemBoundaryConditions.cpp
+    ${DIR}/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssemblerElemInterfaceConditions.cpp
+    ${DIR}/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssemblerElemTerms.cpp
+    ${DIR}/flow/segregatedFlow/pressureCorrection/pressureCorrectionAssemblerNodeTerms.cpp
     ############################################################################
     ${DIR}/heatTransfer/thermalTemperature/thermalTemperatureAssemblerElemBoundaryConditions.cpp
     ${DIR}/heatTransfer/thermalTemperature/thermalTemperatureAssemblerElemInterfaceConditions.cpp
@@ -68,8 +68,8 @@ target_sources(main_obj PRIVATE
 target_include_directories(main_obj PUBLIC
     ${DIR}
     ############################################################################
-    ${DIR}/flow/segregatedFlow/navierStokesAssembler
-    ${DIR}/flow/segregatedFlow/pressureCorrectionAssembler
+    ${DIR}/flow/segregatedFlow/navierStokes
+    ${DIR}/flow/segregatedFlow/pressureCorrection
     ############################################################################
     ${DIR}/heatTransfer/thermalTemperature
     ${DIR}/heatTransfer/thermalEnergy

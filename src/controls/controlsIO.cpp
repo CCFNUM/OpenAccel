@@ -975,20 +975,6 @@ void controls::read(YAML::Node inputNode)
                         expertParameters["wall_distance_method"]
                             .template as<std::string>());
             }
-            else if (expertParameters["geometric_wall_distance_calculation"])
-            {
-                // backward compatibility
-                messager::print(
-                    "WARNING: 'geometric_wall_distance_calculation' is "
-                    "deprecated. Use 'wall_distance_method: mesh_wave' "
-                    "instead.");
-                if (expertParameters["geometric_wall_distance_calculation"]
-                        .template as<bool>())
-                {
-                    solver_.solverControl_.expertParameters_
-                        .wallDistanceMethod_ = wallDistanceMethod::meshWave;
-                }
-            }
 
             if (expertParameters["strong_dirichlet_wall_scale"])
             {
@@ -1010,6 +996,20 @@ void controls::read(YAML::Node inputNode)
             {
                 solver_.solverControl_.expertParameters_.bandwidthReduction_ =
                     expertParameters["bandwidth_reduction"].template as<bool>();
+            }
+
+            if (expertParameters["force_wall_distance_calculation"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .forceWallDistanceCalculation_ =
+                    expertParameters["force_wall_distance_calculation"]
+                        .template as<bool>();
+            }
+
+            if (expertParameters["disable_physics"])
+            {
+                solver_.solverControl_.expertParameters_.disablePhysics_ =
+                    expertParameters["disable_physics"].template as<bool>();
             }
         }
 

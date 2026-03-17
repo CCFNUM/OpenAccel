@@ -242,6 +242,8 @@ struct solverDictionary
             bool strongDirichletWallScale_ = false;
             scalar volumeFractionBlendingFactorMax_ = 2.0;
             bool bandwidthReduction_ = true;
+            bool forceWallDistanceCalculation_ = false;
+            bool disablePhysics_ = false;
         };
 
         basicSettingsDictionary basicSettings_;

@@ -1960,21 +1960,37 @@ void fieldBroker::setupWallScale(const std::shared_ptr<domain> domain)
             {
                 case boundaryPhysicalType::wall:
                     {
-                        switch (bcType)
+                        // if no physics enabled, then the wall-scale will
+                        // consider all walls to be dirichlet
+                        if (this->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_
+                                .disablePhysics_)
                         {
-                            case boundaryConditionType::noSlip:
-                                {
-                                    bc.setType(
-                                        boundaryConditionType::specifiedValue);
-                                    bc.setConstantValue<1>("value", {0});
-                                    yScaleRef().registerSideFields(
-                                        domain->index(), iBoundary);
-                                }
-                                break;
+                            bc.setType(boundaryConditionType::specifiedValue);
+                            bc.setConstantValue<1>("value", {0});
+                            yScaleRef().registerSideFields(domain->index(),
+                                                           iBoundary);
+                        }
+                        else
+                        {
+                            switch (bcType)
+                            {
+                                case boundaryConditionType::noSlip:
+                                    {
+                                        bc.setType(boundaryConditionType::
+                                                       specifiedValue);
+                                        bc.setConstantValue<1>("value", {0});
+                                        yScaleRef().registerSideFields(
+                                            domain->index(), iBoundary);
+                                    }
+                                    break;
 
-                            default:
-                                bc.setType(boundaryConditionType::zeroGradient);
-                                break;
+                                default:
+                                    bc.setType(
+                                        boundaryConditionType::zeroGradient);
+                                    break;
+                            }
                         }
                     }
                     break;
@@ -2328,12 +2344,12 @@ void fieldBroker::setupTurbulentEddyFrequency(
             if (messager::master())
             {
                 // clang-format off
- std::cout << "Setting boundary conditions:\n";
- std::cout << "\tdomain name: " << domain->name() << "\n";
- std::cout << "\tdomain index: " << domain->index() << "\n";
- std::cout << "\tpatch index: " << iBoundary << "\n";
- std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
- std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
+		std::cout << "Setting boundary conditions:\n";
+		std::cout << "\tdomain name: " << domain->name() << "\n";
+		std::cout << "\tdomain index: " << domain->index() << "\n";
+		std::cout << "\tpatch index: " << iBoundary << "\n";
+		std::cout << "\tBoundary type: " << ::accel::toString(bc_type) << "\n";
+		std::cout << "\tYAML values:\n" << boundaryDetailsNode << "\n\n";
                 // clang-format on
             }
 #endif /* NDEBUG */

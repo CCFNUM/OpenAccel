@@ -5305,8 +5305,6 @@ void flowModel::updateMassFlowRateInterior_(
     std::vector<scalar> ws_gradRho;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
-    std::vector<scalar> ws_scv_volume;
-    std::vector<scalar> ws_scv_weight;
 
     // geometry related to populate
     std::vector<scalar> ws_scs_areav;
@@ -5324,6 +5322,11 @@ void flowModel::updateMassFlowRateInterior_(
     std::vector<scalar> coordIp(SPATIAL_DIM);
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
+    std::vector<scalar> B_el(SPATIAL_DIM);
+
+    // SCV workspace for element-constant body force
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_scv_weight;
 
     // pointers to everyone...
     scalar* p_uIp = &uIp[0];
@@ -5371,6 +5374,9 @@ void flowModel::updateMassFlowRateInterior_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = this->pRef().isGradientShifted();
 
+    // compressibility switch: 1 for compressible, 0 for incompressible
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+
     BucketVector const& elementBuckets =
         bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
     for (BucketVector::const_iterator ib = elementBuckets.begin();
@@ -5404,14 +5410,14 @@ void flowModel::updateMassFlowRateInterior_(
         ws_gradRho.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
-        ws_scv_volume.resize(numScvIp);
-        ws_scv_weight.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
         ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_det_j.resize(numScsIp);
         ws_velocity_shape_function.resize(numScsIp * nodesPerElement);
         ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
+        ws_scv_volume.resize(numScvIp);
+        ws_scv_weight.resize(nodesPerElement);
 
         // pointers
         scalar* p_U = &ws_U[0];
@@ -5505,28 +5511,6 @@ void flowModel::updateMassFlowRateInterior_(
             meSCS->determinant(
                 1, &p_coordinates[0], &p_scs_areav[0], &scs_error);
 
-            // compute SCV volumes for volume-weighted element-centre averaging
-            {
-                scalar scv_error = 0.0;
-                meSCV->determinant(
-                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
-                scalar V_el = 0.0;
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    V_el += ws_scv_volume[ip];
-                }
-                const scalar invV_el = 1.0 / V_el;
-                for (label i = 0; i < nodesPerElement; ++i)
-                {
-                    ws_scv_weight[i] = 0.0;
-                }
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    ws_scv_weight[scvIpNodeMap[ip]] +=
-                        ws_scv_volume[ip] * invV_el;
-                }
-            }
-
             // compute dndx
             if (isPGradientShifted)
             {
@@ -5547,6 +5531,40 @@ void flowModel::updateMassFlowRateInterior_(
                                &scs_error);
             }
 
+            // sector-volume-weighted element average of FOrig
+            {
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
+                scalar V_el = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    V_el += ws_scv_volume[ip];
+                }
+                const scalar invV_el = 1.0 / V_el;
+                for (label i = 0; i < nodesPerElement; ++i)
+                {
+                    ws_scv_weight[i] = 0.0;
+                }
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    ws_scv_weight[scvIpNodeMap[ip]] +=
+                        ws_scv_volume[ip] * invV_el;
+                }
+            }
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B_el[d] = 0.0;
+            }
+            for (label ic = 0; ic < nodesPerElement; ++ic)
+            {
+                const scalar w = ws_scv_weight[ic];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] += w * p_FOrig[ic * SPATIAL_DIM + d];
+                }
+            }
+
             for (label ip = 0; ip < numScsIp; ++ip)
             {
                 // left and right nodes for this ip
@@ -5556,16 +5574,34 @@ void flowModel::updateMassFlowRateInterior_(
                 const label ipNdim = ip * SPATIAL_DIM;
                 const label offSetSF = ip * nodesPerElement;
 
-                // setup for ip values
+                // setup for ip values; p_GpdxIp and p_FIp use
+                // arithmetic/harmonic blend from adjacent nodes (il, ir)
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_coordIp[j] = 0.0;
                     p_uIp[j] = 0.0;
-                    p_GpdxIp[j] = 0.0;
                     p_dpdxIp[j] = 0.0;
                     p_duIp[j] = 0.0;
-                    p_FIp[j] = 0.0;
-                    p_FOrigIp[j] = 0.0;
+                    p_FOrigIp[j] = B_el[j];
+
+                    // pressure gradient interpolation: arithmetic (comp=0)
+                    // or harmonic (comp=1) between the two adjacent nodes
+                    const scalar gL = p_Gpdx[il * SPATIAL_DIM + j];
+                    const scalar gR = p_Gpdx[ir * SPATIAL_DIM + j];
+                    const scalar gArith = 0.5 * (gL + gR);
+                    const scalar gHarm =
+                        (std::abs(gL) * gR + gL * std::abs(gR)) /
+                        (std::abs(gL) + std::abs(gR) + SMALL);
+                    p_GpdxIp[j] = (1.0 - comp) * gArith + comp * gHarm;
+
+                    // body force interpolation: same blend as pressure gradient
+                    const scalar fL = p_F[il * SPATIAL_DIM + j];
+                    const scalar fR = p_F[ir * SPATIAL_DIM + j];
+                    const scalar fArith = 0.5 * (fL + fR);
+                    const scalar fHarm =
+                        (std::abs(fL) * fR + fL * std::abs(fR)) /
+                        (std::abs(fL) + std::abs(fR) + SMALL);
+                    p_FIp[j] = (1.0 - comp) * fArith + comp * fHarm;
                 }
 
                 scalar rhoIp = 0.0;
@@ -5575,7 +5611,6 @@ void flowModel::updateMassFlowRateInterior_(
                         p_velocity_shape_function[offSetSF + ic];
                     const scalar r_coord =
                         p_coordinate_shape_function[offSetSF + ic];
-                    const scalar w_scv = ws_scv_weight[ic];
 
                     // use velocity shape functions
                     rhoIp += r_vel * p_rho[ic];
@@ -5594,18 +5629,6 @@ void flowModel::updateMassFlowRateInterior_(
                         // use coordinates shape functions
                         p_coordIp[j] +=
                             r_coord * p_coordinates[SPATIAL_DIM * ic + j];
-
-                        // volume-weighted average of original body force
-                        // to element centre
-                        p_FOrigIp[j] += r_vel * p_FOrig[SPATIAL_DIM * ic + j];
-
-                        // volume-weighted average of pressure gradient
-                        // to element centre
-                        p_GpdxIp[j] += w_scv * p_Gpdx[SPATIAL_DIM * ic + j];
-
-                        // interpolate redistributed body force to IP
-                        // using SCV weights
-                        p_FIp[j] += w_scv * p_F[SPATIAL_DIM * ic + j];
                     }
                 }
 
@@ -5674,8 +5697,8 @@ void flowModel::updateMassFlowRateInterior_(
                              p_scs_areav[ip * SPATIAL_DIM + j];
 
                     // body force stabilization: +ρ*D*(F_orig - F)·S
-                    // tmDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
-                    //          p_scs_areav[ip * SPATIAL_DIM + j];
+                    tmDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                             p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 
                 // store with relaxation: mDot[ip] at this point must be in
@@ -5778,6 +5801,9 @@ void flowModel::updateMassFlowRateInterfaceSideField_(
     // extract vector of dgInfo
     const std::vector<std::vector<dgInfo*>>& dgInfoVec =
         interfaceSideInfoPtr->dgInfoVec_;
+
+    // compressibility switch: 1 for compressible, 0 for incompressible
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
     {
@@ -6158,6 +6184,20 @@ void flowModel::updateMassFlowRateInterfaceSideField_(
                     const label offSet = i * opposingNodesPerSide + ic;
                     oGjpBip[i] += f_o * p_o_Gjp[offSet];
                 }
+            }
+
+            // blend arithmetic and harmonic interpolation between the two
+            // interface sides; for comp=0 (incompressible) each side keeps its
+            // own arithmetic mean; for comp=1 (compressible) both sides use the
+            // harmonic average of the two-side means
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                const scalar a = cGjpBip[i];
+                const scalar b = oGjpBip[i];
+                const scalar harm = (std::abs(a) * b + a * std::abs(b)) /
+                                    (std::abs(a) + std::abs(b) + SMALL);
+                cGjpBip[i] = (1.0 - comp) * a + comp * harm;
+                oGjpBip[i] = (1.0 - comp) * b + comp * harm;
             }
 
             // product of density and velocity; current (take
@@ -6637,6 +6677,12 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_scv_weight;
+    std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
     std::vector<scalar> ws_face_shape_function;
@@ -6684,6 +6730,8 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = this->pRef().isGradientShifted();
 
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+
     BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
     for (BucketVector::const_iterator ib = sideBuckets.begin();
@@ -6701,14 +6749,18 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
         // volume master element
         MasterElement* meSCS =
             MasterElementRepo::get_surface_master_element(theElemTopo);
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
-        const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
+        const label* faceIpNodeMap = meFC->ipNodeMap();
 
         // algorithm related; element
         // (exposed face and element)
@@ -6724,6 +6776,11 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
         ws_det_j.resize(numScsBip);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
+        ws_scv_weight.resize(nodesPerElement);
 
         // pointers
         scalar* p_coordinates = &ws_coordinates[0];
@@ -6738,6 +6795,9 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
         scalar* p_coordinate_face_shape_function =
             &ws_coordinate_face_shape_function[0];
         scalar* p_dndx = &ws_dndx[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
 
         // Always use trilinear (standard) shape functions for coordinates
         meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
@@ -6795,10 +6855,51 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
 
                 // gather vectors
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
+                scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig_e =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
                 const label offSet = ni * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_coordinates[offSet + j] = coords[j];
+                    p_Gpdx_elem[offSet + j] = Gjp_e[j];
+                    p_F_elem[offSet + j] = F_e[j];
+                    p_FOrig_elem[offSet + j] = FOrig_e[j];
+                }
+            }
+
+            // sector-volume-weighted element average of FOrig
+            {
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
+                scalar V_el = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    V_el += ws_scv_volume[ip];
+                }
+                const scalar invV_el = 1.0 / V_el;
+                for (label i = 0; i < nodesPerElement; ++i)
+                {
+                    ws_scv_weight[i] = 0.0;
+                }
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    ws_scv_weight[scvIpNodeMap[ip]] +=
+                        ws_scv_volume[ip] * invV_el;
+                }
+            }
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B_el[d] = 0.0;
+            }
+            for (label ic = 0; ic < nodesPerElement; ++ic)
+            {
+                const scalar w = ws_scv_weight[ic];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] += w * p_FOrig_elem[ic * SPATIAL_DIM + d];
                 }
             }
 
@@ -6872,17 +6973,37 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
             // loop over boundary ips
             for (label ip = 0; ip < numScsBip; ++ip)
             {
+                // per-ip blend: local face node vs opposing interior node
+                const label localFaceNode = faceIpNodeMap[ip];
+                const label opposingNode =
+                    meSCS->opposingNodes(faceOrdinal, ip);
+
                 // zero out vector quantities; form aMag
                 scalar aMag = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_coordBip[j] = 0.0;
                     p_uBip[j] = 0.0;
-                    p_GpdxBip[j] = 0.0;
+                    const scalar gFace =
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                    const scalar gOpp =
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                    const scalar gArith = 0.5 * (gFace + gOpp);
+                    const scalar gHarm =
+                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
+                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
-                    p_FBip[j] = 0.0;
-                    p_FOrigBip[j] = 0.0;
+                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
+                    const scalar fOpp =
+                        p_F_elem[opposingNode * SPATIAL_DIM + j];
+                    const scalar fArith = 0.5 * (fFace + fOpp);
+                    const scalar fHarm =
+                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
+                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                    p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                    p_FOrigBip[j] = B_el[j];
                 }
 
                 // interpolate to bip
@@ -6904,15 +7025,6 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
                             r_coord * p_coordinates[inn * SPATIAL_DIM + j];
                         p_uBip[j] += r * p_U[icNdim + j];
                         p_duBip[j] += r * p_du[icNdim + j];
-
-                        // face-centre average for original body force
-                        p_FOrigBip[j] += r * p_FOrig[icNdim + j];
-
-                        // arithmetic interpolation
-                        p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
-
-                        // interpolate redistributed body force
-                        p_FBip[j] += f * p_F[icNdim + j];
                     }
                 }
 
@@ -6942,9 +7054,8 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
                         axj;
 
                     // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    // tmDot +=
-                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) *
-                    //     axj;
+                    tmDot +=
+                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
                 }
 
                 // store with relaxation
@@ -7361,6 +7472,12 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_scv_weight;
+    std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
     std::vector<scalar> ws_face_shape_function;
@@ -7410,6 +7527,8 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = this->pRef().isGradientShifted();
 
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+
     BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
     for (BucketVector::const_iterator ib = sideBuckets.begin();
@@ -7427,14 +7546,17 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
         // volume master element
         MasterElement* meSCS =
             MasterElementRepo::get_surface_master_element(theElemTopo);
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
-        const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
 
         // algorithm related; element
         // (exposed face and element)
@@ -7446,6 +7568,11 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
         ws_rho.resize(nodesPerSide);
         ws_F.resize(nodesPerSide * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
+        ws_scv_weight.resize(nodesPerElement);
         ws_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -7460,6 +7587,9 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
         scalar* p_rho = &ws_rho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_face_shape_function = &ws_face_shape_function[0];
         scalar* p_coordinate_face_shape_function =
             &ws_coordinate_face_shape_function[0];
@@ -7467,6 +7597,8 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
 
         // Always use trilinear (standard) shape functions for coordinates
         meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
+
+        const label* faceIpNodeMap = meFC->ipNodeMap();
 
         // shape functions; boundary
         if (isUShifted)
@@ -7523,10 +7655,51 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
 
                 // gather vectors
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
+                scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig_e =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
                 const label offSet = ni * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_coordinates[offSet + j] = coords[j];
+                    p_Gpdx_elem[offSet + j] = Gjp_e[j];
+                    p_F_elem[offSet + j] = F_e[j];
+                    p_FOrig_elem[offSet + j] = FOrig_e[j];
+                }
+            }
+
+            // sector-volume-weighted element average of FOrig
+            {
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
+                scalar V_el = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    V_el += ws_scv_volume[ip];
+                }
+                const scalar invV_el = 1.0 / V_el;
+                for (label i = 0; i < nodesPerElement; ++i)
+                {
+                    ws_scv_weight[i] = 0.0;
+                }
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    ws_scv_weight[scvIpNodeMap[ip]] +=
+                        ws_scv_volume[ip] * invV_el;
+                }
+            }
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B_el[d] = 0.0;
+            }
+            for (label ic = 0; ic < nodesPerElement; ++ic)
+            {
+                const scalar w = ws_scv_weight[ic];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] += w * p_FOrig_elem[ic * SPATIAL_DIM + d];
                 }
             }
 
@@ -7606,16 +7779,35 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
                     continue;
                 }
 
+                const label localFaceNode = faceIpNodeMap[ip];
+                const label opposingNode =
+                    meSCS->opposingNodes(faceOrdinal, ip);
+
                 // zero out vector quantities; form aMag
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_coordBip[j] = 0.0;
                     p_uBip[j] = 0.0;
-                    p_GpdxBip[j] = 0.0;
+                    const scalar gFace =
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                    const scalar gOpp =
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                    const scalar gArith = 0.5 * (gFace + gOpp);
+                    const scalar gHarm =
+                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
+                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
-                    p_FBip[j] = 0.0;
-                    p_FOrigBip[j] = 0.0;
+                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
+                    const scalar fOpp =
+                        p_F_elem[opposingNode * SPATIAL_DIM + j];
+                    const scalar fArith = 0.5 * (fFace + fOpp);
+                    const scalar fHarm =
+                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
+                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                    p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                    p_FOrigBip[j] = B_el[j];
                 }
 
                 // interpolate to bip
@@ -7638,15 +7830,6 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
                             r_coord * p_coordinates[inn * SPATIAL_DIM + j];
                         p_uBip[j] += r * p_U[icNdim + j];
                         p_duBip[j] += r * p_du[icNdim + j];
-
-                        // face-centre average for original body force
-                        p_FOrigBip[j] += r * p_FOrig[icNdim + j];
-
-                        // arithmetic interpolation
-                        p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
-
-                        // interpolate redistributed body force
-                        p_FBip[j] += f * p_F[icNdim + j];
                     }
                 }
 
@@ -7676,9 +7859,8 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
                         axj;
 
                     // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    // tmDot +=
-                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) *
-                    //     axj;
+                    tmDot +=
+                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
                 }
 
                 // store with relaxation
@@ -8132,6 +8314,12 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_scv_weight;
+    std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
     std::vector<scalar> ws_face_shape_function;
@@ -8177,6 +8365,8 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = this->pRef().isGradientShifted();
 
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+
     BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
     for (BucketVector::const_iterator ib = sideBuckets.begin();
@@ -8194,14 +8384,17 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         // volume master element
         MasterElement* meSCS =
             MasterElementRepo::get_surface_master_element(theElemTopo);
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = sideBucket.topology().num_nodes();
         const label numScsBip = meFC->numIntPoints_;
-        const scalar f = 1.0 / static_cast<scalar>(nodesPerSide);
 
         // algorithm related; element
         // (exposed face and element)
@@ -8213,6 +8406,11 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         ws_rho.resize(nodesPerSide);
         ws_F.resize(nodesPerSide * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
+        ws_scv_weight.resize(nodesPerElement);
         ws_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -8227,6 +8425,9 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         scalar* p_rho = &ws_rho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_face_shape_function = &ws_face_shape_function[0];
         scalar* p_coordinate_face_shape_function =
             &ws_coordinate_face_shape_function[0];
@@ -8244,6 +8445,8 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
 
         // Always use trilinear (standard) shape functions for coordinates
         meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
+
+        const label* faceIpNodeMap = meFC->ipNodeMap();
 
         const Bucket::size_type nSidesPerBucket = sideBucket.size();
 
@@ -8288,10 +8491,51 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
 
                 // gather vectors
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
+                scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig_e =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
                 const label offSet = ni * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_coordinates[offSet + j] = coords[j];
+                    p_Gpdx_elem[offSet + j] = Gjp_e[j];
+                    p_F_elem[offSet + j] = F_e[j];
+                    p_FOrig_elem[offSet + j] = FOrig_e[j];
+                }
+            }
+
+            // sector-volume-weighted element average of FOrig
+            {
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
+                scalar V_el = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    V_el += ws_scv_volume[ip];
+                }
+                const scalar invV_el = 1.0 / V_el;
+                for (label i = 0; i < nodesPerElement; ++i)
+                {
+                    ws_scv_weight[i] = 0.0;
+                }
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    ws_scv_weight[scvIpNodeMap[ip]] +=
+                        ws_scv_volume[ip] * invV_el;
+                }
+            }
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B_el[d] = 0.0;
+            }
+            for (label ic = 0; ic < nodesPerElement; ++ic)
+            {
+                const scalar w = ws_scv_weight[ic];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] += w * p_FOrig_elem[ic * SPATIAL_DIM + d];
                 }
             }
 
@@ -8362,16 +8606,35 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
             // loop over boundary ips
             for (label ip = 0; ip < numScsBip; ++ip)
             {
+                const label localFaceNode = faceIpNodeMap[ip];
+                const label opposingNode =
+                    meSCS->opposingNodes(faceOrdinal, ip);
+
                 // zero out vector quantities; form aMag
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_coordBip[j] = 0.0;
                     p_uBip[j] = 0.0;
-                    p_GpdxBip[j] = 0.0;
+                    const scalar gFace =
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                    const scalar gOpp =
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                    const scalar gArith = 0.5 * (gFace + gOpp);
+                    const scalar gHarm =
+                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
+                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
-                    p_FBip[j] = 0.0;
-                    p_FOrigBip[j] = 0.0;
+                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
+                    const scalar fOpp =
+                        p_F_elem[opposingNode * SPATIAL_DIM + j];
+                    const scalar fArith = 0.5 * (fFace + fOpp);
+                    const scalar fHarm =
+                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
+                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                    p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                    p_FOrigBip[j] = B_el[j];
                 }
 
                 // interpolate to bip
@@ -8393,15 +8656,6 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                             r_coord * p_coordinates[inn * SPATIAL_DIM + j];
                         p_uBip[j] += r * p_U[icNdim + j];
                         p_duBip[j] += r * p_du[icNdim + j];
-
-                        // face-centre average for original body force
-                        p_FOrigBip[j] += r * p_FOrig[icNdim + j];
-
-                        // arithmetic interpolation
-                        p_GpdxBip[j] += f * p_Gpdx[icNdim + j];
-
-                        // interpolate redistributed body force
-                        p_FBip[j] += f * p_F[icNdim + j];
                     }
                 }
 
@@ -8431,9 +8685,8 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                         axj;
 
                     // buoyancy stabilization: +rho*D*(F_orig - F)·S
-                    // tmDot +=
-                    //     rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) *
-                    //     axj;
+                    tmDot +=
+                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
                 }
 
                 // store with relaxation

@@ -17,7 +17,8 @@ segregatedFlowEquations::segregatedFlowEquations(realm* realm)
     U_eq_ = std::make_unique<navierStokesEquation>(realm, this);
     pCorr_eq_ = std::make_unique<pressureCorrectionEquation>(realm, this);
 
-    // set relaxation factor for mass flux field
+    // set relaxation factor for mass flux field to 0.75 for steady-state cases,
+    // if and only if, not specified by user
     if (controlsRef()
             .solverRef()
             .solverControl_.basicSettings_.convergenceControl_

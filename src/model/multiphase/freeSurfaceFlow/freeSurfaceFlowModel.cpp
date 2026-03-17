@@ -676,25 +676,23 @@ void freeSurfaceFlowModel::computeBodyForces(
 void freeSurfaceFlowModel::redistributeBodyForces(
     const std::shared_ptr<domain> domain)
 {
-    // Harmonic density-weighted body force redistribution for free surface:
+    // Vector harmonic body force redistribution for free surface:
     //
     // For free surface flows, standard volume-weighted averaging smears
     // the body force across the density interface, creating spurious pressure
     // gradients and parasitic currents.
     //
-    // Instead, we average the specific body force (F/rho) to the element
-    // centre using SCV volume weights, then multiply by the element-centre
-    // density to recover the body force:
+    // Instead, we use a projection-based vector harmonic average:
     //
-    // Step 1: Average to element centre with harmonic density weighting:
-    // rho_el = Σ_i (rho_i * V_scv_i) / V_el
-    // B_el = rho_el * Σ_i (B_i/rho_i * V_scv_i) / V_el
+    // Step 1: Arithmetic mean direction, unit vector
+    // Step 2: Recursive harmonic mean of scalar projections onto unit vector
+    // Step 3: Result = harmonic_magnitude * unit_vector
     //
-    // Step 2: Scatter the same element-centre value back to all nodes,
+    // Step 4: Scatter the element-centre value back to all nodes,
     // weighted by SCV volumes:
     // F_node += B_el * V_scv_node
     //
-    // Step 3: Normalize by dual nodal volume:
+    // Step 5: Normalize by dual nodal volume:
     // F_node /= V_dual
     if (this->controlsRef()
             .solverRef()
@@ -719,12 +717,8 @@ void freeSurfaceFlowModel::redistributeBodyForces(
         const auto* dualNodalVolumeSTKFieldPtr = metaData.get_field<scalar>(
             stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
 
-        // Get density field for harmonic weighting
-        const auto* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
-
         // Workspace arrays (variable size, resized per bucket)
         std::vector<scalar> ws_F;
-        std::vector<scalar> ws_rho;
         std::vector<scalar> ws_coordinates;
         std::vector<scalar> ws_scv_volume;
 
@@ -751,7 +745,6 @@ void freeSurfaceFlowModel::redistributeBodyForces(
 
             // Resize workspace arrays
             ws_F.resize(nodesPerElement * SPATIAL_DIM);
-            ws_rho.resize(nodesPerElement);
             ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
             ws_scv_volume.resize(numScvIp);
 
@@ -777,10 +770,6 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                         ws_coordinates[ni * SPATIAL_DIM + d] = coords[d];
                         ws_F[ni * SPATIAL_DIM + d] = FOrig[d];
                     }
-
-                    const scalar* rho =
-                        stk::mesh::field_data(*rhoSTKFieldPtr, node);
-                    ws_rho[ni] = rho[0];
                 }
 
                 // Compute SCV volumes
@@ -788,47 +777,78 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                 meSCV->determinant(
                     1, &ws_coordinates[0], &ws_scv_volume[0], &scv_error);
 
-                // Compute element volume
-                scalar V_el = 0.0;
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    V_el += ws_scv_volume[ip];
-                }
-
-                const scalar invV_el = 1.0 / V_el;
-
-                // Compute volume-weighted element-centre density:
-                // rho_el = Σ_i (rho_i * V_scv_i) / V_el
-                scalar rho_el = 0.0;
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    const label nn = ipNodeMap[ip];
-                    rho_el += ws_rho[nn] * ws_scv_volume[ip];
-                }
-                rho_el *= invV_el;
-
-                // Compute harmonic density-weighted element-centre body force:
-                // B_el = rho_el * Σ_i (B_i/rho_i * V_scv_i) / V_el
+                // projection-based harmonic mean
+                // Step 1: arithmetic mean direction
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
                     F_el[d] = 0.0;
                 }
-
-                for (label ip = 0; ip < numScvIp; ++ip)
+                for (label ni = 0; ni < numNodes; ++ni)
                 {
-                    const label nn = ipNodeMap[ip];
-                    const scalar rho_node = ws_rho[nn];
-                    const scalar invRho = 1.0 / rho_node;
-                    const scalar scV = ws_scv_volume[ip];
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        F_el[d] += ws_F[nn * SPATIAL_DIM + d] * invRho * scV;
+                        F_el[d] += ws_F[ni * SPATIAL_DIM + d];
                     }
                 }
-
+                const scalar invN = 1.0 / static_cast<scalar>(numNodes);
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    F_el[d] *= rho_el * invV_el;
+                    F_el[d] *= invN;
+                }
+
+                // Step 2: unit direction
+                scalar mag = 0.0;
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    mag += F_el[d] * F_el[d];
+                }
+                mag = std::sqrt(mag);
+
+                if (mag < SMALL)
+                {
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        F_el[d] = 0.0;
+                }
+                else
+                {
+                    scalar uhat[SPATIAL_DIM];
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        uhat[d] = F_el[d] / mag;
+                    }
+
+                    // Step 3: recursive harmonic of scalar projections
+                    scalar h = 0.0;
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        h += uhat[d] * ws_F[d];
+                    }
+                    h = std::max(h, 0.0);
+
+                    for (label ni = 1; ni < numNodes; ++ni)
+                    {
+                        scalar dk = 0.0;
+                        for (label d = 0; d < SPATIAL_DIM; ++d)
+                        {
+                            dk += uhat[d] * ws_F[ni * SPATIAL_DIM + d];
+                        }
+                        dk = std::max(dk, 0.0);
+                        if (h > 0.0)
+                        {
+                            h = static_cast<scalar>(ni + 1) * dk * h /
+                                (static_cast<scalar>(ni) * dk + h);
+                        }
+                        else
+                        {
+                            h = 0.0;
+                        }
+                    }
+
+                    // Step 4: result vector
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        F_el[d] = h * uhat[d];
+                    }
                 }
 
                 // Scatter element-centre value back to nodes weighted by
@@ -1658,7 +1678,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     const std::shared_ptr<domain> domain,
     label iPhase)
 {
-    flowModel::updateMassFlowRateInterior_(
+    this->updateMassFlowRateInterior_(
         domain, this->mDotRef(iPhase), this->rhoRef(iPhase));
 }
 
@@ -1668,7 +1688,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
     const interfaceSideInfo* interfaceSideInfoPtr,
     label iPhase)
 {
-    flowModel::updateMassFlowRateInterfaceSideField_(
+    this->updateMassFlowRateInterfaceSideField_(
         domain,
         interfaceSideInfoPtr,
         this->mDotRef(iPhase).sideFieldRef(),
@@ -1711,12 +1731,11 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
                     case boundaryConditionType::staticPressure:
                     case boundaryConditionType::totalPressure:
                         {
-                            flowModel::
-                                updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
-                                    domain,
-                                    boundary,
-                                    this->mDotRef(iPhase).sideFieldRef(),
-                                    this->rhoRef(iPhase));
+                            this->updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
+                                domain,
+                                boundary,
+                                this->mDotRef(iPhase).sideFieldRef(),
+                                this->rhoRef(iPhase));
                         }
                         break;
 
@@ -1733,12 +1752,11 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
                     case boundaryConditionType::staticPressure:
                     case boundaryConditionType::totalPressure:
                         {
-                            flowModel::
-                                updateMassFlowRateBoundaryFieldOpeningPressure_(
-                                    domain,
-                                    boundary,
-                                    this->mDotRef(iPhase).sideFieldRef(),
-                                    this->rhoRef(iPhase));
+                            this->updateMassFlowRateBoundaryFieldOpeningPressure_(
+                                domain,
+                                boundary,
+                                this->mDotRef(iPhase).sideFieldRef(),
+                                this->rhoRef(iPhase));
                         }
                         break;
 
@@ -1754,12 +1772,11 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
                 {
                     case boundaryConditionType::staticPressure:
                         {
-                            flowModel::
-                                updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
-                                    domain,
-                                    boundary,
-                                    this->mDotRef(iPhase).sideFieldRef(),
-                                    this->rhoRef(iPhase));
+                            this->updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
+                                domain,
+                                boundary,
+                                this->mDotRef(iPhase).sideFieldRef(),
+                                this->rhoRef(iPhase));
                         }
                         break;
 
@@ -5746,6 +5763,2411 @@ void freeSurfaceFlowModel::updateFL_(const std::shared_ptr<domain> domain,
 
             default:
                 break;
+        }
+    }
+}
+
+void freeSurfaceFlowModel::updateMassFlowRateInterior_(
+    const std::shared_ptr<domain> domain,
+    elementField<scalar, 1>& mDotField,
+    const nodeField<1, SPATIAL_DIM>& rhoField)
+{
+    using stk::mesh::Bucket;
+    using stk::mesh::BucketVector;
+
+    const auto& mesh = domain->meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    // required for frame motion (MFR)
+    const auto coriolisMatrix =
+        domain->zonePtr()->frameRotating()
+            ? domain->zonePtr()->transformationRef().rotation().coriolisMatrix_
+            : utils::matrix::Zero();
+    const scalar* p_mat = coriolisMatrix.data();
+
+    const auto origin =
+        domain->zonePtr()->frameRotating()
+            ? domain->zonePtr()->transformationRef().rotation().origin_
+            : utils::vector::Zero();
+    const scalar* p_ori = origin.data();
+
+    // nodal fields to gather
+    std::vector<scalar> ws_U;
+    std::vector<scalar> ws_Gpdx;
+    std::vector<scalar> ws_du;
+    std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_p;
+    std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_betaRho;
+    std::vector<scalar> ws_gradRho;
+    std::vector<scalar> ws_F;
+    std::vector<scalar> ws_FOrig;
+
+    // geometry related to populate
+    std::vector<scalar> ws_scs_areav;
+    std::vector<scalar> ws_dndx;
+    std::vector<scalar> ws_deriv;
+    std::vector<scalar> ws_det_j;
+    std::vector<scalar> ws_velocity_shape_function;
+    std::vector<scalar> ws_coordinate_shape_function;
+
+    // integration point data that depends on size
+    std::vector<scalar> uIp(SPATIAL_DIM);
+    std::vector<scalar> GpdxIp(SPATIAL_DIM);
+    std::vector<scalar> dpdxIp(SPATIAL_DIM);
+    std::vector<scalar> duIp(SPATIAL_DIM);
+    std::vector<scalar> coordIp(SPATIAL_DIM);
+    std::vector<scalar> FIp(SPATIAL_DIM);
+    std::vector<scalar> FOrigIp(SPATIAL_DIM);
+    std::vector<scalar> B_el(SPATIAL_DIM);
+
+    // pointers to everyone...
+    scalar* p_uIp = &uIp[0];
+    scalar* p_GpdxIp = &GpdxIp[0];
+    scalar* p_dpdxIp = &dpdxIp[0];
+    scalar* p_duIp = &duIp[0];
+    scalar* p_coordIp = &coordIp[0];
+    scalar* p_FIp = &FIp[0];
+    scalar* p_FOrigIp = &FOrigIp[0];
+
+    // Get pressure diffusivity coefficient field and others
+    const auto& USTKFieldRef = this->URef().stkFieldRef();
+    const auto& pSTKFieldRef = this->pRef().stkFieldRef();
+    const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const auto& betaRhoSTKFieldRef = rhoField.blendingFactorRef().stkFieldRef();
+    const auto& gradRhoSTKFieldRef = rhoField.gradRef().stkFieldRef();
+    const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
+
+    const auto& mDotSTKFieldRef = mDotField.stkFieldRef();
+    const scalar mDotURF = mDotField.urf();
+
+    const auto& duSTKFieldRef =
+        *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
+
+    // Get body force fields for buoyancy pressure stabilization
+    const auto* FSTKFieldPtr =
+        metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
+    const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    // Geometric fields
+    const auto& coordinatesRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+
+    // get interior parts the domain is defined on
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+
+    // define some common selectors
+    stk::mesh::Selector selAllElements =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+
+    // shifted ip's for fields?
+    const bool isUShifted = this->URef().isShifted();
+
+    // shifted ip's for gradients?
+    const bool isPGradientShifted = this->pRef().isGradientShifted();
+
+    // free-surface always uses pure harmonic (no comp switch)
+
+    BucketVector const& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
+    for (BucketVector::const_iterator ib = elementBuckets.begin();
+         ib != elementBuckets.end();
+         ++ib)
+    {
+        Bucket& elementBucket = **ib;
+        const Bucket::size_type nElementsPerBucket = elementBucket.size();
+
+        // extract master elements
+        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
+            elementBucket.topology());
+
+        // extract master element specifics
+        const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* lrscv = meSCS->adjacentNodes();
+
+        // algorithm related
+        ws_U.resize(nodesPerElement * SPATIAL_DIM);
+        ws_Gpdx.resize(nodesPerElement * SPATIAL_DIM);
+        ws_du.resize(nodesPerElement * SPATIAL_DIM);
+        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
+        ws_p.resize(nodesPerElement);
+        ws_rho.resize(nodesPerElement);
+        ws_betaRho.resize(nodesPerElement);
+        ws_gradRho.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
+        ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
+        ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
+        ws_det_j.resize(numScsIp);
+        ws_velocity_shape_function.resize(numScsIp * nodesPerElement);
+        ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
+
+        // pointers
+        scalar* p_U = &ws_U[0];
+        scalar* p_Gpdx = &ws_Gpdx[0];
+        scalar* p_du = &ws_du[0];
+        scalar* p_coordinates = &ws_coordinates[0];
+        scalar* p_p = &ws_p[0];
+        scalar* p_rho = &ws_rho[0];
+        scalar* p_betaRho = &ws_betaRho[0];
+        scalar* p_gradRho = &ws_gradRho[0];
+        scalar* p_F = &ws_F[0];
+        scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_scs_areav = &ws_scs_areav[0];
+        scalar* p_dndx = &ws_dndx[0];
+        scalar* p_velocity_shape_function = &ws_velocity_shape_function[0];
+        scalar* p_coordinate_shape_function = &ws_coordinate_shape_function[0];
+
+        // Always use trilinear (standard) shape functions for coordinates
+        meSCS->shape_fcn(&p_coordinate_shape_function[0]);
+
+        if (isUShifted)
+        {
+            meSCS->shifted_shape_fcn(&p_velocity_shape_function[0]);
+        }
+        else
+        {
+            meSCS->shape_fcn(&p_velocity_shape_function[0]);
+        }
+
+        for (Bucket::size_type iElement = 0; iElement < nElementsPerBucket;
+             ++iElement)
+        {
+            // pointers to elem data
+            scalar* mDot =
+                stk::mesh::field_data(mDotSTKFieldRef, elementBucket, iElement);
+
+            //===============================================
+            // gather nodal data; this is how we do it now..
+            //===============================================
+            stk::mesh::Entity const* nodeRels =
+                elementBucket.begin_nodes(iElement);
+            label numNodes = elementBucket.num_nodes(iElement);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numNodes == nodesPerElement);
+
+            for (label ni = 0; ni < numNodes; ++ni)
+            {
+                stk::mesh::Entity node = nodeRels[ni];
+
+                // pointers to real data
+                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                const scalar* Gjp =
+                    stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                const scalar* gradRho =
+                    stk::mesh::field_data(gradRhoSTKFieldRef, node);
+                const scalar* coords =
+                    stk::mesh::field_data(coordinatesRef, node);
+
+                // gather scalars
+                p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+                p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_betaRho[ni] =
+                    *stk::mesh::field_data(betaRhoSTKFieldRef, node);
+
+                // gather vectors
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_U[offSet + j] = U[j];
+                    p_Gpdx[offSet + j] = Gjp[j];
+                    p_du[offSet + j] = du[j];
+                    p_gradRho[offSet + j] = gradRho[j];
+                    p_coordinates[offSet + j] = coords[j];
+                }
+
+                // gather body force fields for buoyancy stabilization
+                const scalar* F = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_F[offSet + j] = F[j];
+                    p_FOrig[offSet + j] = FOrig[j];
+                }
+            }
+
+            // compute geometry
+            scalar scs_error = 0.0;
+            meSCS->determinant(
+                1, &p_coordinates[0], &p_scs_areav[0], &scs_error);
+
+            // compute dndx
+            if (isPGradientShifted)
+            {
+                meSCS->shifted_grad_op(1,
+                                       &p_coordinates[0],
+                                       &p_dndx[0],
+                                       &ws_deriv[0],
+                                       &ws_det_j[0],
+                                       &scs_error);
+            }
+            else
+            {
+                meSCS->grad_op(1,
+                               &p_coordinates[0],
+                               &p_dndx[0],
+                               &ws_deriv[0],
+                               &ws_det_j[0],
+                               &scs_error);
+            }
+
+            // projection-based harmonic mean of FOrig
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B_el[d] = 0.0;
+            }
+            for (label ni = 0; ni < nodesPerElement; ++ni)
+            {
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] += p_FOrig[ni * SPATIAL_DIM + d];
+                }
+            }
+
+            {
+                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] *= invN;
+                }
+            }
+            scalar mag = 0.0;
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                mag += B_el[d] * B_el[d];
+            }
+            mag = std::sqrt(mag);
+            if (mag < SMALL)
+            {
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] = 0.0;
+                }
+            }
+            else
+            {
+                scalar uhat[SPATIAL_DIM];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    uhat[d] = B_el[d] / mag;
+                }
+                scalar h = 0.0;
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    h += uhat[d] * p_FOrig[d];
+                }
+                h = std::max(h, 0.0);
+                for (label ni = 1; ni < nodesPerElement; ++ni)
+                {
+                    scalar dk = 0.0;
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        dk += uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
+                    }
+                    dk = std::max(dk, 0.0);
+                    if (h > 0.0)
+                    {
+                        h = static_cast<scalar>(ni + 1) * dk * h /
+                            (static_cast<scalar>(ni) * dk + h);
+                    }
+                    else
+                    {
+                        h = 0.0;
+                    }
+                }
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] = h * uhat[d];
+                }
+            }
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                // left and right nodes for this ip
+                const label il = lrscv[2 * ip];
+                const label ir = lrscv[2 * ip + 1];
+
+                const label ipNdim = ip * SPATIAL_DIM;
+                const label offSetSF = ip * nodesPerElement;
+
+                // setup for ip values; p_GpdxIp and p_FIp use
+                // pure harmonic from adjacent nodes (il, ir)
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordIp[j] = 0.0;
+                    p_uIp[j] = 0.0;
+                    p_dpdxIp[j] = 0.0;
+                    p_duIp[j] = 0.0;
+                    p_FOrigIp[j] = B_el[j];
+
+                    // pressure gradient interpolation: harmonic for Gpdx
+                    const scalar gL = p_Gpdx[il * SPATIAL_DIM + j];
+                    const scalar gR = p_Gpdx[ir * SPATIAL_DIM + j];
+                    p_GpdxIp[j] = (std::abs(gL) * gR + gL * std::abs(gR)) /
+                                  (std::abs(gL) + std::abs(gR) + SMALL);
+
+                    // body force interpolation: harmonic for F
+                    const scalar fL = p_F[il * SPATIAL_DIM + j];
+                    const scalar fR = p_F[ir * SPATIAL_DIM + j];
+                    p_FIp[j] = (std::abs(fL) * fR + fL * std::abs(fR)) /
+                               (std::abs(fL) + std::abs(fR) + SMALL);
+                }
+
+                scalar rhoIp = 0.0;
+                for (label ic = 0; ic < nodesPerElement; ++ic)
+                {
+                    const scalar r_vel =
+                        p_velocity_shape_function[offSetSF + ic];
+                    const scalar r_coord =
+                        p_coordinate_shape_function[offSetSF + ic];
+
+                    // use velocity shape functions
+                    rhoIp += r_vel * p_rho[ic];
+
+                    const label offSetDnDx =
+                        SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        // use velocity shape functions
+                        p_duIp[j] += r_vel * p_du[SPATIAL_DIM * ic + j];
+                        p_uIp[j] += r_vel * p_U[SPATIAL_DIM * ic + j];
+
+                        // use pressure shape function derivative
+                        p_dpdxIp[j] += p_dndx[offSetDnDx + j] * p_p[ic];
+
+                        // use coordinates shape functions
+                        p_coordIp[j] +=
+                            r_coord * p_coordinates[SPATIAL_DIM * ic + j];
+                    }
+                }
+
+                // calculate a local relative flow rate
+                scalar tUDotRel = mDot[ip] / rhoIp;
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; j++)
+                    {
+                        tUDotRel -= p_mat[i * SPATIAL_DIM + j] *
+                                    (p_coordIp[j] - p_ori[j]) *
+                                    p_scs_areav[ipNdim + i];
+                    }
+                }
+
+                scalar dcorr = 0;
+                if (tUDotRel > 0)
+                {
+                    // deferred correction
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar dxj =
+                            p_coordIp[j] - p_coordinates[il * SPATIAL_DIM + j];
+                        dcorr += p_betaRho[il] * dxj *
+                                 p_gradRho[il * SPATIAL_DIM + j];
+                    }
+                }
+                else
+                {
+                    // deferred correction
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar dxj =
+                            p_coordIp[j] - p_coordinates[ir * SPATIAL_DIM + j];
+                        dcorr += p_betaRho[ir] * dxj *
+                                 p_gradRho[ir * SPATIAL_DIM + j];
+                    }
+                }
+
+                scalar rhoUpwind;
+                if (tUDotRel > 0)
+                {
+                    rhoUpwind = p_rho[il];
+                }
+                else
+                {
+                    rhoUpwind = p_rho[ir];
+                }
+
+                scalar rhoHR = rhoUpwind + dcorr;
+
+                // rhie-chow
+                // mDot = ρ*U·S - ρ*D*(∇p - Gp)·S + ρ*D*(F_orig - F)·S
+                //        ╰───╯   ╰──────────────╯   ╰─────────────────╯
+                //      divergence   pressure RC       body force stab
+                //
+                scalar tmDot = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    // divergence: ρ*U·S
+                    tmDot +=
+                        rhoHR * p_uIp[j] * p_scs_areav[ip * SPATIAL_DIM + j];
+
+                    // pressure Rhie-Chow: -ρ*D*(∇p - Gp)·S
+                    tmDot -= rhoHR * p_duIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
+                             p_scs_areav[ip * SPATIAL_DIM + j];
+
+                    // body force stabilization: +ρ*D*(F_orig - F)·S
+                    tmDot += rhoHR * p_duIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                             p_scs_areav[ip * SPATIAL_DIM + j];
+                }
+
+                // store with relaxation: mDot[ip] at this point must be in
+                // absolute frame
+                mDot[ip] = mDotURF * tmDot + (1.0 - mDotURF) * mDot[ip];
+            }
+        }
+    }
+}
+
+#ifdef HAS_INTERFACE
+void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
+    const std::shared_ptr<domain> domain,
+    const interfaceSideInfo* interfaceSideInfoPtr,
+    sideField<scalar, 1>& mDotSideField,
+    const nodeField<1, SPATIAL_DIM>& rhoField)
+{
+    const auto& mesh = this->meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    scalar penaltyFactor = interfaceSideInfoPtr->interfPtr()->penaltyFactor();
+
+    STKScalarField& mDotSideSTKFieldRef = mDotSideField.stkFieldRef();
+    const scalar mDotURF = mDotSideField.urf();
+
+    // check
+    assert(mDotSideField.definedOn(interfaceSideInfoPtr->currentPartVec_));
+
+    // ip values; both boundary and opposing surface
+    std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
+    std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+    std::vector<scalar> cNx(SPATIAL_DIM);
+    std::vector<scalar> oNx(SPATIAL_DIM);
+    std::vector<scalar> cRhoUBip(SPATIAL_DIM);
+    std::vector<scalar> oRhoUBip(SPATIAL_DIM);
+    std::vector<scalar> currentCoordsBip(SPATIAL_DIM);
+    std::vector<scalar> cDuBip(SPATIAL_DIM);
+    std::vector<scalar> oDuBip(SPATIAL_DIM);
+
+    // pressure stabilization
+    std::vector<scalar> cGjpBip(SPATIAL_DIM);
+    std::vector<scalar> oGjpBip(SPATIAL_DIM);
+    std::vector<scalar> cDpdxBip(SPATIAL_DIM);
+    std::vector<scalar> oDpdxBip(SPATIAL_DIM);
+
+    // mapping for -1:1 -> -0.5:0.5 volume element
+    std::vector<scalar> currentElementIsoParCoords(SPATIAL_DIM);
+    std::vector<scalar> opposingElementIsoParCoords(SPATIAL_DIM);
+
+    // interpolate nodal values to point-in-elem
+    const label sizeOfScalarField = 1;
+    const label sizeOfVectorField = SPATIAL_DIM;
+
+    // pointers to fixed values
+    scalar* p_cNx = &cNx[0];
+    scalar* p_oNx = &oNx[0];
+
+    // nodal fields to gather; face
+    std::vector<scalar> ws_c_p;
+    std::vector<scalar> ws_o_p;
+    std::vector<scalar> ws_c_Gjp;
+    std::vector<scalar> ws_o_Gjp;
+    std::vector<scalar> ws_c_rhoU;
+    std::vector<scalar> ws_o_rhoU;
+    std::vector<scalar> ws_c_rho;
+    std::vector<scalar> ws_o_rho;
+    std::vector<scalar> ws_c_face_coordinates;
+
+    // element
+    std::vector<scalar> ws_c_elem_p;
+    std::vector<scalar> ws_o_elem_p;
+    std::vector<scalar> ws_c_elem_coordinates;
+    std::vector<scalar> ws_o_elem_coordinates;
+    std::vector<scalar> ws_c_du;
+    std::vector<scalar> ws_o_du;
+
+    // master element data
+    std::vector<scalar> ws_c_dndx;
+    std::vector<scalar> ws_o_dndx;
+    std::vector<scalar> ws_c_det_j;
+    std::vector<scalar> ws_o_det_j;
+
+    // Get transport fields/side fields
+    const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const auto& pSTKFieldRef = this->pRef().stkFieldRef();
+    const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
+    const auto& USTKFieldRef = this->URef().stkFieldRef();
+
+    // Get pressure diffusivity coefficient field
+    const auto& duSTKFieldRef =
+        *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
+
+    // Get geometric fields
+    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    // extract vector of dgInfo
+    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
+        interfaceSideInfoPtr->dgInfoVec_;
+
+    // free-surface always uses pure harmonic (no comp switch)
+
+    for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
+    {
+        const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+
+        // now loop over all the DgInfo objects on this
+        // particular exposed face
+        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+        {
+            dgInfo* dgInfo = faceDgInfoVec[k];
+
+            // extract current/opposing face/element
+            stk::mesh::Entity currentFace = dgInfo->currentFace_;
+            stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
+            stk::mesh::Entity currentElement = dgInfo->currentElement_;
+            stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
+            const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
+            const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+
+            // master element; face and volume
+            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+            MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+            MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+
+            // local ip, ordinals, etc
+            const label currentGaussPointId = dgInfo->currentGaussPointId_;
+            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+            opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+
+            // pointer to mDot
+            scalar* ncmDot =
+                stk::mesh::field_data(mDotSideSTKFieldRef, currentFace);
+
+            // if gauss point is exposed (non-overlapping), then
+            // treat as a wall
+            if (dgInfo->gaussPointExposed_)
+            {
+                ncmDot[currentGaussPointId] = 0.0;
+                continue;
+            }
+
+            // extract some master element info
+            const label currentNodesPerSide = meFCCurrent->nodesPerElement_;
+            const label opposingNodesPerSide = meFCOpposing->nodesPerElement_;
+            const label currentNodesPerElement = meSCSCurrent->nodesPerElement_;
+            const label opposingNodesPerElement =
+                meSCSOpposing->nodesPerElement_;
+
+            // arithmetic weights
+            const scalar f_c = 1.0 / static_cast<scalar>(currentNodesPerSide);
+            const scalar f_o = 1.0 / static_cast<scalar>(opposingNodesPerSide);
+
+            // algorithm related; face
+            ws_c_p.resize(currentNodesPerSide);
+            ws_o_p.resize(opposingNodesPerSide);
+            ws_c_du.resize(currentNodesPerSide * SPATIAL_DIM);
+            ws_o_du.resize(opposingNodesPerSide * SPATIAL_DIM);
+            ws_c_Gjp.resize(currentNodesPerSide * SPATIAL_DIM);
+            ws_o_Gjp.resize(opposingNodesPerSide * SPATIAL_DIM);
+            ws_c_rhoU.resize(currentNodesPerSide * SPATIAL_DIM);
+            ws_o_rhoU.resize(opposingNodesPerSide * SPATIAL_DIM);
+            ws_c_rho.resize(currentNodesPerSide);
+            ws_o_rho.resize(opposingNodesPerSide);
+            ws_c_face_coordinates.resize(currentNodesPerSide * SPATIAL_DIM);
+
+            // algorithm related; element; dndx will be at a
+            // single gauss point
+            ws_c_elem_p.resize(currentNodesPerElement);
+            ws_o_elem_p.resize(opposingNodesPerElement);
+            ws_c_elem_coordinates.resize(currentNodesPerElement * SPATIAL_DIM);
+            ws_o_elem_coordinates.resize(opposingNodesPerElement * SPATIAL_DIM);
+            ws_c_dndx.resize(SPATIAL_DIM * currentNodesPerElement);
+            ws_o_dndx.resize(SPATIAL_DIM * opposingNodesPerElement);
+            ws_c_det_j.resize(1);
+            ws_o_det_j.resize(1);
+
+            // face
+            scalar* p_c_p = &ws_c_p[0];
+            scalar* p_o_p = &ws_o_p[0];
+            scalar* p_c_du = &ws_c_du[0];
+            scalar* p_o_du = &ws_o_du[0];
+            scalar* p_c_Gjp = &ws_c_Gjp[0];
+            scalar* p_o_Gjp = &ws_o_Gjp[0];
+            scalar* p_c_rhoU = &ws_c_rhoU[0];
+            scalar* p_o_rhoU = &ws_o_rhoU[0];
+            scalar* p_c_rho = &ws_c_rho[0];
+            scalar* p_o_rho = &ws_o_rho[0];
+            scalar* p_c_face_coordinates = &ws_c_face_coordinates[0];
+
+            // element
+            scalar* p_c_elem_p = &ws_c_elem_p[0];
+            scalar* p_o_elem_p = &ws_o_elem_p[0];
+            scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
+            scalar* p_o_elem_coordinates = &ws_o_elem_coordinates[0];
+
+            // me pointers
+            scalar* p_c_dndx = &ws_c_dndx[0];
+            scalar* p_o_dndx = &ws_o_dndx[0];
+
+            // populate current face_node_ordinals
+            const label* c_face_node_ordinals =
+                meSCSCurrent->side_node_ordinals(currentFaceOrdinal);
+
+            // gather current face data
+            stk::mesh::Entity const* current_face_node_rels =
+                bulkData.begin_nodes(currentFace);
+            const label current_num_face_nodes =
+                bulkData.num_nodes(currentFace);
+            for (label ni = 0; ni < current_num_face_nodes; ++ni)
+            {
+                stk::mesh::Entity node = current_face_node_rels[ni];
+
+                // gather; scalar
+                p_c_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+                p_c_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+
+                // gather; vector
+                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                const scalar* Gjp =
+                    stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, node);
+                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    const label offSet = i * current_num_face_nodes + ni;
+                    p_c_rhoU[offSet] = U[i];
+                    p_c_Gjp[offSet] = Gjp[i];
+                    p_c_face_coordinates[offSet] = coords[i];
+                    p_c_du[offSet] = du[i];
+                }
+            }
+
+            // populate opposing face_node_ordinals
+            const label* o_face_node_ordinals =
+                meSCSOpposing->side_node_ordinals(opposingFaceOrdinal);
+
+            // gather opposing face data
+            stk::mesh::Entity const* opposing_face_node_rels =
+                bulkData.begin_nodes(opposingFace);
+            const label opposing_num_face_nodes =
+                bulkData.num_nodes(opposingFace);
+            for (label ni = 0; ni < opposing_num_face_nodes; ++ni)
+            {
+                stk::mesh::Entity node = opposing_face_node_rels[ni];
+
+                // gather; scalar
+                p_o_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+                p_o_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+
+                // gather; vector
+                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                const scalar* Gjp =
+                    stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    const label offSet = i * opposing_num_face_nodes + ni;
+                    p_o_rhoU[offSet] = U[i];
+                    p_o_Gjp[offSet] = Gjp[i];
+                    p_o_du[offSet] = du[i];
+                }
+            }
+
+            // gather current element data
+            stk::mesh::Entity const* current_elem_node_rels =
+                bulkData.begin_nodes(currentElement);
+            const label current_num_elem_nodes =
+                bulkData.num_nodes(currentElement);
+            for (label ni = 0; ni < current_num_elem_nodes; ++ni)
+            {
+                stk::mesh::Entity node = current_elem_node_rels[ni];
+
+                // gather; scalar
+                p_c_elem_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+
+                // gather; vector
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, node);
+                const label niNdim = ni * SPATIAL_DIM;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    p_c_elem_coordinates[niNdim + i] = coords[i];
+                }
+            }
+
+            // gather opposing element data; sneak in second
+            // connected nodes
+            stk::mesh::Entity const* opposing_elem_node_rels =
+                bulkData.begin_nodes(opposingElement);
+            const label opposing_num_elem_nodes =
+                bulkData.num_nodes(opposingElement);
+            for (label ni = 0; ni < opposing_num_elem_nodes; ++ni)
+            {
+                stk::mesh::Entity node = opposing_elem_node_rels[ni];
+
+                // gather; scalar
+                p_o_elem_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+
+                // gather; vector
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, node);
+                const label niNdim = ni * SPATIAL_DIM;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    p_o_elem_coordinates[niNdim + i] = coords[i];
+                }
+            }
+
+            // pointer to face data
+            const scalar* c_areaVec =
+                stk::mesh::field_data(exposedAreaVecSTKFieldRef, currentFace);
+
+            scalar c_amag = 0.0;
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                const scalar c_axj =
+                    c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
+                c_amag += c_axj * c_axj;
+            }
+            c_amag = std::sqrt(c_amag);
+
+            // now compute normal
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                p_cNx[i] =
+                    c_areaVec[currentGaussPointId * SPATIAL_DIM + i] / c_amag;
+            }
+
+            // compute opposing normal: in theory it is assumed
+            // that the current and opposing sub-control surfaces
+            // are sufficiently planar
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                p_oNx[i] = -p_cNx[i];
+            }
+
+            // transform opposing normal back to opposing side
+            interfaceSideInfoPtr->reverseRotateVector<SPATIAL_DIM>(oNx);
+
+            // project from side to element; method deals with
+            // the -1:1 isInElement range to the proper
+            // underlying CVFEM range
+            meSCSCurrent->sidePcoords_to_elemPcoords(
+                currentFaceOrdinal,
+                1,
+                &currentIsoParCoords[0],
+                &currentElementIsoParCoords[0]);
+            meSCSOpposing->sidePcoords_to_elemPcoords(
+                opposingFaceOrdinal,
+                1,
+                &opposingIsoParCoords[0],
+                &opposingElementIsoParCoords[0]);
+
+            // compute dndx
+            scalar scs_error = 0.0;
+            meSCSCurrent->general_face_grad_op(currentFaceOrdinal,
+                                               &currentElementIsoParCoords[0],
+                                               &p_c_elem_coordinates[0],
+                                               &p_c_dndx[0],
+                                               &ws_c_det_j[0],
+                                               &scs_error);
+            meSCSOpposing->general_face_grad_op(opposingFaceOrdinal,
+                                                &opposingElementIsoParCoords[0],
+                                                &p_o_elem_coordinates[0],
+                                                &p_o_dndx[0],
+                                                &ws_o_det_j[0],
+                                                &scs_error);
+
+            // current inverse length scale; can loop over face
+            // nodes to avoid "nodesOnFace" array
+            scalar currentInverseLength = 0.0;
+            for (label ic = 0; ic < current_num_face_nodes; ++ic)
+            {
+                const label faceNodeNumber = c_face_node_ordinals[ic];
+                const label offSetDnDx =
+                    faceNodeNumber * SPATIAL_DIM; // single intg. point
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar nxj = p_cNx[j];
+                    const scalar dndxj = p_c_dndx[offSetDnDx + j];
+                    currentInverseLength += dndxj * nxj;
+                }
+            }
+
+            // opposing inverse length scale; can loop over face
+            // nodes to avoid "nodesOnFace" array
+            scalar opposingInverseLength = 0.0;
+            for (label ic = 0; ic < opposing_num_face_nodes; ++ic)
+            {
+                const label faceNodeNumber = o_face_node_ordinals[ic];
+                const label offSetDnDx =
+                    faceNodeNumber * SPATIAL_DIM; // single intg. point
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar nxj = p_oNx[j];
+                    const scalar dndxj = p_o_dndx[offSetDnDx + j];
+                    opposingInverseLength += dndxj * nxj;
+                }
+            }
+
+            // bip gradients; zero out
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                cDpdxBip[j] = 0.0;
+                oDpdxBip[j] = 0.0;
+            }
+
+            // current pressure gradient
+            for (label ic = 0; ic < currentNodesPerElement; ++ic)
+            {
+                const label offSetDnDx = ic * SPATIAL_DIM; // single intg. point
+                const scalar pNp1 = p_c_elem_p[ic];
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar dndxj = p_c_dndx[offSetDnDx + j];
+                    cDpdxBip[j] += dndxj * pNp1;
+                }
+            }
+
+            // opposing pressure gradient
+            for (label ic = 0; ic < opposingNodesPerElement; ++ic)
+            {
+                const label offSetDnDx = ic * SPATIAL_DIM; // single intg. point
+                const scalar pNp1 = p_o_elem_p[ic];
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar dndxj = p_o_dndx[offSetDnDx + j];
+                    oDpdxBip[j] += dndxj * pNp1;
+                }
+            }
+
+            // interpolate to boundary ips
+            scalar cPBip = 0.0;
+            meFCCurrent->interpolatePoint(
+                sizeOfScalarField, &currentIsoParCoords[0], &ws_c_p[0], &cPBip);
+
+            scalar oPBip = 0.0;
+            meFCOpposing->interpolatePoint(sizeOfScalarField,
+                                           &opposingIsoParCoords[0],
+                                           &ws_o_p[0],
+                                           &oPBip);
+
+            scalar cRhoBip = 0.0;
+            meFCCurrent->interpolatePoint(sizeOfScalarField,
+                                          &currentIsoParCoords[0],
+                                          &ws_c_rho[0],
+                                          &cRhoBip);
+
+            scalar oRhoBip = 0.0;
+            meFCOpposing->interpolatePoint(sizeOfScalarField,
+                                           &opposingIsoParCoords[0],
+                                           &ws_o_rho[0],
+                                           &oRhoBip);
+
+            // projected nodal gradient: use arithmetic interpolations: zero-out
+            // first
+            for (label i = 0; i < SPATIAL_DIM; i++)
+            {
+                cGjpBip[i] = 0;
+                oGjpBip[i] = 0;
+            }
+
+            for (label ic = 0; ic < currentNodesPerSide; ++ic)
+            {
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    const label offSet = i * currentNodesPerSide + ic;
+                    cGjpBip[i] += f_c * p_c_Gjp[offSet];
+                }
+            }
+
+            for (label ic = 0; ic < opposingNodesPerSide; ++ic)
+            {
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    const label offSet = i * opposingNodesPerSide + ic;
+                    oGjpBip[i] += f_o * p_o_Gjp[offSet];
+                }
+            }
+
+            // pure harmonic interpolation between the two
+            // interface sides for free-surface
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                const scalar a = cGjpBip[i];
+                const scalar b = oGjpBip[i];
+                const scalar harm = (std::abs(a) * b + a * std::abs(b)) /
+                                    (std::abs(a) + std::abs(b) + SMALL);
+                cGjpBip[i] = harm;
+                oGjpBip[i] = harm;
+            }
+
+            // product of density and velocity; current (take
+            // over previous nodal value for velocity)
+            for (label ni = 0; ni < current_num_face_nodes; ++ni)
+            {
+                const scalar rho = p_c_rho[ni];
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    const label offSet = i * current_num_face_nodes + ni;
+                    p_c_rhoU[offSet] *= rho;
+                }
+            }
+
+            // opposite
+            for (label ni = 0; ni < opposing_num_face_nodes; ++ni)
+            {
+                const scalar rho = p_o_rho[ni];
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    const label offSet = i * opposing_num_face_nodes + ni;
+                    p_o_rhoU[offSet] *= rho;
+                }
+            }
+
+            // interpolate velocity with density scaling
+            meFCCurrent->interpolatePoint(sizeOfVectorField,
+                                          &currentIsoParCoords[0],
+                                          &ws_c_rhoU[0],
+                                          &cRhoUBip[0]);
+
+            meFCOpposing->interpolatePoint(sizeOfVectorField,
+                                           &opposingIsoParCoords[0],
+                                           &ws_o_rhoU[0],
+                                           &oRhoUBip[0]);
+
+            meFCCurrent->interpolatePoint(sizeOfVectorField,
+                                          &currentIsoParCoords[0],
+                                          &ws_c_du[0],
+                                          &cDuBip[0]);
+
+            meFCOpposing->interpolatePoint(sizeOfVectorField,
+                                           &opposingIsoParCoords[0],
+                                           &ws_o_du[0],
+                                           &oDuBip[0]);
+
+            meFCCurrent->interpolatePoint(sizeOfVectorField,
+                                          &currentIsoParCoords[0],
+                                          &ws_c_face_coordinates[0],
+                                          &currentCoordsBip[0]);
+
+            scalar currentDiffBipmag = 0;
+            scalar opposingDiffBipmag = 0;
+            for (label i = 0; i < SPATIAL_DIM; i++)
+            {
+                currentDiffBipmag +=
+                    cRhoBip * cDuBip[i] / static_cast<scalar>(SPATIAL_DIM);
+                opposingDiffBipmag +=
+                    oRhoBip * oDuBip[i] / static_cast<scalar>(SPATIAL_DIM);
+            }
+
+            const scalar penaltyIp =
+                penaltyFactor * 0.5 *
+                (currentDiffBipmag * currentInverseLength +
+                 opposingDiffBipmag * opposingInverseLength);
+
+            scalar ncFlux = 0.0;
+            scalar ncPstabFlux = 0.0;
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                const scalar cRhoU = cRhoUBip[j];
+                const scalar oRhoU = oRhoUBip[j];
+                ncFlux += 0.5 * (cRhoU * p_cNx[j] - oRhoU * p_oNx[j]);
+
+                const scalar cPstab =
+                    cRhoBip * cDuBip[j] * (cDpdxBip[j] - cGjpBip[j]);
+                const scalar oPstab =
+                    oRhoBip * oDuBip[j] * (oDpdxBip[j] - oGjpBip[j]);
+                ncPstabFlux += 0.5 * (cPstab * p_cNx[j] - oPstab * p_oNx[j]);
+            }
+
+            // scatter it
+            scalar tmDot =
+                (ncFlux - ncPstabFlux + penaltyIp * (cPBip - oPBip)) * c_amag;
+
+            // store with relaxation
+            ncmDot[currentGaussPointId] =
+                mDotURF * tmDot + (1.0 - mDotURF) * ncmDot[currentGaussPointId];
+        }
+    }
+}
+#endif /* HAS_INTERFACE */
+
+void freeSurfaceFlowModel::
+    updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary,
+        sideField<scalar, 1>& mDotSideField,
+        const nodeField<1, SPATIAL_DIM>& rhoField)
+{
+    using stk::mesh::Bucket;
+    using stk::mesh::BucketVector;
+
+    const auto& mesh = this->meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    // ip values; both boundary and opposing
+    // surface
+    std::vector<scalar> coordBip(SPATIAL_DIM);
+    std::vector<scalar> uBip(SPATIAL_DIM);
+    std::vector<scalar> GpdxBip(SPATIAL_DIM);
+    std::vector<scalar> dpdxBip(SPATIAL_DIM);
+    std::vector<scalar> duBip(SPATIAL_DIM);
+    std::vector<scalar> FBip(SPATIAL_DIM);
+    std::vector<scalar> FOrigBip(SPATIAL_DIM);
+
+    // pointers to fixed values
+    scalar* p_coordBip = &coordBip[0];
+    scalar* p_uBip = &uBip[0];
+    scalar* p_GpdxBip = &GpdxBip[0];
+    scalar* p_dpdxBip = &dpdxBip[0];
+    scalar* p_duBip = &duBip[0];
+    scalar* p_FBip = &FBip[0];
+    scalar* p_FOrigBip = &FOrigBip[0];
+
+    // nodal fields to gather
+    std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_p;
+    std::vector<scalar> ws_U;
+    std::vector<scalar> ws_Gpdx;
+    std::vector<scalar> ws_du;
+    std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_F;
+    std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> B_el(SPATIAL_DIM);
+
+    // master element
+    std::vector<scalar> ws_face_shape_function;
+    std::vector<scalar> ws_coordinate_face_shape_function;
+    std::vector<scalar> ws_dndx;
+    std::vector<scalar> ws_det_j;
+
+    // Get fields
+    const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const auto& pSTKFieldRef = this->pRef().stkFieldRef();
+    const auto& nodalSidePSTKFieldRef =
+        this->pRef().nodeSideFieldRef().stkFieldRef();
+    const auto& USTKFieldRef = this->URef().stkFieldRef();
+    const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
+
+    const auto& mDotSideSTKFieldRef = mDotSideField.stkFieldRef();
+    const scalar mDotURF = mDotSideField.urf();
+
+    const auto& duSTKFieldRef =
+        *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
+
+    // Get body force fields for buoyancy pressure stabilization
+    const auto* FSTKFieldPtr =
+        metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
+    const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    // Get geometric fields
+    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    // define vector of parent topos; should
+    // always be UNITY in size
+    std::vector<stk::topology> parentTopo;
+
+    // define some common selectors
+    stk::mesh::Selector selAllSides =
+        metaData.universal_part() & stk::mesh::selectUnion(boundary->parts());
+
+    // shifted ip's for field?
+    const bool isUShifted = this->URef().isShifted();
+
+    // shifted ip's for gradients?
+    const bool isPGradientShifted = this->pRef().isGradientShifted();
+
+    // free-surface always uses pure harmonic (no comp switch)
+
+    BucketVector const& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selAllSides);
+    for (BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        Bucket& sideBucket = **ib;
+
+        // extract connected element
+        // topology
+        sideBucket.parent_topology(stk::topology::ELEMENT_RANK, parentTopo);
+        STK_ThrowAssert(parentTopo.size() == 1);
+        stk::topology theElemTopo = parentTopo[0];
+
+        // volume master element
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(theElemTopo);
+        const label nodesPerElement = meSCS->nodesPerElement_;
+
+        // face master element
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
+        const label nodesPerSide = sideBucket.topology().num_nodes();
+        const label numScsBip = meFC->numIntPoints_;
+        const label* faceIpNodeMap = meFC->ipNodeMap();
+
+        // algorithm related; element
+        // (exposed face and element)
+        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
+        ws_p.resize(nodesPerElement);
+        ws_U.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
+        ws_du.resize(nodesPerSide * SPATIAL_DIM);
+        ws_rho.resize(nodesPerSide);
+        ws_F.resize(nodesPerSide * SPATIAL_DIM);
+        ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
+        ws_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
+        ws_det_j.resize(numScsBip);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+
+        // pointers
+        scalar* p_coordinates = &ws_coordinates[0];
+        scalar* p_p = &ws_p[0];
+        scalar* p_U = &ws_U[0];
+        scalar* p_Gpdx = &ws_Gpdx[0];
+        scalar* p_du = &ws_du[0];
+        scalar* p_rho = &ws_rho[0];
+        scalar* p_F = &ws_F[0];
+        scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_face_shape_function = &ws_face_shape_function[0];
+        scalar* p_coordinate_face_shape_function =
+            &ws_coordinate_face_shape_function[0];
+        scalar* p_dndx = &ws_dndx[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
+
+        // Always use trilinear (standard) shape functions for coordinates
+        meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
+
+        // shape functions; boundary
+        if (isUShifted)
+        {
+            meFC->shifted_shape_fcn(&p_face_shape_function[0]);
+        }
+        else
+        {
+            meFC->shape_fcn(&p_face_shape_function[0]);
+        }
+
+        const Bucket::size_type nSidesPerBucket = sideBucket.size();
+
+        for (Bucket::size_type iSide = 0; iSide < nSidesPerBucket; ++iSide)
+        {
+            // get face
+            stk::mesh::Entity side = sideBucket[iSide];
+
+            // pointer to face data
+            const scalar* areaVec =
+                stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            scalar* mDot = stk::mesh::field_data(mDotSideSTKFieldRef, side);
+
+            // extract the connected element to this exposed face; should be
+            // single in size!
+            const stk::mesh::Entity* faceElemRels =
+                bulkData.begin_elements(side);
+            STK_ThrowAssert(bulkData.num_elements(side) == 1);
+
+            // get element; its face ordinal number and populate
+            // face_node_ordinals
+            stk::mesh::Entity element = faceElemRels[0];
+            const label faceOrdinal = bulkData.begin_element_ordinals(side)[0];
+            const label* faceNodeOrdinals =
+                meSCS->side_node_ordinals(faceOrdinal);
+
+            //======================================
+            // gather nodal data off of element
+            //======================================
+            stk::mesh::Entity const* elemNodeRels =
+                bulkData.begin_nodes(element);
+            label numNodes = bulkData.num_nodes(element);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numNodes == nodesPerElement);
+            for (label ni = 0; ni < numNodes; ++ni)
+            {
+                stk::mesh::Entity node = elemNodeRels[ni];
+
+                // gather scalars
+                p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+
+                // gather vectors
+                scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
+                scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig_e =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordinates[offSet + j] = coords[j];
+                    p_Gpdx_elem[offSet + j] = Gjp_e[j];
+                    p_F_elem[offSet + j] = F_e[j];
+                    p_FOrig_elem[offSet + j] = FOrig_e[j];
+                }
+            }
+
+            // projection-based harmonic mean of FOrig
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B_el[d] = 0.0;
+            }
+            for (label ni = 0; ni < nodesPerElement; ++ni)
+            {
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
+                }
+            }
+            {
+                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] *= invN;
+                }
+            }
+            scalar mag = 0.0;
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                mag += B_el[d] * B_el[d];
+            }
+            mag = std::sqrt(mag);
+            if (mag < SMALL)
+            {
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] = 0.0;
+                }
+            }
+            else
+            {
+                scalar uhat[SPATIAL_DIM];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    uhat[d] = B_el[d] / mag;
+                }
+                scalar h = 0.0;
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    h += uhat[d] * p_FOrig_elem[d];
+                }
+                h = std::max(h, 0.0);
+                for (label ni = 1; ni < nodesPerElement; ++ni)
+                {
+                    scalar dk = 0.0;
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                    }
+                    dk = std::max(dk, 0.0);
+                    if (h > 0.0)
+                    {
+                        h = static_cast<scalar>(ni + 1) * dk * h /
+                            (static_cast<scalar>(ni) * dk + h);
+                    }
+                    else
+                    {
+                        h = 0.0;
+                    }
+                }
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] = h * uhat[d];
+                }
+            }
+
+            //======================================
+            // gather nodal data off of face
+            //======================================
+            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
+            label numSideNodes = bulkData.num_nodes(side);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numSideNodes == nodesPerSide);
+            for (label ni = 0; ni < numSideNodes; ++ni)
+            {
+                const label ic = faceNodeOrdinals[ni];
+
+                stk::mesh::Entity node = sideNodeRels[ni];
+
+                // gather scalars
+                p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_p[ic] = *stk::mesh::field_data(nodalSidePSTKFieldRef, node);
+
+                // gather vectors
+                scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                scalar* Gjp = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_U[offSet + j] = U[j];
+                    p_Gpdx[offSet + j] = Gjp[j];
+                    p_du[offSet + j] = du[j];
+                }
+
+                // gather body force vectors for buoyancy stabilization
+                const scalar* F = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_F[offSet + j] = F[j];
+                    p_FOrig[offSet + j] = FOrig[j];
+                }
+
+                // NOTE: [2024-11-25] Correction uses
+                // computed pressure values for side nodes, not actual boundary
+                // condition values (after discussion with Mahdi).
+            }
+
+            // compute dndx
+            scalar scs_error = 0.0;
+            if (isPGradientShifted)
+            {
+                meSCS->shifted_face_grad_op(1,
+                                            faceOrdinal,
+                                            &p_coordinates[0],
+                                            &p_dndx[0],
+                                            &ws_det_j[0],
+                                            &scs_error);
+            }
+            else
+            {
+                meSCS->face_grad_op(1,
+                                    faceOrdinal,
+                                    &p_coordinates[0],
+                                    &p_dndx[0],
+                                    &ws_det_j[0],
+                                    &scs_error);
+            }
+
+            // loop over boundary ips
+            for (label ip = 0; ip < numScsBip; ++ip)
+            {
+                // per-ip blend: local face node vs opposing interior node
+                const label localFaceNode = faceIpNodeMap[ip];
+                const label opposingNode =
+                    meSCS->opposingNodes(faceOrdinal, ip);
+
+                // zero out vector quantities; form aMag
+                scalar aMag = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordBip[j] = 0.0;
+                    p_uBip[j] = 0.0;
+                    // pressure gradient: harmonic for Gpdx
+                    const scalar gFace =
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                    const scalar gOpp =
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                    p_GpdxBip[j] =
+                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
+                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    p_dpdxBip[j] = 0.0;
+                    p_duBip[j] = 0.0;
+                    // body force: harmonic for F
+                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
+                    const scalar fOpp =
+                        p_F_elem[opposingNode * SPATIAL_DIM + j];
+                    p_FBip[j] =
+                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
+                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                    p_FOrigBip[j] = B_el[j];
+                }
+
+                // interpolate to bip
+                scalar rhoBip = 0;
+                const label offSetSF_face = ip * nodesPerSide;
+                for (label ic = 0; ic < nodesPerSide; ++ic)
+                {
+                    const label inn = faceNodeOrdinals[ic];
+                    const scalar r = p_face_shape_function[offSetSF_face + ic];
+                    const scalar r_coord =
+                        p_coordinate_face_shape_function[offSetSF_face + ic];
+
+                    rhoBip += r * p_rho[ic];
+
+                    const label icNdim = ic * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_coordBip[j] +=
+                            r_coord * p_coordinates[inn * SPATIAL_DIM + j];
+                        p_uBip[j] += r * p_U[icNdim + j];
+                        p_duBip[j] += r * p_du[icNdim + j];
+                    }
+                }
+
+                // form dpdxBip
+                for (label ic = 0; ic < nodesPerElement; ++ic)
+                {
+                    const label offSetDnDx =
+                        SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
+                    const scalar pIc = p_p[ic];
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_dpdxBip[j] += p_dndx[offSetDnDx + j] * pIc;
+                    }
+                }
+
+                // form mDot:
+                // rho*uj*Aj - rho*du*(dpdxj - Gjp)*Aj + rho*du*(FOrigj - Fj)*Aj
+                scalar tmDot = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+
+                    // divergence + pressure Rhie-Chow
+                    tmDot +=
+                        (rhoBip * p_uBip[j] -
+                         rhoBip * p_duBip[j] * (p_dpdxBip[j] - p_GpdxBip[j])) *
+                        axj;
+
+                    // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                    tmDot +=
+                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                }
+
+                // store with relaxation
+                mDot[ip] = mDotURF * tmDot + (1.0 - mDotURF) * mDot[ip];
+            }
+        }
+    }
+}
+
+void freeSurfaceFlowModel::
+    updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary,
+        sideField<scalar, 1>& mDotSideField,
+        const nodeField<1, SPATIAL_DIM>& rhoField)
+{
+    using stk::mesh::Bucket;
+    using stk::mesh::BucketVector;
+
+    const auto& mesh = this->meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    // ip values; both boundary and opposing
+    // surface
+    std::vector<scalar> coordBip(SPATIAL_DIM);
+    std::vector<scalar> uBip(SPATIAL_DIM);
+    std::vector<scalar> GpdxBip(SPATIAL_DIM);
+    std::vector<scalar> dpdxBip(SPATIAL_DIM);
+    std::vector<scalar> duBip(SPATIAL_DIM);
+    std::vector<scalar> FBip(SPATIAL_DIM);
+    std::vector<scalar> FOrigBip(SPATIAL_DIM);
+
+    // pointers to fixed values
+    scalar* p_coordBip = &coordBip[0];
+    scalar* p_uBip = &uBip[0];
+    scalar* p_GpdxBip = &GpdxBip[0];
+    scalar* p_dpdxBip = &dpdxBip[0];
+    scalar* p_duBip = &duBip[0];
+    scalar* p_FBip = &FBip[0];
+    scalar* p_FOrigBip = &FOrigBip[0];
+
+    // nodal fields to gather
+    std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_p;
+    std::vector<scalar> ws_U;
+    std::vector<scalar> ws_Gpdx;
+    std::vector<scalar> ws_du;
+    std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_F;
+    std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> B_el(SPATIAL_DIM);
+
+    // master element
+    std::vector<scalar> ws_face_shape_function;
+    std::vector<scalar> ws_coordinate_face_shape_function;
+    std::vector<scalar> ws_dndx;
+    std::vector<scalar> ws_det_j;
+
+    // Get fields
+    const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const auto& pSTKFieldRef = this->pRef().stkFieldRef();
+    const auto& USTKFieldRef = this->URef().stkFieldRef();
+    const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
+    const auto& nodalSidePSTKFieldRef =
+        this->pRef().nodeSideFieldRef().stkFieldRef();
+
+    const auto& mDotSideSTKFieldRef = mDotSideField.stkFieldRef();
+    const auto& reversalFlowFlagSTKFieldRef =
+        this->URef().reversalFlagRef().stkFieldRef();
+    const scalar mDotURF = mDotSideField.urf();
+
+    const auto& duSTKFieldRef =
+        *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
+
+    // Get body force fields for buoyancy pressure stabilization
+    const auto* FSTKFieldPtr =
+        metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
+    const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    // Get geometric fields
+    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    // define vector of parent topos; should
+    // always be UNITY in size
+    std::vector<stk::topology> parentTopo;
+
+    // define some common selectors
+    stk::mesh::Selector selAllSides =
+        metaData.universal_part() & stk::mesh::selectUnion(boundary->parts());
+
+    // shifted ip's for field?
+    const bool isUShifted = this->URef().isShifted();
+
+    // shifted ip's for gradients?
+    const bool isPGradientShifted = this->pRef().isGradientShifted();
+
+    // free-surface always uses pure harmonic (no comp switch)
+
+    BucketVector const& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selAllSides);
+    for (BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        Bucket& sideBucket = **ib;
+
+        // extract connected element
+        // topology
+        sideBucket.parent_topology(stk::topology::ELEMENT_RANK, parentTopo);
+        STK_ThrowAssert(parentTopo.size() == 1);
+        stk::topology theElemTopo = parentTopo[0];
+
+        // volume master element
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(theElemTopo);
+        const label nodesPerElement = meSCS->nodesPerElement_;
+
+        // face master element
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
+        const label nodesPerSide = sideBucket.topology().num_nodes();
+        const label numScsBip = meFC->numIntPoints_;
+
+        // algorithm related; element
+        // (exposed face and element)
+        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
+        ws_p.resize(nodesPerElement);
+        ws_U.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
+        ws_du.resize(nodesPerSide * SPATIAL_DIM);
+        ws_rho.resize(nodesPerSide);
+        ws_F.resize(nodesPerSide * SPATIAL_DIM);
+        ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
+        ws_det_j.resize(numScsBip);
+
+        // pointers
+        scalar* p_coordinates = &ws_coordinates[0];
+        scalar* p_p = &ws_p[0];
+        scalar* p_U = &ws_U[0];
+        scalar* p_Gpdx = &ws_Gpdx[0];
+        scalar* p_du = &ws_du[0];
+        scalar* p_rho = &ws_rho[0];
+        scalar* p_F = &ws_F[0];
+        scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
+        scalar* p_face_shape_function = &ws_face_shape_function[0];
+        scalar* p_coordinate_face_shape_function =
+            &ws_coordinate_face_shape_function[0];
+        scalar* p_dndx = &ws_dndx[0];
+
+        // Always use trilinear (standard) shape functions for coordinates
+        meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
+
+        const label* faceIpNodeMap = meFC->ipNodeMap();
+
+        // shape functions; boundary
+        if (isUShifted)
+        {
+            meFC->shifted_shape_fcn(&p_face_shape_function[0]);
+        }
+        else
+        {
+            meFC->shape_fcn(&p_face_shape_function[0]);
+        }
+
+        const Bucket::size_type nSidesPerBucket = sideBucket.size();
+
+        for (Bucket::size_type iSide = 0; iSide < nSidesPerBucket; ++iSide)
+        {
+            // get face
+            stk::mesh::Entity side = sideBucket[iSide];
+
+            // pointer to face data
+            const scalar* areaVec =
+                stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            scalar* mDot = stk::mesh::field_data(mDotSideSTKFieldRef, side);
+            const label* rfflag =
+                stk::mesh::field_data(reversalFlowFlagSTKFieldRef, side);
+
+            // extract the connected element to this exposed face; should be
+            // single in size!
+            const stk::mesh::Entity* faceElemRels =
+                bulkData.begin_elements(side);
+            STK_ThrowAssert(bulkData.num_elements(side) == 1);
+
+            // get element; its face ordinal number and populate
+            // face_node_ordinals
+            stk::mesh::Entity element = faceElemRels[0];
+            const label faceOrdinal = bulkData.begin_element_ordinals(side)[0];
+            const label* faceNodeOrdinals =
+                meSCS->side_node_ordinals(faceOrdinal);
+
+            //======================================
+            // gather nodal data off of element
+            //======================================
+            stk::mesh::Entity const* elemNodeRels =
+                bulkData.begin_nodes(element);
+            label numNodes = bulkData.num_nodes(element);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numNodes == nodesPerElement);
+            for (label ni = 0; ni < numNodes; ++ni)
+            {
+                stk::mesh::Entity node = elemNodeRels[ni];
+
+                // gather scalars
+                p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+
+                // gather vectors
+                scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
+                scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig_e =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordinates[offSet + j] = coords[j];
+                    p_Gpdx_elem[offSet + j] = Gjp_e[j];
+                    p_F_elem[offSet + j] = F_e[j];
+                    p_FOrig_elem[offSet + j] = FOrig_e[j];
+                }
+            }
+
+            // projection-based harmonic mean of FOrig
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B_el[d] = 0.0;
+            }
+            for (label ni = 0; ni < nodesPerElement; ++ni)
+            {
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
+                }
+            }
+            {
+                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] *= invN;
+                }
+            }
+            scalar mag = 0.0;
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                mag += B_el[d] * B_el[d];
+            }
+            mag = std::sqrt(mag);
+            if (mag < SMALL)
+            {
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] = 0.0;
+                }
+            }
+            else
+            {
+                scalar uhat[SPATIAL_DIM];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    uhat[d] = B_el[d] / mag;
+                }
+                scalar h = 0.0;
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    h += uhat[d] * p_FOrig_elem[d];
+                }
+                h = std::max(h, 0.0);
+                for (label ni = 1; ni < nodesPerElement; ++ni)
+                {
+                    scalar dk = 0.0;
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                    }
+                    dk = std::max(dk, 0.0);
+                    if (h > 0.0)
+                    {
+                        h = static_cast<scalar>(ni + 1) * dk * h /
+                            (static_cast<scalar>(ni) * dk + h);
+                    }
+                    else
+                    {
+                        h = 0.0;
+                    }
+                }
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] = h * uhat[d];
+                }
+            }
+
+            //======================================
+            // gather nodal data off of face
+            //======================================
+            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
+            label numSideNodes = bulkData.num_nodes(side);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numSideNodes == nodesPerSide);
+            for (label ni = 0; ni < numSideNodes; ++ni)
+            {
+                const label ic = faceNodeOrdinals[ni];
+
+                stk::mesh::Entity node = sideNodeRels[ni];
+
+                // gather scalars
+                p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_p[ic] = *stk::mesh::field_data(nodalSidePSTKFieldRef, node);
+
+                // gather vectors
+                scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                scalar* Gjp = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_U[offSet + j] = U[j];
+                    p_Gpdx[offSet + j] = Gjp[j];
+                    p_du[offSet + j] = du[j];
+                }
+
+                // gather body force vectors for buoyancy stabilization
+                const scalar* F = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_F[offSet + j] = F[j];
+                    p_FOrig[offSet + j] = FOrig[j];
+                }
+
+                // NOTE: Correction uses
+                // computed pressure values for side nodes, not actual boundary
+                // condition values (after discussion with Mahdi).
+            }
+
+            // compute dndx
+            scalar scs_error = 0.0;
+            if (isPGradientShifted)
+            {
+                meSCS->shifted_face_grad_op(1,
+                                            faceOrdinal,
+                                            &p_coordinates[0],
+                                            &p_dndx[0],
+                                            &ws_det_j[0],
+                                            &scs_error);
+            }
+            else
+            {
+                meSCS->face_grad_op(1,
+                                    faceOrdinal,
+                                    &p_coordinates[0],
+                                    &p_dndx[0],
+                                    &ws_det_j[0],
+                                    &scs_error);
+            }
+
+            // loop over boundary ips
+            for (label ip = 0; ip < numScsBip; ++ip)
+            {
+                if (rfflag[ip] == 1) // slip-wall when reversed
+                {
+                    mDot[ip] = 0.0;
+                    continue;
+                }
+
+                const label localFaceNode = faceIpNodeMap[ip];
+                const label opposingNode =
+                    meSCS->opposingNodes(faceOrdinal, ip);
+
+                // zero out vector quantities; form aMag
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordBip[j] = 0.0;
+                    p_uBip[j] = 0.0;
+                    // pressure gradient: harmonic for Gpdx
+                    const scalar gFace =
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                    const scalar gOpp =
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                    p_GpdxBip[j] =
+                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
+                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    p_dpdxBip[j] = 0.0;
+                    p_duBip[j] = 0.0;
+                    // body force: harmonic for F
+                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
+                    const scalar fOpp =
+                        p_F_elem[opposingNode * SPATIAL_DIM + j];
+                    p_FBip[j] =
+                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
+                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                    p_FOrigBip[j] = B_el[j];
+                }
+
+                // interpolate to bip
+                scalar rhoBip = 0;
+                const label offSetSF_face = ip * nodesPerSide;
+                for (label ic = 0; ic < nodesPerSide; ++ic)
+                {
+                    const label inn = faceNodeOrdinals[ic];
+
+                    const scalar r = p_face_shape_function[offSetSF_face + ic];
+                    const scalar r_coord =
+                        p_coordinate_face_shape_function[offSetSF_face + ic];
+
+                    rhoBip += r * p_rho[ic];
+
+                    const label icNdim = ic * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_coordBip[j] +=
+                            r_coord * p_coordinates[inn * SPATIAL_DIM + j];
+                        p_uBip[j] += r * p_U[icNdim + j];
+                        p_duBip[j] += r * p_du[icNdim + j];
+                    }
+                }
+
+                // form dpdxBip
+                for (label ic = 0; ic < nodesPerElement; ++ic)
+                {
+                    const label offSetDnDx =
+                        SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
+                    const scalar pIc = p_p[ic];
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_dpdxBip[j] += p_dndx[offSetDnDx + j] * pIc;
+                    }
+                }
+
+                // form mDot:
+                // rho*uj*Aj - rho*du*(dpdxj - Gjp)*Aj + rho*du*(FOrigj - Fj)*Aj
+                scalar tmDot = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+
+                    // divergence + pressure Rhie-Chow
+                    tmDot +=
+                        (rhoBip * p_uBip[j] -
+                         rhoBip * p_duBip[j] * (p_dpdxBip[j] - p_GpdxBip[j])) *
+                        axj;
+
+                    // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                    tmDot +=
+                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                }
+
+                // store with relaxation
+                mDot[ip] = mDotURF * tmDot + (1.0 - mDotURF) * mDot[ip];
+            }
+        }
+    }
+}
+
+void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
+    const std::shared_ptr<domain> domain,
+    const boundary* boundary,
+    sideField<scalar, 1>& mDotSideField,
+    const nodeField<1, SPATIAL_DIM>& rhoField)
+{
+    using stk::mesh::Bucket;
+    using stk::mesh::BucketVector;
+
+    const auto& mesh = this->meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    // ip values; both boundary and opposing
+    // surface
+    std::vector<scalar> coordBip(SPATIAL_DIM);
+    std::vector<scalar> uBip(SPATIAL_DIM);
+    std::vector<scalar> GpdxBip(SPATIAL_DIM);
+    std::vector<scalar> dpdxBip(SPATIAL_DIM);
+    std::vector<scalar> duBip(SPATIAL_DIM);
+    std::vector<scalar> FBip(SPATIAL_DIM);
+    std::vector<scalar> FOrigBip(SPATIAL_DIM);
+
+    // pointers to fixed values
+    scalar* p_coordBip = &coordBip[0];
+    scalar* p_uBip = &uBip[0];
+    scalar* p_GpdxBip = &GpdxBip[0];
+    scalar* p_dpdxBip = &dpdxBip[0];
+    scalar* p_duBip = &duBip[0];
+    scalar* p_FBip = &FBip[0];
+    scalar* p_FOrigBip = &FOrigBip[0];
+
+    // nodal fields to gather
+    std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_p;
+    std::vector<scalar> ws_U;
+    std::vector<scalar> ws_Gpdx;
+    std::vector<scalar> ws_du;
+    std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_F;
+    std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_Gpdx_elem;
+    std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> B_el(SPATIAL_DIM);
+
+    // master element
+    std::vector<scalar> ws_face_shape_function;
+    std::vector<scalar> ws_coordinate_face_shape_function;
+    std::vector<scalar> ws_dndx;
+    std::vector<scalar> ws_det_j;
+
+    // Get fields
+    const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const auto& pSTKFieldRef = this->pRef().stkFieldRef();
+    const auto& USTKFieldRef = this->URef().stkFieldRef();
+    const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
+
+    const auto& mDotSideSTKFieldRef = mDotSideField.stkFieldRef();
+    const scalar mDotURF = mDotSideField.urf();
+
+    const auto& duSTKFieldRef =
+        *metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::du_ID);
+
+    // Get body force fields for buoyancy pressure stabilization
+    const auto* FSTKFieldPtr =
+        metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
+    const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    // Get geometric fields
+    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    // define vector of parent topos; should
+    // always be UNITY in size
+    std::vector<stk::topology> parentTopo;
+
+    // define some common selectors
+    stk::mesh::Selector selAllSides =
+        metaData.universal_part() & stk::mesh::selectUnion(boundary->parts());
+
+    // shifted ip's for field?
+    const bool isUShifted = this->URef().isShifted();
+
+    // shifted ip's for gradients?
+    const bool isPGradientShifted = this->pRef().isGradientShifted();
+
+    // free-surface always uses pure harmonic (no comp switch)
+
+    BucketVector const& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selAllSides);
+    for (BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        Bucket& sideBucket = **ib;
+
+        // extract connected element
+        // topology
+        sideBucket.parent_topology(stk::topology::ELEMENT_RANK, parentTopo);
+        STK_ThrowAssert(parentTopo.size() == 1);
+        stk::topology theElemTopo = parentTopo[0];
+
+        // volume master element
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(theElemTopo);
+        const label nodesPerElement = meSCS->nodesPerElement_;
+
+        // face master element
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
+        const label nodesPerSide = sideBucket.topology().num_nodes();
+        const label numScsBip = meFC->numIntPoints_;
+
+        // algorithm related; element
+        // (exposed face and element)
+        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
+        ws_p.resize(nodesPerElement);
+        ws_U.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
+        ws_du.resize(nodesPerSide * SPATIAL_DIM);
+        ws_rho.resize(nodesPerSide);
+        ws_F.resize(nodesPerSide * SPATIAL_DIM);
+        ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
+        ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
+        ws_det_j.resize(numScsBip);
+
+        // pointers
+        scalar* p_coordinates = &ws_coordinates[0];
+        scalar* p_p = &ws_p[0];
+        scalar* p_U = &ws_U[0];
+        scalar* p_Gpdx = &ws_Gpdx[0];
+        scalar* p_du = &ws_du[0];
+        scalar* p_rho = &ws_rho[0];
+        scalar* p_F = &ws_F[0];
+        scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
+        scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_FOrig_elem = &ws_FOrig_elem[0];
+        scalar* p_face_shape_function = &ws_face_shape_function[0];
+        scalar* p_coordinate_face_shape_function =
+            &ws_coordinate_face_shape_function[0];
+        scalar* p_dndx = &ws_dndx[0];
+
+        // shape functions; boundary
+        if (isUShifted)
+        {
+            meFC->shifted_shape_fcn(&p_face_shape_function[0]);
+        }
+        else
+        {
+            meFC->shape_fcn(&p_face_shape_function[0]);
+        }
+
+        // Always use trilinear (standard) shape functions for coordinates
+        meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
+
+        const label* faceIpNodeMap = meFC->ipNodeMap();
+
+        const Bucket::size_type nSidesPerBucket = sideBucket.size();
+
+        for (Bucket::size_type iSide = 0; iSide < nSidesPerBucket; ++iSide)
+        {
+            // get face
+            stk::mesh::Entity side = sideBucket[iSide];
+
+            // pointer to face data
+            const scalar* areaVec =
+                stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            scalar* mDot = stk::mesh::field_data(mDotSideSTKFieldRef, side);
+
+            // extract the connected element to this exposed face; should be
+            // single in size!
+            const stk::mesh::Entity* faceElemRels =
+                bulkData.begin_elements(side);
+            STK_ThrowAssert(bulkData.num_elements(side) == 1);
+
+            // get element; its face ordinal number and populate
+            // face_node_ordinals
+            stk::mesh::Entity element = faceElemRels[0];
+            const label faceOrdinal = bulkData.begin_element_ordinals(side)[0];
+            const label* faceNodeOrdinals =
+                meSCS->side_node_ordinals(faceOrdinal);
+
+            //======================================
+            // gather nodal data off of element
+            //======================================
+            stk::mesh::Entity const* elemNodeRels =
+                bulkData.begin_nodes(element);
+            label numNodes = bulkData.num_nodes(element);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numNodes == nodesPerElement);
+            for (label ni = 0; ni < numNodes; ++ni)
+            {
+                stk::mesh::Entity node = elemNodeRels[ni];
+
+                // gather scalars
+                p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+
+                // gather vectors
+                scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
+                scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig_e =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordinates[offSet + j] = coords[j];
+                    p_Gpdx_elem[offSet + j] = Gjp_e[j];
+                    p_F_elem[offSet + j] = F_e[j];
+                    p_FOrig_elem[offSet + j] = FOrig_e[j];
+                }
+            }
+
+            // projection-based harmonic mean of FOrig
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B_el[d] = 0.0;
+            }
+            for (label ni = 0; ni < nodesPerElement; ++ni)
+            {
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
+                }
+            }
+            {
+                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] *= invN;
+                }
+            }
+            scalar mag = 0.0;
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                mag += B_el[d] * B_el[d];
+            }
+            mag = std::sqrt(mag);
+            if (mag < SMALL)
+            {
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] = 0.0;
+                }
+            }
+            else
+            {
+                scalar uhat[SPATIAL_DIM];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    uhat[d] = B_el[d] / mag;
+                }
+                scalar h = 0.0;
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    h += uhat[d] * p_FOrig_elem[d];
+                }
+                h = std::max(h, 0.0);
+                for (label ni = 1; ni < nodesPerElement; ++ni)
+                {
+                    scalar dk = 0.0;
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                    {
+                        dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                    }
+                    dk = std::max(dk, 0.0);
+                    if (h > 0.0)
+                    {
+                        h = static_cast<scalar>(ni + 1) * dk * h /
+                            (static_cast<scalar>(ni) * dk + h);
+                    }
+                    else
+                    {
+                        h = 0.0;
+                    }
+                }
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    B_el[d] = h * uhat[d];
+                }
+            }
+
+            //======================================
+            // gather nodal data off of face
+            //======================================
+            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
+            label numSideNodes = bulkData.num_nodes(side);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numSideNodes == nodesPerSide);
+            for (label ni = 0; ni < numSideNodes; ++ni)
+            {
+                stk::mesh::Entity node = sideNodeRels[ni];
+
+                // gather scalars
+                p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+
+                // gather vectors
+                scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                scalar* Gjp = stk::mesh::field_data(gradPSTKFieldRef, node);
+                const scalar* du = stk::mesh::field_data(duSTKFieldRef, node);
+
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_U[offSet + j] = U[j];
+                    p_Gpdx[offSet + j] = Gjp[j];
+                    p_du[offSet + j] = du[j];
+                }
+
+                // gather body force vectors for buoyancy stabilization
+                const scalar* F = stk::mesh::field_data(*FSTKFieldPtr, node);
+                const scalar* FOrig =
+                    stk::mesh::field_data(*FOrigSTKFieldPtr, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_F[offSet + j] = F[j];
+                    p_FOrig[offSet + j] = FOrig[j];
+                }
+
+                // NOTE: Correction uses
+                // computed pressure values for side nodes, not actual boundary
+                // condition values (after discussion with Mahdi).
+            }
+
+            // compute dndx
+            scalar scs_error = 0.0;
+            if (isPGradientShifted)
+            {
+                meSCS->shifted_face_grad_op(1,
+                                            faceOrdinal,
+                                            &p_coordinates[0],
+                                            &p_dndx[0],
+                                            &ws_det_j[0],
+                                            &scs_error);
+            }
+            else
+            {
+                meSCS->face_grad_op(1,
+                                    faceOrdinal,
+                                    &p_coordinates[0],
+                                    &p_dndx[0],
+                                    &ws_det_j[0],
+                                    &scs_error);
+            }
+
+            // loop over boundary ips
+            for (label ip = 0; ip < numScsBip; ++ip)
+            {
+                const label localFaceNode = faceIpNodeMap[ip];
+                const label opposingNode =
+                    meSCS->opposingNodes(faceOrdinal, ip);
+
+                // zero out vector quantities; form aMag
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordBip[j] = 0.0;
+                    p_uBip[j] = 0.0;
+                    // pressure gradient: harmonic for Gpdx
+                    const scalar gFace =
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
+                    const scalar gOpp =
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
+                    p_GpdxBip[j] =
+                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
+                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    p_dpdxBip[j] = 0.0;
+                    p_duBip[j] = 0.0;
+                    // body force: harmonic for F
+                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
+                    const scalar fOpp =
+                        p_F_elem[opposingNode * SPATIAL_DIM + j];
+                    p_FBip[j] =
+                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
+                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
+                    p_FOrigBip[j] = B_el[j];
+                }
+
+                // interpolate to bip
+                scalar rhoBip = 0;
+                const label offSetSF_face = ip * nodesPerSide;
+                for (label ic = 0; ic < nodesPerSide; ++ic)
+                {
+                    const label inn = faceNodeOrdinals[ic];
+                    const scalar r = p_face_shape_function[offSetSF_face + ic];
+                    const scalar r_coord =
+                        p_coordinate_face_shape_function[offSetSF_face + ic];
+
+                    rhoBip += r * p_rho[ic];
+
+                    const label icNdim = ic * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_coordBip[j] +=
+                            r_coord * p_coordinates[inn * SPATIAL_DIM + j];
+                        p_uBip[j] += r * p_U[icNdim + j];
+                        p_duBip[j] += r * p_du[icNdim + j];
+                    }
+                }
+
+                // form dpdxBip
+                for (label ic = 0; ic < nodesPerElement; ++ic)
+                {
+                    const label offSetDnDx =
+                        SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
+                    const scalar pIc = p_p[ic];
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_dpdxBip[j] += p_dndx[offSetDnDx + j] * pIc;
+                    }
+                }
+
+                // form mDot:
+                // rho*uj*Aj - rho*du*(dpdxj - Gjp)*Aj + rho*du*(FOrigj - Fj)*Aj
+                scalar tmDot = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+
+                    // divergence + pressure Rhie-Chow
+                    tmDot +=
+                        (rhoBip * p_uBip[j] -
+                         rhoBip * p_duBip[j] * (p_dpdxBip[j] - p_GpdxBip[j])) *
+                        axj;
+
+                    // buoyancy stabilization: +rho*D*(F_orig - F)·S
+                    tmDot +=
+                        rhoBip * p_duBip[j] * (p_FOrigBip[j] - p_FBip[j]) * axj;
+                }
+
+                // store with relaxation
+                mDot[ip] = mDotURF * tmDot + (1.0 - mDotURF) * mDot[ip];
+            }
         }
     }
 }

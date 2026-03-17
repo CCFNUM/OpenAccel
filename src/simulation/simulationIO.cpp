@@ -20,9 +20,6 @@
 #include "simulation.h"
 #include "types.h"
 
-#include <algorithm>
-#include <sstream>
-
 namespace accel
 {
 
@@ -496,6 +493,15 @@ void simulation::createAddons_()
 
 void simulation::collectEquations_()
 {
+    // skip equation collection if physics are disabled: this is often dedicated
+    // to focused tests on mesh or addons
+    if (this->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.disablePhysics_)
+    {
+        return;
+    }
+
     for (const auto& domain : domainVector_)
     {
         // segregated NS-pcorr equations

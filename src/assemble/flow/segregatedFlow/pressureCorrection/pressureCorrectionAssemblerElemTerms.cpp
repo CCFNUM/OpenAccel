@@ -65,8 +65,6 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_duRhs;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
-    std::vector<scalar> ws_scv_volume;
-    std::vector<scalar> ws_scv_weight;
 
     // geometry related to populate
     std::vector<scalar> ws_scs_areav;
@@ -86,6 +84,11 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> duRhsIp(SPATIAL_DIM);
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
+    std::vector<scalar> B_el(SPATIAL_DIM);
+
+    // SCV workspace for element-constant body force
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_scv_weight;
 
     // pointers to everyone...
     scalar* p_coordIp = &coordIp[0];
@@ -171,7 +174,6 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
             elementBucket.topology());
         MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
             elementBucket.topology());
-
         // extract master element specifics
         const label nodesPerElement = meSCS->nodesPerElement_;
         const label numScsIp = meSCS->numIntPoints_;
@@ -202,14 +204,14 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
         ws_duRhs.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
-        ws_scv_volume.resize(numScvIp);
-        ws_scv_weight.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
         ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_det_j.resize(numScsIp);
         ws_velocity_shape_function.resize(numScsIp * nodesPerElement);
         ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
+        ws_scv_volume.resize(numScvIp);
+        ws_scv_weight.resize(nodesPerElement);
 
         // pointers
         scalar* p_lhs = &lhs[0];
@@ -345,28 +347,6 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
             meSCS->determinant(
                 1, &p_coordinates[0], &p_scs_areav[0], &scs_error);
 
-            // compute SCV volumes for volume-weighted element-centre averaging
-            {
-                scalar scv_error = 0.0;
-                meSCV->determinant(
-                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
-                scalar V_el = 0.0;
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    V_el += ws_scv_volume[ip];
-                }
-                const scalar invV_el = 1.0 / V_el;
-                for (label i = 0; i < nodesPerElement; ++i)
-                {
-                    ws_scv_weight[i] = 0.0;
-                }
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    ws_scv_weight[scvIpNodeMap[ip]] +=
-                        ws_scv_volume[ip] * invV_el;
-                }
-            }
-
             // compute dndx for residual
             if (isPGradientShifted)
             {
@@ -385,6 +365,30 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                                &ws_deriv[0],
                                &ws_det_j[0],
                                &scs_error);
+            }
+
+            // sector-volume-weighted element average of FOrig
+            {
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
+                scalar V_el = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                    V_el += ws_scv_volume[ip];
+                const scalar invV_el = 1.0 / V_el;
+                for (label i = 0; i < nodesPerElement; ++i)
+                    ws_scv_weight[i] = 0.0;
+                for (label ip = 0; ip < numScvIp; ++ip)
+                    ws_scv_weight[scvIpNodeMap[ip]] +=
+                        ws_scv_volume[ip] * invV_el;
+            }
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+                B_el[d] = 0.0;
+            for (label ic = 0; ic < nodesPerElement; ++ic)
+            {
+                const scalar w = ws_scv_weight[ic];
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                    B_el[d] += w * p_FOrig[ic * SPATIAL_DIM + d];
             }
 
             for (label ip = 0; ip < numScsIp; ++ip)
@@ -413,7 +417,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                     p_duIp[j] = 0.0;
                     p_duRhsIp[j] = 0.0;
                     p_FIp[j] = 0.0;
-                    p_FOrigIp[j] = 0.0;
+                    p_FOrigIp[j] = B_el[j];
                 }
 
                 const label offSetSF = ip * nodesPerElement;
@@ -423,7 +427,6 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                         p_velocity_shape_function[offSetSF + ic];
                     const scalar r_coord =
                         p_coordinate_shape_function[offSetSF + ic];
-                    const scalar w_scv = ws_scv_weight[ic];
 
                     const label offSetDnDx =
                         SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
@@ -441,19 +444,27 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
 
                         // use pressure shape function derivative
                         p_dpdxIp[j] += p_dndx[offSetDnDx + j] * p_p[ic];
-
-                        // volume-weighted average of original body force
-                        // to element centre
-                        p_FOrigIp[j] += r_vel * p_FOrig[SPATIAL_DIM * ic + j];
-
-                        // volume-weighted average of pressure gradient
-                        // to element centre
-                        p_GpdxIp[j] += w_scv * p_Gpdx[SPATIAL_DIM * ic + j];
-
-                        // interpolate redistributed body force to IP
-                        // using velocity shape functions
-                        p_FIp[j] += w_scv * p_F[SPATIAL_DIM * ic + j];
                     }
+                }
+
+                // 2-node arithmetic/harmonic blend for Gpdx and F
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar gA = p_Gpdx[SPATIAL_DIM * il + j];
+                    const scalar gB = p_Gpdx[SPATIAL_DIM * ir + j];
+                    const scalar gArith = 0.5 * (gA + gB);
+                    const scalar gHarm =
+                        (std::abs(gA) * gB + gA * std::abs(gB)) /
+                        (std::abs(gA) + std::abs(gB) + SMALL);
+                    p_GpdxIp[j] = (1.0 - comp) * gArith + comp * gHarm;
+
+                    const scalar fA = p_F[SPATIAL_DIM * il + j];
+                    const scalar fB = p_F[SPATIAL_DIM * ir + j];
+                    const scalar fArith = 0.5 * (fA + fB);
+                    const scalar fHarm =
+                        (std::abs(fA) * fB + fA * std::abs(fB)) /
+                        (std::abs(fA) + std::abs(fB) + SMALL);
+                    p_FIp[j] = (1.0 - comp) * fArith + comp * fHarm;
                 }
 
                 scalar dcorr = 0;
@@ -557,10 +568,9 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                     mDot -= rhoHR * p_duRhsIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
                             p_scs_areav[ip * SPATIAL_DIM + j];
 
-                    // // body force stabilization: +ρ*D*(F_orig - F)·S
-                    // mDot += rhoHR * p_duRhsIp[j] * (p_FOrigIp[j] - p_FIp[j])
-                    // *
-                    //         p_scs_areav[ip * SPATIAL_DIM + j];
+                    // body force stabilization: +ρ*D*(F_orig - F)·S
+                    mDot += rhoHR * p_duRhsIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                            p_scs_areav[ip * SPATIAL_DIM + j];
                 }
 
                 // transform mDot to relative frame
