@@ -16,6 +16,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Opt into Node.js 24 to resolve deprecation errors for current actions
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    
+    # Required for the softprops/action-gh-release to upload files
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
