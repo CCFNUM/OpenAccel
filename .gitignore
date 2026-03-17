@@ -18,7 +18,6 @@ CMakeFiles/
 .claude/
 
 # Tools
-*.bib
 *.bib.clean
 *.aux
 *.bbl
