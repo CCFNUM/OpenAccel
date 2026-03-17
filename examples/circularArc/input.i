@@ -101,7 +101,7 @@ simulation:
                                 aggressive_levels: 1  # Reduces memory overhead
                                 trunc_factor: 0.3     # Keeps the solver lean  
             expert_parameters:  
-                consistent: true                       
+                consistent: true
         output_control:
             file_path: results.e
             output_frequency: 10
