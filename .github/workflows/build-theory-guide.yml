@@ -3,13 +3,13 @@ name: Build Theory Guide
 on:
   push:
     paths:
-      - 'tools/docs/theory/**.tex'
-      - 'tools/docs/theory/**.bib'
+      - 'docs/theory/**.tex'
+      - 'docs/theory/**.bib'
       - '.github/workflows/build-theory-guide.yml'
   pull_request:
     paths:
-      - 'tools/docs/theory/**.tex'
-      - 'tools/docs/theory/**.bib'
+      - 'docs/theory/**.tex'
+      - 'docs/theory/**.bib'
       - '.github/workflows/build-theory-guide.yml'
   workflow_dispatch:
 
@@ -24,18 +24,18 @@ jobs:
         uses: xu-cheng/latex-action@v3
         with:
           root_file: solver_theory_guide.tex
-          working_directory: tools/docs/theory
+          working_directory: docs/theory
           args: -pdf -bibtex -halt-on-error
 
       - name: Upload PDF artifact
         uses: actions/upload-artifact@v4
         with:
           name: theory-guide-pdf
-          path: tools/docs/theory/solver_theory_guide.pdf
+          path: docs/theory/solver_theory_guide.pdf
           retention-days: 90
 
       - name: Upload PDF to release (on tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: tools/docs/theory/solver_theory_guide.pdf
+          files: docs/theory/solver_theory_guide.pdf
