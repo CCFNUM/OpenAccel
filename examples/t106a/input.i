@@ -75,14 +75,14 @@ simulation:
                 turbulence_numerics: upwind                
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 500
-                    physical_timescale: 0.1
+                    max_iterations: 1000
+                    physical_timescale: 1
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.5
                         pressure_relaxation_factor: 0.1
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-6
+                    residual_target: 1e-8
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:  
