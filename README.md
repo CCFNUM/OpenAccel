@@ -18,7 +18,7 @@
 
 ## 📖 Documentation
 
-A **Theory Guide** covering the mathematical foundations of OpenAccel is available in [`tools/docs/theory/`](./tools/docs/theory/).
+A **Theory Guide** covering the mathematical foundations of OpenAccel is available in [`docs/theory/`](./docs/theory/).
 
 The guide is automatically compiled to PDF on every commit via GitHub Actions. To get the latest PDF:
 
