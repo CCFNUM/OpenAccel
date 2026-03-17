@@ -17,18 +17,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
-    
+      # softprops/action-gh-release@v2 still runs on Node 20; force Node 24
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    # Required for the softprops/action-gh-release to upload files
     permissions:
       contents: write
 
     steps:
       # Updated to v5/v6 which defaults to Node 24
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Compile theory guide
-        uses: xu-cheng/latex-action@v3
+        uses: xu-cheng/latex-action@v4
         with:
           root_file: solver_theory_guide.tex
           working_directory: docs/theory
@@ -36,7 +38,7 @@ jobs:
           args: -pdf -bibtex -halt-on-error
 
       - name: Upload PDF artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: theory-guide-pdf
           path: docs/theory/solver_theory_guide.pdf
