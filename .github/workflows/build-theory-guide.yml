@@ -16,15 +16,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      # Opt into Node.js 24 to resolve deprecation errors for current actions
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     
-    # Required for the softprops/action-gh-release to upload files
     permissions:
       contents: write
 
     steps:
+      # Updated to v5/v6 which defaults to Node 24
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -33,6 +30,7 @@ jobs:
         with:
           root_file: solver_theory_guide.tex
           working_directory: docs/theory
+          # Ensure -interaction=nonstopmode is handled by the action's args
           args: -pdf -bibtex -halt-on-error
 
       - name: Upload PDF artifact
