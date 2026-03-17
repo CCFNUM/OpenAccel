@@ -169,6 +169,7 @@ The repository includes a suite of test cases designed to demonstrate the variou
 * **elbow:** Incompressible laminar flow within a wedge-type mesh.
 * **circularArc:** Compressible inviscid flow over a bump (circular arc) at subsonic speed.
 * **pitzDaily:** Turbulent flow over a backward-facing step, used to benchmark turbulence models.
+* **t106a:** 2D turbulent flow through a turbine cascade using periodic boundary conditions.
 
 ### Multiphase & Free Surface Flow
 * **damBreak:** A laminar multiphase free-surface flow simulation using the **Volume of Fluid (VOF)** method.
