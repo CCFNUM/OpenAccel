@@ -180,7 +180,7 @@ The repository includes a suite of test cases designed to demonstrate the variou
 * **staticDroplet:** A stationary water droplet in an air domain. This VOF case isolates and tests the **Continuum Surface Force (CSF)** model for surface tension without gravity.
 
 ### Solid Mechanics
-* **palteHole:** The Kirsch Problem benchmark uses a quarter-symmetry model to validate stress concentration at a circular hole against analytical solutions.
+* **plateHole:** The Kirsch Problem benchmark uses a quarter-symmetry model to validate stress concentration at a circular hole against analytical solutions.
 
 ### Fluid-Structure Interaction (FSI) & Moving Meshes
 * **flexibleDamBreak:** A water column collapse where the fluid impacts an elastic obstacle. This demonstrates the coupling of **VOF** with **ALE** formulations.
