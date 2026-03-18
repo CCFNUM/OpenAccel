@@ -80,6 +80,7 @@ cmake -DCMAKE_CXX_EXTENSIONS=Off \
     -DPETSC_DIR=<petsc-install-directory> \
     -DHYPRE_DIR=<hypre-install-directory> \
     -DGNUPLOT_DIR=<gnuplot-install-directory> \
+    -DSPATIAL_DIM=<2_or_3> \
     ..
 ```
 
@@ -169,8 +170,11 @@ The repository includes a suite of test cases designed to demonstrate the variou
 * **elbow:** Incompressible laminar flow within a wedge-type mesh.
 * **circularArc:** Compressible inviscid flow over a bump (circular arc) at subsonic speed.
 * **pitzDaily:** Turbulent flow over a backward-facing step, used to benchmark turbulence models.
-* **t106a:** 2D turbulent flow through a turbine cascade using periodic boundary conditions.
-
+* **t106a:** Turbulent flow through a turbine cascade using periodic boundary conditions.
+* **forwardStep**: 2D inviscid supersonic flow past a forward-facing step.
+  > [!IMPORTANT]
+  > This case requires the solver to be compiled for 2D by setting `-DSPATIAL_DIM=2` during the CMake configuration.
+  
 ### Multiphase & Free Surface Flow
 * **damBreak:** A laminar multiphase free-surface flow simulation using the **Volume of Fluid (VOF)** method.
 * **staticDroplet:** A stationary water droplet in an air domain. This VOF case isolates and tests the **Continuum Surface Force (CSF)** model for surface tension without gravity.
