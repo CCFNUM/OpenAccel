@@ -110,17 +110,18 @@ simulation:
                         pressure_relaxation_factor: 0.2
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-8
+                    residual_target: 1e-10
             advanced_options:
                 linear_solver_settings:
                     default:
-                        family: PETSc
-                        max_iterations: 20
-                        rtol: 1.0e-1
+                        family: Trilinos
+                        min_iterations: 3
+                        max_iterations: 50
+                        rtol: 1.0e-2
                         atol: 1.0e-12
                         options:
-                            ksp_type: fgmres
-                            pc_type: bjacobi                      
+                            belos_solver: gmres
+                            preconditioner: ilu
         output_control:
             file_path: results.e
             output_frequency: 10
