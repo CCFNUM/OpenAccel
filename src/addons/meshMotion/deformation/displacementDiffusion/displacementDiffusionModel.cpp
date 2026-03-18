@@ -534,18 +534,22 @@ void displacementDiffusionModel::
     // and moment
     rigidBodyPtr->update(F, M, dt);
 
-    // Calculate full Quaternion
-    std::vector<scalar> q(4, 0.0);
+    // Calculate rotation matrix
     utils::matrix rotMat;
-
+#if SPATIAL_DIM == 3
+    std::vector<scalar> q(4, 0.0);
     q = rigidBody::getQuatFromEulerxyz(rigidBodyPtr->theta());
     rotMat = rigidBody::getRotmatFromQuat(q);
+#else
+    scalar theta2d = rigidBodyPtr->theta()[0];
+    rotMat = Eigen::Rotation2D<scalar>(theta2d).toRotationMatrix();
+#endif
     scalar* p_rotMat = rotMat.data();
 
     // local space; current coords and
     // rotated coords; generalized for 2D and 3D
-    scalar mcX[3] = {0.0, 0.0, 0.0};
-    scalar rcX[3] = {0.0, 0.0, 0.0};
+    scalar mcX[SPATIAL_DIM] = {};
+    scalar rcX[SPATIAL_DIM] = {};
 
     bool correctBoundaryNodeValues = this->DRef().correctedBoundaryNodeValues();
 
@@ -584,13 +588,13 @@ void displacementDiffusionModel::
                 mcX[i] = orgCoords[i];
             }
 
-            const scalar cX = mcX[0] - centroid0[0];
-            const scalar cY = mcX[1] - centroid0[1];
-            const scalar cZ = mcX[2] - centroid0[2];
-
             // rotated model coordinates;
             // converted to displacement; add
             // back in centroid
+#if SPATIAL_DIM == 3
+            const scalar cX = mcX[0] - centroid0[0];
+            const scalar cY = mcX[1] - centroid0[1];
+            const scalar cZ = mcX[2] - centroid0[2];
 
             rcX[0] = p_rotMat[0] * cX + p_rotMat[1] * cY + p_rotMat[2] * cZ -
                      mcX[0] + centroid0[0] + dx[0];
@@ -598,6 +602,15 @@ void displacementDiffusionModel::
                      mcX[1] + centroid0[1] + dx[1];
             rcX[2] = p_rotMat[6] * cX + p_rotMat[7] * cY + p_rotMat[8] * cZ -
                      mcX[2] + centroid0[2] + dx[2];
+#else
+            const scalar cX = mcX[0] - centroid0[0];
+            const scalar cY = mcX[1] - centroid0[1];
+
+            rcX[0] = p_rotMat[0] * cX + p_rotMat[1] * cY - mcX[0] +
+                     centroid0[0] + dx[0];
+            rcX[1] = p_rotMat[2] * cX + p_rotMat[3] * cY - mcX[1] +
+                     centroid0[1] + dx[1];
+#endif
 
             for (label i = 0; i < SPATIAL_DIM; i++)
             {

@@ -7,6 +7,7 @@
 
 // code
 #include "controls.h"
+#include "git_revision.h"
 #include "messager.h"
 
 // std
@@ -15,14 +16,14 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <sys/stat.h>
 
 namespace accel
 {
 
 // Constructors
 
-controls::controls() : profiler_(messager::comm())
+controls::controls(fs::path cwd)
+    : workingDirectory_(cwd), profiler_(messager::comm())
 {
     // required states for correct restart
     restartParameter_.set_param(
@@ -148,139 +149,29 @@ label controls::getTimeStepCount() const
 
 void controls::advanceAndSetTimestep()
 {
-    const timestepMode mode = analysisType_.timeSteps_.mode_;
-
-    scalar dt = analysisType_.initialTimestep_;
-
-    // Helper function to write adaptive time stepping diagnostics to file
-    // Controlled by write_timestep_info YAML parameter, only master process
-    // writes
-    static bool log_file_initialized = false;
-    const auto writeAdaptiveLog = [&](const scalar dt_value,
-                                      const scalar maxCo_value,
-                                      const std::string& action)
-    {
-        // Check if user enabled timestep info output
-        if (!solver_.outputControl_.writeTimestepInfo_)
-            return;
-
-        if (!messager::master())
-            return;
-
-        // Create directory if it doesn't exist
-        struct stat info;
-        if (stat("postProcessing", &info) != 0)
-        {
-            mkdir("postProcessing", 0755);
-        }
-        if (stat("postProcessing/adaptiveTimeStepping", &info) != 0)
-        {
-            mkdir("postProcessing/adaptiveTimeStepping", 0755);
-        }
-
-        // Initialize file with header
-        if (!log_file_initialized)
-        {
-            std::ofstream logfile(
-                "postProcessing/adaptiveTimeStepping/timestep.dat");
-            logfile << "# Adaptive Time Stepping Diagnostics\n";
-            logfile << "# Time\t\tTimestep\tCo_max\t\tCo_target\tAction\n";
-            logfile.close();
-            log_file_initialized = true;
-        }
-
-        // Append data
-        std::ofstream logfile(
-            "postProcessing/adaptiveTimeStepping/timestep.dat", std::ios::app);
-        logfile << std::scientific << std::setprecision(6);
-        logfile << this->time << "\t" << dt_value << "\t" << maxCo_value << "\t"
-                << analysisType_.timeSteps_.timestepAdaptation_.courantNumber_
-                << "\t" << action << "\n";
-        logfile.close();
-    };
+    LogFileInfo info(analysisType_.timeSteps_.mode_);
+    info.dt = analysisType_.initialTimestep_;
 
 #ifndef NDEBUG
-    scalar dt_before_output_adjustment = dt;
+    scalar dt_before_output_adjustment = info.dt;
     bool timestep_adjusted_for_output = false;
 #endif /* NDEBUG */
 
-    const auto computeAdaptiveDt = [&]()
+    if (info.mode == timestepMode::periodicInterval)
     {
-        const scalar dt_curr = getTimestep();
-        const scalar maxCo = maxCourant_;
-        const auto& dtInfo = analysisType_.timeSteps_;
-        const auto& adapt = dtInfo.timestepAdaptation_;
-
-        const label freq = std::max<label>(1, dtInfo.timestepUpdateFrequency_);
-        const bool updateNow = ((analysisType_.timeStepCount_ % freq) == 0);
-        if (!updateNow)
-        {
-            return dt_curr;
-        }
-
-        if (adapt.option_ == timestepAdaptationType::rmsCourant)
-        {
-            errorMsg("rms_courant adaptation is not implemented");
-        }
-
-        scalar dt_new = dt_curr;
-        std::string action = "unchanged";
-
-        if (maxCo > 0 && dt_curr > 0)
-        {
-            // Calculate desired adjustment factor
-            const scalar factor = adapt.courantNumber_ / maxCo;
-
-            // Apply asymmetric damping to prevent aggressive timestep changes
-            scalar damped_factor = factor;
-            if (factor < 1.0)
-            {
-                // Decreasing timestep - limit reduction (default: max 20%
-                // decrease)
-                damped_factor = std::max(factor, adapt.timestepDecreaseFactor_);
-                action = "decreased";
-            }
-            else if (factor > 1.0)
-            {
-                // Increasing timestep - limit increase (default: max 6%
-                // increase)
-                damped_factor = std::min(factor, adapt.timestepIncreaseFactor_);
-                action = "increased";
-            }
-
-            dt_new = dt_curr * damped_factor;
-        }
-
-        dt_new = std::max(adapt.minTimestep_, dt_new);
-        dt_new = std::min(adapt.maxTimestep_, dt_new);
-
-#ifndef NDEBUG
-        // Console output for adaptive changes (debug only, master only)
-        if (messager::master() && std::abs(dt_new - dt_curr) > 1.0e-12)
-        {
-            std::cout << "[Adaptive dt] Time=" << std::scientific
-                      << std::setprecision(4) << this->time
-                      << " | Co_max=" << std::fixed << std::setprecision(3)
-                      << maxCo << " (target=" << adapt.courantNumber_ << ")"
-                      << " | dt: " << std::scientific << std::setprecision(4)
-                      << dt_curr << " -> " << dt_new << " (" << action << ")"
-                      << std::endl;
-        }
-#endif /* NDEBUG */
-
-        // Log to file (controlled by write_timestep_info YAML parameter)
-        writeAdaptiveLog(dt_new, maxCo, action);
-
-        return dt_new;
-    };
+        periodicIntervalTimestep_(info);
+    }
+    else if (info.mode == timestepMode::specifiedInterval)
+    {
+        specifiedIntervalTimestep_(info);
+    }
+    else if (info.mode == timestepMode::adaptive)
+    {
+        courantAdaptiveTimestep_(info);
+    }
 
     if (solver_.outputControl_.matchFinalTime_)
     {
-        if (mode == timestepMode::adaptive)
-        {
-            dt = computeAdaptiveDt();
-        }
-
         // WARNING [faw 2025-01-17]: current implementation writes output based
         // on a dump frequency. Restarting simulations with input that was
         // generated with match_final_time = true results in non-uniform time
@@ -288,19 +179,11 @@ void controls::advanceAndSetTimestep()
         // results file regardless of write frequency. Default for
         // match_final_time is `false`.
         const scalar dt_end = analysisType_.totalTime_ - this->time;
-        dt = (dt_end < dt) ? dt_end : dt;
-    }
-    else if (mode == timestepMode::periodicInterval)
-    {
-        dt = periodicIntervalTimestep_();
-    }
-    else if (mode == timestepMode::specifiedInterval)
-    {
-        dt = specifiedIntervalTimestep_();
-    }
-    else if (mode == timestepMode::adaptive)
-    {
-        dt = computeAdaptiveDt();
+        if (dt_end < info.dt)
+        {
+            info.dt = dt_end;
+            info.action = "match_final_time";
+        }
     }
 
     // Adjust timestep to match output times when using time_interval
@@ -321,40 +204,37 @@ void controls::advanceAndSetTimestep()
             const scalar time_to_output = next_output_time - current_time;
 
             // If next timestep would overshoot the output time, reduce it
-            if (time_to_output > 1.0e-12 && dt > time_to_output)
+            if (time_to_output > 1.0e-12 && info.dt > time_to_output)
             {
 #ifndef NDEBUG
-                dt_before_output_adjustment = dt;
+                dt_before_output_adjustment = info.dt;
                 timestep_adjusted_for_output = true;
 #endif /* NDEBUG */
-                dt = time_to_output;
+                info.dt = time_to_output;
+                info.action = "output_sync";
 
 #ifndef NDEBUG
                 // Console output for output synchronization (debug only, master
                 // only)
-                if (messager::master() && mode == timestepMode::adaptive)
+                if (messager::master() && info.mode == timestepMode::adaptive)
                 {
-                    std::cout << "[Adaptive dt] Time=" << std::scientific
-                              << std::setprecision(4) << this->time
-                              << " | dt adjusted for output: "
-                              << dt_before_output_adjustment << " -> " << dt
-                              << " (next output at t=" << next_output_time
-                              << ")" << std::endl;
+                    std::cout
+                        << "[Adaptive dt] Time=" << std::scientific
+                        << std::setprecision(4) << this->time
+                        << " | dt adjusted for output: "
+                        << dt_before_output_adjustment << " -> " << info.dt
+                        << " (next output at t=" << next_output_time << ")"
+                        << std::endl;
                 }
 #endif /* NDEBUG */
-
-                // Log to file (controlled by write_timestep_info YAML
-                // parameter)
-                if (mode == timestepMode::adaptive)
-                {
-                    writeAdaptiveLog(dt, maxCourant_, "output_sync");
-                }
             }
         }
     }
 
+    writeTimestepLog_(info);
+
     ++analysisType_.timeStepCount_; // 1. advance ID
-    this->setTimestep(dt);          // 2. set new step @ID
+    this->setTimestep(info.dt);     // 2. set new step @ID
     resetMaxCourant();
 }
 
@@ -371,7 +251,77 @@ int controls::timestepPosition_(const int i) const
            analysisTypeDictionary::DT_ENTRIES;
 }
 
-scalar controls::periodicIntervalTimestep_() const
+void controls::writeTimestepLog_(const LogFileInfo& info)
+{
+    // Check if user enabled timestep info output on this rank
+    if (!dtLogFile_)
+        return;
+
+    static bool log_file_initialized = false;
+
+    // Initialize file with header
+    auto& out = *dtLogFile_;
+    if (!log_file_initialized)
+    {
+        auto now = std::chrono::system_clock::now();
+        auto in_time_t = std::chrono::system_clock::to_time_t(now);
+
+        out << "# Accel Time Stepping Diagnostics: "
+            << std::put_time(std::localtime(&in_time_t), "%c\n");
+        out << "# Git revision: " << accel::git_revision << '\n';
+        out << "#\n";
+
+        if (info.mode == timestepMode::adaptive)
+        {
+            out << "# Mode: Adaptive\n";
+            out << "# Time\t\tTimestep\tCo_max\t\tCo_target\tAction\n";
+        }
+        else if (info.mode == timestepMode::periodicInterval)
+        {
+            out << "# Mode: Periodic interval\n";
+            out << "# Time\tTimestep\tPeriod\t";
+            out << "Interval_start\tInterval_length\tAction\n";
+        }
+        else if (info.mode == timestepMode::specifiedInterval)
+        {
+            out << "# Mode: Specified interval\n";
+            out << "# Time\tTimestep\t";
+            out << "Interval_start\tInterval_length\tAction\n";
+        }
+        else
+        {
+            out << "# Mode: Constant\n";
+            out << "# Time\tTimestep\tAction\n";
+        }
+        log_file_initialized = true;
+    }
+
+    out << std::scientific << std::setprecision(6);
+    out << this->time << "\t" << info.dt << "\t";
+    if (info.mode == timestepMode::adaptive)
+    {
+        out << info.maxCourant << "\t"
+            << analysisType_.timeSteps_.timestepAdaptation_.courantNumber_
+            << "\t" << info.action;
+    }
+    else if (info.mode == timestepMode::periodicInterval)
+    {
+        out << info.period << "\t" << info.intervalStart << "\t"
+            << info.intervalLength << "\t" << info.action;
+    }
+    else if (info.mode == timestepMode::specifiedInterval)
+    {
+        out << info.intervalStart << "\t" << info.intervalLength << "\t"
+            << info.action;
+    }
+    else
+    {
+        out << info.action;
+    }
+    out << "\n";
+}
+
+void controls::periodicIntervalTimestep_(LogFileInfo& info) const
 {
     const auto& start_time = analysisType_.timeSteps_.startTime_;
     const auto& interval_length = analysisType_.timeSteps_.intervalLength_;
@@ -397,21 +347,27 @@ scalar controls::periodicIntervalTimestep_() const
         t_test = (t_test < 0) ? -t_test : t_test; // round-off
     }
 
+    info.period = k;
+    info.intervalStart = t_start + k * T;
+    info.intervalLength = T;
+
     if (0 <= t_test &&
         (t_length - t_test) > 5.0 * std::numeric_limits<scalar>::epsilon())
     {
         const scalar dt_interval = timestep_interval.front();
         assert(dt_interval > 0);
-        return dt_interval;
+        info.action = "inside_interval";
+        info.dt = dt_interval;
     }
     else
     {
         assert(analysisType_.initialTimestep_ > 0);
-        return analysisType_.initialTimestep_;
+        info.action = "outside_interval";
+        info.dt = analysisType_.initialTimestep_;
     }
 }
 
-scalar controls::specifiedIntervalTimestep_()
+void controls::specifiedIntervalTimestep_(LogFileInfo& info)
 {
     auto& start_time = analysisType_.timeSteps_.startTime_;
     auto& interval_length = analysisType_.timeSteps_.intervalLength_;
@@ -448,17 +404,90 @@ scalar controls::specifiedIntervalTimestep_()
         }
     }
 
+    info.intervalStart = t_start;
+    info.intervalLength = t_length;
+
     if (0 <= t_test &&
         (t_length - t_test) > 5.0 * std::numeric_limits<scalar>::epsilon())
     {
         assert(dt_interval > 0);
-        return dt_interval;
+        info.action = "inside_interval";
+        info.dt = dt_interval;
     }
     else
     {
         assert(analysisType_.initialTimestep_ > 0);
-        return analysisType_.initialTimestep_;
+        info.action = "outside_interval";
+        info.dt = analysisType_.initialTimestep_;
     }
+}
+
+void controls::courantAdaptiveTimestep_(LogFileInfo& info) const
+{
+    const scalar dt_curr = getTimestep();
+    const scalar maxCo = maxCourant_;
+    const auto& dtInfo = analysisType_.timeSteps_;
+    const auto& adapt = dtInfo.timestepAdaptation_;
+
+    const label freq = std::max<label>(1, dtInfo.timestepUpdateFrequency_);
+    const bool updateNow = ((analysisType_.timeStepCount_ % freq) == 0);
+    if (!updateNow)
+    {
+        info.dt = dt_curr;
+        return;
+    }
+
+    if (adapt.option_ == timestepAdaptationType::rmsCourant)
+    {
+        errorMsg("rms_courant adaptation is not implemented");
+    }
+
+    scalar dt_new = dt_curr;
+
+    if (maxCo > 0 && dt_curr > 0)
+    {
+        // Calculate desired adjustment factor
+        const scalar factor = adapt.courantNumber_ / maxCo;
+
+        // Apply asymmetric damping to prevent aggressive timestep changes
+        scalar damped_factor = factor;
+        if (factor < 1.0)
+        {
+            // Decreasing timestep - limit reduction (default: max 20%
+            // decrease)
+            damped_factor = std::max(factor, adapt.timestepDecreaseFactor_);
+            info.action = "decreased";
+        }
+        else if (factor > 1.0)
+        {
+            // Increasing timestep - limit increase (default: max 6%
+            // increase)
+            damped_factor = std::min(factor, adapt.timestepIncreaseFactor_);
+            info.action = "increased";
+        }
+
+        dt_new = dt_curr * damped_factor;
+    }
+
+    dt_new = std::max(adapt.minTimestep_, dt_new);
+    dt_new = std::min(adapt.maxTimestep_, dt_new);
+
+#ifndef NDEBUG
+    // Console output for adaptive changes (debug only, master only)
+    if (messager::master() && std::abs(dt_new - dt_curr) > 1.0e-12)
+    {
+        std::cout << "[Adaptive dt] Time=" << std::scientific
+                  << std::setprecision(4) << this->time
+                  << " | Co_max=" << std::fixed << std::setprecision(3) << maxCo
+                  << " (target=" << adapt.courantNumber_ << ")"
+                  << " | dt: " << std::scientific << std::setprecision(4)
+                  << dt_curr << " -> " << dt_new << " (" << info.action << ")"
+                  << std::endl;
+    }
+#endif /* NDEBUG */
+
+    info.maxCourant = maxCo;
+    info.dt = dt_new;
 }
 
 void controls::updateMaxCourant(const scalar maxCourant)
@@ -474,6 +503,34 @@ scalar controls::getMaxCourant() const
 void controls::resetMaxCourant()
 {
     maxCourant_ = -1;
+}
+
+// IO paths
+fs::path controls::getWorkingDirectory() const
+{
+    assert(fs::exists(workingDirectory_));
+    return workingDirectory_;
+}
+
+fs::path controls::getPostProcessingDirectory() const
+{
+    fs::path dir = getWorkingDirectory() / "postProcessing";
+    fs::create_directories(dir);
+    return dir;
+}
+
+fs::path controls::getResidualDirectory() const
+{
+    fs::path dir = getPostProcessingDirectory() / "0" / "residuals";
+    fs::create_directories(dir);
+    return dir;
+}
+
+fs::path controls::getAdaptiveTimesteppingDirectory() const
+{
+    fs::path dir = getWorkingDirectory() / "adaptiveTimeStepping";
+    fs::create_directories(dir);
+    return dir;
 }
 
 } // namespace accel

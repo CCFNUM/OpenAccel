@@ -250,13 +250,14 @@ void interface::updateGhostings_()
 
 void interface::determineGeometricRelations_()
 {
+    utils::vector translationVector;
+    utils::matrix rotationMatrix;
+
+#if SPATIAL_DIM == 3
     // create a surface comparator object to determine translation
     // vector and/or rotation matrix
     auto cmp = utils::surfaceComparator(masterInfoPtr_->currentPartVec_,
                                         slaveInfoPtr_->currentPartVec_);
-
-    utils::vector translationVector;
-    utils::matrix rotationMatrix;
 
     switch (option_)
     {
@@ -319,6 +320,34 @@ void interface::determineGeometricRelations_()
             }
             break;
     }
+#else
+    // 2D: surfaceComparator not available
+    rotationMatrix = utils::matrix::Identity();
+
+    switch (option_)
+    {
+        case interfaceModelOption::rotationalPeriodicity:
+            errorMsg("Rotational periodicity interface not yet supported in "
+                     "2D");
+            break;
+
+        case interfaceModelOption::translationalPeriodicity:
+            errorMsg("Translational periodicity interface not yet supported in "
+                     "2D (surfaceComparator is 3D only)");
+            break;
+
+        case interfaceModelOption::generalConnection:
+            {
+                if (messager::master())
+                {
+                    std::cout << std::endl
+                              << this->name() << " => General Connection"
+                              << std::endl;
+                }
+            }
+            break;
+    }
+#endif
 
     // copy translation vector and rotation matrix to master and slave sides
     this->masterInfoRef().translationVector_ = translationVector;
@@ -326,6 +355,7 @@ void interface::determineGeometricRelations_()
     this->slaveInfoRef().translationVector_ = -translationVector;
     this->slaveInfoRef().rotationMatrix_ = rotationMatrix.transpose();
 
+#if SPATIAL_DIM == 3
 #if 0
     // check if master and slave are totally overlapping
     isOverlap_ =
@@ -367,6 +397,7 @@ void interface::determineGeometricRelations_()
             }
         }
     }
+#endif
 }
 
 void interface::populateConformalRowToRowMapping_()

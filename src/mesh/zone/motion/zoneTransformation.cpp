@@ -82,8 +82,7 @@ void zoneTransformation::read(const YAML::Node& inputNode)
 
 #if SPATIAL_DIM == 2
                 // axis of rotation always in k-dir (any user input will be
-                // ignored)
-                rotation_.axis_ = {0, 0, 1};
+                // ignored; axis_ is not used in 2D)
 
                 // fill coriolis matrix
                 rotation_.coriolisMatrix_ << 0, -rotation_.omega_,

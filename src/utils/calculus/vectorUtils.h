@@ -62,7 +62,9 @@ class basis
 private:
     vector a_;  // unit axis
     vector e1_; // unit, perpendicular to a
+#if SPATIAL_DIM == 3
     vector e2_; // e2 = a x e1
+#endif
 
 public:
     basis() = default;
@@ -70,10 +72,14 @@ public:
     basis(const vector& axis)
     {
         a_ = axis.normalized();
+#if SPATIAL_DIM == 2
+        e1_ = vector(-a_[1], a_[0]);
+#else
         vector tmp =
             (std::fabs(a_[0]) < 0.9) ? vector(1, 0, 0) : vector(0, 1, 0);
         e1_ = (a_.cross(tmp)).normalized();
         e2_ = a_.cross(e1_);
+#endif
     }
 
     inline void projectToPlane(const vector& x3,
@@ -85,7 +91,11 @@ public:
         vector r = x3 - p;
         vector rperp = r - a_ * a_.dot(r);
         X = rperp.dot(e1_);
+#if SPATIAL_DIM == 2
+        Y = 0.0;
+#else
         Y = rperp.dot(e2_);
+#endif
     }
 };
 

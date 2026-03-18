@@ -2184,7 +2184,8 @@ void flowModel::reportFlowData_()
 {
     if (messager::master() && controlsRef().isTransient())
     {
-        std::cout << "MAXIMUM COURANT NUMBER: " << flowData_.maxCo << std::endl;
+        std::cout << "MAXIMUM COURANT NUMBER: " << std::fixed
+                  << std::setprecision(2) << flowData_.maxCo << std::endl;
         std::cout
             << "+----------------+---------+---------+-------------------+----"
                "----"

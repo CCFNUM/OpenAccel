@@ -115,6 +115,13 @@ struct solverDictionary
                     interpolationSchemeType::linearLinear;
                 interpolationSchemeType displacementInterpolationType_ =
                     interpolationSchemeType::linearLinear;
+#ifdef HAS_MHD
+                interpolationSchemeType electricPotentialInterpolationType_ =
+                    interpolationSchemeType::linearLinear;
+                interpolationSchemeType
+                    magneticVectorPotentialInterpolationType_ =
+                        interpolationSchemeType::linearLinear;
+#endif /* HAS_MHD */
 
                 // Gradient interpolation scheme types
                 interpolationSchemeType velocityGradientInterpolationType_ =
@@ -145,6 +152,14 @@ struct solverDictionary
                         interpolationSchemeType::linearLinear;
                 interpolationSchemeType displacementGradientInterpolationType_ =
                     interpolationSchemeType::linearLinear;
+#ifdef HAS_MHD
+                interpolationSchemeType
+                    electricPotentialGradientInterpolationType_ =
+                        interpolationSchemeType::linearLinear;
+                interpolationSchemeType
+                    magneticVectorPotentialGradientInterpolationType_ =
+                        interpolationSchemeType::linearLinear;
+#endif /* HAS_MHD */
             };
 
             struct convergenceCriteriaDictionary
@@ -198,6 +213,7 @@ struct solverDictionary
                     label pressureCorrection_ = 1;
                     label solidDisplacement_ = 1;
                     label segregatedFlow_ = 1;
+                    label coupledFlow_ = 1;
                     label volumeFraction_ = 1;
                 };
 
@@ -228,7 +244,9 @@ struct solverDictionary
 
         struct expertParametersDictionary
         {
+            bool coupledPressureVelocity_ = true;
             bool disableMomentumPredictor_ = false;
+            bool coupledVolumeFraction_ = false;
             bool consistent_ = false;
             bool limitGradients_ = false;
             bool correctGradients_ = false;
@@ -296,7 +314,7 @@ class controls
 public:
     // Constructors
 
-    controls();
+    controls(fs::path working_directory = "./");
 
     // Destructor
 
@@ -352,6 +370,15 @@ public:
 
     void resetMaxCourant();
 
+    // IO paths
+    fs::path getWorkingDirectory() const;
+
+    fs::path getPostProcessingDirectory() const;
+
+    fs::path getResidualDirectory() const;
+
+    fs::path getAdaptiveTimesteppingDirectory() const;
+
     // Run loop-related public variables
 
     label iter{0};
@@ -361,6 +388,8 @@ public:
     scalar time{0};
 
 private:
+    fs::path workingDirectory_;
+
     analysisTypeDictionary analysisType_;
 
     solverDictionary solver_;
@@ -371,11 +400,31 @@ private:
 
     scalar maxCourant_{-1};
 
+    std::unique_ptr<std::ofstream> dtLogFile_;
+
+    struct LogFileInfo
+    {
+        LogFileInfo(timestepMode m)
+            : mode(m), period(0), dt(0), maxCourant(0), intervalStart(0),
+              intervalLength(0), action("unchanged")
+        {
+        }
+
+        const timestepMode mode;
+        size_t period;
+        scalar dt, maxCourant, intervalStart, intervalLength;
+        std::string action{"unchanged"};
+    };
+
     int timestepPosition_(const int i) const;
 
-    scalar periodicIntervalTimestep_() const;
+    void writeTimestepLog_(const LogFileInfo& info);
 
-    scalar specifiedIntervalTimestep_();
+    void periodicIntervalTimestep_(LogFileInfo& info) const;
+
+    void specifiedIntervalTimestep_(LogFileInfo& info);
+
+    void courantAdaptiveTimestep_(LogFileInfo& info) const;
 };
 
 } // namespace accel

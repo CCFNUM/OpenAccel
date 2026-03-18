@@ -53,17 +53,19 @@ void rigidBody::read(const YAML::Node& input)
                        .template as<scalar>();
         I_(1, 1) = basicSettingsBlock["mass_moment_of_inertia"]["yy"]
                        .template as<scalar>();
-        I_(2, 2) = basicSettingsBlock["mass_moment_of_inertia"]["zz"]
-                       .template as<scalar>();
         I_(0, 1) = basicSettingsBlock["mass_moment_of_inertia"]["xy"]
+                       .template as<scalar>();
+        I_(1, 0) = I_(0, 1);
+#if SPATIAL_DIM == 3
+        I_(2, 2) = basicSettingsBlock["mass_moment_of_inertia"]["zz"]
                        .template as<scalar>();
         I_(0, 2) = basicSettingsBlock["mass_moment_of_inertia"]["xz"]
                        .template as<scalar>();
         I_(1, 2) = basicSettingsBlock["mass_moment_of_inertia"]["yz"]
                        .template as<scalar>();
-        I_(1, 0) = I_(0, 1);
         I_(2, 0) = I_(0, 2);
         I_(2, 1) = I_(1, 2);
+#endif
     }
     else
     {
@@ -116,15 +118,19 @@ void rigidBody::read(const YAML::Node& input)
                 {
                     linearDOFs_(1) = 1;
                 }
+
+#if SPATIAL_DIM == 3
                 else if (option == "z_axis")
                 {
                     linearDOFs_(2) = 1;
                 }
+#endif
                 else if (option == "x_and_y_axes")
                 {
                     linearDOFs_(0) = 1;
                     linearDOFs_(1) = 1;
                 }
+#if SPATIAL_DIM == 3
                 else if (option == "y_and_z_axes")
                 {
                     linearDOFs_(1) = 1;
@@ -141,6 +147,7 @@ void rigidBody::read(const YAML::Node& input)
                     linearDOFs_(1) = 1;
                     linearDOFs_(2) = 1;
                 }
+#endif
             }
 
             if (DOFBlock["rotational_degrees_of_freedom"])
@@ -160,15 +167,19 @@ void rigidBody::read(const YAML::Node& input)
                 {
                     angularDOFs_(1) = 1;
                 }
+
+#if SPATIAL_DIM == 3
                 else if (option == "z_axis")
                 {
                     angularDOFs_(2) = 1;
                 }
+#endif
                 else if (option == "x_and_y_axes")
                 {
                     angularDOFs_(0) = 1;
                     angularDOFs_(1) = 1;
                 }
+#if SPATIAL_DIM == 3
                 else if (option == "y_and_z_axes")
                 {
                     angularDOFs_(1) = 1;
@@ -185,6 +196,7 @@ void rigidBody::read(const YAML::Node& input)
                     angularDOFs_(1) = 1;
                     angularDOFs_(2) = 1;
                 }
+#endif
             }
         }
     }
@@ -243,9 +255,14 @@ void rigidBody::update(const utils::vector F, const utils::vector M, scalar dt)
         U_ = U_ + dt * a_;
     }
 
-    // enable/disable dof's
-    U_.array() *= linearDOFs_.array().cast<scalar>();
+    // enable/disable linear dof's
+    for (label i = 0; i < SPATIAL_DIM; ++i)
+        U_[i] *= static_cast<scalar>(linearDOFs_(i));
 
+    // update body centroid displacement: total displacement
+    dx_ += U_ * dt;
+
+#if SPATIAL_DIM == 3
     // Convert back into body frame
     utils::vector bodyFrameOme = convertVectToOrigFrame(omega_, theta_, false);
     utils::vector bodyFrameMom =
@@ -306,11 +323,8 @@ void rigidBody::update(const utils::vector F, const utils::vector M, scalar dt)
     // Convert back to lab frame
     omega_ = convertVectToOrigFrame(bodyFrameOme, theta_, true);
 
-    // enable/disable dof's
+    // enable/disable angular dof's
     omega_.array() *= angularDOFs_.array().cast<scalar>();
-
-    // update body centroid displacement: total displacement
-    dx_ += U_ * dt;
 
     // angle -> quaternion -> RK4 using Omega -> angle
     std::vector<scalar> quat = getQuatFromEulerxyz(theta_);
@@ -339,8 +353,21 @@ void rigidBody::update(const utils::vector F, const utils::vector M, scalar dt)
 
     // Extract angle from Quat
     theta_ = rvector3(getEulerxyzFromQuat(quat).data());
+#else
+    // 2D: single rotation about z-axis
+    // theta_[0] stores the angle, omega_[0] stores angular velocity
+    // M[0] is the moment about z, I_(0,0) holds Izz
+    if (I_(0, 0) > FLT_MIN)
+    {
+        scalar alpha = (M[0] + Mext_[0]) / I_(0, 0);
+        omega_[0] += alpha * dt;
+    }
+    omega_[0] *= static_cast<scalar>(angularDOFs_(0));
+    theta_[0] += omega_[0] * dt;
+#endif
 }
 
+#if SPATIAL_DIM == 3
 std::vector<scalar>
 rigidBody::getQuatFromEulerxyz(const utils::vector& bodyAngle)
 {
@@ -506,5 +533,6 @@ void rigidBody::evaluateQuatRHS(std::vector<scalar>& quat,
     qrhs[3] =
         (quat[2] * omega(0) - quat[1] * omega(1) + quat[0] * omega(2)) * 0.5;
 }
+#endif // SPATIAL_DIM == 3
 
 } // namespace accel

@@ -139,6 +139,7 @@ void mesh::read(const YAML::Node& inputNode)
             }
         }
 
+#if SPATIAL_DIM == 3
         // Check for element validation flag
         if (mesh_node["check_mesh"])
         {
@@ -151,6 +152,7 @@ void mesh::read(const YAML::Node& inputNode)
             enableCorrection_ =
                 mesh_node["enable_correction"].template as<bool>();
         }
+#endif
     }
     else
     {
@@ -202,6 +204,14 @@ void mesh::read(const YAML::Node& inputNode)
                 {
                     this->setAnyZoneMeshDeforming(true);
                 }
+
+#ifdef HAS_OVERSET
+                // Turn boolean true for an existing overset in the zone mesh
+                if (!this->anyZoneMeshWithOverset() && zone_ptr->hasOverset())
+                {
+                    this->setAnyZoneMeshWithOverset(true);
+                }
+#endif /* HAS_OVERSET */
 
                 // Add to the global zones vector
                 zoneVector_.push_back(std::move(zone_ptr));
@@ -479,6 +489,45 @@ void mesh::read(const YAML::Node& inputNode)
                                     }
                                 }
                             }
+
+#ifdef HAS_OVERSET
+                            const auto& oversetBlock = domainBlock["overset"];
+
+                            for (const auto& osBlock : oversetBlock)
+                            {
+                                for (std::string osBoundaryPartName :
+                                     osBlock["overset_boundary_parts"]
+                                         .template as<
+                                             std::vector<std::string>>())
+                                {
+                                    const stk::mesh::Part* boundaryPart =
+                                        metaDataRef().get_part(
+                                            osBoundaryPartName);
+
+                                    // check validity
+                                    if (boundaryPart->primary_entity_rank() !=
+                                            metaDataRef().side_rank() ||
+                                        boundaryPart->topology() !=
+                                            stk::topology::INVALID_TOPOLOGY)
+                                    {
+                                        errorMsg(
+                                            "invalid overset boundary part " +
+                                            osBoundaryPartName);
+                                    }
+
+                                    // only add if not stored yet
+                                    const auto it =
+                                        std::find(boundaryActiveParts_.begin(),
+                                                  boundaryActiveParts_.end(),
+                                                  boundaryPart);
+                                    if (it == boundaryActiveParts_.end())
+                                    {
+                                        boundaryActiveParts_.push_back(
+                                            boundaryPart);
+                                    }
+                                }
+                            }
+#endif /* HAS_OVERSET */
                         }
                         else
                         {

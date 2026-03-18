@@ -123,8 +123,6 @@ private:
     // read and create settings/directories
     void createControls_();
 
-    void createDirectories_();
-
     // read and create mesh
     void createMesh_();
 

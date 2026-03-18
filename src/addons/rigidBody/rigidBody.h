@@ -103,6 +103,7 @@ public:
 
     // Static functions
 
+#if SPATIAL_DIM == 3
     static std::vector<scalar>
     getQuatFromEulerxyz(const utils::vector& bodyAngle);
 
@@ -126,6 +127,7 @@ public:
     static void evaluateQuatRHS(std::vector<scalar>& quat,
                                 utils::vector& omega,
                                 std::vector<scalar>& qrhs);
+#endif
 };
 
 } // namespace accel

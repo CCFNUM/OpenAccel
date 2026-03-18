@@ -68,7 +68,8 @@ void controls::read(YAML::Node inputNode)
                         case timestepMode::periodicInterval:
                             {
                                 analysisType_.initialTimestep_ =
-                                    dt_info["timestep"].template as<scalar>();
+                                    dt_info["initial_timestep"]
+                                        .template as<scalar>();
 
                                 if (dt_info["start_time"])
                                 {
@@ -554,6 +555,31 @@ void controls::read(YAML::Node inputNode)
                                 .template as<std::string>());
                 }
 
+#ifdef HAS_MHD
+                if (interpScheme["electric_potential_interpolation_type"])
+                {
+                    solver_.solverControl_.basicSettings_
+                        .interpolationSchemeType_
+                        .electricPotentialInterpolationType_ =
+                        convertInterpolationSchemeTypeFromString(
+                            interpScheme
+                                ["electric_potential_interpolation_type"]
+                                    .template as<std::string>());
+                }
+
+                if (interpScheme
+                        ["magnetic_vector_potential_interpolation_type"])
+                {
+                    solver_.solverControl_.basicSettings_
+                        .interpolationSchemeType_
+                        .magneticVectorPotentialInterpolationType_ =
+                        convertInterpolationSchemeTypeFromString(
+                            interpScheme
+                                ["magnetic_vector_potential_interpolation_type"]
+                                    .template as<std::string>());
+                }
+#endif /* HAS_MHD */
+
                 // Gradient interpolation scheme types
                 if (interpScheme["velocity_gradient_interpolation_type"])
                 {
@@ -678,6 +704,32 @@ void controls::read(YAML::Node inputNode)
                                 ["displacement_gradient_interpolation_type"]
                                     .template as<std::string>());
                 }
+
+#ifdef HAS_MHD
+                if (interpScheme
+                        ["electric_potential_gradient_interpolation_type"])
+                {
+                    solver_.solverControl_.basicSettings_
+                        .interpolationSchemeType_
+                        .electricPotentialGradientInterpolationType_ =
+                        convertInterpolationSchemeTypeFromString(
+                            interpScheme["electric_potential_gradient_"
+                                         "interpolation_type"]
+                                .template as<std::string>());
+                }
+
+                if (interpScheme["magnetic_vector_potential_gradient_"
+                                 "interpolation_type"])
+                {
+                    solver_.solverControl_.basicSettings_
+                        .interpolationSchemeType_
+                        .magneticVectorPotentialGradientInterpolationType_ =
+                        convertInterpolationSchemeTypeFromString(
+                            interpScheme["magnetic_vector_potential_gradient_"
+                                         "interpolation_type"]
+                                .template as<std::string>());
+                }
+#endif /* HAS_MHD */
             }
         }
         else
@@ -811,6 +863,16 @@ void controls::read(YAML::Node inputNode)
                     }
 
                     if (advancedOptions["equation_controls"]["sub_iterations"]
+                                       ["coupled_flow"])
+                    {
+                        solver_.solverControl_.advancedOptions_
+                            .equationControls_.subIterations_.coupledFlow_ =
+                            advancedOptions["equation_controls"]
+                                           ["sub_iterations"]["coupled_flow"]
+                                               .template as<label>();
+                    }
+
+                    if (advancedOptions["equation_controls"]["sub_iterations"]
                                        ["volume_fraction"])
                     {
                         solver_.solverControl_.advancedOptions_
@@ -903,6 +965,24 @@ void controls::read(YAML::Node inputNode)
                         .template as<bool>();
             }
 
+            if (expertParameters["coupled_pressure_velocity"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .coupledPressureVelocity_ =
+                    expertParameters["coupled_pressure_velocity"]
+                        .template as<bool>();
+
+                if (!solver_.solverControl_.expertParameters_
+                         .coupledPressureVelocity_ &&
+                    expertParameters["disable_momentum_predictor"])
+                {
+                    solver_.solverControl_.expertParameters_
+                        .disableMomentumPredictor_ =
+                        expertParameters["disable_momentum_predictor"]
+                            .template as<bool>();
+                }
+            }
+
             if (expertParameters["limit_gradients"])
             {
                 solver_.solverControl_.expertParameters_.limitGradients_ =
@@ -928,6 +1008,14 @@ void controls::read(YAML::Node inputNode)
                 solver_.solverControl_.expertParameters_
                     .falseMassAccumulation_ =
                     expertParameters["false_mass_accumulation"]
+                        .template as<bool>();
+            }
+
+            if (expertParameters["coupled_volume_fraction"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .coupledVolumeFraction_ =
+                    expertParameters["coupled_volume_fraction"]
                         .template as<bool>();
             }
 
@@ -1091,6 +1179,15 @@ void controls::read(YAML::Node inputNode)
             {
                 solver_.outputControl_.writeTimestepInfo_ =
                     outputCtrl["write_timestep_info"].template as<bool>();
+
+                if (messager::master() &&
+                    solver_.outputControl_.writeTimestepInfo_)
+                {
+                    const auto timestep_log =
+                        getAdaptiveTimesteppingDirectory() / "timestep.dat";
+                    dtLogFile_ = std::make_unique<std::ofstream>(timestep_log,
+                                                                 std::ios::app);
+                }
             }
         }
         else

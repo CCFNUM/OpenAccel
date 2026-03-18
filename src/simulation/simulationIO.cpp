@@ -52,7 +52,14 @@ std::string simulation::residualPlotCommand_() const
 
 void simulation::create_()
 {
-    createDirectories_();
+    plotResInitialized_ = false;
+    if (messager::master())
+    {
+        // Set booleans
+        plotRes_ = args_.count("residuals");
+        printScales_ = args_.count("scales");
+    }
+
     createControls_(); // must call before createMesh_ for correct restarts!
     createMesh_();
     createRealm_();
@@ -65,7 +72,8 @@ void simulation::create_()
 
 void simulation::createControls_()
 {
-    controlsPtr_ = std::make_unique<controls>();
+    controlsPtr_ = std::make_unique<controls>(
+        fs::absolute(this->inputFilePath_).parent_path());
     controlsPtr_->read(getYAMLSimulationNode());
 }
 
@@ -931,23 +939,6 @@ void simulation::restoreBoundaryValues_()
     }
 }
 
-void simulation::createDirectories_()
-{
-    plotResInitialized_ = false;
-    if (messager::master())
-    {
-        // Set booleans
-        plotRes_ = args_.count("residuals");
-        printScales_ = args_.count("scales");
-
-        // Post processing directory
-        fs::create_directory(this->getPostProcessingDirectory());
-
-        // Residuals directory and file
-        fs::create_directories(this->getResidualDirectory());
-    }
-}
-
 void simulation::initializeResidualPlot()
 {
     try
@@ -992,19 +983,17 @@ void simulation::updateResidualPlot()
 
 fs::path simulation::getSimulationDirectory() const
 {
-    return fs::absolute(inputFilePath_).parent_path();
+    return controlsPtr_->getWorkingDirectory();
 }
 
 fs::path simulation::getPostProcessingDirectory() const
 {
-    fs::path pp_path(this->getSimulationDirectory() / "postProcessing");
-    return pp_path;
+    return controlsPtr_->getPostProcessingDirectory();
 }
 
 fs::path simulation::getResidualDirectory() const
 {
-    fs::path res_path(this->getPostProcessingDirectory() / "0" / "residuals");
-    return res_path;
+    return controlsPtr_->getResidualDirectory();
 }
 
 void simulation::plotResiduals()
