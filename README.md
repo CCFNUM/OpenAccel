@@ -51,7 +51,7 @@ The following libraries are included as Git submodules:
 * **[ExprTk](https://github.com/ArashPartow/exprtk):** Mathematical expression parsing and evaluation.
 * **[nanoflann](https://github.com/jlblancoc/nanoflann):** KD-tree library for nearest-neighbour searches.
 * **[gplotpp](https://github.com/ziotom78/gplotpp):** C++ interface for gnuplot.
-* **[liblinsolve](https://gitlab.com/hslu_ccfnum/liblinsolve.git):** Wrapper library for HYPRE, PETSc, and Trilinos linear solver utilities.
+* **[liblinsolve](https://github.com/CCFNUM/LibLinSolve.git):** Wrapper library for HYPRE, PETSc, and Trilinos linear solver utilities.
 
 ---
 
