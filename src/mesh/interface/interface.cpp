@@ -301,7 +301,15 @@ void interface::determineGeometricRelations_()
                               << this->name() << " => Translational Periodicity"
                               << std::endl;
                     std::cout << "\tTranslation vector (slave to master): "
-                              << translationVector << std::endl;
+                              << std::scientific << std::setprecision(6)
+#if SPATIAL_DIM == 3
+                              << translationVector[0] << " "
+                              << translationVector[1] << " "
+                              << translationVector[2] << std::endl;
+#else
+                              << translationVector[0] << " "
+                              << translationVector[1] << std::endl;
+#endif
                 }
             }
             break;

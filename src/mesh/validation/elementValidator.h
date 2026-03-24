@@ -238,6 +238,9 @@ public:
         return correctionFactor_;
     }
 
+    // Jacobian diagnostics
+    void computeJacobianDiagnostics(scalar detJThreshold = 1.0e-10) const;
+
     // Statistics and reporting
     const ElementValidationStats& getValidationStats() const
     {

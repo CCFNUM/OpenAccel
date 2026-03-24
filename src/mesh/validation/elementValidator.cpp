@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 
 namespace accel
 {
@@ -773,6 +774,232 @@ elementValidator::getElementQuality(stk::mesh::Entity element) const
 void elementValidator::resetValidationStats()
 {
     stats_ = ElementValidationStats();
+}
+
+void elementValidator::computeJacobianDiagnostics(scalar detJThreshold) const
+{
+    const stk::mesh::BulkData& bulkData = meshRef().bulkDataRef();
+    const stk::mesh::MetaData& metaData = meshRef().metaDataRef();
+
+    const auto* coordinates = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, mesh::coordinates_ID);
+
+    stk::mesh::Selector elementSelector =
+        meshRef().locallyOwnedInteriorPartsSelector();
+
+    const stk::mesh::BucketVector& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, elementSelector);
+
+    struct ElementDiagnostic
+    {
+        stk::mesh::EntityId globalId;
+        std::string partName;
+        scalar minDetJ;
+        scalar maxDetJ;
+        scalar aspectRatio;
+        bool scsError;
+        std::array<scalar, SPATIAL_DIM> centroid;
+    };
+
+    std::vector<ElementDiagnostic> badElements;
+    scalar localMinDetJ = std::numeric_limits<scalar>::max();
+    scalar localMaxDetJ = -std::numeric_limits<scalar>::max();
+    label localTotal = 0;
+    label localFlagged = 0;
+    label localScsError = 0;
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const stk::mesh::Bucket& bucket = *bucketPtr;
+        stk::topology elemTopo = bucket.topology();
+
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(elemTopo);
+        if (meSCS == nullptr)
+            continue;
+
+        const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScsIp = meSCS->numIntPoints_;
+
+        std::vector<scalar> ws_coordinates(nodesPerElement * SPATIAL_DIM);
+        std::vector<scalar> ws_dndx(nodesPerElement * SPATIAL_DIM * numScsIp);
+        std::vector<scalar> ws_deriv(nodesPerElement * SPATIAL_DIM * numScsIp);
+        std::vector<scalar> ws_det_j(numScsIp);
+
+        // Determine element block name from bucket parts
+        std::string partName = "unknown";
+        for (const stk::mesh::Part* part : bucket.supersets())
+        {
+            if (part->primary_entity_rank() == stk::topology::ELEMENT_RANK &&
+                part->topology() != stk::topology::INVALID_TOPOLOGY)
+            {
+                partName = part->name();
+                break;
+            }
+        }
+
+        for (size_t iElement = 0; iElement < bucket.size(); ++iElement)
+        {
+            stk::mesh::Entity element = bucket[iElement];
+            const stk::mesh::Entity* nodeRels = bucket.begin_nodes(iElement);
+            const label numNodes = bucket.num_nodes(iElement);
+
+            // Gather coordinates and compute centroid
+            std::array<scalar, SPATIAL_DIM> centroid{};
+            for (label ni = 0; ni < numNodes; ++ni)
+            {
+                const scalar* coords =
+                    stk::mesh::field_data(*coordinates, nodeRels[ni]);
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    ws_coordinates[offSet + j] = coords[j];
+                    centroid[j] += coords[j];
+                }
+            }
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+                centroid[j] /= static_cast<scalar>(numNodes);
+
+            // Call grad_op
+            scalar scs_error = 0.0;
+            meSCS->grad_op(1,
+                           &ws_coordinates[0],
+                           &ws_dndx[0],
+                           &ws_deriv[0],
+                           &ws_det_j[0],
+                           &scs_error);
+
+            // Find min/max det_j across all IPs
+            scalar elemMinDetJ = ws_det_j[0];
+            scalar elemMaxDetJ = ws_det_j[0];
+            for (label ip = 1; ip < numScsIp; ++ip)
+            {
+                elemMinDetJ = std::min(elemMinDetJ, ws_det_j[ip]);
+                elemMaxDetJ = std::max(elemMaxDetJ, ws_det_j[ip]);
+            }
+
+            localTotal++;
+            localMinDetJ = std::min(localMinDetJ, elemMinDetJ);
+            localMaxDetJ = std::max(localMaxDetJ, elemMaxDetJ);
+
+            if (scs_error != 0.0)
+                localScsError++;
+
+            if (elemMinDetJ < detJThreshold || scs_error != 0.0)
+            {
+                localFlagged++;
+                scalar ar = computeAspectRatio_(element);
+                badElements.push_back({bulkData.identifier(element),
+                                       partName,
+                                       elemMinDetJ,
+                                       elemMaxDetJ,
+                                       ar,
+                                       scs_error != 0.0,
+                                       centroid});
+            }
+        }
+    }
+
+    // Sort bad elements by min det_j (worst first)
+    std::sort(badElements.begin(),
+              badElements.end(),
+              [](const ElementDiagnostic& a, const ElementDiagnostic& b)
+    { return a.minDetJ < b.minDetJ; });
+
+    // Parallel reductions for summary
+    stk::ParallelMachine comm = bulkData.parallel();
+    label globalTotal = 0;
+    label globalFlagged = 0;
+    label globalScsError = 0;
+    stk::all_reduce_sum(comm, &localTotal, &globalTotal, 1);
+    stk::all_reduce_sum(comm, &localFlagged, &globalFlagged, 1);
+    stk::all_reduce_sum(comm, &localScsError, &globalScsError, 1);
+
+    scalar globalMinDetJ = localMinDetJ;
+    scalar globalMaxDetJ = localMaxDetJ;
+    stk::all_reduce_min(comm, &localMinDetJ, &globalMinDetJ, 1);
+    stk::all_reduce_max(comm, &localMaxDetJ, &globalMaxDetJ, 1);
+
+    // Print summary (rank 0 only)
+    if (messager::master())
+    {
+        std::ostringstream report;
+        report << "\n" << std::string(70, '=') << "\n";
+        report << " JACOBIAN DETERMINANT DIAGNOSTICS\n";
+        report << std::string(70, '=') << "\n";
+        report << "Total elements:              " << globalTotal << "\n";
+        report << "Flagged elements (det_j < " << std::scientific
+               << std::setprecision(1) << detJThreshold
+               << "): " << globalFlagged << "\n";
+        report << "Elements with scs_error:     " << globalScsError << "\n";
+        report << "Global min det_j:            " << std::scientific
+               << std::setprecision(6) << globalMinDetJ << "\n";
+        report << "Global max det_j:            " << std::scientific
+               << std::setprecision(6) << globalMaxDetJ << "\n";
+        report << std::string(70, '-') << "\n";
+        infoMsg(report.str());
+    }
+
+    // Print worst/best flagged elements (each rank, max 5 each end)
+    if (!badElements.empty())
+    {
+        int rank = bulkData.parallel_rank();
+        constexpr size_t maxShow = 5;
+
+        // Compute column width for block name based on actual data
+        size_t blockW = 8; // minimum width for "Block" header
+        for (const auto& e : badElements)
+            blockW = std::max(blockW, e.partName.size() + 2);
+
+        const int idW = 12;
+        const int numW = 14;
+        const int errW = 8;
+        const int totalW =
+            idW + static_cast<int>(blockW) + 4 * numW + errW + 40;
+
+        std::ostringstream details;
+        details << "Rank " << rank << ": " << badElements.size()
+                << " flagged elements (showing worst/best " << maxShow << ")\n";
+        details << std::left << std::setw(idW) << "GlobalID"
+                << std::setw(blockW) << "Block" << std::setw(numW) << "MinDetJ"
+                << std::setw(numW) << "MaxDetJ" << std::setw(numW)
+                << "AspectRatio" << std::setw(errW) << "ScsErr" << "Centroid\n";
+        details << std::string(totalW, '-') << "\n";
+
+        auto printEntry = [&](const ElementDiagnostic& e)
+        {
+            details << std::left << std::setw(idW) << e.globalId
+                    << std::setw(blockW) << e.partName << std::scientific
+                    << std::setprecision(3) << std::setw(numW) << e.minDetJ
+                    << std::setw(numW) << e.maxDetJ << std::setw(numW)
+                    << e.aspectRatio << std::setw(errW)
+                    << (e.scsError ? "YES" : "no") << std::fixed
+                    << std::setprecision(6) << "(" << e.centroid[0] << ", "
+                    << e.centroid[1] << ", " << e.centroid[2] << ")\n";
+        };
+
+        // Worst elements (sorted ascending, so first entries are worst)
+        size_t nWorst = std::min(maxShow, badElements.size());
+        for (size_t i = 0; i < nWorst; ++i)
+            printEntry(badElements[i]);
+
+        if (badElements.size() > 2 * maxShow)
+            details << "  ... (" << badElements.size() - 2 * maxShow
+                    << " more) ...\n";
+
+        // Best flagged elements (last entries)
+        if (badElements.size() > maxShow)
+        {
+            size_t startBest = badElements.size() > 2 * maxShow
+                                   ? badElements.size() - maxShow
+                                   : nWorst;
+            for (size_t i = startBest; i < badElements.size(); ++i)
+                printEntry(badElements[i]);
+        }
+
+        details << std::string(totalW, '=') << "\n";
+        infoMsg(details.str());
+    }
 }
 
 void elementValidator::printValidationReport() const

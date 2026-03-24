@@ -96,9 +96,19 @@ void mesh::read(const YAML::Node& inputNode)
             this->controlsRef().deserializeRestartParam(*ioBrokerPtr_);
         }
 
-        // ensure mesh dimensions is consistent with SPATIAL_DIM
-        assert(bulkDataPtr_->mesh_meta_data_ptr()->spatial_dimension() ==
-               SPATIAL_DIM);
+        // Cache the mesh dimension
+        const auto dim =
+            bulkDataPtr_->mesh_meta_data_ptr()->spatial_dimension();
+
+        // Check if mismatch
+        if (messager::master() && dim != SPATIAL_DIM)
+        {
+            std::string msg = "Mesh dimension mismatch! "
+                              "Mesh dim: " +
+                              std::to_string(dim) + ", Solver architecture: " +
+                              std::to_string(SPATIAL_DIM);
+            errorMsg(msg);
+        }
 
         // Validate YAML input against Exodus file parts
         validateYamlAgainstExodus_(inputNode);

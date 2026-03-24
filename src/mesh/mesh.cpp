@@ -465,6 +465,9 @@ void mesh::initializeElementValidation_()
             elementValidatorPtr_->printValidationReport();
         }
 
+        // Jacobian determinant diagnostics
+        elementValidatorPtr_->computeJacobianDiagnostics();
+
         // Apply element corrections if needed (flash CVFEM pattern)
         // In flash, this is called after mesh quality assessment
         auto correctionResults = elementValidatorPtr_->correctInvalidElements();

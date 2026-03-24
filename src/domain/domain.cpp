@@ -248,6 +248,9 @@ void domain::setupPressureLevelInformation_()
 
 bool domain::isWallDistanceRequired() const
 {
+    if (type_ != domainType::fluid)
+        return false;
+
     bool state = false;
 
     if (this->zonePtr()->meshDeforming())
@@ -268,6 +271,14 @@ bool domain::isWallDistanceRequired() const
     }
 
     if (this->turbulence_.option_ != turbulenceOption::laminar)
+    {
+        state = true;
+    }
+
+    if (this->meshRef()
+            .controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.forceWallDistanceCalculation_)
     {
         state = true;
     }
