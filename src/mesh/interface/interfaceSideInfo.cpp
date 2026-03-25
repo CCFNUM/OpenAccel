@@ -1,4 +1,4 @@
-﻿// File       : interfaceSideInfo.cpp
+// File       : interfaceSideInfo.cpp
 // Created    : Fri Aug 25 2023 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:

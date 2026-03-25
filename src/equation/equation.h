@@ -15,8 +15,6 @@
 #include "types.h"
 #include "zone.h"
 
-#include <memory>
-
 namespace accel
 {
 

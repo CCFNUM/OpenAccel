@@ -68,8 +68,6 @@ protected:
 
 private:
     std::unique_ptr<Assembler> assembler_;
-
-    // ALE-FSI
 };
 
 } /* namespace accel */

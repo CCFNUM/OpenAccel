@@ -5,6 +5,7 @@
 //              common model code.
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
+
 #ifndef FLOWMODEL_H
 #define FLOWMODEL_H
 

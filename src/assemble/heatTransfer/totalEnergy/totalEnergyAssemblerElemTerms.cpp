@@ -1,4 +1,4 @@
-﻿// File       : totalEnergyAssemblerElemTerms.cpp
+// File       : totalEnergyAssemblerElemTerms.cpp
 // Created    : Thu Apr 02 2025 15:40:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
