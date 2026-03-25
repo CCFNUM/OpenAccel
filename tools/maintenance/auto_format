@@ -62,6 +62,10 @@ def collect_header(lines):
     header = []
     i = 0
 
+    # Strip UTF-8 BOM if present on first line
+    if lines and lines[0].startswith('\ufeff'):
+        lines = [lines[0].lstrip('\ufeff')] + lines[1:]
+
     # Skip leading clang-format off guard
     if i < len(lines) and lines[i].strip() == GUARD_OFF:
         i += 1
@@ -218,7 +222,7 @@ def _is_header_file(lines):
     """Check if the file starts with a recognisable header."""
     if not lines:
         return False
-    first_few = '\n'.join(lines[:6])
+    first_few = '\n'.join(lines[:6]).lstrip('\ufeff')
     return bool(re.search(r'^//.*\bFile\b', first_few, re.MULTILINE))
 
 
