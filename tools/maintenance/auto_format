@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+# File       : auto_format
+# Created    : Tue Mar 25 2025
+# Author     : Mhamad Mahdi Alloush
+# Description: Reformat source file headers and run clang-format with
+#              temporary guards to protect headers from reformatting.
+# Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
+# SPDX-License-Identifier: BSD-3-Clause
+
+"""Reformat source file headers in src/ and run clang-format.
+
+Workflow:
+1. Fix headers: each key-value on its own line, Description wrapped at 80 chars
+2. Add temporary clang-format off/on guards around headers
+3. Run format_code (clang-format) — guards protect the headers
+4. Strip the temporary guards
+
+Usage:
+    auto_format [--check] [--verbose] [SRC_DIR]
+
+    --check     Report files that need header changes without modifying
+    --verbose   Print every file processed, not just changed ones
+    SRC_DIR     Source directory (default: ../../src relative to this script)
+"""
+
+import os
+import re
+import subprocess
+import sys
+
+MAX_LINE = 80
+EXTENSIONS = {'.c', '.cpp', '.C', '.h', '.hpp', '.H'}
+EXCLUDE_DIRS = {'solver'}
+KEYS = ['File', 'Created', 'Author', 'Description']
+# Match both copyright formats:
+#   Copyright YYYY CCFNUM HSLU T&A. All Rights Reserved.
+#   Copyright (c) YYYY CCFNUM, Lucerne University of Applied Sciences and Arts.
+COPYRIGHT_RE = re.compile(
+    r'Copyright\s+'
+    r'(?:'
+    r'\d{4}\s+CCFNUM\s+HSLU\s+T&A\.\s+All\s+Rights\s+Reserved\.'
+    r'|'
+    r'\(c\)\s+\d{4}\s+CCFNUM,\s+Lucerne\s+University\s+of\s+Applied\s+Sciences\s+and\s+Arts\.'
+    r')'
+)
+GUARD_OFF = '// clang-format off'
+GUARD_ON = '// clang-format on'
+
+
+# ---------------------------------------------------------------------------
+# Header collection
+# ---------------------------------------------------------------------------
+
+def collect_header(lines):
+    """Collect consecutive comment lines from the top of the file.
+
+    Strips any existing ``// clang-format off`` / ``// clang-format on`` guards
+    so the script is idempotent.
+
+    Returns (header_lines, rest_start_index).
+    """
+    header = []
+    i = 0
+
+    # Skip leading clang-format off guard
+    if i < len(lines) and lines[i].strip() == GUARD_OFF:
+        i += 1
+
+    while i < len(lines):
+        s = lines[i].strip()
+        if s == GUARD_ON:
+            i += 1
+            break
+        if not s.startswith('//'):
+            break
+        header.append(s)
+        i += 1
+
+    return header, i
+
+
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+
+def _strip_prefix(line):
+    """Remove ``//`` prefix and optional leading space."""
+    if line.startswith('// '):
+        return line[3:]
+    if line.startswith('//'):
+        return line[2:]
+    return line
+
+
+def parse_entries(header_lines):
+    """Parse header lines into a list of ``(key, value)`` tuples.
+
+    Handles headers that were mangled by clang-format (keys joined on one line)
+    by joining all header text and splitting on known key markers.
+    """
+    text = ' '.join(_strip_prefix(l).strip() for l in header_lines)
+    text = re.sub(r'\s+', ' ', text).strip()
+    if not text:
+        return []
+
+    # Locate each key in order (search forward only to avoid false matches)
+    positions = []
+    search_from = 0
+    for key in KEYS:
+        m = re.search(rf'\b{key}\s*:\s*', text[search_from:])
+        if m:
+            abs_start = search_from + m.start()
+            abs_vstart = search_from + m.end()
+            positions.append((key, abs_start, abs_vstart))
+            search_from = abs_vstart
+
+    # Copyright marker — matches both "Copyright YYYY" and "Copyright (c) YYYY"
+    m = re.search(r'\bCopyright\s+(?:\(c\)\s+)?\d{4}', text[search_from:])
+    if m:
+        abs_start = search_from + m.start()
+        positions.append(('_copyright', abs_start, abs_start))
+
+    if not positions:
+        return []
+
+    # Extract values
+    entries = []
+    for idx, (key, _kstart, vstart) in enumerate(positions):
+        vend = positions[idx + 1][1] if idx + 1 < len(positions) else len(text)
+
+        if key == '_copyright':
+            full = text[_kstart:vend].strip()
+            cm = COPYRIGHT_RE.search(full)
+            if cm:
+                entries.append(('Copyright', full[:cm.end()].strip()))
+                extra = full[cm.end():].strip()
+                if extra:
+                    entries.append(('Extra', extra))
+            else:
+                entries.append(('Copyright', full))
+        else:
+            entries.append((key, text[vstart:vend].strip()))
+
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# Formatting
+# ---------------------------------------------------------------------------
+
+def _wrap_description(value):
+    """Wrap description at 80 chars with aligned continuation lines.
+
+    ``// Description: `` is 16 characters.  Continuation lines use
+    ``//              `` (also 16 characters) so text aligns.
+    """
+    if not value:
+        return ['// Description:']
+
+    prefix = '// Description: '   # 16 chars
+    cont   = '//              '   # 16 chars
+    avail  = MAX_LINE - len(prefix)  # 64
+
+    words = value.split()
+    chunks = []
+    current = ''
+
+    for word in words:
+        if current:
+            test = current + ' ' + word
+            if len(test) <= avail:
+                current = test
+            else:
+                chunks.append(current)
+                current = word
+        else:
+            current = word
+
+    if current:
+        chunks.append(current)
+
+    return [
+        (prefix if i == 0 else cont) + chunk
+        for i, chunk in enumerate(chunks)
+    ] or ['// Description:']
+
+
+def _format_key(key, value):
+    """Format a standard key-value pair with aligned colon."""
+    padded = key.ljust(11)
+    return f'// {padded}: {value}' if value else f'// {padded}:'
+
+
+def rebuild_header(entries, with_guards=True):
+    """Rebuild formatted header lines, optionally with clang-format guards."""
+    lines = []
+    if with_guards:
+        lines.append(GUARD_OFF)
+
+    for key, value in entries:
+        if key == 'Description':
+            lines.extend(_wrap_description(value))
+        elif key in ('Copyright', 'Extra'):
+            lines.append(f'// {value}')
+        else:
+            lines.append(_format_key(key, value))
+
+    if with_guards:
+        lines.append(GUARD_ON)
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# File processing
+# ---------------------------------------------------------------------------
+
+def _is_header_file(lines):
+    """Check if the file starts with a recognisable header."""
+    if not lines:
+        return False
+    first_few = '\n'.join(lines[:6])
+    return bool(re.search(r'^//.*\bFile\b', first_few, re.MULTILINE))
+
+
+def format_header(filepath):
+    """Format header and add temporary guards.  Returns True if file changed."""
+    with open(filepath, 'r') as f:
+        content = f.read()
+
+    lines = content.splitlines()
+    if not _is_header_file(lines):
+        return False
+
+    header_lines, rest_start = collect_header(lines)
+    if not header_lines:
+        return False
+
+    entries = parse_entries(header_lines)
+    if not entries:
+        return False
+
+    new_header = rebuild_header(entries, with_guards=True)
+    new_lines = new_header + lines[rest_start:]
+    new_content = '\n'.join(new_lines)
+    if content.endswith('\n'):
+        new_content += '\n'
+
+    if new_content == content:
+        return False
+
+    with open(filepath, 'w') as f:
+        f.write(new_content)
+    return True
+
+
+def strip_guards(filepath):
+    """Remove the clang-format off/on guards around the header."""
+    with open(filepath, 'r') as f:
+        content = f.read()
+
+    lines = content.splitlines()
+    if not lines:
+        return False
+
+    new_lines = []
+    i = 0
+
+    # Strip leading guard
+    if lines[i].strip() == GUARD_OFF:
+        i += 1
+
+    # Copy header comment lines, stripping the trailing guard
+    while i < len(lines):
+        s = lines[i].strip()
+        if s == GUARD_ON:
+            i += 1
+            break
+        new_lines.append(lines[i])
+        i += 1
+
+    # Copy the rest unchanged
+    new_lines.extend(lines[i:])
+
+    new_content = '\n'.join(new_lines)
+    if content.endswith('\n'):
+        new_content += '\n'
+
+    if new_content == content:
+        return False
+
+    with open(filepath, 'w') as f:
+        f.write(new_content)
+    return True
+
+
+def find_source_files(src_dir):
+    """Return sorted list of all source files under src_dir, excluding EXCLUDE_DIRS."""
+    result = []
+    for root, dirs, files in os.walk(src_dir):
+        # Prune excluded directories (relative to src_dir)
+        rel = os.path.relpath(root, src_dir)
+        dirs[:] = sorted(d for d in dirs if rel != '.' or d not in EXCLUDE_DIRS)
+        for fname in sorted(files):
+            ext = os.path.splitext(fname)[1]
+            if ext in EXTENSIONS:
+                result.append(os.path.join(root, fname))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    args = sys.argv[1:]
+    check   = '--check' in args
+    verbose = '--verbose' in args
+    positional = [a for a in args if not a.startswith('--')]
+
+    if positional:
+        src_dir = os.path.abspath(positional[0])
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        src_dir = os.path.normpath(os.path.join(script_dir, '..', '..', 'src'))
+
+    all_files = find_source_files(src_dir)
+
+    # --check: just report which headers need fixing (no clang-format run)
+    if check:
+        modified = 0
+        for filepath in all_files:
+            with open(filepath, 'r') as f:
+                content = f.read()
+            lines = content.splitlines()
+            if not _is_header_file(lines):
+                continue
+            header_lines, rest_start = collect_header(lines)
+            if not header_lines:
+                continue
+            entries = parse_entries(header_lines)
+            if not entries:
+                continue
+            # Compare without guards
+            new_header = rebuild_header(entries, with_guards=False)
+            new_lines = new_header + lines[rest_start:]
+            new_content = '\n'.join(new_lines)
+            if content.endswith('\n'):
+                new_content += '\n'
+            if new_content != content:
+                modified += 1
+                rel = os.path.relpath(filepath, src_dir)
+                print(f'  Would modify: {rel}')
+            elif verbose:
+                rel = os.path.relpath(filepath, src_dir)
+                print(f'  Unchanged: {rel}')
+        print(f'\nProcessed {len(all_files)} files, would modify {modified}')
+        if modified > 0:
+            sys.exit(1)
+        return
+
+    # --- Phase 1: Format headers + add temporary guards ---
+    print('Phase 1: Formatting headers (adding temporary clang-format guards)...')
+    header_count = 0
+    for filepath in all_files:
+        if format_header(filepath):
+            header_count += 1
+            if verbose:
+                rel = os.path.relpath(filepath, src_dir)
+                print(f'  Formatted: {rel}')
+    print(f'  {header_count} headers formatted')
+
+    # --- Phase 2: Run clang-format via format_code ---
+    print('Phase 2: Running clang-format (headers protected by guards)...')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    format_code = os.path.join(script_dir, 'format_code')
+    result = subprocess.run(
+        ['bash', format_code],
+        cwd=script_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print(f'  format_code failed (exit {result.returncode}):')
+        if result.stderr:
+            print(result.stderr)
+        sys.exit(result.returncode)
+    print('  Done')
+
+    # --- Phase 3: Strip temporary guards ---
+    print('Phase 3: Removing temporary clang-format guards...')
+    strip_count = 0
+    for filepath in all_files:
+        if strip_guards(filepath):
+            strip_count += 1
+    print(f'  Stripped guards from {strip_count} files')
+
+    print(f'\nDone. {header_count} headers formatted, {len(all_files)} files clang-formatted.')
+
+
+if __name__ == '__main__':
+    main()

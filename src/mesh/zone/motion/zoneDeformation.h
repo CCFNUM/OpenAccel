@@ -2,9 +2,8 @@
 // Created    : Sat Jan 11 2025 20:15:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Mesh deformation specification and displacement diffusion
-// parameters
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              parameters
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef ZONEDEFORMATION_H

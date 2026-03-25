@@ -2,9 +2,8 @@
 // Created    : Mon Jan 27 2025
 // Author     : Mhamad Mahdi Alloush
 // Description: Assembler for the volume fraction transport in free-surface
-// flows
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and
-// Arts.
+//              flows
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef VOLUMEFRACTIONASSEMBLER_H

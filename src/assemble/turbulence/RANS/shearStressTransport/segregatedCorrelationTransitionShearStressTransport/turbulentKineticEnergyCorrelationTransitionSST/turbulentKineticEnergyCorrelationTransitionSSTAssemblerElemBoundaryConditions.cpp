@@ -1,9 +1,8 @@
-// File       :
-// turbulentKineticEnergyCorrelationTransitionSSTAssemblerElemBoundaryConditions.cpp
+// File       : turbulentKineticEnergyCorrelationTransitionSSTAssemblerElemBoundaryConditions.cpp
 // Created    : Sun Dec 29 2024
 // Author     : Adam Fares
 // Description: Boundary conditions for TKE equation in correlation-based
-// transition SST model (Menter 2015)
+//              transition SST model (Menter 2015)
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 

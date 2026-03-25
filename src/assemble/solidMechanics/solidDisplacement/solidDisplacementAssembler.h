@@ -2,9 +2,8 @@
 // Created    : Thu Dec 04 2025 08:42:10 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Assembler for the solid displacement equation in structural
-// mechanics
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              mechanics
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef SOLIDDISPLACEMENTASSEMBLER_H

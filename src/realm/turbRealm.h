@@ -2,9 +2,8 @@
 // Created    : Tue Jun 11 2024 15:06:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Turbulence field container for transport variables and wall
-// functions
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              functions
+// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TURBREALM_H

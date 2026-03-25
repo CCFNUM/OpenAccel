@@ -2,9 +2,8 @@
 // Created    : Sat Mar 01 2026
 // Author     : Mhamad Mahdi Alloush
 // Description: Wall distance computation via direct Euclidean distance to
-// nearest wall node (meshWave method)
-// Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and
-// Arts.
+//              nearest wall node (meshWave method)
+// Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef MESHWAVE_H

@@ -2,9 +2,8 @@
 // Created    : Sat Dec 06 2025 10:22:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Mesh displacement vector field with deforming mesh coordinate
-// handling
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              handling
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef DISPLACEMENT_H

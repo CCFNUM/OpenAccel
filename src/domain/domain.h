@@ -2,9 +2,8 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Physical domain definition with material properties and equation
-// models
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and
-// Arts.
+//              models
+// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef DOMAIN_H

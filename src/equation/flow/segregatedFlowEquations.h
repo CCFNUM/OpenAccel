@@ -2,10 +2,10 @@
 // Created    : Fri Mar 15 2024 15:06:38 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Navier-Stokes convenience wrapper to solve coupled momentum and
-// pressure correction separately. Alternatively, these two
-// equations can be solved by defining them explicitly in the YAML
-// config file of the run. This class is just a wrapper for that
-// since the two equations should be solved together.
+//              pressure correction separately. Alternatively, these two
+//              equations can be solved by defining them explicitly in the YAML
+//              config file of the run. This class is just a wrapper for that
+//              since the two equations should be solved together.
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 

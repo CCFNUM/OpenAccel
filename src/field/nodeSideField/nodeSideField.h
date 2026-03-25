@@ -2,9 +2,8 @@
 // Created    : Fri Aug 25 2023 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Field defined at nodes on boundary sides with interpolation
-// support
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and
-// Arts.
+//              support
+// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef NODESIDEFIELD_H

@@ -2,9 +2,8 @@
 // Created    : Thu Dec 04 2025 08:42:10 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Node scalar property field for Poisson's ratio in solid
-// mechanics
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              mechanics
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef POISSONRATIO_H

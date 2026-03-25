@@ -2,11 +2,11 @@
 // Created    : Thu Feb 22 2024 13:38:51 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Assembler for generic systems represented by a single physical
-// variable `phi` (requires phi field to be specified via
-// interface). Coupled assemblers should NOT inherit from this
-// assembler since they require knowledge of multiple physical
-// variables and not just one (`phi` in general). Knowledge about
-// the transport fields is sufficient for this assembler type.
+//              variable `phi` (requires phi field to be specified via
+//              interface). Coupled assemblers should NOT inherit from this
+//              assembler since they require knowledge of multiple physical
+//              variables and not just one (`phi` in general). Knowledge about
+//              the transport fields is sufficient for this assembler type.
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 

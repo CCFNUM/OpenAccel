@@ -2,9 +2,8 @@
 // Created    : Thu Feb 22 2025 13:38:51 (+0100)
 // Author     : Achraf Nagihi
 // Description: Assembler for the turbulent dissipation rate equation in
-// k-epsilon model
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied
-// Sciences and Arts.
+//              k-epsilon model
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TURBULENTDISSIPATIONRATEASSEMBLER_H

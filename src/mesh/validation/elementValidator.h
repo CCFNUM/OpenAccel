@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Element quality validation and correction system
 // Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
-// Ported from flash CVFEM code element correction functionality
+// SPDX-License-Identifier: BSD-3-Clause Ported from flash CVFEM code element correction functionality
 
 #ifndef ELEMENTVALIDATOR_H
 #define ELEMENTVALIDATOR_H

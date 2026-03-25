@@ -2,7 +2,7 @@
 // Created    : Sat Mar 01 2026
 // Author     : Mhamad Mahdi Alloush
 // Description: Wall distance computation via direct Euclidean distance to
-// nearest wall node
+//              nearest wall node
 // Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 

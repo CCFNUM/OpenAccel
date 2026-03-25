@@ -2,9 +2,8 @@
 // Created    : Thu Dec 04 2025 08:42:10 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Solid mechanics model for displacement, stress, and strain
-// computations
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied
-// Sciences and Arts.
+//              computations
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef SOLIDMECHANICSMODEL_H

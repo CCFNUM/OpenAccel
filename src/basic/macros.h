@@ -2,9 +2,8 @@
 // Created    : Tue Apr 30 2024 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Common field operations, IO helpers, and STK mesh utility
-// functions
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              functions
+// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef MACROS_H

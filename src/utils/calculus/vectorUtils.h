@@ -2,9 +2,8 @@
 // Created    : Sat Dec 21 2024 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Vector and tensor transformation utilities with rotation matrix
-// support
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and
-// Arts.
+//              support
+// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef VECTORUTILS_H

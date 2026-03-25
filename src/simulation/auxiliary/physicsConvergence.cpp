@@ -2,8 +2,7 @@
 // Created    : Thu Feb 26 2026
 // Author     : Mhamad Mahdi Alloush
 // Description: Physics-based convergence checks for coupled simulations
-// Copyright (c) 2026 CCFNUM, Lucerne University of Applied
-// Sciences and Arts.
+// Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "physicsConvergence.h"

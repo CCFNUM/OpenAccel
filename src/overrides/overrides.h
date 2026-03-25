@@ -2,9 +2,8 @@
 // Created    : Mon Feb 09 2026 08:42:10 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Runtime configuration overrides including fluid-structure
-// interaction
-// Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              interaction
+// Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef OVERRIDES_H

@@ -2,7 +2,7 @@
 // Created    : Fri Mar 15 2024 15:06:38 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Abstract base model for Navier-Stokes equations. Implements
-// common model code.
+//              common model code.
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 #ifndef FLOWMODEL_H

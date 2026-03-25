@@ -2,9 +2,8 @@
 // Created    : Wed Jan 15 2025
 // Author     : Adam Fares
 // Description: Assembler for the transition onset Reynolds number in transition
-// SST model
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              SST model
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef TRANSITIONONSETREYNOLDSNUMBERTRANSITIONSSTASSEMBLER_H

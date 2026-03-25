@@ -2,9 +2,8 @@
 // Created    : Sun Jan 26 2025 22:09:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Volume fraction field for multiphase flows with compressive
-// advection
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences
-// and Arts.
+//              advection
+// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef VOLUMEFRACTION_H

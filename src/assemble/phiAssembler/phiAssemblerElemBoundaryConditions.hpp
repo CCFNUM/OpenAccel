@@ -2,7 +2,7 @@
 // Created    : Thu Feb 29 2024 14:10:40 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Element based (stencil) assembly kernel implementation for
-// boundary conditions
+//              boundary conditions
 // Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 

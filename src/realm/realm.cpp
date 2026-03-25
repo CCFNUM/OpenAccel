@@ -2,8 +2,7 @@
 // Created    :
 // Author     :
 // Description:
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied
-// Sciences and Arts.
+// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
 // code
