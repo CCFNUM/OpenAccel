@@ -1024,33 +1024,34 @@ void simulation::addPlotItem(const residualPlotItem& item)
 
 void simulation::printSolverHeader(const int argc, const char* argv[])
 {
- if (messager::master())
- {
- std::cout << "╔══════════════════════════════════════════════════════════════════════╗" << std::endl;
- std::cout << "║                          OpenAccel " << SPATIAL_DIM
- << "D                                ║" << std::endl;
- std::cout << "║          Parallel fluid flow CFD package based on CVFEM              ║" << std::endl;
- std::cout << "║                    |<| Powered by Trilinos |>|                       ║" << std::endl;
- std::cout << "╚══════════════════════════════════════════════════════════════════════╝" << std::endl;
- std::cout << "Revision: " << accel::git_revision << std::endl;
- std::cout << "Command line:";
- for (int i = 0; i < argc; i++) {
- std::cout << " " << argv[i];
- }
- std::cout << '\n';
- std::cout << std::endl;
- }
+    if (messager::master())
+    {
+        std::cout << "╔══════════════════════════════════════════════════════════════════════╗" << std::endl;
+        std::cout << "║                          OpenAccel " << SPATIAL_DIM
+        << "D                                ║" << std::endl;
+        std::cout << "║          Parallel fluid flow CFD package based on CVFEM              ║" << std::endl;
+        std::cout << "║                    |<| Powered by Trilinos |>|                       ║" << std::endl;
+        std::cout << "╚══════════════════════════════════════════════════════════════════════╝" << std::endl;
+        std::cout << "Revision: " << accel::git_revision << std::endl;
+        std::cout << "Command line:";
+        for (int i = 0; i < argc; i++)
+        {
+            std::cout << " " << argv[i];
+        }
+        std::cout << '\n';
+        std::cout << std::endl;
+    }
 }
 
 void simulation::printSolverFooter()
 {
- if (messager::master())
- {
- std::cout << "╔══════════════════════════════════════════════════════════════════════╗" << std::endl;
- std::cout << "║                       Simulation is complete                         ║" << std::endl;
- std::cout << "╚══════════════════════════════════════════════════════════════════════╝" << std::endl;
- std::cout << std::endl;
- }
+    if (messager::master())
+    {
+        std::cout << "╔══════════════════════════════════════════════════════════════════════╗" << std::endl;
+        std::cout << "║                       Simulation is complete                         ║" << std::endl;
+        std::cout << "╚══════════════════════════════════════════════════════════════════════╝" << std::endl;
+        std::cout << std::endl;
+    }
 }
 
 // clang-format on
