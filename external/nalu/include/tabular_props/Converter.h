@@ -1,14 +1,12 @@
 #ifndef CONVERTER_H
 #define CONVERTER_H
 
-#include <string>
 #include <tabular_props/HDF5Table.h>
 #include <vector>
+#include <string>
 
-namespace sierra
-{
-namespace nalu
-{
+namespace sierra {
+namespace nalu {
 
 // Forward declarations
 class H5IO;
@@ -22,11 +20,11 @@ class Converter;
  */
 class ConverterFactory
 {
-public:
-    ConverterFactory(){};
-    ~ConverterFactory(){};
+ public:
+  ConverterFactory() {};
+  ~ConverterFactory() {};
 
-    Converter* create(const std::string& converterType) const;
+  Converter * create( const std::string & converterType ) const;
 };
 
 //============================================================================
@@ -40,61 +38,58 @@ public:
  *  new variable for use as an input in the central Table.  Derived classes
  *  provide the conversion machinery in the query() function.
  */
-class Converter
-{
-public:
-    explicit Converter(const std::string& converterType);
+class Converter {
 
-    virtual ~Converter(){};
+ public:
 
-    /** Get the name of the variable returned by this Converter */
-    const std::string& name() const
-    {
-        return name_;
-    }
+  explicit Converter( const std::string & converterType );
 
-    /** Get the list of input variables, in the order that they are to be
-     *  provided to the query() call */
-    const std::vector<std::string>& input_names() const
-    {
-        return inputNames_;
-    }
+  virtual ~Converter() { };
 
-    /* Get the number of input variables for this Converter */
-    unsigned int dimension() const
-    {
-        return dimension_;
-    }
+  /** Get the name of the variable returned by this Converter */
+  const std::string & name() const{ return name_; }
 
-    /**
-     *  Perform the calculation
-     *
-     *  @param inputs : Array of independent variable values
-     *  @result : The resulting computed value
-     */
-    virtual double query(const std::vector<double>& inputs) const = 0;
+  /** Get the list of input variables, in the order that they are to be
+   *  provided to the query() call */
+  const std::vector<std::string> & input_names() const {
+    return inputNames_;
+  }
 
-    /** Print a summary of this Converter configuration */
-    void print_summary() const;
+  /* Get the number of input variables for this Converter */
+  unsigned int dimension() const { return dimension_; }
 
-    /** Read this Converter from the provided I/O device */
-    virtual void read_hdf5(H5IO& io);
+  /**
+   *  Perform the calculation
+   *
+   *  @param inputs : Array of independent variable values
+   *  @result : The resulting computed value
+   */
+  virtual double query( const std::vector<double> &inputs ) const = 0;
 
-protected:
-    // Name of the variable returned by this Converter
-    std::string name_;
+  /** Print a summary of this Converter configuration */
+  void print_summary() const;
 
-    // Names of the input variables, in the order they are required
-    std::vector<std::string> inputNames_;
+  /** Read this Converter from the provided I/O device */
+  virtual void read_hdf5( H5IO & io );
 
-    // Number of input variables
-    unsigned int dimension_;
+ protected:
 
-private:
-    // No copying.  (Assignment not possible with abstract class.)
-    Converter(const Converter&);
+  // Name of the variable returned by this Converter
+  std::string name_;
 
-    const std::string converterType_;
+  // Names of the input variables, in the order they are required
+  std::vector<std::string> inputNames_;
+
+  // Number of input variables
+  unsigned int dimension_;
+
+ private:
+
+  // No copying.  (Assignment not possible with abstract class.)
+  Converter( const Converter & );
+
+  const std::string converterType_;
+
 };
 
 //============================================================================
@@ -107,16 +102,18 @@ private:
  *  debugging, although it can be used for simply renaming table variables
  *  so that the Property class advertises a different input name.
  */
-class NameConverter : public Converter
-{
-public:
-    NameConverter();
-    NameConverter(const std::string& outputName, const std::string& inputName);
+class NameConverter : public Converter {
 
-    virtual double query(const std::vector<double>& inputs) const;
+ public:
 
-private:
-    NameConverter operator=(const NameConverter&); // No assignment
+  NameConverter();
+  NameConverter( const std::string & outputName,
+                 const std::string & inputName );
+
+  virtual double query( const std::vector<double>  &inputs ) const;
+
+ private:
+  NameConverter operator=( const NameConverter & );  // No assignment
 };
 
 //============================================================================
@@ -128,38 +125,39 @@ private:
  *  mean and variance mixture fraction and mean scalar dissipation rate.
  *  This is used by the nonadiabatic flamelet models.
  */
-class ChiConverter : public Converter
-{
-public:
-    ChiConverter();
-    /* This version is used in Atab_ConverterBuilder.C */
-    /*
-    ChiConverter( const std::string & outputName,
-                  const std::string & inputZMeanName,
-                  const std::string & inputZScaledVarianceMeanName,
-                  const std::string & inputChiMeanName,
-                  const double zStoich,
-                  const HDF5Table * fChiMeanTable );
-    */
+class ChiConverter : public Converter {
 
-    virtual ~ChiConverter();
+ public:
 
-    /**
-     *  Do a lookup in the table at the input variable coordinates provided
-     *
-     *  @param inputs : Array of input variable values
-     *  @result : The state variable value interpolated from the table
-     */
-    virtual double query(const std::vector<double>& inputs) const;
+  ChiConverter();
+  /* This version is used in Atab_ConverterBuilder.C */
+  /*
+  ChiConverter( const std::string & outputName,
+                const std::string & inputZMeanName,
+                const std::string & inputZScaledVarianceMeanName,
+                const std::string & inputChiMeanName,
+                const double zStoich,
+                const HDF5Table * fChiMeanTable );
+  */
 
-    /** Read this Converter from the provided I/O device */
-    virtual void read_hdf5(H5IO& io);
+  virtual ~ChiConverter();
 
-private:
-    ChiConverter operator=(const ChiConverter&); // No assignment
+  /**
+   *  Do a lookup in the table at the input variable coordinates provided
+   *
+   *  @param inputs : Array of input variable values
+   *  @result : The state variable value interpolated from the table
+   */
+  virtual double query( const std::vector<double>  &inputs ) const;
 
-    double zStoich_;
-    const HDF5Table* fChiMeanTable_;
+  /** Read this Converter from the provided I/O device */
+  virtual void read_hdf5( H5IO & io );
+
+ private:
+  ChiConverter operator=( const ChiConverter & );  // No assignment
+
+  double zStoich_;
+  const HDF5Table * fChiMeanTable_;
 };
 
 //============================================================================
@@ -168,37 +166,38 @@ private:
  *  @brief Calculates reference scalar dissipation rate
  *
  *  This converter calculates a reference scalar dissipation rate for
- *  flow where turbulence/chemistry interactions can be neglected.
+ *  flow where turbulence/chemistry interactions can be neglected. 
  */
-class DeltaChiConverter : public Converter
-{
-public:
-    DeltaChiConverter();
-    /* This version is used in Atab_ConverterBuilder.C */
-    /*
-    DeltaChiConverter( const std::string & outputName,
-                       const std::string & inputZMeanName,
-                       const std::string & inputChiMeanName,
-                       const double zStoich );
-    */
+class DeltaChiConverter : public Converter {
 
-    virtual ~DeltaChiConverter();
+ public:
 
-    /**
-     *  Do a lookup in the table at the input variable coordinates provided
-     *
-     *  @param inputs : Array of input variable values
-     *  @result : The state variable value interpolated from the table
-     */
-    virtual double query(const std::vector<double>& inputs) const;
+  DeltaChiConverter();
+  /* This version is used in Atab_ConverterBuilder.C */
+  /*
+  DeltaChiConverter( const std::string & outputName,
+                     const std::string & inputZMeanName,
+                     const std::string & inputChiMeanName,
+                     const double zStoich );
+  */
 
-    /** Read this Converter from the provided I/O device */
-    virtual void read_hdf5(H5IO& io);
+  virtual ~DeltaChiConverter();
 
-private:
-    DeltaChiConverter operator=(const DeltaChiConverter&); // No assignment
+  /**
+   *  Do a lookup in the table at the input variable coordinates provided
+   *
+   *  @param inputs : Array of input variable values
+   *  @result : The state variable value interpolated from the table
+   */
+  virtual double query( const std::vector<double>  &inputs ) const;
 
-    double zStoich_;
+  /** Read this Converter from the provided I/O device */
+  virtual void read_hdf5( H5IO & io );
+
+ private:
+  DeltaChiConverter operator=( const DeltaChiConverter & ); // No assignment
+
+  double zStoich_;
 };
 
 //============================================================================
@@ -210,37 +209,38 @@ private:
  *  mean and variance mixture fraction and mean heat loss parameter.
  *  This is used by the nonadiabatic flamelet models.
  */
-class GammaConverter : public Converter
-{
-public:
-    GammaConverter();
-    /* This version is used in Atab_ConverterBuilder.C */
-    /*
-    GammaConverter( const std::string & outputName,
-                    const std::vector<std::string> & inputZMeanNames,
-                    const std::string & inputZScaledVarianceMeanName,
-                    const std::string & inputGammaMeanName,
-                    const HDF5Table * fGammaMeanTable );
-    */
+class GammaConverter : public Converter {
 
-    virtual ~GammaConverter();
+ public:
 
-    /**
-     *  Do a lookup in the table at the input variable coordinates provided
-     *
-     *  @param inputs : Array of input variable values
-     *  @result : The state variable value interpolated from the table
-     */
-    virtual double query(const std::vector<double>& inputs) const;
+  GammaConverter();
+  /* This version is used in Atab_ConverterBuilder.C */
+  /*
+  GammaConverter( const std::string & outputName,
+                  const std::vector<std::string> & inputZMeanNames,
+                  const std::string & inputZScaledVarianceMeanName,
+                  const std::string & inputGammaMeanName,
+                  const HDF5Table * fGammaMeanTable );
+  */
 
-    /** Read this Converter from the provided I/O device */
-    virtual void read_hdf5(H5IO& io);
+  virtual ~GammaConverter();
 
-private:
-    GammaConverter operator=(const GammaConverter&); // No assignment
+  /**
+   *  Do a lookup in the table at the input variable coordinates provided
+   *
+   *  @param inputs : Array of input variable values
+   *  @result : The state variable value interpolated from the table
+   */
+  virtual double query( const std::vector<double>  &inputs ) const;
 
-    unsigned int numTableInputs_;
-    const HDF5Table* fGammaMeanTable_;
+  /** Read this Converter from the provided I/O device */
+  virtual void read_hdf5( H5IO & io );
+
+ private:
+  GammaConverter operator=( const GammaConverter & );  // No assignment
+
+  unsigned int numTableInputs_;
+  const HDF5Table * fGammaMeanTable_;
 };
 
 //============================================================================
@@ -249,41 +249,42 @@ private:
  *  @brief Calculates reference heat loss parameter
  *
  *  This converter calculates a reference heat loss parameter for
- *  flow where turbulence/chemistry interactions can be neglected.
+ *  flow where turbulence/chemistry interactions can be neglected. 
  */
-class DeltaGammaConverter : public Converter
-{
-public:
-    DeltaGammaConverter();
-    /* This version is used in Atab_ConverterBuilder.C */
-    /*
-    DeltaGammaConverter( const std::string & outputName,
-                         const std::vector<std::string> & inputZMeanName,
-                         const std::string & inputGammaMeanName,
-                         const std::vector<std::vector<double> > & zStoich,
-                         const std::vector<double> & gammaMaxStoich );
-    */
+class DeltaGammaConverter : public Converter {
 
-    virtual ~DeltaGammaConverter();
+ public:
 
-    /**
-     *  Do a lookup in the table at the input variable coordinates provided
-     *
-     *  @param inputs : Array of input variable values
-     *  @result : The state variable value interpolated from the table
-     */
-    virtual double query(const std::vector<double>& inputs) const;
+  DeltaGammaConverter();
+  /* This version is used in Atab_ConverterBuilder.C */
+  /*
+  DeltaGammaConverter( const std::string & outputName,
+                       const std::vector<std::string> & inputZMeanName,
+                       const std::string & inputGammaMeanName,
+                       const std::vector<std::vector<double> > & zStoich,
+                       const std::vector<double> & gammaMaxStoich );
+  */
 
-    /** Read this Converter from the provided I/O device */
-    virtual void read_hdf5(H5IO& io);
+  virtual ~DeltaGammaConverter();
 
-private:
-    DeltaGammaConverter operator=(const DeltaGammaConverter&); // No assignment
+  /**
+   *  Do a lookup in the table at the input variable coordinates provided
+   *
+   *  @param inputs : Array of input variable values
+   *  @result : The state variable value interpolated from the table
+   */
+  virtual double query( const std::vector<double>  &inputs ) const;
 
-    unsigned int numMixFrac_;
-    std::vector<std::vector<double>> zStoich_;
-    std::vector<double> gammaMaxStoich_;
-    mutable std::vector<double> zMean_;
+  /** Read this Converter from the provided I/O device */
+  virtual void read_hdf5( H5IO & io );
+
+ private:
+  DeltaGammaConverter operator=( const DeltaGammaConverter & ); // No assignment
+
+  unsigned int numMixFrac_;
+  std::vector<std::vector<double> > zStoich_;
+  std::vector<double> gammaMaxStoich_;
+  mutable std::vector<double> zMean_;
 };
 
 //============================================================================
@@ -297,56 +298,57 @@ private:
  *  chemistry interactions may be either neglected (isDelta=true) or
  *  included (isDelta=false; default).
  */
-class HStarConverter : public Converter
-{
-public:
-    explicit HStarConverter(const bool isDelta = false);
+class HStarConverter : public Converter {
 
-    /* This version is used in Atab_ConverterBuilder.C */
-    /*
-    HStarConverter( const std::string & outputName,
-                    const std::vector<std::string> & inputZMeanNames,
-                    const std::string & inputHStarMeanName,
-                    const double hStar_ref_min,
-                    const std::vector<double> & hStar_stream_min,
-                    const std::vector<double> & a,
-                    const bool isDelta = false );
-    */
+ public:
 
-    virtual ~HStarConverter();
+  explicit HStarConverter( const bool isDelta = false );
 
-    /**
-     *  Do a lookup in the table at the input variable coordinates provided
-     *
-     *  @param inputs : Array of input variable values
-     *  @result : The state variable value interpolated from the table
-     */
-    virtual double query(const std::vector<double>& inputs) const;
+  /* This version is used in Atab_ConverterBuilder.C */
+  /*
+  HStarConverter( const std::string & outputName,
+                  const std::vector<std::string> & inputZMeanNames,
+                  const std::string & inputHStarMeanName,
+                  const double hStar_ref_min,
+                  const std::vector<double> & hStar_stream_min,
+                  const std::vector<double> & a,
+                  const bool isDelta = false );
+  */
 
-    /** Read this Converter from the provided I/O device */
-    virtual void read_hdf5(H5IO& io);
+  virtual ~HStarConverter();
 
-private:
-    HStarConverter operator=(const HStarConverter&); // No assignment
+  /**
+   *  Do a lookup in the table at the input variable coordinates provided
+   *
+   *  @param inputs : Array of input variable values
+   *  @result : The state variable value interpolated from the table
+   */
+  virtual double query( const std::vector<double>  &inputs ) const;
 
-    void augmented_mixfrac(const std::vector<double>& mixFrac,
-                           std::vector<double>& mixFracAug) const;
+  /** Read this Converter from the provided I/O device */
+  virtual void read_hdf5( H5IO & io );
 
-    double mixture_property(const std::vector<double>& mixFracAug,
-                            const std::vector<double>& streamProp) const;
+ private:
+  HStarConverter operator=( const HStarConverter & );  // No assignment
 
-    unsigned int numMixFrac_;
-    mutable std::vector<double>
-        zAug_; // Augmented mixture fraction buffer space
+  void augmented_mixfrac( const std::vector<double> &mixFrac,
+                          std::vector<double> & mixFracAug ) const;
 
-    double hStar_ref_min_;
-    std::vector<double> hStar_stream_min_;
-    std::vector<double> a_;
+  double mixture_property( const std::vector<double> & mixFracAug,
+                           const std::vector<double> & streamProp ) const;
+
+  unsigned int numMixFrac_;
+  mutable std::vector<double> zAug_;  // Augmented mixture fraction buffer space
+
+  double hStar_ref_min_;
+  std::vector<double> hStar_stream_min_;
+  std::vector<double> a_;
+
 };
 
 //============================================================================
 
-} // namespace nalu
-} // namespace sierra
+} // end nalu namespace
+} // end sierra namespace
 
 #endif

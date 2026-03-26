@@ -5,173 +5,206 @@
 /*  directory structure                                                   */
 /*------------------------------------------------------------------------*/
 
+
 #ifndef Tet4CVFEM_h
 #define Tet4CVFEM_h
 
-#include <master_element/MasterElement.h>
+#include<master_element/MasterElement.h>
 
-namespace sierra
-{
-namespace nalu
-{
+namespace sierra{
+namespace nalu{
 
 // Tet 4 subcontrol volume
 class TetSCV : public MasterElement
 {
 public:
-    TetSCV();
-    virtual ~TetSCV();
 
-    const int* ipNodeMap(int ordinal = 0);
+  TetSCV();
+  virtual ~TetSCV();
 
-    void determinant(SharedMemView<DoubleType**>& coords,
-                     SharedMemView<DoubleType*>& volume);
+  const int * ipNodeMap(int ordinal = 0);
 
-    void grad_op(SharedMemView<DoubleType**>& coords,
-                 SharedMemView<DoubleType***>& gradop,
-                 SharedMemView<DoubleType***>& deriv);
+  void determinant(
+    SharedMemView<DoubleType**>& coords,
+    SharedMemView<DoubleType*>& volume);
 
-    void shifted_grad_op(SharedMemView<DoubleType**>& coords,
-                         SharedMemView<DoubleType***>& gradop,
-                         SharedMemView<DoubleType***>& deriv);
+  void grad_op(
+    SharedMemView<DoubleType**>&coords,
+    SharedMemView<DoubleType***>&gradop,
+    SharedMemView<DoubleType***>&deriv);
 
-    void grad_op(const int nelem,
-                 const double* coords,
-                 double* gradop,
-                 double* deriv,
-                 double* det_j,
-                 double* error);
+  void shifted_grad_op(
+    SharedMemView<DoubleType**>&coords,
+    SharedMemView<DoubleType***>&gradop,
+    SharedMemView<DoubleType***>&deriv);
 
-    void determinant(const int nelem,
-                     const double* coords,
-                     double* areav,
-                     double* error);
+  void grad_op(
+    const int nelem,
+    const double *coords,
+    double *gradop,
+    double *deriv,
+    double *det_j,
+    double * error );
 
-    void shape_fcn(double* shpfc);
+  void determinant(
+    const int nelem,
+    const double *coords,
+    double *areav,
+    double * error );
 
-    void shifted_shape_fcn(double* shpfc);
+  void shape_fcn(
+    double *shpfc);
 
-    void
-    tet_shape_fcn(const int& npts, const double* par_coord, double* shape_fcn);
+  void shifted_shape_fcn(
+    double *shpfc);
+  
+  void tet_shape_fcn(
+    const int &npts,
+    const double *par_coord, 
+    double* shape_fcn);
 };
 
 // Tet 4 subcontrol surface
 class TetSCS : public MasterElement
 {
 public:
-    TetSCS();
-    virtual ~TetSCS();
 
-    const int* ipNodeMap(int ordinal = 0);
+  TetSCS();
+  virtual ~TetSCS();
 
-    virtual void determinant(SharedMemView<DoubleType**>& coords,
-                             SharedMemView<DoubleType**>& areav);
+  const int * ipNodeMap(int ordinal = 0);
 
-    void determinant(const int nelem,
-                     const double* coords,
-                     double* areav,
-                     double* error);
+  virtual void determinant(
+    SharedMemView<DoubleType**>&coords,
+    SharedMemView<DoubleType**>&areav);
 
-    void grad_op(SharedMemView<DoubleType**>& coords,
-                 SharedMemView<DoubleType***>& gradop,
-                 SharedMemView<DoubleType***>& deriv);
+  void determinant(
+    const int nelem,
+    const double *coords,
+    double *areav,
+    double * error );
 
-    void grad_op(const int nelem,
-                 const double* coords,
-                 double* gradop,
-                 double* deriv,
-                 double* det_j,
-                 double* error);
+  void grad_op(
+    SharedMemView<DoubleType**>&coords,
+    SharedMemView<DoubleType***>&gradop,
+    SharedMemView<DoubleType***>&deriv);
 
-    void shifted_grad_op(SharedMemView<DoubleType**>& coords,
-                         SharedMemView<DoubleType***>& gradop,
-                         SharedMemView<DoubleType***>& deriv);
+  void grad_op(
+    const int nelem,
+    const double *coords,
+    double *gradop,
+    double *deriv,
+    double *det_j,
+    double * error );
 
-    void shifted_grad_op(const int nelem,
-                         const double* coords,
-                         double* gradop,
-                         double* deriv,
-                         double* det_j,
-                         double* error);
+  void shifted_grad_op(
+    SharedMemView<DoubleType**>&coords,
+    SharedMemView<DoubleType***>&gradop,
+    SharedMemView<DoubleType***>&deriv);
 
-    void face_grad_op(const int nelem,
-                      const int face_ordinal,
-                      const double* coords,
-                      double* gradop,
-                      double* det_j,
-                      double* error);
+  void shifted_grad_op(
+    const int nelem,
+    const double *coords,
+    double *gradop,
+    double *deriv,
+    double *det_j,
+    double * error );
 
-    void face_grad_op(int face_ordinal,
-                      SharedMemView<DoubleType**>& coords,
-                      SharedMemView<DoubleType***>& gradop) final;
+  void face_grad_op(
+    const int nelem,
+    const int face_ordinal,
+    const double *coords,
+    double *gradop,
+    double *det_j,
+    double * error );
 
-    void shifted_face_grad_op(const int nelem,
-                              const int face_ordinal,
-                              const double* coords,
-                              double* gradop,
-                              double* det_j,
-                              double* error);
+  void face_grad_op(
+    int face_ordinal,
+    SharedMemView<DoubleType**>& coords,
+    SharedMemView<DoubleType***>& gradop) final;
 
-    void shifted_face_grad_op(int face_ordinal,
-                              SharedMemView<DoubleType**>& coords,
-                              SharedMemView<DoubleType***>& gradop) final;
+  void shifted_face_grad_op(
+    const int nelem,
+    const int face_ordinal,
+    const double *coords,
+    double *gradop,
+    double *det_j,
+    double * error );
 
-    void gij(SharedMemView<DoubleType**>& coords,
-             SharedMemView<DoubleType***>& gupper,
-             SharedMemView<DoubleType***>& glower,
-             SharedMemView<DoubleType***>& deriv);
+  void shifted_face_grad_op(
+    int face_ordinal,
+    SharedMemView<DoubleType**>& coords,
+    SharedMemView<DoubleType***>& gradop) final;
 
-    void gij(const double* coords,
-             double* gupperij,
-             double* glowerij,
-             double* deriv);
+  void gij(
+    SharedMemView<DoubleType**>& coords,
+    SharedMemView<DoubleType***>& gupper,
+    SharedMemView<DoubleType***>& glower,
+    SharedMemView<DoubleType***>& deriv);
 
-    const int* adjacentNodes();
+  void gij(
+    const double *coords,
+    double *gupperij,
+    double *glowerij,
+    double *deriv);
 
-    const int* scsIpEdgeOrd();
+  const int * adjacentNodes();
 
-    void shape_fcn(double* shpfc);
+  const int * scsIpEdgeOrd();
 
-    void shifted_shape_fcn(double* shpfc);
+  void shape_fcn(
+    double *shpfc);
 
-    void
-    tet_shape_fcn(const int& npts, const double* par_coord, double* shape_fcn);
+  void shifted_shape_fcn(
+    double *shpfc);
 
-    int opposingNodes(const int ordinal, const int node);
+  void tet_shape_fcn(
+    const int &npts,
+    const double *par_coord,
+    double* shape_fcn);
 
-    int opposingFace(const int ordinal, const int node);
+  int opposingNodes(
+    const int ordinal, const int node);
 
-    double isInElement(const double* elemNodalCoord,
-                       const double* pointCoord,
-                       double* isoParCoord);
+  int opposingFace(
+    const int ordinal, const int node);
 
-    void interpolatePoint(const int& nComp,
-                          const double* isoParCoord,
-                          const double* field,
-                          double* result);
+  double isInElement(
+    const double *elemNodalCoord,
+    const double *pointCoord,
+    double *isoParCoord);
 
-    void general_shape_fcn(const int numIp,
-                           const double* isoParCoord,
-                           double* shpfc);
+  void interpolatePoint(
+    const int &nComp,
+    const double *isoParCoord,
+    const double *field,
+    double *result);
 
-    void general_face_grad_op(const int face_ordinal,
-                              const double* isoParCoord,
-                              const double* coords,
-                              double* gradop,
-                              double* det_j,
-                              double* error);
+  void general_shape_fcn(
+    const int numIp,
+    const double *isoParCoord,
+    double *shpfc);
 
-    void sidePcoords_to_elemPcoords(const int& side_ordinal,
-                                    const int& npoints,
-                                    const double* side_pcoords,
-                                    double* elem_pcoords);
+  void general_face_grad_op(
+    const int face_ordinal,
+    const double *isoParCoord,
+    const double *coords,
+    double *gradop,
+    double *det_j,
+    double * error );
 
-    double parametric_distance(const double* x);
+  void sidePcoords_to_elemPcoords(
+    const int & side_ordinal,
+    const int & npoints,
+    const double *side_pcoords,
+    double *elem_pcoords);
 
-    const int* side_node_ordinals(int sideOrdinal) final;
+  double parametric_distance(const double* x);
+
+  const int* side_node_ordinals(int sideOrdinal) final;
 };
 
 } // namespace nalu
-} // namespace sierra
+} // namespace Sierra
 
 #endif
