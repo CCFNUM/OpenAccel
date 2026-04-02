@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# File       : auto_format
+# File       : smart_format
 # Created    : Tue Mar 25 2025
 # Author     : Mhamad Mahdi Alloush
 # Description: Reformat source file headers and run clang-format with
@@ -16,7 +16,7 @@ Workflow:
 4. Strip the temporary guards
 
 Usage:
-    auto_format [--check] [--verbose] [SRC_DIR]
+    smart_format [--check] [--verbose] [SRC_DIR]
 
     --check     Report files that need header changes without modifying
     --verbose   Print every file processed, not just changed ones
