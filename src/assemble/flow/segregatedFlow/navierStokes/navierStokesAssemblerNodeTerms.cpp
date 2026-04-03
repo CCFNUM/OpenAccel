@@ -131,7 +131,7 @@ void navierStokesAssembler::assembleNodeTermsFusedSteady_(const domain* domain,
                 for (label j = 0; j < SPATIAL_DIM; j++)
                 {
                     lhs[i * SPATIAL_DIM + j] +=
-                        p_mat[i * SPATIAL_DIM + j] * vol;
+                        rho * p_mat[i * SPATIAL_DIM + j] * vol;
 
                     rhs[i] -= p_mat[i * SPATIAL_DIM + j] * rho *
                               Ub[SPATIAL_DIM * iNode + j] * vol;
