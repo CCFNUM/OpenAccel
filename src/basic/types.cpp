@@ -621,7 +621,8 @@ std::string toString(inputDataType type)
 
 std::unordered_map<std::string, initialConditionOption>
     initialConditionOptionMap{{"null", initialConditionOption::null},
-                              {"value", initialConditionOption::value}};
+                              {"value", initialConditionOption::value},
+                              {"automatic", initialConditionOption::automatic}};
 
 initialConditionOption convertInitialConditionOptionFromString(std::string s)
 {

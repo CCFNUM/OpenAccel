@@ -847,8 +847,9 @@ void nodeField<N, M>::initializeField(label iZone)
                 assert(mf.time_restored() -
                            static_cast<label>(mf.time_restored()) ==
                        0.0);
-                assert(this->meshRef().controlsRef().globalIter ==
-                       static_cast<label>(mf.time_restored()));
+                assert(this->meshRef().controlsRef().globalIter == 0 ||
+                       this->meshRef().controlsRef().globalIter ==
+                           static_cast<label>(mf.time_restored()));
                 this->meshRef().controlsRef().globalIter =
                     static_cast<label>(mf.time_restored());
             }
@@ -994,6 +995,43 @@ void nodeField<N, M>::initializeField(label iZone)
                         errorMsg("profile data not provided yet");
                     }
                     break;
+            }
+        }
+        else if (initCond.type() == initialConditionOption::automatic)
+        {
+            stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
+                this->name(), this->meshRef().metaDataRef());
+            stk::io::MeshField mf(theField, theField->name());
+            mf.set_read_time(this->meshRef().ioBrokerRef().get_max_time());
+
+            // limit initialized parts to current zone's
+            for (const stk::mesh::Part* part :
+                 this->meshPtr()->zonePtr(iZone)->interiorParts())
+            {
+                mf.add_subset(*part);
+            }
+
+            // restore
+            this->meshRef().ioBrokerRef().read_input_field(mf);
+
+            if (mf.field_restored())
+            {
+                if (messager::master())
+                {
+                    std::cout << "Field " + this->name() +
+                                     " is imported from the data base at time "
+                              << std::scientific << mf.time_restored()
+                              << std::endl;
+                }
+            }
+            else
+            {
+                if (messager::master())
+                {
+                    warningMsg("Field " + this->name() +
+                               " is not found in the data base. "
+                               "Initializing from Zero");
+                }
             }
         }
     }

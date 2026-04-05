@@ -108,6 +108,15 @@ void controls::setRestartParam()
 void controls::deserializeRestartParam(
     const stk::io::StkMeshIoBroker& io_broker)
 {
+    if (!isTransient())
+    {
+        // For steady-state, globalIter is recovered from the field
+        // time_restored() in nodeField::initialize(). The dt_* and
+        // timeStepCount parameters are only relevant to transient runs.
+        io_broker.get_global("globalIter", globalIter, false);
+        return;
+    }
+
     io_broker.get_global("timeStepCount", analysisType_.timeStepCount_);
     io_broker.get_global("globalIter", globalIter);
     for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)

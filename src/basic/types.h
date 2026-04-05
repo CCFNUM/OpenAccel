@@ -541,7 +541,8 @@ std::string toString(inputDataType type);
 enum class initialConditionOption
 {
     null,
-    value
+    value,
+    automatic
 };
 
 initialConditionOption convertInitialConditionOptionFromString(std::string s);

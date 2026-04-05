@@ -58,6 +58,7 @@ void setupFieldInitializationOverDomainFromConfig(TField& field,
             }
             break;
 
+        case initialConditionOption::automatic:
         case initialConditionOption::null:
             break;
     }
