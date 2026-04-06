@@ -7,8 +7,8 @@
 
 // code
 #include "controls.h"
-#include "git_revision.h"
 #include "messager.h"
+#include "version.h"
 
 // std
 #include <algorithm>
@@ -277,7 +277,9 @@ void controls::writeTimestepLog_(const LogFileInfo& info)
 
         out << "# Accel Time Stepping Diagnostics: "
             << std::put_time(std::localtime(&in_time_t), "%c\n");
-        out << "# Git revision: " << accel::git_revision << '\n';
+        out << "# Version: " << accel::PROJECT_VERSION << '\n';
+        out << "# Git hash: " << accel::GIT_HASH << '\n';
+        out << "# Git describe: " << accel::GIT_DESCRIBE << '\n';
         out << "#\n";
 
         if (info.mode == timestepMode::adaptive)

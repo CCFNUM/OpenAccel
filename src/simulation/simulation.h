@@ -209,7 +209,7 @@ public:
 
     void writeRestart(const bool write_condition);
 
-    void printSolverHeader(const int argc, const char* argv[]);
+    void printSolverHeader();
 
     void printSolverFooter();
 

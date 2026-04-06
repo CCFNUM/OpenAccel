@@ -10,7 +10,6 @@
 
 // code
 #include "assembler.h"
-#include "git_revision.h"
 #include "linearSolver.h"
 #include "macros.h"
 #include "mesh.h"
@@ -18,8 +17,10 @@
 #include "residual.h"
 #include "simulation.h"
 #include "types.h"
+#include "version.h"
 
 // supported linear solvers
+#include "AMGFactory.h"
 #include "HYPRESolver.h"
 #include "PETScSolver.h"
 #include "TrilinosSolver.h"
@@ -319,8 +320,10 @@ linearSystem<N>::setupSolver(const std::string system_name)
     }
     ::accel::tolower(family_type);
 
-    ::linearSolver::GraphLayout layout = ::linearSolver::GraphLayout::UNDEFINED;
+    using AMGFactory = ::linearSolver::AMGFactory;
+    using AMGFactoryType = ::linearSolver::AMGFactoryType;
 
+    ::linearSolver::GraphLayout layout = ::linearSolver::GraphLayout::UNDEFINED;
     if (family_type == "petsc")
     {
 #ifdef HAS_PETSC
@@ -350,6 +353,18 @@ linearSystem<N>::setupSolver(const std::string system_name)
         errorMsg("linearSystem: executable does not support Trilinos (" +
                  this->system_name_ + ")");
 #endif /* HAS_TRILINOS */
+    }
+    else if (family_type == "amgsolver")
+    {
+        AMGFactory f = ::linearSolver::getAMGFactory(AMGFactoryType::AMG);
+        lsolver_ =
+            static_cast<LinearSolver*>(f(N, solver, layout, &solver_lookup));
+    }
+    else if (family_type == "gmres")
+    {
+        AMGFactory f = ::linearSolver::getAMGFactory(AMGFactoryType::GMRES);
+        lsolver_ =
+            static_cast<LinearSolver*>(f(N, solver, layout, &solver_lookup));
     }
     else
     {
@@ -604,7 +619,9 @@ void linearSystem<N>::initializeHistory_()
         auto& fout = *residual_stream_;
         fout << COMMENT << "Accel solver timestamp: "
              << std::put_time(std::localtime(&in_time_t), "%c\n");
-        fout << COMMENT << "Git revision: " << accel::git_revision << '\n';
+        fout << COMMENT << "Version: " << accel::PROJECT_VERSION << '\n';
+        fout << COMMENT << "Git hash: " << accel::GIT_HASH << '\n';
+        fout << COMMENT << "Git describe: " << accel::GIT_DESCRIBE << '\n';
         fout << COMMENT << '\n';
         ctx->info(fout, COMMENT);
         fout << COMMENT << '\n';

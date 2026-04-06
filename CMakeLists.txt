@@ -1,9 +1,21 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(Accel VERSION 1.0 LANGUAGES C CXX Fortran)
+project(OpenAccel)
 
 # Set C++ standard (optional but recommended)
 set(CMAKE_CXX_STANDARD 20)
+
+# options
+option(WITH_AMGSOLVER "Build with AMG solver" OFF)
+option(WITH_CVFEM_SOLID_MECHANICS "Use CVFEM for solid mechanics" ON)
+option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
+option(WITH_FASTMATH "Use fast math optimization" OFF)
+option(WITH_FSI "Build with Utopia FSI support" OFF)
+option(WITH_INTERFACE "Enable interface support" ON)
+option(WITH_MHD "Build with MHD support" OFF)
+option(WITH_OVERSET "Build with overset mesh support" OFF)
+option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
+option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" ON)
 
 # Get Git hash
 include(cmake/CheckGit.cmake)
@@ -44,8 +56,11 @@ endif()
 # Spatial dimension
 add_compile_definitions(SPATIAL_DIM=${SPATIAL_DIM})
 
-# PkgConfig
+# various system and dependencies for code in external/
+set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(PkgConfig)
+find_package(Threads REQUIRED)
+find_package(HDF5 REQUIRED)
 
 # For Trilinos (required for STK, etc.)
 set(CMAKE_PREFIX_PATH ${Trilinos_DIR} ${CMAKE_PREFIX_PATH})
@@ -54,16 +69,19 @@ message("-- Found Trilinos = ${Trilinos_DIR}")
 message("   Trilinos version: ${Trilinos_VERSION}")
 
 # Check if Trilinos linear solver packages are available (Belos, Ifpack2, Tpetra)
-set(TRILINOS_LINEAR_SOLVER_AVAILABLE TRUE)
-foreach(pkg Belos Ifpack2 Tpetra)
-    list(FIND Trilinos_PACKAGE_LIST ${pkg} pkg_index)
-    if(pkg_index EQUAL -1)
-        set(TRILINOS_LINEAR_SOLVER_AVAILABLE FALSE)
-        message("   Trilinos package ${pkg}: NOT FOUND")
-    else()
-        message("   Trilinos package ${pkg}: found")
-    endif()
-endforeach()
+set(TRILINOS_LINEAR_SOLVER_AVAILABLE FALSE)
+if(WITH_TRILINOS_SOLVER)
+    set(TRILINOS_LINEAR_SOLVER_AVAILABLE TRUE)
+    foreach(pkg Belos Ifpack2 Tpetra)
+        list(FIND Trilinos_PACKAGE_LIST ${pkg} pkg_index)
+        if(pkg_index EQUAL -1)
+            set(TRILINOS_LINEAR_SOLVER_AVAILABLE FALSE)
+            message("   Trilinos package ${pkg}: NOT FOUND")
+        else()
+            message("   Trilinos package ${pkg}: found")
+        endif()
+    endforeach()
+endif()
 
 if(TRILINOS_LINEAR_SOLVER_AVAILABLE)
     add_compile_definitions(HAS_TRILINOS)
@@ -77,8 +95,9 @@ set(CMAKE_PREFIX_PATH ${YAML_DIR}/lib/cmake ${YAML_DIR}/lib64/cmake
     $ENV{YAML_CPP_DIR}/lib/cmake $ENV{YAML_CPP_DIR}/lib64/cmake ${CMAKE_PREFIX_PATH})
 find_package(YAML-CPP)
 if(YAML-CPP_FOUND)
-  # YAML master branch is used
-  include_directories(SYSTEM ${YAML_CPP_INCLUDE_DIR})
+  # YAML system install is used
+  include_directories(${YAML_CPP_INCLUDE_DIR})
+  link_directories(${YAML_CPP_LIBRARY_DIR})
 else()
   # YAML 0.5.3 is used
   find_library(YAML_CPP_LIBRARIES NAMES yaml-cpp PATHS ${YAML_DIR}/lib)
@@ -96,7 +115,7 @@ endif()
 
 # PETSc
 if(DEFINED PETSC_DIR)
-    message("PETSC_DIR (${PETSC_DIR}) is provided. PETSc functionalities are enabled.")
+    message("-- PETSC_DIR (${PETSC_DIR}) is provided. PETSc functionalities are enabled.")
     add_compile_definitions(HAS_PETSC)
     include_directories(${PETSC_DIR}/include)
 
@@ -106,14 +125,14 @@ if(DEFINED PETSC_DIR)
 else()
     if (PKG_CONFIG_FOUND)
         # https://gitlab.com/petsc/petsc/-/merge_requests/5992
-        pkg_check_modules(PETSC PETSc)
+        pkg_check_modules(PETSC REQUIRED petsc)
 
         if(PETSC_FOUND)
-            message("PETSc functionalities are enabled.")
             add_compile_definitions(HAS_PETSC)
             include_directories(${PETSC_INCLUDE_DIRS})
+            link_directories(${PETSC_LIBRARY_DIRS})
         else()
-            message("PETSc functionalities are disabled.")
+            message("-- PETSc functionalities are disabled.")
         endif()
     endif()
 endif()
@@ -150,13 +169,13 @@ if(HYPRE_FOUND)
     message("-- HYPRE found and enabled.")
     add_compile_definitions(HAS_HYPRE)
     include_directories(${HYPRE_INCLUDE_DIRS})
+    link_directories(${HYPRE_LIBRARY_DIRS})
 else()
     message("-- HYPRE functionalities are DISABLED (not found).")
 endif()
 
 # Interface support (enabled by default)
-option(HAS_INTERFACE "Enable interface support" ON)
-if(HAS_INTERFACE)
+if(WITH_INTERFACE)
     add_compile_definitions(HAS_INTERFACE)
     message("-- Interface support: ENABLED")
 else()
@@ -164,8 +183,7 @@ else()
 endif()
 
 # Solid mechanics assembler
-option(USE_CVFEM_SOLID_MECHANICS "Use CVFEM for solid mechanics" ON)
-if(USE_CVFEM_SOLID_MECHANICS)
+if(WITH_CVFEM_SOLID_MECHANICS)
     add_compile_definitions(USE_CVFEM_SOLID_MECHANICS)
     message("-- Solid mechanics assembler: CVFEM")
 else()
@@ -199,15 +217,19 @@ target_include_directories(main_obj PUBLIC
     ${Trilinos_TPL_INCLUDE_DIRS}
 )
 
-# Link your executable with liblinsolve and Trilinos libraries
+# linear solver library
 target_link_libraries(main_obj PUBLIC ${libLinSolve})
+
+# Link your executable with Trilinos libraries
 target_link_libraries(main_obj PUBLIC ${Trilinos_LIBRARIES})
 
 # Link your executable with MPI libraries
-target_link_libraries(main_obj PUBLIC ${MPI_C_LIBRARIES} ${MPI_CXX_LIBRARIES})
+target_link_libraries(main_obj PUBLIC ${MPI_C_LIBRARIES})
 
-# Link to Git hash object
-target_link_libraries(main_obj PRIVATE git_revision)
+# Link to Git version object and various dependencies for external/
+target_link_libraries(main_obj PRIVATE git_version)
+target_link_libraries(main_obj PRIVATE Threads::Threads)
+target_link_libraries(main_obj PRIVATE HDF5::HDF5)
 
 # Link your executable with YAML libraries
 if(EXISTS ${YAML_DIR}/lib/libyaml-cpp.so)
@@ -254,7 +276,8 @@ else()
     # ... your existing 'disabled' logic ...
 endif()
 
-if(DEFINED WITH_FASTMATH AND WITH_FASTMATH)
+
+if(WITH_FASTMATH)
     string(APPEND CMAKE_CXX_FLAGS_RELEASE " -Ofast -mavx2 -mfma")
     string(APPEND CMAKE_CXX_FLAGS_RELWITHDEBINFO " -Ofast -mavx2 -mfma")
     message("-- Using fast math optimizations (NOT compliant with IEEE)")

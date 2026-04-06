@@ -1,0 +1,14 @@
+#include "version.h"
+
+namespace accel
+{
+
+const int VERSION_MAJOR = @PROJECT_VERSION_MAJOR@;
+const int VERSION_MINOR = @PROJECT_VERSION_MINOR@;
+const int VERSION_PATCH = @PROJECT_VERSION_PATCH@;
+
+const char GIT_HASH[] = "@GIT_HASH@";
+const char GIT_DESCRIBE[] = "@GIT_DESCRIBE@";
+const char PROJECT_VERSION[] = "@PROJECT_VERSION@";
+
+} // namespace accel

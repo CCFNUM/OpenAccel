@@ -12,6 +12,7 @@
 #include "mesh.h"
 #include "physicsConvergence.h"
 #include "realm.h"
+#include "version.h"
 
 namespace accel
 {
@@ -31,7 +32,7 @@ simulation::simulation(const int argc, const char* argv[]) : verbose_(0)
 
     stk::parse_command_line_args(argc, argv, desc, args_);
 
-    printSolverHeader(argc, argv);
+    printSolverHeader();
 
     inputFilePath_ = fs::path(inputFileName);
     inputNode_ = YAML::LoadFile(inputFilePath_.c_str());
@@ -39,6 +40,21 @@ simulation::simulation(const int argc, const char* argv[]) : verbose_(0)
     if (getYAMLSimulationNode()["verbose"])
     {
         verbose_ = getYAMLSimulationNode()["verbose"].template as<int>();
+    }
+
+    if (messager::master())
+    {
+        if (verbose_ > 0)
+        {
+            std::cout << "Git hash: " << accel::GIT_HASH << '\n';
+            std::cout << "Git describe: " << accel::GIT_DESCRIBE << '\n';
+        }
+        std::cout << "Command line:";
+        for (int i = 0; i < argc; i++)
+        {
+            std::cout << " " << argv[i];
+        }
+        std::cout << std::endl;
     }
 
     // 1) Create components: read/setup

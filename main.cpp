@@ -3,9 +3,9 @@
 // Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <mpi.h>
 #include <Kokkos_Core.hpp>
 #include <csignal>
+#include <mpi.h>
 #ifdef HAS_PETSC
 #include <petscsys.h>
 #if PETSC_VERSION_LT(3, 18, 1)

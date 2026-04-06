@@ -6,12 +6,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "physicsConvergence.h"
-#include "git_revision.h"
 #include "interface.h"
 #include "interfaceSideInfo.h"
 #include "messager.h"
 #include "simulation.h"
 #include "solidDisplacementEquation.h"
+#include "version.h"
 
 namespace accel
 {
@@ -276,7 +276,9 @@ void physicsConvergence::initializeResidualFile_(
     auto& fout = *stream;
     fout << "# Accel solver timestamp: "
          << std::put_time(std::localtime(&in_time_t), "%c\n");
-    fout << "# Git revision: " << accel::git_revision << '\n';
+    fout << "# Version: " << accel::PROJECT_VERSION << '\n';
+    fout << "# Git hash: " << accel::GIT_HASH << '\n';
+    fout << "# Git describe: " << accel::GIT_DESCRIBE << '\n';
     fout << "# Physics convergence residual history — interface: " << interfName
          << '\n';
     fout << "# Criterion: " << criterionName << '\n';

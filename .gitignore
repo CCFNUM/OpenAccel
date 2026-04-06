@@ -1,11 +1,39 @@
-# Build
-build*/
-examples/
-*.o
+.myanchor
+*.cflags
+*.config
+*.creator
+*.creator.user
+*.cxxflags
+*.files
+*.includes
+build*
+*.vscode
+*.samples
 *.exe
-CMakeCache.txt
-CMakeFiles/
-*.txt*
+*.bak
+*~
+*.o
+*.pro
+*.user
+*.pro.user
+*.xcodeproj
+*results.e*
+*.cgns*
+*.exo*
+*.e*
+*.png*
+*.jpg*
+*.avi*
+
+examples/**/*.py
+examples/**/*.txt
+examples/**/*.bin*
+examples/**/postProcessing
+examples/**/log*
+test
+.qtc_clangd
+
+/patch.*
 
 # IDE
 .vscode/
@@ -27,3 +55,5 @@ CMakeFiles/
 *.log
 *.pdf
 
+# Documentation files
+*.md

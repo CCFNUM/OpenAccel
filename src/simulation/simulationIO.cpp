@@ -10,7 +10,6 @@
 #include "elementField.h"
 #include "equation.h"
 #include "fluidEquationsIncludes.h"
-#include "git_revision.h"
 #ifdef HAS_INTERFACE
 #include "interface.h"
 #include "interfaceSideInfo.h"
@@ -19,6 +18,7 @@
 #include "messager.h"
 #include "simulation.h"
 #include "types.h"
+#include "version.h"
 
 namespace accel
 {
@@ -1020,25 +1020,44 @@ void simulation::addPlotItem(const residualPlotItem& item)
     plot_items_.push_back(item);
 }
 
+// number of characters for inner width of header/footer boxes
+static constexpr int WIDTH = 70;
+
+static std::string printStringCentered(const std::string& str)
+{
+    const int pad_l = (WIDTH <= str.length()) ? 0 : (WIDTH - str.length()) / 2;
+    const int pad_r =
+        (WIDTH <= pad_l + str.length()) ? 0 : WIDTH - (pad_l + str.length());
+    std::ostringstream s;
+    s << std::string(pad_l, ' ') << str << std::string(pad_r, ' ');
+    return s.str();
+}
+
+static std::string printHorizontalBar()
+{
+    std::ostringstream s;
+    for (int i = 0; i < WIDTH; i++)
+    {
+        s << "═";
+    }
+    return s.str();
+}
+
 // clang-format off
 
-void simulation::printSolverHeader(const int argc, const char* argv[])
+void simulation::printSolverHeader()
 {
     if (messager::master())
     {
-        std::cout << "╔══════════════════════════════════════════════════════════════════════╗" << std::endl;
-        std::cout << "║                          OpenAccel " << SPATIAL_DIM
-        << "D                                ║" << std::endl;
-        std::cout << "║          Parallel fluid flow CFD package based on CVFEM              ║" << std::endl;
-        std::cout << "║                    |<| Powered by Trilinos |>|                       ║" << std::endl;
-        std::cout << "╚══════════════════════════════════════════════════════════════════════╝" << std::endl;
-        std::cout << "Revision: " << accel::git_revision << std::endl;
-        std::cout << "Command line:";
-        for (int i = 0; i < argc; i++)
-        {
-            std::cout << " " << argv[i];
-        }
-        std::cout << '\n';
+        std::ostringstream h, d, v;
+        h << "OpenAccel " << SPATIAL_DIM << "D";
+        d << "Parallel fluid flow CFD package based on CVFEM";
+        v << "v" << accel::PROJECT_VERSION;
+        std::cout << "╔" << printHorizontalBar()         << "╗" << std::endl;
+        std::cout << "║" << printStringCentered(h.str()) << "║" << std::endl;
+        std::cout << "║" << printStringCentered(d.str()) << "║" << std::endl;
+        std::cout << "║" << printStringCentered(v.str()) << "║" << std::endl;
+        std::cout << "╚" << printHorizontalBar()         << "╝" << std::endl;
         std::cout << std::endl;
     }
 }
@@ -1047,9 +1066,11 @@ void simulation::printSolverFooter()
 {
     if (messager::master())
     {
-        std::cout << "╔══════════════════════════════════════════════════════════════════════╗" << std::endl;
-        std::cout << "║                       Simulation is complete                         ║" << std::endl;
-        std::cout << "╚══════════════════════════════════════════════════════════════════════╝" << std::endl;
+        std::ostringstream d;
+        d << "Simulation is complete";
+        std::cout << "╔" << printHorizontalBar()         << "╗" << std::endl;
+        std::cout << "║" << printStringCentered(d.str()) << "║" << std::endl;
+        std::cout << "╚" << printHorizontalBar()         << "╝" << std::endl;
         std::cout << std::endl;
     }
 }

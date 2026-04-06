@@ -9,13 +9,13 @@
 #include "flowModel.h"
 #include "Common.h"
 #include "domain.h"
-#include "git_revision.h"
 #include "idealGasModel.h"
 #include "messager.h"
 #include "realm.h"
 #include "simulation.h"
 #include "sutherlandsFormulaModel.h"
 #include "thermoModel.h"
+#include "version.h"
 #include "zoneTransformation.h"
 
 namespace accel
@@ -2308,7 +2308,10 @@ void flowModel::reportFlowData_()
 
                 fout << COMMENT << "CVFEM solver timestamp: "
                      << std::put_time(std::localtime(&in_time_t), "%c\n");
-                fout << COMMENT << "Git revision: " << accel::git_revision
+                fout << COMMENT << "Version: " << accel::PROJECT_VERSION
+                     << '\n';
+                fout << COMMENT << "Git hash: " << accel::GIT_HASH << '\n';
+                fout << COMMENT << "Git describe: " << accel::GIT_DESCRIBE
                      << '\n';
                 fout << COMMENT << '\n';
                 fout << COMMENT << "Mass flow balance:\n";
