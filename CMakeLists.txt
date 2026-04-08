@@ -15,7 +15,7 @@ option(WITH_INTERFACE "Enable interface support" ON)
 option(WITH_MHD "Build with MHD support" OFF)
 option(WITH_OVERSET "Build with overset mesh support" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
-option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" ON)
+option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" OFF)
 
 # Get Git hash
 include(cmake/CheckGit.cmake)
