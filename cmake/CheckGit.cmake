@@ -1,11 +1,11 @@
 set(CURRENT_LIST_DIR ${CMAKE_CURRENT_LIST_DIR})
 if (NOT DEFINED pre_configure_dir)
     set(pre_configure_dir ${CMAKE_CURRENT_LIST_DIR})
-endif ()
+endif()
 
 if (NOT DEFINED post_configure_dir)
     set(post_configure_dir ${CMAKE_BINARY_DIR}/generated)
-endif ()
+endif()
 
 set(pre_configure_file ${pre_configure_dir}/version.cpp.in)
 set(post_configure_file ${post_configure_dir}/version.cpp)
@@ -20,32 +20,31 @@ function(CheckGitRead git_hash)
         LIST(GET CONTENT 0 var)
 
         set(${git_hash} ${var} PARENT_SCOPE)
-    endif ()
+    endif()
 endfunction()
 
 function(CheckGitVersion)
-    find_package(Git QUIET)
-    if(NOT Git_FOUND)
-        message(WARNING "Git not found")
-        return()
-    endif()
-
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} describe --tags --always --long --dirty --broken
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE GIT_DESCRIBE
-        OUTPUT_STRIP_TRAILING_WHITESPACE
+    if (EXISTS ${CMAKE_SOURCE_DIR}/.git)
+        find_package(Git REQUIRED)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --tags --always --long --dirty --broken
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_DESCRIBE
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            )
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            OUTPUT_VARIABLE GIT_COMMIT_HASH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
         )
+    else()
+        set(GIT_DESCRIBE "out-of-repo-build")
+        set(GIT_COMMIT_HASH "out-of-repo-build")
+    endif()
 
     # the following region is special, do not remove the marker comments below
     set(GIT_TAG v0.2.0)
-
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE GIT_COMMIT_HASH
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
 
     string(REGEX REPLACE "^v-?" "" CLEAN_TAG "${GIT_TAG}")
     if(CLEAN_TAG MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)(-.*)?$")
@@ -65,7 +64,7 @@ function(CheckGitVersion)
     CheckGitRead(GIT_HASH_CACHE)
     if (NOT EXISTS ${post_configure_dir})
         file(MAKE_DIRECTORY ${post_configure_dir})
-    endif ()
+    endif()
 
     if (NOT EXISTS ${post_configure_dir}/version.h)
         file(COPY ${pre_configure_dir}/version.h DESTINATION ${post_configure_dir})
@@ -73,7 +72,7 @@ function(CheckGitVersion)
 
     if (NOT DEFINED GIT_HASH_CACHE)
         set(GIT_HASH_CACHE "INVALID")
-    endif ()
+    endif()
 
     # Only update the version.cpp if the hash has changed. This will
     # prevent us from rebuilding the project more than we need to.
@@ -82,11 +81,10 @@ function(CheckGitVersion)
         # to regenerate the source file.
         CheckGitWrite(${GIT_DESCRIBE})
         configure_file(${pre_configure_file} ${post_configure_file} @ONLY)
-    endif ()
+    endif()
 endfunction()
 
 function(CheckGitSetup)
-
     add_custom_target(AlwaysCheckGit COMMAND ${CMAKE_COMMAND}
         -DRUN_CHECK_GIT_REVISION=1
         -Dpre_configure_dir=${pre_configure_dir}
@@ -106,4 +104,4 @@ endfunction()
 # This is used to run this function from an external cmake process.
 if (RUN_CHECK_GIT_REVISION)
     CheckGitVersion()
-endif ()
+endif()

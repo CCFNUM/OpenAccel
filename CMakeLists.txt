@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 # options
 option(WITH_AMGSOLVER "Build with AMG solver" OFF)
+option(WITH_CANONICAL_SUFFIX "Enable canonical executable suffix" OFF)
 option(WITH_CVFEM_SOLID_MECHANICS "Use CVFEM for solid mechanics" ON)
 option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
 option(WITH_FASTMATH "Use fast math optimization" OFF)
@@ -15,7 +16,8 @@ option(WITH_INTERFACE "Enable interface support" ON)
 option(WITH_MHD "Build with MHD support" OFF)
 option(WITH_OVERSET "Build with overset mesh support" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
-option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" OFF)
+option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" ON)
+option(WITH_WARNINGS "Enable compiler warnings" OFF)
 
 # Get Git hash
 include(cmake/CheckGit.cmake)
@@ -36,15 +38,15 @@ endif()
 
 # Set the executable name
 set(exec_suffix "-${SPATIAL_DIM}D")
-if(DEFINED CANONICAL_EXEC_SUFFIX AND CANONICAL_EXEC_SUFFIX)
+if(WITH_CANONICAL_SUFFIX)
     set(exec_suffix "-stk")
 endif()
-set(exec "accel${exec_suffix}.exe")
+set(exec "openaccel${exec_suffix}.exe")
 if(CMAKE_BUILD_TYPE STREQUAL DEBUG OR CMAKE_BUILD_TYPE STREQUAL Debug)
-   set(exec "accel${exec_suffix}-debug.exe")
+   set(exec "openaccel${exec_suffix}-debug.exe")
 endif()
 
-if(DEFINED ACCEL_WARNING AND ACCEL_WARNING)
+if(WITH_WARNINGS)
 add_compile_options(
     -Wall
     -Wextra
@@ -125,7 +127,7 @@ if(DEFINED PETSC_DIR)
 else()
     if (PKG_CONFIG_FOUND)
         # https://gitlab.com/petsc/petsc/-/merge_requests/5992
-        pkg_check_modules(PETSC REQUIRED petsc)
+        pkg_check_modules(PETSC petsc)
 
         if(PETSC_FOUND)
             add_compile_definitions(HAS_PETSC)
