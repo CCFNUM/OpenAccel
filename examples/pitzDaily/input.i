@@ -1,3 +1,4 @@
+# vim: ft=yaml
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb

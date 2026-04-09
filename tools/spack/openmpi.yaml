@@ -8,6 +8,7 @@ spack:
   - hdf5
   - gsl
   - yaml-cpp@0.8.0
+  - gnuplot
   - hypre
   - petsc
   - trilinos@16 ~adios2 ~amesos +amesos2 +belos ~boost cxxstd=17 ~epetra ~epetraext +explicit_template_instantiation +hdf5 +hypre ~ifpack +ifpack2 +intrepid2 +kokkos ~ml +mpi +muelu +mumps +nox ~openmp +sacado +stk +stratimikos +suite-sparse +superlu-dist +tpetra +zoltan2 +shared +exodus +sierra_migration

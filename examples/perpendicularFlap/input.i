@@ -1,5 +1,7 @@
+# vim: ft=yaml
 mesh:
     file_path: mesh.e
+    automatic_decomposition_type: rcb
 simulation:
     verbose: 1
     physical_analysis:
