@@ -24,8 +24,8 @@ function(CheckGitRead git_hash)
 endfunction()
 
 function(CheckGitVersion)
-    if (EXISTS ${CMAKE_SOURCE_DIR}/.git)
-        find_package(Git REQUIRED)
+    if (GIT_REPO_BUILD)
+        find_package(Git REQUIRED QUIET)
         execute_process(
             COMMAND ${GIT_EXECUTABLE} describe --tags --always --long --dirty --broken
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
@@ -85,14 +85,23 @@ function(CheckGitVersion)
 endfunction()
 
 function(CheckGitSetup)
+    if (NOT DEFINED GIT_REPO_BUILD)
+        if (IS_DIRECTORY ${PROJECT_SOURCE_DIR}/.git)
+            set(GIT_REPO_BUILD TRUE)
+        else()
+            set(GIT_REPO_BUILD FALSE)
+        endif()
+    endif()
+
     add_custom_target(AlwaysCheckGit COMMAND ${CMAKE_COMMAND}
         -DRUN_CHECK_GIT_REVISION=1
+        -DGIT_REPO_BUILD=${GIT_REPO_BUILD}
         -Dpre_configure_dir=${pre_configure_dir}
         -Dpost_configure_file=${post_configure_dir}
         -DGIT_HASH_CACHE=${GIT_HASH_CACHE}
         -P ${CURRENT_LIST_DIR}/CheckGit.cmake
         BYPRODUCTS ${post_configure_file}
-        )
+    )
 
     add_library(git_version ${CMAKE_BINARY_DIR}/generated/version.cpp)
     target_include_directories(git_version PUBLIC ${CMAKE_BINARY_DIR}/generated)
