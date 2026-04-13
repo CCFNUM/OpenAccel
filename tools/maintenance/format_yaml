@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# File       : format_yaml
+# Created    : Mon Apr 13 2026 10:49:52 (+0200)
+# Author     : Fabian Wermelinger
+# Description: Format YAML files (supposed to be executed from this directory).
+#              Requires https://github.com/google/yamlfmt
+# Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
+
+SOURCE='\.\./\.\./examples/.*\.(i|yml|yaml)'
+
+# format in-place
+find ../.. \
+    -regextype 'egrep' \
+    -regex "${SOURCE}" \
+    -print0 | \
+    xargs -0 -n12 -P$(nproc) yamlfmt "$@"

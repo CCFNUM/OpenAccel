@@ -8,37 +8,37 @@ simulation:
         analysis_type:
             option: steady_state
         domains:
-          - name: default_domain
-            location: [fluid]
-            materials: [fluid_1]
-            type: fluid
-            domain_models:
-                reference_pressure: 101325
-            fluid_models:
-                turbulence:
-                    option: laminar
-            boundaries:
-              - name: top
-                type: wall
-                location: [top]
-                boundary_details:
-                    mass_and_momentum:
-                        wall_velocity:
-                            option: cartesian_components
-                            wall_velocity: [1,0,0]
-              - name: sides
-                type: wall
-                location: [sides]
-              - name: front_and_back
-                type: symmetry
-                location: [frontandback]
-            initialization:
-                velocity:
-                    option: value
-                    velocity: [0,0,0]
-                pressure:
-                    option: value
-                    pressure: 0
+        - name: default_domain
+          location: [fluid]
+          materials: [fluid_1]
+          type: fluid
+          domain_models:
+            reference_pressure: 101325
+          fluid_models:
+            turbulence:
+                option: laminar
+          boundaries:
+          - name: top
+            type: wall
+            location: [top]
+            boundary_details:
+                mass_and_momentum:
+                    wall_velocity:
+                        option: cartesian_components
+                        wall_velocity: [1, 0, 0]
+          - name: sides
+            type: wall
+            location: [sides]
+          - name: front_and_back
+            type: symmetry
+            location: [frontandback]
+          initialization:
+            velocity:
+                option: value
+                velocity: [0, 0, 0]
+            pressure:
+                option: value
+                pressure: 0
     solver:
         solver_control:
             basic_settings:
@@ -58,7 +58,7 @@ simulation:
             advanced_options:
                 pressure_level_information:
                     option: cartesian_coordinates
-                    cartesian_coordinates: [0,0,0]
+                    cartesian_coordinates: [0, 0, 0]
                     relative_pressure_level: 0
                 linear_solver_settings:
                     default:
@@ -68,7 +68,7 @@ simulation:
                         atol: 1.0e-12
                         options:
                             ksp_type: fgmres
-                            pc_type: bjacobi  
+                            pc_type: bjacobi
                     pressure_correction:
                         family: Trilinos
                         max_iterations: 200
@@ -82,12 +82,12 @@ simulation:
             output_frequency: 10
             output_fields: [velocity, pressure]
     material_library:
-      - name: fluid_1
-        thermodynamic_properties:
-            equation_of_state:
-                option: value
-                density: 1
-        transport_properties:
-            dynamic_viscosity:
-                option: value
-                dynamic_viscosity: 0.01
+    - name: fluid_1
+      thermodynamic_properties:
+        equation_of_state:
+            option: value
+            density: 1
+      transport_properties:
+        dynamic_viscosity:
+            option: value
+            dynamic_viscosity: 0.01

@@ -20,77 +20,77 @@ simulation:
                     timestep_decrease_factor: 0.8
                     timestep_increase_factor: 1.06
         domains:
-          - name: default_domain
-            location: [fluid-hex]
-            materials: [water,air]
-            type: fluid
-            domain_models:
-                reference_pressure: 101325
-                buoyancy_model:
-                    option: buoyant
-                    gravity: [0,-9.81,0]
-                    buoyancy_reference_density: 1
-            fluid_models:
-                turbulence:     
-                    option: laminar
-                multiphase:
-                    homogeneous: true
-                    free_surface_model: 
-                        option: standard 
-                        flux_corrected_transport: true
-                        interface_compression_level: 2
-                        n_alpha_corrections: 2
-            fluid_pair_models:
-              - pair: [water, air]
-                surface_tension:
-                    option: continuum_surface_force
-                    surface_tension_coefficient: 0.07
-            boundaries:
-              - name: walls
-                type: wall
-                location: [bot,dam,left,right]
-              - name: top
-                type: opening
-                location: [top]
-                boundary_details:
-                    mass_and_momentum:
-                        option: opening_pressure
-                        relative_pressure: 0
-                    flow_direction:
-                        option: cartesian_components
-                        x: 0
-                        y: -1
-                        z: 0
-                fluid_values:
-                    water:
-                        volume_fraction:
-                            option: value
-                            volume_fraction: 0
-                    air:
-                        volume_fraction:
-                            option: value
-                            volume_fraction: 1
-              - name: front_and_back
-                type: symmetry
-                location: [sym]
-            initialization:
-                velocity:
-                    option: value
-                    velocity: [0,0,0]
-                pressure:
-                    option: value
-                    pressure: 0                   
-                fluid_specific_initialization:
-                    water:
-                        volume_fraction:
-                            option: value
-                            input_type: expression
-                            volume_fraction: "if (x<=0.152348 and y<=0.290476, 1, 0)"
-                    air:
-                        volume_fraction:
-                            option: value
-                            input_type: expression
-                            volume_fraction: "if (x<=0.152348 and y<=0.290476, 0, 1)"
+        - name: default_domain
+          location: [fluid-hex]
+          materials: [water, air]
+          type: fluid
+          domain_models:
+            reference_pressure: 101325
+            buoyancy_model:
+                option: buoyant
+                gravity: [0, -9.81, 0]
+                buoyancy_reference_density: 1
+          fluid_models:
+            turbulence:
+                option: laminar
+            multiphase:
+                homogeneous: true
+                free_surface_model:
+                    option: standard
+                    flux_corrected_transport: true
+                    interface_compression_level: 2
+                    n_alpha_corrections: 2
+          fluid_pair_models:
+          - pair: [water, air]
+            surface_tension:
+                option: continuum_surface_force
+                surface_tension_coefficient: 0.07
+          boundaries:
+          - name: walls
+            type: wall
+            location: [bot, dam, left, right]
+          - name: top
+            type: opening
+            location: [top]
+            boundary_details:
+                mass_and_momentum:
+                    option: opening_pressure
+                    relative_pressure: 0
+                flow_direction:
+                    option: cartesian_components
+                    x: 0
+                    y: -1
+                    z: 0
+            fluid_values:
+                water:
+                    volume_fraction:
+                        option: value
+                        volume_fraction: 0
+                air:
+                    volume_fraction:
+                        option: value
+                        volume_fraction: 1
+          - name: front_and_back
+            type: symmetry
+            location: [sym]
+          initialization:
+            velocity:
+                option: value
+                velocity: [0, 0, 0]
+            pressure:
+                option: value
+                pressure: 0
+            fluid_specific_initialization:
+                water:
+                    volume_fraction:
+                        option: value
+                        input_type: expression
+                        volume_fraction: "if (x<=0.152348 and y<=0.290476, 1, 0)"
+                air:
+                    volume_fraction:
+                        option: value
+                        input_type: expression
+                        volume_fraction: "if (x<=0.152348 and y<=0.290476, 0, 1)"
     solver:
         solver_control:
             basic_settings:
@@ -98,13 +98,13 @@ simulation:
                 transient_scheme: first_order_backward_euler
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 5    
+                    max_iterations: 5
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-6
                 interpolation_scheme:
-                    velocity_interpolation_type: linear_linear             
-            advanced_options: 
+                    velocity_interpolation_type: linear_linear
+            advanced_options:
                 equation_controls:
                     volume_fraction_smoothing:
                         smooth_volume_fraction: true
@@ -118,7 +118,7 @@ simulation:
                         atol: 1.0e-12
                         options:
                             ksp_type: fgmres
-                            pc_type: bjacobi                
+                            pc_type: bjacobi
                     pressure_correction:
                         family: Trilinos
                         min_iterations: 3
@@ -127,8 +127,8 @@ simulation:
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
-                            preconditioner: ilu 
-            expert_parameters: 
+                            preconditioner: ilu
+            expert_parameters:
                 body_force_redistribution: false
         output_control:
             file_path: results.e
@@ -138,21 +138,21 @@ simulation:
             write_timestep_info: true
             output_fields: [velocity, pressure, volume_fraction.water]
     material_library:
-      - name: water
-        thermodynamic_properties:
-            equation_of_state:
-                option: value
-                density: 1000
-        transport_properties:
-            dynamic_viscosity:
-                option: value
-                dynamic_viscosity: 1e-3  
-      - name: air
-        thermodynamic_properties:
-            equation_of_state:
-                option: value
-                density: 1
-        transport_properties:
-            dynamic_viscosity:
-                option: value
-                dynamic_viscosity: 1.48e-5                
+    - name: water
+      thermodynamic_properties:
+        equation_of_state:
+            option: value
+            density: 1000
+      transport_properties:
+        dynamic_viscosity:
+            option: value
+            dynamic_viscosity: 1e-3
+    - name: air
+      thermodynamic_properties:
+        equation_of_state:
+            option: value
+            density: 1
+      transport_properties:
+        dynamic_viscosity:
+            option: value
+            dynamic_viscosity: 1.48e-5

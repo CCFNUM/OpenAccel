@@ -1,0 +1,6 @@
+formatter:
+  type: basic
+  indent: 4
+  indentless_arrays: true
+  retain_line_breaks: true
+  trim_trailing_whitespace: true

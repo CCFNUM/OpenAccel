@@ -20,49 +20,49 @@ simulation:
                     timestep_decrease_factor: 0.8
                     timestep_increase_factor: 1.06
         domains:
-          - name: default_domain
-            location: [fluid-hex]
-            materials: [water, air]
-            type: fluid
-            domain_models:
-                reference_pressure: 0
-            fluid_models:
-                turbulence:
-                    option: laminar
-                multiphase:
-                    homogeneous: true
-                    free_surface_model:
-                        option: standard
-            fluid_pair_models:
-              - pair: [water, air]
-                surface_tension:
-                    option: continuum_surface_force
-                    surface_tension_coefficient: 73.0
-            boundaries:
-              - name: walls
-                type: symmetry
-                location: [walls]
-              - name: front_and_back
-                type: symmetry
-                location: [front_and_back]
-            initialization:
-                velocity:
-                    option: value
-                    velocity: [0, 0, 0]
-                pressure:
-                    option: value
-                    pressure: 0
-                fluid_specific_initialization:
-                    water:
-                        volume_fraction:
-                            option: value
-                            input_type: expression
-                            volume_fraction: "if ((x-0.5)*(x-0.5) + (y-0.5)*(y-0.5) < 0.04, 1, 0)"
-                    air:
-                        volume_fraction:
-                            option: value
-                            input_type: expression
-                            volume_fraction: "if ((x-0.5)*(x-0.5) + (y-0.5)*(y-0.5) < 0.04, 0, 1)"
+        - name: default_domain
+          location: [fluid-hex]
+          materials: [water, air]
+          type: fluid
+          domain_models:
+            reference_pressure: 0
+          fluid_models:
+            turbulence:
+                option: laminar
+            multiphase:
+                homogeneous: true
+                free_surface_model:
+                    option: standard
+          fluid_pair_models:
+          - pair: [water, air]
+            surface_tension:
+                option: continuum_surface_force
+                surface_tension_coefficient: 73.0
+          boundaries:
+          - name: walls
+            type: symmetry
+            location: [walls]
+          - name: front_and_back
+            type: symmetry
+            location: [front_and_back]
+          initialization:
+            velocity:
+                option: value
+                velocity: [0, 0, 0]
+            pressure:
+                option: value
+                pressure: 0
+            fluid_specific_initialization:
+                water:
+                    volume_fraction:
+                        option: value
+                        input_type: expression
+                        volume_fraction: "if ((x-0.5)*(x-0.5) + (y-0.5)*(y-0.5) < 0.04, 1, 0)"
+                air:
+                    volume_fraction:
+                        option: value
+                        input_type: expression
+                        volume_fraction: "if ((x-0.5)*(x-0.5) + (y-0.5)*(y-0.5) < 0.04, 0, 1)"
     solver:
         solver_control:
             basic_settings:
@@ -79,8 +79,8 @@ simulation:
             advanced_options:
                 pressure_level_information:
                     option: cartesian_coordinates
-                    cartesian_coordinates: [0,0,0]
-                    relative_pressure_level: 0                
+                    cartesian_coordinates: [0, 0, 0]
+                    relative_pressure_level: 0
                 equation_controls:
                     volume_fraction_smoothing:
                         smooth_volume_fraction: true
@@ -95,7 +95,7 @@ simulation:
                         atol: 1.0e-12
                         options:
                             ksp_type: fgmres
-                            pc_type: bjacobi                
+                            pc_type: bjacobi
                     pressure_correction:
                         family: Trilinos
                         min_iterations: 3
@@ -115,21 +115,21 @@ simulation:
             write_timestep_info: true
             output_fields: [velocity, pressure, volume_fraction.water, curvature.water_air, body_forces, pressure_gradient]
     material_library:
-      - name: water
-        thermodynamic_properties:
-            equation_of_state:
-                option: value
-                density: 1000
-        transport_properties:
-            dynamic_viscosity:
-                option: value
-                dynamic_viscosity: 1e-3
-      - name: air
-        thermodynamic_properties:
-            equation_of_state:
-                option: value
-                density: 1000
-        transport_properties:
-            dynamic_viscosity:
-                option: value
-                dynamic_viscosity: 1e-3
+    - name: water
+      thermodynamic_properties:
+        equation_of_state:
+            option: value
+            density: 1000
+      transport_properties:
+        dynamic_viscosity:
+            option: value
+            dynamic_viscosity: 1e-3
+    - name: air
+      thermodynamic_properties:
+        equation_of_state:
+            option: value
+            density: 1000
+      transport_properties:
+        dynamic_viscosity:
+            option: value
+            dynamic_viscosity: 1e-3
