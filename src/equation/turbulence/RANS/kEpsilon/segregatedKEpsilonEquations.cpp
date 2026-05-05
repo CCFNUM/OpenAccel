@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2025 13:38:51 (+0100)
 // Author     : Achraf Nagihi
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "segregatedKEpsilonEquations.h"
 #include "realm.h"
@@ -17,6 +16,8 @@ segregatedKEpsilonEquations::segregatedKEpsilonEquations(realm* realm)
     tke_eq_ =
         std::make_unique<turbulentKineticEnergyKEpsilonEquation>(realm, this);
     tdr_eq_ = std::make_unique<turbulentDissipationRateEquation>(realm, this);
+    tke_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    tdr_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
 }
 
 void segregatedKEpsilonEquations::addDomain(std::shared_ptr<domain> domain)

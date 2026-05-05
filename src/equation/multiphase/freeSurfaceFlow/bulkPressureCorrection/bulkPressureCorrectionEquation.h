@@ -2,8 +2,7 @@
 // Created    : Sun Feb 02 2025 20:44:56 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Pressure correction equation for bulk free-surface flow
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef BULKPRESSURECORRECTIONEQUATION_H
 #define BULKPRESSURECORRECTIONEQUATION_H

@@ -1,9 +1,8 @@
 // File       : dataTransfer.hpp
 // Created    : Fri Nov 21 2025 14:01:11 (+0100)
 // Author     : Mhamad Mahdi Alloush
-// Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Description: Template and inline implementations for interface data transfer.
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 namespace accel
 {

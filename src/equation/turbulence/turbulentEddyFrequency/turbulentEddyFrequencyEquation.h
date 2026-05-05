@@ -2,8 +2,7 @@
 // Created    : Thu Mar 14 2024 12:50:04 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Base class for turbulent eddy frequency transport equation
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TURBULENTEDDYFREQUENCYEQUATION_H
 #define TURBULENTEDDYFREQUENCYEQUATION_H
@@ -25,6 +24,8 @@ private:
     turbulenceModel* model_;
 
 public:
+    static constexpr equationID ID = equationID::turbulentEddyFrequency;
+
     turbulentEddyFrequencyEquation(realm* realm, turbulenceModel* model);
 
     void checkDomain(const std::shared_ptr<domain> domain) override;
@@ -44,6 +45,11 @@ public:
     void preTimeStep() override;
 
     void printScales() override;
+
+    equationID getID() override
+    {
+        return ID;
+    }
 
 protected:
     void setResidualScales_() override;

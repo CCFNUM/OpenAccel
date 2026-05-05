@@ -2,8 +2,7 @@
 // Created    : Fri Aug 25 2023 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
@@ -25,16 +24,22 @@ dgInfo::dgInfo(label parallelRank,
                MasterElement* meSCSCurrent,
                stk::topology currentElementTopo,
                const scalar searchTolerance)
-    : parallelRank_(parallelRank), globalFaceId_(globalFaceId),
-      localGaussPointId_(localGaussPointId),
-      currentGaussPointId_(currentGaussPointId), currentFace_(currentFace),
-      currentElement_(currentElement), currentFaceOrdinal_(currentFaceOrdinal),
-      meFCCurrent_(meFCCurrent), meSCSCurrent_(meSCSCurrent),
-      currentElementTopo_(currentElementTopo), bestXRef_(1.0e16),
+    : localGaussPointId_(localGaussPointId), bestXRef_(1.0e16),
       bestX_(bestXRef_), nearestDistance_(searchTolerance),
-      nearestDistanceSafety_(2.0), gaussPointExposed_(false),
-      opposingFaceIsGhosted_(0)
+      nearestDistanceSafety_(2.0), gaussPointExposed_(false)
 {
+    // populate inherited (ipInfo) fields
+    parallelRank_ = parallelRank;
+    globalFaceId_ = globalFaceId;
+    currentGaussPointId_ = currentGaussPointId;
+    currentFace_ = currentFace;
+    currentElement_ = currentElement;
+    currentFaceOrdinal_ = currentFaceOrdinal;
+    meFCCurrent_ = meFCCurrent;
+    meSCSCurrent_ = meSCSCurrent;
+    currentElementTopo_ = currentElementTopo;
+    opposingFaceIsGhosted_ = 0;
+
     // resize internal vectors
     currentGaussPointCoords_.resize(SPATIAL_DIM);
 

@@ -2,8 +2,7 @@
 // Created    : Mon Apr 14 2025 10:36:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef WITH_THERMAL_TEMPERATURE
 
@@ -16,8 +15,8 @@ void thermalEnergyAssembler::assembleNodeTermsFusedSteady_(const domain* domain,
                                                            Context* ctx)
 {
     // retreive energy source in domain
-    scalar energySourceValue = domain->energySource().value_[0];
-    if (domain->energySource().option_ == sourceOption::totalSource)
+    scalar energySourceValue = domain->energySourceRef().value_[0];
+    if (domain->energySourceRef().option_ == sourceOption::totalSource)
     {
         energySourceValue /= domain->zonePtr()->stats().volume_;
     }
@@ -277,8 +276,8 @@ void thermalEnergyAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
     Context* ctx)
 {
     // retreive energy source in domain
-    scalar energySourceValue = domain->energySource().value_[0];
-    if (domain->energySource().option_ == sourceOption::totalSource)
+    scalar energySourceValue = domain->energySourceRef().value_[0];
+    if (domain->energySourceRef().option_ == sourceOption::totalSource)
     {
         energySourceValue /= domain->zonePtr()->stats().volume_;
     }
@@ -489,8 +488,8 @@ void thermalEnergyAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
     Context* ctx)
 {
     // retreive energy source in domain
-    scalar energySourceValue = domain->energySource().value_[0];
-    if (domain->energySource().option_ == sourceOption::totalSource)
+    scalar energySourceValue = domain->energySourceRef().value_[0];
+    if (domain->energySourceRef().option_ == sourceOption::totalSource)
     {
         energySourceValue /= domain->zonePtr()->stats().volume_;
     }

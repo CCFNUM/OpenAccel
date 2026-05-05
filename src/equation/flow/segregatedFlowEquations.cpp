@@ -2,8 +2,7 @@
 // Created    : Fri Mar 15 2024 15:06:38 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Segregated Navier-Stokes equations implementation details
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "segregatedFlowEquations.h"
 #include "realm.h"
@@ -16,6 +15,8 @@ segregatedFlowEquations::segregatedFlowEquations(realm* realm)
 {
     U_eq_ = std::make_unique<navierStokesEquation>(realm, this);
     pCorr_eq_ = std::make_unique<pressureCorrectionEquation>(realm, this);
+    U_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    pCorr_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
 
     // set relaxation factor for mass flux field to 0.75 for steady-state cases,
     // if and only if, not specified by user
@@ -305,6 +306,7 @@ void segregatedFlowEquations::postSolve()
     FOREACH_DOMAIN(updateMachNumberField_);
     FOREACH_DOMAIN(updateTotalPressureField_);
     FOREACH_DOMAIN(updateRelativeVelocityField_);
+    FOREACH_DOMAIN(updateUWallCoeffs);     // laminar
     FOREACH_DOMAIN(updateWallShearStress); // laminar
     FOREACH_DOMAIN(updateMassImbalance_);
 #ifdef HAS_INTERFACE

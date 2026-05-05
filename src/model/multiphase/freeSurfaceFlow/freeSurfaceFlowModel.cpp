@@ -2,13 +2,15 @@
 // Created    : Sun Jan 26 2025 22:06:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "freeSurfaceFlowModel.h"
 #include "idealGasModel.h"
 #include "simulation.h"
 #include "sutherlandsFormulaModel.h"
+#ifdef HAS_INTERFACE
+#include "ipInfo.h"
+#endif
 
 namespace accel
 {
@@ -724,6 +726,11 @@ void freeSurfaceFlowModel::redistributeBodyForces(
 
         // Fixed-size workspace arrays (reused in inner loop)
         std::vector<scalar> F_el(SPATIAL_DIM);
+        std::vector<scalar> uhat(SPATIAL_DIM);
+
+        // pointers to fixed-size arrays
+        scalar* p_F_el = &F_el[0];
+        scalar* p_uhat = &uhat[0];
 
         // Define selectors
         stk::mesh::Selector selAllElements =
@@ -781,47 +788,46 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                 // Step 1: arithmetic mean direction
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    F_el[d] = 0.0;
+                    p_F_el[d] = 0.0;
                 }
                 for (label ni = 0; ni < numNodes; ++ni)
                 {
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        F_el[d] += ws_F[ni * SPATIAL_DIM + d];
+                        p_F_el[d] += ws_F[ni * SPATIAL_DIM + d];
                     }
                 }
                 const scalar invN = 1.0 / static_cast<scalar>(numNodes);
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    F_el[d] *= invN;
+                    p_F_el[d] *= invN;
                 }
 
                 // Step 2: unit direction
                 scalar mag = 0.0;
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    mag += F_el[d] * F_el[d];
+                    mag += p_F_el[d] * p_F_el[d];
                 }
                 mag = std::sqrt(mag);
 
                 if (mag < SMALL)
                 {
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        F_el[d] = 0.0;
+                        p_F_el[d] = 0.0;
                 }
                 else
                 {
-                    scalar uhat[SPATIAL_DIM];
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        uhat[d] = F_el[d] / mag;
+                        p_uhat[d] = p_F_el[d] / mag;
                     }
 
                     // Step 3: recursive harmonic of scalar projections
                     scalar h = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        h += uhat[d] * ws_F[d];
+                        h += p_uhat[d] * ws_F[d];
                     }
                     h = std::max(h, 0.0);
 
@@ -830,7 +836,7 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                         scalar dk = 0.0;
                         for (label d = 0; d < SPATIAL_DIM; ++d)
                         {
-                            dk += uhat[d] * ws_F[ni * SPATIAL_DIM + d];
+                            dk += p_uhat[d] * ws_F[ni * SPATIAL_DIM + d];
                         }
                         dk = std::max(dk, 0.0);
                         if (h > 0.0)
@@ -847,7 +853,7 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                     // Step 4: result vector
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        F_el[d] = h * uhat[d];
+                        p_F_el[d] = h * p_uhat[d];
                     }
                 }
 
@@ -864,7 +870,7 @@ void freeSurfaceFlowModel::redistributeBodyForces(
 
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        F_node[d] += F_el[d] * scV;
+                        F_node[d] += p_F_el[d] * scV;
                     }
                 }
             }
@@ -1382,16 +1388,17 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
-    STKScalarField& mixtureMdotfSideSTKFieldPtr =
+    STKScalarField& mixtureMdotfSideSTKFieldRef =
         this->mDotRef().sideFieldRef().stkFieldRef();
 
     // check
     assert(this->mDotRef().sideFieldRef().definedOn(
         interfaceSideInfoPtr->currentPartVec_));
 
-    // zero-out
-    this->mDotRef().sideFieldRef().setToValue(
-        {0.0}, interfaceSideInfoPtr->currentPartVec_);
+    // zero the mixture mass flow rate field: in thoery it is already zero. This
+    // is only for safety
+    ops::zero(&mixtureMdotfSideSTKFieldRef,
+              interfaceSideInfoPtr->currentPartVec_);
 
     // ip values; both boundary and opposing surface
     std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
@@ -1404,10 +1411,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
     std::vector<scalar> ws_c_alpha;
     std::vector<scalar> ws_o_alpha;
 
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
-
     for (label iPhase = 0; iPhase < domain->nMaterials(); iPhase++)
     {
         label phaseIndex = domain->localToGlobalMaterialIndex(iPhase);
@@ -1417,52 +1420,38 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
         const auto& mDotSideSTKFieldPtr =
             this->mDotRef(phaseIndex).sideFieldRef().stkFieldRef();
 
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-             iSide++)
+        for (const auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-            // now loop over all the DgInfo objects on this
-            // particular exposed face
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+            for (const ipInfo* ip : faceIpInfoVec)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
+                if (ip->isExposed_)
+                    continue;
 
-                // extract current/opposing face/element
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-                stk::mesh::Entity currentElement = dgInfo->currentElement_;
-                stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
+                stk::mesh::Entity currentFace = ip->currentFace_;
+                stk::mesh::Entity opposingFace = ip->opposingFace_;
+                MasterElement* meFCCurrent = ip->meFCCurrent_;
+                MasterElement* meFCOpposing = ip->meFCOpposing_;
 
-                // master element; face and volume
-                MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-
-                // local ip, ordinals, etc
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                currentIsoParCoords = dgInfo->currentIsoParCoords_;
-                opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+                const label currentGaussPointId = ip->currentGaussPointId_;
+                currentIsoParCoords = ip->currentIsoParCoords_;
+                opposingIsoParCoords = ip->opposingIsoParCoords_;
 
                 // pointer to mDot
                 scalar* ncmDot = stk::mesh::field_data(
-                    mixtureMdotfSideSTKFieldPtr, currentFace);
+                    mixtureMdotfSideSTKFieldRef, currentFace);
                 const scalar* pncmDot =
                     stk::mesh::field_data(mDotSideSTKFieldPtr, currentFace);
 
-                // extract some master element info
                 const label currentNodesPerFace = meFCCurrent->nodesPerElement_;
                 const label opposingNodesPerFace =
                     meFCOpposing->nodesPerElement_;
 
-                // algorithm related; face
                 ws_c_alpha.resize(currentNodesPerFace);
                 ws_o_alpha.resize(opposingNodesPerFace);
 
-                // face
                 scalar* p_c_alpha = &ws_c_alpha[0];
                 scalar* p_o_alpha = &ws_o_alpha[0];
 
-                // gather current face data
                 stk::mesh::Entity const* current_face_node_rels =
                     bulkData.begin_nodes(currentFace);
                 const label current_num_face_nodes =
@@ -1470,13 +1459,10 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
                 for (label ni = 0; ni < current_num_face_nodes; ++ni)
                 {
                     stk::mesh::Entity node = current_face_node_rels[ni];
-
-                    // gather; scalar
                     p_c_alpha[ni] =
                         *stk::mesh::field_data(alphaSTKFieldRef, node);
                 }
 
-                // gather opposing face data
                 stk::mesh::Entity const* opposing_face_node_rels =
                     bulkData.begin_nodes(opposingFace);
                 const label opposing_num_face_nodes =
@@ -1484,8 +1470,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
                 for (label ni = 0; ni < opposing_num_face_nodes; ++ni)
                 {
                     stk::mesh::Entity node = opposing_face_node_rels[ni];
-
-                    // gather; scalar
                     p_o_alpha[ni] =
                         *stk::mesh::field_data(alphaSTKFieldRef, node);
                 }
@@ -1503,8 +1487,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
                                                &opposingAlphaBip);
 
                 ncmDot[currentGaussPointId] +=
-                    (currentAlphaBip + opposingAlphaBip) / 2.0 *
-                    pncmDot[currentGaussPointId];
+                    ip->areaFraction_ * (currentAlphaBip + opposingAlphaBip) /
+                    2.0 * pncmDot[currentGaussPointId];
             }
         }
     }
@@ -5821,6 +5805,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
     std::vector<scalar> B_el(SPATIAL_DIM);
+    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to everyone...
     scalar* p_uIp = &uIp[0];
@@ -5830,6 +5815,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     scalar* p_coordIp = &coordIp[0];
     scalar* p_FIp = &FIp[0];
     scalar* p_FOrigIp = &FOrigIp[0];
+    scalar* p_uhat = &uhat[0];
 
     // Get pressure diffusivity coefficient field and others
     const auto& USTKFieldRef = this->URef().stkFieldRef();
@@ -6053,15 +6039,14 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
             }
             else
             {
-                scalar uhat[SPATIAL_DIM];
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    uhat[d] = B_el[d] / mag;
+                    p_uhat[d] = B_el[d] / mag;
                 }
                 scalar h = 0.0;
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    h += uhat[d] * p_FOrig[d];
+                    h += p_uhat[d] * p_FOrig[d];
                 }
                 h = std::max(h, 0.0);
                 for (label ni = 1; ni < nodesPerElement; ++ni)
@@ -6069,7 +6054,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                     scalar dk = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        dk += uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
+                        dk += p_uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
                     }
                     dk = std::max(dk, 0.0);
                     if (h > 0.0)
@@ -6084,7 +6069,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                 }
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    B_el[d] = h * uhat[d];
+                    B_el[d] = h * p_uhat[d];
                 }
             }
 
@@ -6314,50 +6299,53 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
+    std::vector<scalar> oldMdot;
+    std::vector<scalar> accumulatedMdot;
+    std::vector<bool> exposedMdot;
+    std::vector<bool> touchedMdot;
 
     // free-surface always uses pure harmonic (no comp switch)
-
-    for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
+    for (const auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
     {
-        const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+        if (faceIpInfoVec.empty())
+            continue;
 
-        // now loop over all the DgInfo objects on this
-        // particular exposed face
-        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+        const ipInfo* firstIp = faceIpInfoVec.front();
+        scalar* faceMdot =
+            stk::mesh::field_data(mDotSideSTKFieldRef, firstIp->currentFace_);
+        const label numScsBip = firstIp->meFCCurrent_->numIntPoints_;
+        oldMdot.assign(faceMdot, faceMdot + numScsBip);
+        accumulatedMdot.assign(numScsBip, 0.0);
+        exposedMdot.assign(numScsBip, false);
+        touchedMdot.assign(numScsBip, false);
+
+        for (const ipInfo* ip : faceIpInfoVec)
         {
-            dgInfo* dgInfo = faceDgInfoVec[k];
-
             // extract current/opposing face/element
-            stk::mesh::Entity currentFace = dgInfo->currentFace_;
-            stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-            stk::mesh::Entity currentElement = dgInfo->currentElement_;
-            stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-            const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-            const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+            stk::mesh::Entity currentFace = ip->currentFace_;
+            stk::mesh::Entity opposingFace = ip->opposingFace_;
+            stk::mesh::Entity currentElement = ip->currentElement_;
+            stk::mesh::Entity opposingElement = ip->opposingElement_;
+            const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+            const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
             // master element; face and volume
-            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-            MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-            MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+            MasterElement* meFCCurrent = ip->meFCCurrent_;
+            MasterElement* meFCOpposing = ip->meFCOpposing_;
+            MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+            MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
             // local ip, ordinals, etc
-            const label currentGaussPointId = dgInfo->currentGaussPointId_;
-            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-            opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
-
-            // pointer to mDot
-            scalar* ncmDot =
-                stk::mesh::field_data(mDotSideSTKFieldRef, currentFace);
+            const label currentGaussPointId = ip->currentGaussPointId_;
+            touchedMdot[currentGaussPointId] = true;
+            currentIsoParCoords = ip->currentIsoParCoords_;
+            opposingIsoParCoords = ip->opposingIsoParCoords_;
 
             // if gauss point is exposed (non-overlapping), then
             // treat as a wall
-            if (dgInfo->gaussPointExposed_)
+            if (ip->isExposed_)
             {
-                ncmDot[currentGaussPointId] = 0.0;
+                exposedMdot[currentGaussPointId] = true;
                 continue;
             }
 
@@ -6540,7 +6528,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
                     c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
                 c_amag += c_axj * c_axj;
             }
-            c_amag = std::sqrt(c_amag);
+            c_amag = std::sqrt(c_amag) * ip->areaFraction_;
 
             // now compute normal
             for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -6675,8 +6663,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
                                            &ws_o_rho[0],
                                            &oRhoBip);
 
-            // projected nodal gradient: use arithmetic interpolations: zero-out
-            // first
+            // projected nodal gradient: use arithmetic
+            // interpolations: zero-out first
             for (label i = 0; i < SPATIAL_DIM; i++)
             {
                 cGjpBip[i] = 0;
@@ -6796,9 +6784,17 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
             scalar tmDot =
                 (ncFlux - ncPstabFlux + penaltyIp * (cPBip - oPBip)) * c_amag;
 
-            // store with relaxation
-            ncmDot[currentGaussPointId] =
-                mDotURF * tmDot + (1.0 - mDotURF) * ncmDot[currentGaussPointId];
+            accumulatedMdot[currentGaussPointId] += tmDot;
+        }
+
+        for (label ip = 0; ip < numScsBip; ++ip)
+        {
+            if (!touchedMdot[ip])
+                continue;
+
+            faceMdot[ip] = exposedMdot[ip] ? 0.0
+                                           : mDotURF * accumulatedMdot[ip] +
+                                                 (1.0 - mDotURF) * oldMdot[ip];
         }
     }
 }
@@ -6827,6 +6823,7 @@ void freeSurfaceFlowModel::
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
+    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -6836,6 +6833,7 @@ void freeSurfaceFlowModel::
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
+    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -7064,15 +7062,14 @@ void freeSurfaceFlowModel::
             }
             else
             {
-                scalar uhat[SPATIAL_DIM];
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    uhat[d] = B_el[d] / mag;
+                    p_uhat[d] = B_el[d] / mag;
                 }
                 scalar h = 0.0;
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    h += uhat[d] * p_FOrig_elem[d];
+                    h += p_uhat[d] * p_FOrig_elem[d];
                 }
                 h = std::max(h, 0.0);
                 for (label ni = 1; ni < nodesPerElement; ++ni)
@@ -7080,7 +7077,7 @@ void freeSurfaceFlowModel::
                     scalar dk = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
                     }
                     dk = std::max(dk, 0.0);
                     if (h > 0.0)
@@ -7095,7 +7092,7 @@ void freeSurfaceFlowModel::
                 }
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    B_el[d] = h * uhat[d];
+                    B_el[d] = h * p_uhat[d];
                 }
             }
 
@@ -7282,6 +7279,7 @@ void freeSurfaceFlowModel::
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
+    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -7291,6 +7289,7 @@ void freeSurfaceFlowModel::
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
+    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -7524,15 +7523,14 @@ void freeSurfaceFlowModel::
             }
             else
             {
-                scalar uhat[SPATIAL_DIM];
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    uhat[d] = B_el[d] / mag;
+                    p_uhat[d] = B_el[d] / mag;
                 }
                 scalar h = 0.0;
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    h += uhat[d] * p_FOrig_elem[d];
+                    h += p_uhat[d] * p_FOrig_elem[d];
                 }
                 h = std::max(h, 0.0);
                 for (label ni = 1; ni < nodesPerElement; ++ni)
@@ -7540,7 +7538,7 @@ void freeSurfaceFlowModel::
                     scalar dk = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
                     }
                     dk = std::max(dk, 0.0);
                     if (h > 0.0)
@@ -7555,7 +7553,7 @@ void freeSurfaceFlowModel::
                 }
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    B_el[d] = h * uhat[d];
+                    B_el[d] = h * p_uhat[d];
                 }
             }
 
@@ -7746,6 +7744,7 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
+    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -7755,6 +7754,7 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
+    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -7982,15 +7982,14 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
             }
             else
             {
-                scalar uhat[SPATIAL_DIM];
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    uhat[d] = B_el[d] / mag;
+                    p_uhat[d] = B_el[d] / mag;
                 }
                 scalar h = 0.0;
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    h += uhat[d] * p_FOrig_elem[d];
+                    h += p_uhat[d] * p_FOrig_elem[d];
                 }
                 h = std::max(h, 0.0);
                 for (label ni = 1; ni < nodesPerElement; ++ni)
@@ -7998,7 +7997,7 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                     scalar dk = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
                     }
                     dk = std::max(dk, 0.0);
                     if (h > 0.0)
@@ -8013,7 +8012,7 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                 }
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                 {
-                    B_el[d] = h * uhat[d];
+                    B_el[d] = h * p_uhat[d];
                 }
             }
 

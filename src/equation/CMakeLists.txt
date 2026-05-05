@@ -2,8 +2,7 @@
 # Created    : Thu Oct 16 2025 08:17:36 (+0200)
 # Author     : Fabian Wermelinger
 # Description: CMake build definitions
-# Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-# SPDX-License-Identifier: BSD-3-Clause
+# Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 

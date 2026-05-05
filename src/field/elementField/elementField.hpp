@@ -1,9 +1,9 @@
 // File       : elementField.hpp
 // Created    : Fri Aug 25 2023 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
-// Description:
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Description: Template and inline implementations for element field
+//              containers.
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 namespace accel
 {
@@ -394,7 +394,7 @@ void elementField<T, N>::registerSideFieldsForInterfaceSide(
     {
         const auto& interf = this->meshRef().interfaceRef(iInterface);
 
-        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap_)
+        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap())
             return;
 
         // Instantiate if not yet
@@ -417,7 +417,7 @@ void elementField<T, N>::registerSideFieldsForInterfaceSide(
     {
         const auto& interf = this->meshRef().interfaceRef(iInterface);
 
-        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap_)
+        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap())
             return;
 
         // Instantiate if not yet

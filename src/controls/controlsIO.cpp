@@ -2,8 +2,7 @@
 // Created    : Fri Aug 25 2023 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "controls.h"
@@ -555,31 +554,6 @@ void controls::read(YAML::Node inputNode)
                                 .template as<std::string>());
                 }
 
-#ifdef HAS_MHD
-                if (interpScheme["electric_potential_interpolation_type"])
-                {
-                    solver_.solverControl_.basicSettings_
-                        .interpolationSchemeType_
-                        .electricPotentialInterpolationType_ =
-                        convertInterpolationSchemeTypeFromString(
-                            interpScheme
-                                ["electric_potential_interpolation_type"]
-                                    .template as<std::string>());
-                }
-
-                if (interpScheme
-                        ["magnetic_vector_potential_interpolation_type"])
-                {
-                    solver_.solverControl_.basicSettings_
-                        .interpolationSchemeType_
-                        .magneticVectorPotentialInterpolationType_ =
-                        convertInterpolationSchemeTypeFromString(
-                            interpScheme
-                                ["magnetic_vector_potential_interpolation_type"]
-                                    .template as<std::string>());
-                }
-#endif /* HAS_MHD */
-
                 // Gradient interpolation scheme types
                 if (interpScheme["velocity_gradient_interpolation_type"])
                 {
@@ -704,32 +678,6 @@ void controls::read(YAML::Node inputNode)
                                 ["displacement_gradient_interpolation_type"]
                                     .template as<std::string>());
                 }
-
-#ifdef HAS_MHD
-                if (interpScheme
-                        ["electric_potential_gradient_interpolation_type"])
-                {
-                    solver_.solverControl_.basicSettings_
-                        .interpolationSchemeType_
-                        .electricPotentialGradientInterpolationType_ =
-                        convertInterpolationSchemeTypeFromString(
-                            interpScheme["electric_potential_gradient_"
-                                         "interpolation_type"]
-                                .template as<std::string>());
-                }
-
-                if (interpScheme["magnetic_vector_potential_gradient_"
-                                 "interpolation_type"])
-                {
-                    solver_.solverControl_.basicSettings_
-                        .interpolationSchemeType_
-                        .magneticVectorPotentialGradientInterpolationType_ =
-                        convertInterpolationSchemeTypeFromString(
-                            interpScheme["magnetic_vector_potential_gradient_"
-                                         "interpolation_type"]
-                                .template as<std::string>());
-                }
-#endif /* HAS_MHD */
             }
         }
         else
@@ -859,16 +807,6 @@ void controls::read(YAML::Node inputNode)
                             .equationControls_.subIterations_.segregatedFlow_ =
                             advancedOptions["equation_controls"]
                                            ["sub_iterations"]["segregated_flow"]
-                                               .template as<label>();
-                    }
-
-                    if (advancedOptions["equation_controls"]["sub_iterations"]
-                                       ["coupled_flow"])
-                    {
-                        solver_.solverControl_.advancedOptions_
-                            .equationControls_.subIterations_.coupledFlow_ =
-                            advancedOptions["equation_controls"]
-                                           ["sub_iterations"]["coupled_flow"]
                                                .template as<label>();
                     }
 
@@ -1099,6 +1037,44 @@ void controls::read(YAML::Node inputNode)
                 solver_.solverControl_.expertParameters_.disablePhysics_ =
                     expertParameters["disable_physics"].template as<bool>();
             }
+
+            if (expertParameters["nonlinear_stabilisation"])
+            {
+                solver_.solverControl_.expertParameters_.nso_ =
+                    expertParameters["nonlinear_stabilisation"]
+                        .template as<bool>();
+            }
+
+            if (expertParameters["nso_fourth_order_factor"])
+            {
+                solver_.solverControl_.expertParameters_.nsoFourthOrderFac_ =
+                    expertParameters["nso_fourth_order_factor"]
+                        .template as<scalar>();
+            }
+
+#ifdef HAS_INTERFACE
+            if (expertParameters["non_conformal_method"])
+            {
+                solver_.solverControl_.expertParameters_.nonconformalMethod_ =
+                    convertNonconformalMethodFromString(
+                        expertParameters["non_conformal_method"]
+                            .template as<std::string>());
+            }
+            if (expertParameters["ggi_assembly_method"])
+            {
+                solver_.solverControl_.expertParameters_.ggiAssemblyMethod_ =
+                    convertGgiAssemblyMethodFromString(
+                        expertParameters["ggi_assembly_method"]
+                            .template as<std::string>());
+
+                if (solver_.solverControl_.expertParameters_
+                        .ggiAssemblyMethod_ ==
+                    ggiAssemblyMethod::constrainedMortar)
+                {
+                    errorMsg("constrained mortar not implemented yet");
+                }
+            }
+#endif /* HAS_INTERFACE */
         }
 
         if (solver["output_control"])

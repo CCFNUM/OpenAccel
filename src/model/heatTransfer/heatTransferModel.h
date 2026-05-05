@@ -2,8 +2,7 @@
 // Created    : Thu Feb 01 2024 16:41:11 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Base class for heat transfer problems
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef HEATTRANSFERMODEL_H
 #define HEATTRANSFERMODEL_H

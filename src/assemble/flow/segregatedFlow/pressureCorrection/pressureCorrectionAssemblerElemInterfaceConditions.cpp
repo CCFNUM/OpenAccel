@@ -2,15 +2,14 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
 // code
-#include "dgInfo.h"
 #include "flowModel.h"
 #include "interface.h"
+#include "ipInfo.h"
 #include "mesh.h"
 #include "navierStokesAssembler.h"
 #include "pressureCorrectionAssembler.h"
@@ -200,43 +199,52 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
+    // extract vector of interface IP info
 
-    for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
+    const auto ggiMethod =
+        field_broker_->meshRef()
+            .controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.ggiAssemblyMethod_;
+    const bool useGgiNonPenalty =
+        interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+            nonconformalMethod::generalGridInterface &&
+        ggiMethod != ggiAssemblyMethod::penaltyMortar;
+    const scalar multiplier = useGgiNonPenalty ? 1.0 : 0.5;
+
+    const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
+
+    for (label iSide = 0; iSide < static_cast<label>(ipInfoVec.size()); iSide++)
     {
-        const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+        const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-        // now loop over all the DgInfo objects on this particular
-        // exposed face
-        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+        for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
         {
-            dgInfo* dgInfo = faceDgInfoVec[k];
+            const ipInfo* ip = faceIpInfoVec[k];
 
-            // if gauss point is exposed (non-overlapping), then
-            // treat as a wall
-            if (dgInfo->gaussPointExposed_)
+            if (ip->isExposed_)
                 continue;
 
             // extract current/opposing face/element
-            stk::mesh::Entity currentFace = dgInfo->currentFace_;
-            stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-            stk::mesh::Entity currentElement = dgInfo->currentElement_;
-            stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-            const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-            const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+            stk::mesh::Entity currentFace = ip->currentFace_;
+            stk::mesh::Entity opposingFace = ip->opposingFace_;
+            stk::mesh::Entity currentElement = ip->currentElement_;
+            stk::mesh::Entity opposingElement = ip->opposingElement_;
+            const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+            const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
             // master element; face and volume
-            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-            MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-            MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+            MasterElement* meFCCurrent = ip->meFCCurrent_;
+            MasterElement* meFCOpposing = ip->meFCOpposing_;
+            MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+            MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
-            // local ip, ordinals, etc
-            const label currentGaussPointId = dgInfo->currentGaussPointId_;
-            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-            opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+            // local ip
+            const label currentGaussPointId = ip->currentGaussPointId_;
+            const label opposingGaussPointId = ip->opposingGaussPointId_;
+
+            currentIsoParCoords = ip->currentIsoParCoords_;
+            opposingIsoParCoords = ip->opposingIsoParCoords_;
 
             // mapping from ip to nodes for this ordinal
             const label* ipNodeMap =
@@ -249,11 +257,11 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             const label opposingNodesPerElement =
                 meSCSOpposing->nodesPerElement_;
 
-            // arithmetic weights
+            // arithmetic weights for Gjp interpolation
             const scalar f_c = 1.0 / static_cast<scalar>(currentNodesPerSide);
             const scalar f_o = 1.0 / static_cast<scalar>(opposingNodesPerSide);
 
-            // resize some things; matrix related
+            // resize; matrix related
             const label totalNodes =
                 currentNodesPerElement + opposingNodesPerElement;
             const label lhsSize = totalNodes * totalNodes;
@@ -284,8 +292,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             ws_c_general_shape_function.resize(currentNodesPerSide);
             ws_o_general_shape_function.resize(opposingNodesPerSide);
 
-            // algorithm related; element; dndx will be at a single
-            // gauss point
+            // algorithm related; element
             ws_c_elem_p.resize(currentNodesPerElement);
             ws_o_elem_p.resize(opposingNodesPerElement);
             ws_c_elem_coordinates.resize(currentNodesPerElement * SPATIAL_DIM);
@@ -454,8 +461,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 }
             }
 
-            // gather opposing element data; sneak in second
-            // connected nodes
+            // gather opposing element data
             stk::mesh::Entity const* opposing_elem_node_rels =
                 bulkData.begin_nodes(opposingElement);
             const label opposing_num_elem_nodes =
@@ -484,6 +490,9 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             const scalar* c_areaVec =
                 stk::mesh::field_data(exposedAreaVecSTKFieldRef, currentFace);
 
+            // contact surface area fraction
+            const scalar fcs = ip->areaFraction_;
+
             scalar c_amag = 0.0;
             for (label j = 0; j < SPATIAL_DIM; ++j)
             {
@@ -493,27 +502,23 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             }
             c_amag = std::sqrt(c_amag);
 
-            // now compute normal
+            // compute normal
             for (label i = 0; i < SPATIAL_DIM; ++i)
             {
                 p_cNx[i] =
                     c_areaVec[currentGaussPointId * SPATIAL_DIM + i] / c_amag;
             }
 
-            // compute opposing normal: in theory it is assumed
-            // that the current and opposing sub-control surfaces
-            // are sufficiently planar
             for (label i = 0; i < SPATIAL_DIM; ++i)
             {
                 p_oNx[i] = -p_cNx[i];
             }
 
-            // transform opposing normal back to opposing side
+            // transform opposing normal back to opposing
+            // side
             interfaceSideInfoPtr->reverseRotateVector<SPATIAL_DIM>(oNx);
 
-            // project from side to element; method deals with the
-            // -1:1 isInElement range to the proper underlying CVFEM
-            // range
+            // project from side to element
             meSCSCurrent->sidePcoords_to_elemPcoords(
                 currentFaceOrdinal,
                 1,
@@ -540,14 +545,12 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                                 &ws_o_det_j[0],
                                                 &scs_error);
 
-            // current inverse length scale; can loop over face
-            // nodes to avoid "nodesOnFace" array
+            // current inverse length scale
             scalar currentInverseLength = 0.0;
             for (label ic = 0; ic < current_num_face_nodes; ++ic)
             {
                 const label faceNodeNumber = c_face_node_ordinals[ic];
-                const label offSetDnDx =
-                    faceNodeNumber * SPATIAL_DIM; // single intg. point
+                const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     const scalar nxj = p_cNx[j];
@@ -556,14 +559,12 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 }
             }
 
-            // opposing inverse length scale; can loop over face
-            // nodes to avoid "nodesOnFace" array
+            // opposing inverse length scale
             scalar opposingInverseLength = 0.0;
             for (label ic = 0; ic < opposing_num_face_nodes; ++ic)
             {
                 const label faceNodeNumber = o_face_node_ordinals[ic];
-                const label offSetDnDx =
-                    faceNodeNumber * SPATIAL_DIM; // single intg. point
+                const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     const scalar nxj = p_oNx[j];
@@ -582,7 +583,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             // current pressure gradient
             for (label ic = 0; ic < currentNodesPerElement; ++ic)
             {
-                const label offSetDnDx = ic * SPATIAL_DIM; // single intg. point
+                const label offSetDnDx = ic * SPATIAL_DIM;
                 const scalar p = p_c_elem_p[ic];
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -594,7 +595,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             // opposing pressure gradient
             for (label ic = 0; ic < opposingNodesPerElement; ++ic)
             {
-                const label offSetDnDx = ic * SPATIAL_DIM; // single intg. point
+                const label offSetDnDx = ic * SPATIAL_DIM;
                 const scalar p = p_o_elem_p[ic];
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -603,8 +604,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 }
             }
 
-            // product of density and velocity; current (take
-            // over previous nodal value for velocity)
+            // product of density and velocity; current
             for (label ni = 0; ni < current_num_face_nodes; ++ni)
             {
                 const scalar rho = p_c_rho[ni];
@@ -686,7 +686,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                           &ws_c_Um[0],
                                           &cUmBip[0]);
 
-            // interpolate pressure diffusivity (LHS: duTilde for SIMPLEC)
+            // interpolate pressure diffusivity (LHS)
             meFCCurrent->interpolatePoint(sizeOfVectorField,
                                           &currentIsoParCoords[0],
                                           &ws_c_du[0],
@@ -697,7 +697,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                            &ws_o_du[0],
                                            &oDuBip[0]);
 
-            // interpolate pressure diffusivity (RHS: always du)
+            // interpolate pressure diffusivity (RHS)
             meFCCurrent->interpolatePoint(sizeOfVectorField,
                                           &currentIsoParCoords[0],
                                           &ws_c_duRhs[0],
@@ -708,8 +708,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                            &ws_o_duRhs[0],
                                            &oDuRhsBip[0]);
 
-            // projected nodal gradient: use arithmetic interpolations: zero-out
-            // first
+            // projected nodal gradient; zero-out first
             for (label i = 0; i < SPATIAL_DIM; i++)
             {
                 cGjpBip[i] = 0;
@@ -744,12 +743,15 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 p_rhs[p] = 0.0;
             }
 
-            // save mDot
-            const scalar tmDot = (stk::mesh::field_data(
-                mDotSideSTKFieldRef, currentFace))[currentGaussPointId];
-
+            // save mDot from previous iteration
+            // (for compressibility linearization)
+            const scalar tmDot =
+                (stk::mesh::field_data(mDotSideSTKFieldRef,
+                                       currentFace))[currentGaussPointId] *
+                fcs;
             const scalar abs_tmDot = std::abs(tmDot);
 
+            // pressure diffusivity for penalty
             scalar currentDiffBipmag = 0;
             scalar opposingDiffBipmag = 0;
             for (label i = 0; i < SPATIAL_DIM; i++)
@@ -760,11 +762,14 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                     oRhoBip * oDuBip[i] / static_cast<scalar>(SPATIAL_DIM);
             }
 
+            // compute penalty (active for penaltyMortar)
             const scalar penaltyIp =
                 penaltyFactor * 0.5 *
                 (currentDiffBipmag * currentInverseLength +
                  opposingDiffBipmag * opposingInverseLength);
+            const scalar penaltyMultiplier = 2.0 * (1.0 - multiplier);
 
+            // mass flux and pressure stabilization
             scalar ncFlux = 0.0;
             scalar ncPstabFlux = 0.0;
             for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -780,10 +785,9 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 ncPstabFlux += 0.5 * (cPstab * p_cNx[j] - oPstab * p_oNx[j]);
             }
 
-            scalar mDot =
-                (ncFlux - ncPstabFlux + penaltyIp * (cPBip - oPBip)) * c_amag;
-
-            // transform mDot to relative frame
+            scalar mDot = (ncFlux - ncPstabFlux +
+                           penaltyMultiplier * penaltyIp * (cPBip - oPBip)) *
+                          fcs * c_amag;
 
             // 1.) frame motion
             for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -792,24 +796,25 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 {
                     mDot -= cRhoBip * p_mat[i * SPATIAL_DIM + j] *
                             (currentCoordsBip[j] - p_ori[j]) *
-                            c_areaVec[currentGaussPointId * SPATIAL_DIM + i];
+                            c_areaVec[currentGaussPointId * SPATIAL_DIM + i] *
+                            fcs;
                 }
             }
 
             // 2.) mesh motion
             for (label i = 0; i < SPATIAL_DIM; ++i)
             {
-                mDot -= cRhoBip * cUmBip[i] * p_cNx[i] * c_amag;
+                mDot -= cRhoBip * cUmBip[i] * p_cNx[i] * fcs * c_amag;
             }
 
 #ifndef NDEBUG
-            // SCL check: accumulate grid flux to nearest node
+            // SCL check: accumulate grid flux
             if (sclCheckSTKFieldPtr)
             {
                 scalar gridFlux = 0.0;
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
-                    gridFlux += cRhoBip * cUmBip[i] * p_cNx[i] * c_amag;
+                    gridFlux += cRhoBip * cUmBip[i] * p_cNx[i] * fcs * c_amag;
                 }
                 const label nn_scl = ipNodeMap[currentGaussPointId];
                 stk::mesh::Entity node = current_elem_node_rels[nn_scl];
@@ -825,10 +830,11 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             // set-up row for matrix
             const label rowR = nn * totalNodes;
 
-            // sensitivities; current face (penalty and advection); use general
-            // shape function for this single ip
-            scalar lhsFacC = penaltyIp * c_amag + (abs_tmDot + tmDot) / 2.0 *
-                                                      cPsiBip / cRhoBip * comp;
+            // sensitivities; current face
+            // (penalty and compressibility linearization)
+            scalar lhsFacC =
+                penaltyMultiplier * penaltyIp * fcs * c_amag +
+                (abs_tmDot + tmDot) / 2.0 * cPsiBip / cRhoBip * comp;
             meFCCurrent->general_shape_fcn(
                 1, &currentIsoParCoords[0], &ws_c_general_shape_function[0]);
             for (label ic = 0; ic < currentNodesPerSide; ++ic)
@@ -838,10 +844,11 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 p_lhs[rowR + icnn] += r * lhsFacC;
             }
 
-            // sensitivities; current element (diffusion)
+            // sensitivities; current element
+            // (pressure diffusion)
             for (label ic = 0; ic < currentNodesPerElement; ++ic)
             {
-                const label offSetDnDx = ic * SPATIAL_DIM; // single intg. point
+                const label offSetDnDx = ic * SPATIAL_DIM;
                 scalar lhscd = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -849,13 +856,14 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                     const scalar dndxj = p_c_dndx[offSetDnDx + j];
                     lhscd -= cRhoBip * cDuBip[j] * dndxj * nxj;
                 }
-                p_lhs[rowR + ic] += 0.5 * lhscd * c_amag;
+                p_lhs[rowR + ic] += multiplier * lhscd * fcs * c_amag;
             }
 
-            // sensitivities; opposing face (penalty); use general
-            // shape function for this single ip
-            scalar lhsFacO = penaltyIp * c_amag + (abs_tmDot - tmDot) / 2.0 *
-                                                      oPsiBip / oRhoBip * comp;
+            // sensitivities; opposing face
+            // (penalty and compressibility linearization)
+            scalar lhsFacO =
+                penaltyMultiplier * penaltyIp * fcs * c_amag +
+                (abs_tmDot - tmDot) / 2.0 * oPsiBip / oRhoBip * comp;
             meFCOpposing->general_shape_fcn(
                 1, &opposingIsoParCoords[0], &ws_o_general_shape_function[0]);
             for (label ic = 0; ic < opposingNodesPerSide; ++ic)
@@ -865,10 +873,11 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 p_lhs[rowR + icnn + currentNodesPerElement] -= r * lhsFacO;
             }
 
-            // sensitivities; opposing element (diffusion)
+            // sensitivities; opposing element
+            // (pressure diffusion)
             for (label ic = 0; ic < opposingNodesPerElement; ++ic)
             {
-                const label offSetDnDx = ic * SPATIAL_DIM; // single intg. point
+                const label offSetDnDx = ic * SPATIAL_DIM;
                 scalar lhscd = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -877,7 +886,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                     lhscd -= oRhoBip * oDuBip[j] * dndxj * nxj;
                 }
                 p_lhs[rowR + ic + currentNodesPerElement] -=
-                    0.5 * lhscd * c_amag;
+                    (1.0 - multiplier) * lhscd * fcs * c_amag;
             }
 
             this->applyCoeff_(

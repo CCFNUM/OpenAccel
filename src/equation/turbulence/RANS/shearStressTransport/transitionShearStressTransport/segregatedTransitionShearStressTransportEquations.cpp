@@ -2,8 +2,7 @@
 // Created    : Mon Jan 14 2025
 // Author     : Adam Fares
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "segregatedTransitionShearStressTransportEquations.h"
 #include "realm.h"
@@ -24,6 +23,10 @@ segregatedTransitionShearStressTransportEquations::
             realm, this);
     ti_eq_ = std::make_unique<turbulentIntermittencyTransitionSSTEquation>(
         realm, this);
+    tke_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    tef_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    tor_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    ti_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
 }
 
 void segregatedTransitionShearStressTransportEquations::addDomain(

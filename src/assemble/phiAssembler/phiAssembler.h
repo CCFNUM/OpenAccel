@@ -7,8 +7,7 @@
 //              assembler since they require knowledge of multiple physical
 //              variables and not just one (`phi` in general). Knowledge about
 //              the transport fields is sufficient for this assembler type.
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef PHIASSEMBLER_H
 #define PHIASSEMBLER_H
@@ -381,352 +380,410 @@ public:
 
     void applyConstraints(const domain* domain, Context* ctx)
     {
-        // select all locally owned nodes for this domain
-        const auto& mesh = field_broker_->meshRef();
-        const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-        const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-
-        // get fields
-        const auto& phiSTKFieldRef = phi_->stkFieldRef();
-
-        auto& A = ctx->getAMatrix();
-        auto& b = ctx->getBVector();
-
-        // not necessary for this equation
-        const bool scaledConstraints = false;
-
 #ifdef HAS_INTERFACE
-        // Interfaces
-        for (const interface* interf : domain->zonePtr()->interfacesRef())
+        // Interface constraints applied under either of two conditions:
+        // 1) conformal interfaces (in case non-conformal treatment forces to
+        // false)
+        // 2) non-conformal interfaces in the case of GGI + constrained
+        // mortar
+        if (field_broker_->meshRef().hasInterfaces())
         {
-            if (!interf->isConformalTreatment() ||
-                !interf->isMasterZone(domain->index()))
-                continue;
+            // select all locally owned nodes for this domain
+            const auto& mesh = field_broker_->meshRef();
+            const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+            const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
-            if constexpr (N == 1)
+            // get fields
+            const auto& phiSTKFieldRef = phi_->stkFieldRef();
+
+            auto& A = ctx->getAMatrix();
+            auto& b = ctx->getBVector();
+
+            for (const interface* interf : domain->zonePtr()->interfacesRef())
             {
-                // conformal row-to-row mapping
-                const auto& matchingNodePairConnectivityMap =
-                    interf->conformalRowToRowMap();
+                // constraints on both sides are done in a single pass: during
+                // master visit
+                if (!interf->isMasterZone(domain->index()))
+                    continue;
 
-                // get pairs
-                const auto& nodePairs = interf->matchingNodePairVector();
-
-                // matrix connection data
-                const auto& diagOffsets = A.diagOffsetRef();
-
-                label iPair = 0;
-                for (const auto& nodePair : nodePairs)
+                if (!interf->isConformalTreatment())
                 {
-                    // get required local data for the matching pair
+                    // GGI CS static condensation
+                    const auto& ctrls = field_broker_->meshRef().controlsRef();
+                    const auto ncMethod = ctrls.solverRef()
+                                              .solverControl_.expertParameters_
+                                              .nonconformalMethod_;
+                    const auto ggiMethod = ctrls.solverRef()
+                                               .solverControl_.expertParameters_
+                                               .ggiAssemblyMethod_;
 
-                    // data for stencil 1 (of node 1)
-                    const auto& node1 = nodePair.first;
-                    const label& lid1 = bulkData.local_id(node1);
-                    auto vals1 = A.rowVals(lid1);
-                    const label diagOffset1 = diagOffsets[lid1];
-                    const scalar phi1 =
-                        *stk::mesh::field_data(phiSTKFieldRef, node1);
-
-                    // data for stencil 2 (of node 2)
-                    const auto& node2 = nodePair.second;
-                    const label& lid2 = bulkData.local_id(node2);
-                    auto vals2 = A.rowVals(lid2);
-                    const label diagOffset2 = diagOffsets[lid2];
-                    const scalar phi2 =
-                        *stk::mesh::field_data(phiSTKFieldRef, node2);
-
-                    // define a mapper from the stencil of node 2 to the
-                    // stencil of node 1
-                    const std::vector<label>& mapper =
-                        matchingNodePairConnectivityMap[iPair];
-
-                    // add vals2 to vals1
-                    for (label iCol = 0; iCol < mapper.size(); iCol++)
+                    if (ncMethod == nonconformalMethod::generalGridInterface &&
+                        ggiMethod == ggiAssemblyMethod::constrainedMortar)
                     {
-                        vals1[mapper[iCol]] += vals2[iCol];
+                        errorMsg(
+                            "GGI CS static condensation not implemented yet");
                     }
-
-                    // add rhs2 to rhs1
-                    b[lid1] += b[lid2];
-
-                    // Force value at node 2 to be equal to that at node 1
-
-                    // zero row of node 2
-                    for (label i = 0; i < vals2.size(); i++)
-                    {
-                        vals2[i] = 0;
-                    }
-
-                    // zero rhs of node 2
-                    b[lid2] = 0;
-
-                    // set diagonal of row 2
-                    vals2[diagOffset2] = 1;
-
-                    // set off-diagonal of row 2
-                    vals2[diagOffset1] = -1;
-
-                    // set rhs for res
-                    b[lid2] -= phi2 - phi1;
-
-                    if (scaledConstraints)
-                    {
-                        // multiply row 2 by diagonal scalar from row 1
-                        scalar diag1 = vals1[diagOffset1];
-
-                        // multiply diagonal
-                        vals2[diagOffset2] *= diag1;
-
-                        // multiply off-diagonal
-                        vals2[diagOffset1] *= diag1;
-
-                        // multiply rhs
-                        b[lid2] *= diag1;
-                    }
-
-                    // increment
-                    iPair++;
                 }
-            }
-            else if constexpr (N == SPATIAL_DIM)
-            {
-                // Get rotation tensor (identity in case of translation
-                // periodicity or general connection)
-                const utils::matrix& rotMat =
-                    interf->interfaceSideInfoPtr(domain->index())
-                        ->rotationMatrix_;
-
-                // conformal row-to-row mapping
-                const auto& matchingNodePairConnectivityMap =
-                    interf->conformalRowToRowMap();
-
-                // get pairs
-                const auto& nodePairs = interf->matchingNodePairVector();
-
-                // matrix connection data
-                const auto& diagOffsets = A.diagOffsetRef();
-
-                label iPair = 0;
-                for (const auto& nodePair : nodePairs)
+                else
                 {
-                    // get required local data for the matching pair
+                    // hard-coded condition: not necessary for this equation
+                    const bool scaledConstraints = false;
 
-                    // data for stencil 1 (of node 1)
-                    const auto& node1 = nodePair.first;
-                    const label& lid1 = bulkData.local_id(node1);
-                    auto vals1 = A.rowVals(lid1);
-                    const label diagOffset1 = diagOffsets[lid1];
-                    const scalar* phi1 =
-                        stk::mesh::field_data(phiSTKFieldRef, node1);
-
-                    // data for stencil 2 (of node 2)
-                    const auto& node2 = nodePair.second;
-                    const label& lid2 = bulkData.local_id(node2);
-                    auto vals2 = A.rowVals(lid2);
-                    const label diagOffset2 = diagOffsets[lid2];
-                    const scalar* phi2 =
-                        stk::mesh::field_data(phiSTKFieldRef, node2);
-
-                    // define a mapper from the stencil of node 2 to the
-                    // stencil of node 1
-                    const std::vector<label>& mapper =
-                        matchingNodePairConnectivityMap[iPair];
-
-                    // add vals2 to vals1 (rotate vals2 first)
-                    for (label iCol = 0; iCol < mapper.size(); iCol++)
+                    if constexpr (N == 1)
                     {
-                        // apply for block (SPATIAL_DIM x SPATIAL_DIM)
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        // conformal row-to-row mapping
+                        const auto& matchingNodePairConnectivityMap =
+                            interf->conformalRowToRowMap();
+
+                        // get pairs
+                        const auto& nodePairs =
+                            interf->matchingNodePairVector();
+
+                        // matrix connection data
+                        const auto& diagOffsets = A.diagOffsetRef();
+
+                        label iPair = 0;
+                        for (const auto& nodePair : nodePairs)
                         {
-                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            // get required local data for the matching pair
+
+                            // data for stencil 1 (of node 1)
+                            const auto& node1 = nodePair.first;
+                            const label& lid1 = bulkData.local_id(node1);
+                            auto vals1 = A.rowVals(lid1);
+                            const label diagOffset1 = diagOffsets[lid1];
+                            const scalar phi1 =
+                                *stk::mesh::field_data(phiSTKFieldRef, node1);
+
+                            // data for stencil 2 (of node 2)
+                            const auto& node2 = nodePair.second;
+                            const label& lid2 = bulkData.local_id(node2);
+                            auto vals2 = A.rowVals(lid2);
+                            const label diagOffset2 = diagOffsets[lid2];
+                            const scalar phi2 =
+                                *stk::mesh::field_data(phiSTKFieldRef, node2);
+
+                            // define a mapper from the stencil of node 2 to the
+                            // stencil of node 1
+                            const std::vector<label>& mapper =
+                                matchingNodePairConnectivityMap[iPair];
+
+                            // add vals2 to vals1
+                            for (label iCol = 0; iCol < mapper.size(); iCol++)
                             {
-                                for (label k = 0; k < SPATIAL_DIM; ++k)
+                                vals1[mapper[iCol]] += vals2[iCol];
+                            }
+
+                            // add rhs2 to rhs1
+                            b[lid1] += b[lid2];
+
+                            // Force value at node 2 to be equal to that at node
+                            // 1
+
+                            // zero row of node 2
+                            for (label i = 0; i < vals2.size(); i++)
+                            {
+                                vals2[i] = 0;
+                            }
+
+                            // zero rhs of node 2
+                            b[lid2] = 0;
+
+                            // set diagonal of row 2
+                            vals2[diagOffset2] = 1;
+
+                            // set off-diagonal of row 2
+                            vals2[diagOffset1] = -1;
+
+                            // set rhs for res
+                            b[lid2] -= phi2 - phi1;
+
+                            if (scaledConstraints)
+                            {
+                                // multiply row 2 by diagonal scalar from row 1
+                                scalar diag1 = vals1[diagOffset1];
+
+                                // multiply diagonal
+                                vals2[diagOffset2] *= diag1;
+
+                                // multiply off-diagonal
+                                vals2[diagOffset1] *= diag1;
+
+                                // multiply rhs
+                                b[lid2] *= diag1;
+                            }
+
+                            // increment
+                            iPair++;
+                        }
+                    }
+                    else if constexpr (N == SPATIAL_DIM)
+                    {
+                        // Get rotation tensor (identity in case of translation
+                        // periodicity or general connection)
+                        const utils::matrix& rotMat =
+                            interf->interfaceSideInfoPtr(domain->index())
+                                ->rotationMatrix_;
+
+                        // conformal row-to-row mapping
+                        const auto& matchingNodePairConnectivityMap =
+                            interf->conformalRowToRowMap();
+
+                        // get pairs
+                        const auto& nodePairs =
+                            interf->matchingNodePairVector();
+
+                        // matrix connection data
+                        const auto& diagOffsets = A.diagOffsetRef();
+
+                        label iPair = 0;
+                        for (const auto& nodePair : nodePairs)
+                        {
+                            // get required local data for the matching pair
+
+                            // data for stencil 1 (of node 1)
+                            const auto& node1 = nodePair.first;
+                            const label& lid1 = bulkData.local_id(node1);
+                            auto vals1 = A.rowVals(lid1);
+                            const label diagOffset1 = diagOffsets[lid1];
+                            const scalar* phi1 =
+                                stk::mesh::field_data(phiSTKFieldRef, node1);
+
+                            // data for stencil 2 (of node 2)
+                            const auto& node2 = nodePair.second;
+                            const label& lid2 = bulkData.local_id(node2);
+                            auto vals2 = A.rowVals(lid2);
+                            const label diagOffset2 = diagOffsets[lid2];
+                            const scalar* phi2 =
+                                stk::mesh::field_data(phiSTKFieldRef, node2);
+
+                            // define a mapper from the stencil of node 2 to the
+                            // stencil of node 1
+                            const std::vector<label>& mapper =
+                                matchingNodePairConnectivityMap[iPair];
+
+                            // add vals2 to vals1 (rotate vals2 first)
+                            for (label iCol = 0; iCol < mapper.size(); iCol++)
+                            {
+                                // apply for block (SPATIAL_DIM x SPATIAL_DIM)
+                                for (label i = 0; i < SPATIAL_DIM; ++i)
                                 {
-                                    for (label l = 0; l < SPATIAL_DIM; ++l)
+                                    for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
-                                        // sum += R(i,k) * T(k,l) * R(j,l)
-                                        vals1[mapper[iCol] * SPATIAL_DIM *
-                                                  SPATIAL_DIM +
-                                              i * SPATIAL_DIM + j] +=
-                                            rotMat(i, k) *
-                                            vals2[iCol * SPATIAL_DIM *
-                                                      SPATIAL_DIM +
-                                                  k * SPATIAL_DIM + l] *
-                                            rotMat(j, l);
+                                        for (label k = 0; k < SPATIAL_DIM; ++k)
+                                        {
+                                            for (label l = 0; l < SPATIAL_DIM;
+                                                 ++l)
+                                            {
+                                                // sum += R(i,k) * T(k,l) *
+                                                // R(j,l)
+                                                vals1[mapper[iCol] *
+                                                          SPATIAL_DIM *
+                                                          SPATIAL_DIM +
+                                                      i * SPATIAL_DIM + j] +=
+                                                    rotMat(i, k) *
+                                                    vals2[iCol * SPATIAL_DIM *
+                                                              SPATIAL_DIM +
+                                                          k * SPATIAL_DIM + l] *
+                                                    rotMat(j, l);
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                    }
 
-                    // add rhs2 to rhs1 (rotate rhs2 first)
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            b[lid1 * SPATIAL_DIM + i] +=
-                                rotMat(i, j) * b[lid2 * SPATIAL_DIM + j];
-                        }
-                    }
-
-                    // Force value at node 2 to be equal to that at node 1
-
-                    // zero row of node 2
-                    for (label i = 0; i < vals2.size(); i++)
-                    {
-                        vals2[i] = 0;
-                    }
-
-                    // zero rhs of node 2
-                    for (label i = 0; i < SPATIAL_DIM; i++)
-                    {
-                        b[lid2 * SPATIAL_DIM + i] = 0.0;
-                    }
-
-                    // set diagonal of row 2
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        vals2[SPATIAL_DIM * SPATIAL_DIM * diagOffset2 +
-                              i * SPATIAL_DIM + i] = 1;
-                    }
-
-                    // set off-diagonal of row 2
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            vals2[SPATIAL_DIM * SPATIAL_DIM * diagOffset1 +
-                                  i * SPATIAL_DIM + j] = -rotMat(j, i);
-                        }
-                    }
-
-                    // set rhs for res
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        b[lid2 * SPATIAL_DIM + i] -= phi2[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            b[lid2 * SPATIAL_DIM + i] +=
-                                (rotMat(j, i) * phi1[j]);
-                        }
-                    }
-
-                    if (scaledConstraints)
-                    {
-                        // Rotate diagonal tensor from row 1 (master) to row 2
-                        // (slave) frame Since R rotates from slave to master:
-                        // v_master = R * v_slave To rotate tensor from master
-                        // to slave: D1_rot = R^T * D1 * R D1_rot[i,j] = sum_k
-                        // sum_l R[k,i] * D1[k,l] * R[l,j]
-
-                        // multiply diagonal block by rotated diagonal of row 1
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
+                            // add rhs2 to rhs1 (rotate rhs2 first)
                             for (label i = 0; i < SPATIAL_DIM; ++i)
                             {
-                                scalar sum = 0.0;
-                                for (label k = 0; k < SPATIAL_DIM; ++k)
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
-                                    // Compute rotated diagonal on-the-fly: (R^T
-                                    // * D1 * R)[i,k]
-                                    scalar d_rot_ik = 0.0;
-                                    for (label m = 0; m < SPATIAL_DIM; ++m)
-                                    {
-                                        for (label n = 0; n < SPATIAL_DIM; ++n)
-                                        {
-                                            d_rot_ik +=
-                                                rotMat(m, i) *
-                                                vals1[SPATIAL_DIM *
-                                                          SPATIAL_DIM *
-                                                          diagOffset1 +
-                                                      m * SPATIAL_DIM + n] *
-                                                rotMat(n, k);
-                                        }
-                                    }
-                                    // Multiply: D1_rot[i,k] * A2[k,j]
-                                    sum += d_rot_ik *
-                                           vals2[SPATIAL_DIM * SPATIAL_DIM *
-                                                     diagOffset2 +
-                                                 k * SPATIAL_DIM + j];
+                                    b[lid1 * SPATIAL_DIM + i] +=
+                                        rotMat(i, j) *
+                                        b[lid2 * SPATIAL_DIM + j];
                                 }
+                            }
+
+                            // Force value at node 2 to be equal to that at node
+                            // 1
+
+                            // zero row of node 2
+                            for (label i = 0; i < vals2.size(); i++)
+                            {
+                                vals2[i] = 0;
+                            }
+
+                            // zero rhs of node 2
+                            for (label i = 0; i < SPATIAL_DIM; i++)
+                            {
+                                b[lid2 * SPATIAL_DIM + i] = 0.0;
+                            }
+
+                            // set diagonal of row 2
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
                                 vals2[SPATIAL_DIM * SPATIAL_DIM * diagOffset2 +
-                                      i * SPATIAL_DIM + j] = sum;
+                                      i * SPATIAL_DIM + i] = 1;
                             }
-                        }
 
-                        // multiply off-diagonal block by rotated diagonal of
-                        // row 1
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
+                            // set off-diagonal of row 2
                             for (label i = 0; i < SPATIAL_DIM; ++i)
                             {
-                                scalar sum = 0.0;
-                                for (label k = 0; k < SPATIAL_DIM; ++k)
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
-                                    // Compute rotated diagonal on-the-fly: (R^T
-                                    // * D1 * R)[i,k]
-                                    scalar d_rot_ik = 0.0;
-                                    for (label m = 0; m < SPATIAL_DIM; ++m)
-                                    {
-                                        for (label n = 0; n < SPATIAL_DIM; ++n)
-                                        {
-                                            d_rot_ik +=
-                                                rotMat(m, i) *
-                                                vals1[SPATIAL_DIM *
-                                                          SPATIAL_DIM *
-                                                          diagOffset1 +
-                                                      m * SPATIAL_DIM + n] *
-                                                rotMat(n, k);
-                                        }
-                                    }
-                                    // Multiply: D1_rot[i,k] * A2[k,j]
-                                    sum += d_rot_ik *
-                                           vals2[SPATIAL_DIM * SPATIAL_DIM *
-                                                     diagOffset1 +
-                                                 k * SPATIAL_DIM + j];
+                                    vals2[SPATIAL_DIM * SPATIAL_DIM *
+                                              diagOffset1 +
+                                          i * SPATIAL_DIM + j] = -rotMat(j, i);
                                 }
-                                vals2[SPATIAL_DIM * SPATIAL_DIM * diagOffset1 +
-                                      i * SPATIAL_DIM + j] = sum;
                             }
-                        }
 
-                        // multiply rhs by rotated diagonal of row 1
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            scalar sum = 0.0;
-                            for (label k = 0; k < SPATIAL_DIM; ++k)
+                            // set rhs for res
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
                             {
-                                // Compute rotated diagonal on-the-fly: (R^T *
-                                // D1 * R)[i,k]
-                                scalar d_rot_ik = 0.0;
-                                for (label m = 0; m < SPATIAL_DIM; ++m)
+                                b[lid2 * SPATIAL_DIM + i] -= phi2[i];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
-                                    for (label n = 0; n < SPATIAL_DIM; ++n)
+                                    b[lid2 * SPATIAL_DIM + i] +=
+                                        (rotMat(j, i) * phi1[j]);
+                                }
+                            }
+
+                            if (scaledConstraints)
+                            {
+                                // Rotate diagonal tensor from row 1 (master) to
+                                // row 2 (slave) frame Since R rotates from
+                                // slave to master: v_master = R * v_slave To
+                                // rotate tensor from master to slave: D1_rot =
+                                // R^T * D1 * R D1_rot[i,j] = sum_k sum_l R[k,i]
+                                // * D1[k,l] * R[l,j]
+
+                                // multiply diagonal block by rotated diagonal
+                                // of row 1
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    for (label i = 0; i < SPATIAL_DIM; ++i)
                                     {
-                                        d_rot_ik +=
-                                            rotMat(m, i) *
-                                            vals1[SPATIAL_DIM * SPATIAL_DIM *
-                                                      diagOffset1 +
-                                                  m * SPATIAL_DIM + n] *
-                                            rotMat(n, k);
+                                        scalar sum = 0.0;
+                                        for (label k = 0; k < SPATIAL_DIM; ++k)
+                                        {
+                                            // Compute rotated diagonal
+                                            // on-the-fly: (R^T
+                                            // * D1 * R)[i,k]
+                                            scalar d_rot_ik = 0.0;
+                                            for (label m = 0; m < SPATIAL_DIM;
+                                                 ++m)
+                                            {
+                                                for (label n = 0;
+                                                     n < SPATIAL_DIM;
+                                                     ++n)
+                                                {
+                                                    d_rot_ik +=
+                                                        rotMat(m, i) *
+                                                        vals1[SPATIAL_DIM *
+                                                                  SPATIAL_DIM *
+                                                                  diagOffset1 +
+                                                              m * SPATIAL_DIM +
+                                                              n] *
+                                                        rotMat(n, k);
+                                                }
+                                            }
+                                            // Multiply: D1_rot[i,k] * A2[k,j]
+                                            sum += d_rot_ik *
+                                                   vals2[SPATIAL_DIM *
+                                                             SPATIAL_DIM *
+                                                             diagOffset2 +
+                                                         k * SPATIAL_DIM + j];
+                                        }
+                                        vals2[SPATIAL_DIM * SPATIAL_DIM *
+                                                  diagOffset2 +
+                                              i * SPATIAL_DIM + j] = sum;
                                     }
                                 }
-                                // Multiply: D1_rot[i,k] * b2[k]
-                                sum += d_rot_ik * b[lid2 * SPATIAL_DIM + k];
+
+                                // multiply off-diagonal block by rotated
+                                // diagonal of row 1
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                                    {
+                                        scalar sum = 0.0;
+                                        for (label k = 0; k < SPATIAL_DIM; ++k)
+                                        {
+                                            // Compute rotated diagonal
+                                            // on-the-fly: (R^T
+                                            // * D1 * R)[i,k]
+                                            scalar d_rot_ik = 0.0;
+                                            for (label m = 0; m < SPATIAL_DIM;
+                                                 ++m)
+                                            {
+                                                for (label n = 0;
+                                                     n < SPATIAL_DIM;
+                                                     ++n)
+                                                {
+                                                    d_rot_ik +=
+                                                        rotMat(m, i) *
+                                                        vals1[SPATIAL_DIM *
+                                                                  SPATIAL_DIM *
+                                                                  diagOffset1 +
+                                                              m * SPATIAL_DIM +
+                                                              n] *
+                                                        rotMat(n, k);
+                                                }
+                                            }
+                                            // Multiply: D1_rot[i,k] * A2[k,j]
+                                            sum += d_rot_ik *
+                                                   vals2[SPATIAL_DIM *
+                                                             SPATIAL_DIM *
+                                                             diagOffset1 +
+                                                         k * SPATIAL_DIM + j];
+                                        }
+                                        vals2[SPATIAL_DIM * SPATIAL_DIM *
+                                                  diagOffset1 +
+                                              i * SPATIAL_DIM + j] = sum;
+                                    }
+                                }
+
+                                // multiply rhs by rotated diagonal of row 1
+                                for (label i = 0; i < SPATIAL_DIM; ++i)
+                                {
+                                    scalar sum = 0.0;
+                                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                                    {
+                                        // Compute rotated diagonal on-the-fly:
+                                        // (R^T * D1 * R)[i,k]
+                                        scalar d_rot_ik = 0.0;
+                                        for (label m = 0; m < SPATIAL_DIM; ++m)
+                                        {
+                                            for (label n = 0; n < SPATIAL_DIM;
+                                                 ++n)
+                                            {
+                                                d_rot_ik +=
+                                                    rotMat(m, i) *
+                                                    vals1[SPATIAL_DIM *
+                                                              SPATIAL_DIM *
+                                                              diagOffset1 +
+                                                          m * SPATIAL_DIM + n] *
+                                                    rotMat(n, k);
+                                            }
+                                        }
+                                        // Multiply: D1_rot[i,k] * b2[k]
+                                        sum += d_rot_ik *
+                                               b[lid2 * SPATIAL_DIM + k];
+                                    }
+                                    b[lid2 * SPATIAL_DIM + i] = sum;
+                                }
                             }
-                            b[lid2 * SPATIAL_DIM + i] = sum;
+
+                            // increment
+                            iPair++;
                         }
                     }
-
-                    // increment
-                    iPair++;
+                    else
+                    {
+                        errorMsg("1:1 interface treatment is only available "
+                                 "for scalar "
+                                 "and vectorial transport equations");
+                    }
                 }
-            }
-            else
-            {
-                errorMsg("1:1 interface treatment is only available for scalar "
-                         "and vectorial transport equations");
             }
         }
 #endif /* HAS_INTERFACE */

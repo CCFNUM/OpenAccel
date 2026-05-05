@@ -2,8 +2,7 @@
 // Created    : Wed Jun 4 2025 17:44:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "turbulentKineticEnergyKEpsilonAssembler.h"
 

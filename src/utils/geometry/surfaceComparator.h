@@ -2,8 +2,7 @@
 // Created    : Tue Sep 16 2025 14:15:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Comparing/checking diagnostics between two surfaces
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef SURFACECOMPARATOR_H
 #define SURFACECOMPARATOR_H

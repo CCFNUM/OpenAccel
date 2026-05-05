@@ -2,8 +2,7 @@
 # Created    : Thu Oct 16 2025 08:17:36 (+0200)
 # Author     : Fabian Wermelinger
 # Description: CMake build definitions
-# Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-# SPDX-License-Identifier: BSD-3-Clause
+# Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -11,10 +10,13 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(main_obj PRIVATE
     ${DIR}/graph/nodeGraph.cpp
     ############################################################################
-    ${DIR}/interface/dgInfo.cpp
+    ${DIR}/interface/dg/dgInfo.cpp
+    ${DIR}/interface/dg/dgInterfaceSideInfo.cpp
+    ${DIR}/interface/ggi/ggiInfo.cpp
+    ${DIR}/interface/ggi/ggiInterfaceSideInfo.cpp
     ${DIR}/interface/interface.cpp
-    ${DIR}/interface/interfaceIO.cpp
     ${DIR}/interface/interfaceSideInfo.cpp
+    ${DIR}/interface/interfaceIO.cpp
     ${DIR}/interface/transfer/dataTransfer.cpp
     ############################################################################
     ${DIR}/mesh.cpp
@@ -38,6 +40,8 @@ target_include_directories(main_obj PUBLIC
     ############################################################################
     ${DIR}/graph
     ############################################################################
+    ${DIR}/interface/dg
+    ${DIR}/interface/ggi
     ${DIR}/interface
     ${DIR}/interface/transfer
     ############################################################################

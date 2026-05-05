@@ -2,17 +2,24 @@
 // Created    : Wed Jan 22 2025 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "nodeGraph.h"
 #ifdef HAS_INTERFACE
 #include "dgInfo.h"
+#include "dgInterfaceSideInfo.h"
+#include "ggiInfo.h"
+#include "ggiInterfaceSideInfo.h"
 #include "interface.h"
 #include "interfaceSideInfo.h"
+#include "ipInfo.h"
 #endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
+#ifdef HAS_OVERSET
+#include "overset.h"
+#include "oversetInfo.h"
+#endif /* HAS_OVERSET */
 
 using namespace linearSolver;
 
@@ -168,145 +175,47 @@ void nodeGraph::buildGraph_()
                 // side will always be implicitly connected to all nodes on the
                 // opposing side
 
-                // Master
+                const auto addInterfaceStencil =
+                    [&](const interfaceSideInfo& sideInfo)
                 {
-                    const auto& masterInterface = interf.masterInfoRef();
-
-                    // extract vector of dgInfo
-                    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                        masterInterface.dgInfoVec_;
-
-                    for (label iSide = 0;
-                         iSide < static_cast<label>(dgInfoVec.size());
-                         iSide++)
+                    for (const auto& faceIpInfoVec : sideInfo.ipInfoVec())
                     {
-                        const std::vector<dgInfo*>& faceDgInfoVec =
-                            dgInfoVec[iSide];
-
-                        // now loop over all the DgInfo objects on this
-                        // particular exposed face
-                        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+                        for (const ipInfo* ip : faceIpInfoVec)
                         {
-                            dgInfo* dgInfo = faceDgInfoVec[k];
-
-                            if (dgInfo->gaussPointExposed_)
+                            if (ip->isExposed_)
                                 continue;
 
-                            // extract current/opposing face/element
-                            stk::mesh::Entity currentFace =
-                                dgInfo->currentFace_;
-                            stk::mesh::Entity opposingElement =
-                                dgInfo->opposingElement_;
-
-                            // master element
-                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-
-                            // local ip, ordinals, etc
-                            const label currentGaussPointId =
-                                dgInfo->currentGaussPointId_;
-
-                            // mapping from ip to nodes for this ordinal
                             const label* faceIpNodeMap =
-                                meFCCurrent->ipNodeMap();
+                                ip->meFCCurrent_->ipNodeMap();
                             stk::mesh::Entity const* current_face_node_rels =
-                                bulkData.begin_nodes(currentFace);
-                            const label nn = faceIpNodeMap[currentGaussPointId];
+                                bulkData.begin_nodes(ip->currentFace_);
+                            const label nn =
+                                faceIpNodeMap[ip->currentGaussPointId_];
                             stk::mesh::Entity node = current_face_node_rels[nn];
 
                             stk::mesh::EntityId nearestID =
                                 bulkData.local_id(node);
 
-                            if (nearestID <
-                                static_cast<ulabel>(
-                                    n_owned_nodes_)) // implies this is a local
-                                                     // node in case of parallel
-                            {
-                                // gather opposing face data
-                                stk::mesh::Entity const*
-                                    opposing_elem_node_rels =
-                                        bulkData.begin_nodes(opposingElement);
-                                const label opposing_num_elem_nodes =
-                                    bulkData.num_nodes(opposingElement);
-                                for (label ni = 0; ni < opposing_num_elem_nodes;
-                                     ++ni)
-                                {
-                                    crsRowStencil[nearestID].insert(
-                                        opposing_elem_node_rels[ni]);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Slave
-                {
-                    const auto& slaveInterface = interf.slaveInfoRef();
-
-                    // extract vector of dgInfo
-                    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                        slaveInterface.dgInfoVec_;
-
-                    for (label iSide = 0;
-                         iSide < static_cast<label>(dgInfoVec.size());
-                         iSide++)
-                    {
-                        const std::vector<dgInfo*>& faceDgInfoVec =
-                            dgInfoVec[iSide];
-
-                        // now loop over all the DgInfo objects on this
-                        // particular exposed face
-                        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
-                        {
-                            dgInfo* dgInfo = faceDgInfoVec[k];
-
-                            if (dgInfo->gaussPointExposed_)
+                            if (nearestID >=
+                                static_cast<ulabel>(n_owned_nodes_))
                                 continue;
 
-                            // extract current/opposing face/element
-                            stk::mesh::Entity currentFace =
-                                dgInfo->currentFace_;
-                            stk::mesh::Entity opposingElement =
-                                dgInfo->opposingElement_;
-
-                            // master element
-                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-
-                            // local ip, ordinals, etc
-                            const label currentGaussPointId =
-                                dgInfo->currentGaussPointId_;
-
-                            // mapping from ip to nodes for this ordinal
-                            const label* faceIpNodeMap =
-                                meFCCurrent->ipNodeMap();
-                            stk::mesh::Entity const* current_face_node_rels =
-                                bulkData.begin_nodes(currentFace);
-                            const label nn = faceIpNodeMap[currentGaussPointId];
-                            stk::mesh::Entity node = current_face_node_rels[nn];
-
-                            stk::mesh::EntityId nearestID =
-                                bulkData.local_id(node);
-
-                            if (nearestID <
-                                static_cast<ulabel>(
-                                    n_owned_nodes_)) // implies this is a local
-                                                     // node in case of parallel
+                            stk::mesh::Entity const* opposing_elem_node_rels =
+                                bulkData.begin_nodes(ip->opposingElement_);
+                            const label opposing_num_elem_nodes =
+                                bulkData.num_nodes(ip->opposingElement_);
+                            for (label ni = 0; ni < opposing_num_elem_nodes;
+                                 ++ni)
                             {
-                                // gather opposing face data
-                                stk::mesh::Entity const*
-                                    opposing_elem_node_rels =
-                                        bulkData.begin_nodes(opposingElement);
-                                const label opposing_num_elem_nodes =
-                                    bulkData.num_nodes(opposingElement);
-                                for (label ni = 0; ni < opposing_num_elem_nodes;
-                                     ++ni)
-                                {
-                                    crsRowStencil[nearestID].insert(
-                                        opposing_elem_node_rels[ni]);
-                                }
+                                crsRowStencil[nearestID].insert(
+                                    opposing_elem_node_rels[ni]);
                             }
                         }
                     }
-                }
+                };
+
+                addInterfaceStencil(interf.masterInfoRef());
+                addInterfaceStencil(interf.slaveInfoRef());
             }
         }
     }

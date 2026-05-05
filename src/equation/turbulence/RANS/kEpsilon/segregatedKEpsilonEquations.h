@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2025 13:38:51 (+0100)
 // Author     : Achraf Nagihi
 // Description: Segregated solution of the k-epsilon turbulence equations
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef SEGREGATEDKEPSILONEQUATIONS_H
 #define SEGREGATEDKEPSILONEQUATIONS_H

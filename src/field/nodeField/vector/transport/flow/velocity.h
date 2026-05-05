@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Velocity vector field with flow reversal detection and direction
 //              fields
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef VELOCITY_H
 #define VELOCITY_H

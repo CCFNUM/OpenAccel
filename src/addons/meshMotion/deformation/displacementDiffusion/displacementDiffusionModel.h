@@ -2,8 +2,7 @@
 // Created    : Fri Feb 14 2025 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Model for displacement boundary conditions and surface loads
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef DISPLACEMENTDIFFUSIONMODEL_H
 #define DISPLACEMENTDIFFUSIONMODEL_H

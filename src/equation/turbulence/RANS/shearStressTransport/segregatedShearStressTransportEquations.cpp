@@ -2,8 +2,7 @@
 // Created    : Fri Mar 15 2024 15:06:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "segregatedShearStressTransportEquations.h"
 #include "realm.h"
@@ -18,6 +17,8 @@ segregatedShearStressTransportEquations::
 {
     tke_eq_ = std::make_unique<turbulentKineticEnergySSTEquation>(realm, this);
     tef_eq_ = std::make_unique<turbulentEddyFrequencySSTEquation>(realm, this);
+    tke_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    tef_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
 }
 
 void segregatedShearStressTransportEquations::addDomain(

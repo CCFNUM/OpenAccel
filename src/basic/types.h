@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Fundamental type aliases, enumerations, and constants for the
 //              solver
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TYPES_H
 #define TYPES_H
@@ -232,27 +231,37 @@ public:
 enum class equationID
 {
     // fluid equations
-    segregatedFlow = 0,
+    coupledNavierStokes = 0,
+    pressureCorrection,
+    segregatedCorrelationTransitionShearStressTransport,
+    segregatedFlow,
+    segregatedFreeSurfaceFlow,
+    segregatedKEpsilon,
     segregatedShearStressTransport,
     segregatedTransitionShearStressTransport,
-    segregatedCorrelationTransitionShearStressTransport,
-    segregatedKEpsilon,
-    segregatedFreeSurface,
+    transitionOnsetReynoldsNumber,
+    turbulentDissipationRate,
+    turbulentEddyFrequency,
+    turbulentIntermittency,
+    turbulentIntermittencyCorrelation,
+    turbulentKineticEnergy,
     // solid equations
     //
     // other equations
+    displacementDiffusion,
+    solidDisplacement,
     thermalEnergy,
     totalEnergy,
-    displacementDiffusion,
     volumeFraction,
-    solidDisplacement,
     wallScaleDiffusion,
-    // default for equations that do not require an ID
-    noID,
     // total number of equation IDs
-    numberOfDeclaredEquations
+    numberOfDeclaredEquations,
+    UNDEFINED
 };
 
+extern std::unordered_map<std::string, equationID> equationIDMap;
+bool isValidEquationIDName(std::string s);
+std::string canonicalEquationIDName(std::string s);
 equationID convertEquationIDFromString(std::string s);
 
 // Heat Transfer option
@@ -569,6 +578,24 @@ enum class interfaceType
 interfaceType convertInterfaceTypeFromString(std::string s);
 
 std::string toString(interfaceType type);
+
+// Non-conformal interface treatment method
+enum class nonconformalMethod
+{
+    discontinuousGalerkin,
+    generalGridInterface
+};
+
+nonconformalMethod convertNonconformalMethodFromString(std::string s);
+
+// GGI assembly method
+enum class ggiAssemblyMethod
+{
+    penaltyMortar,
+    constrainedMortar
+};
+
+ggiAssemblyMethod convertGgiAssemblyMethodFromString(std::string s);
 #endif /* HAS_INTERFACE */
 
 // Wall-function type

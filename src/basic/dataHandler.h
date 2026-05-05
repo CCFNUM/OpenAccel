@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Templated input data storage with interpolation and time table
 //              support
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef DATAHANDLER_H
 #define DATAHANDLER_H

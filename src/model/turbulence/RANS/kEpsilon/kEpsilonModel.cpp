@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2025 13:38:51 (+0100)
 // Author     : Achraf Nagihi
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "kEpsilonModel.h"
 #include "messager.h"
@@ -24,6 +23,9 @@ kEpsilonModel::kEpsilonModel(realm* realm) : RANSModel(realm)
     // auxiliary
     yMinRef();
     PkRef();
+
+    // set near-wall distance to 0.25
+    NWDFactor_ = 0.25;
 }
 
 void kEpsilonModel::clipValues(const std::shared_ptr<domain> domain)
@@ -498,75 +500,6 @@ void kEpsilonModel::updateTurbulentDynamicViscosity(
             mut[k] = 0.75 * mut_val + 0.25 * mut[k];
         }
     }
-}
-
-void kEpsilonModel::clipMinDistToWall(const std::shared_ptr<domain> domain)
-{
-    STKScalarField* minDistanceToWallSTKFieldPtr = yMinRef().stkFieldPtr();
-
-    stk::mesh::BulkData& bulkData = meshRef().bulkDataRef();
-    stk::mesh::MetaData& metaData = meshRef().metaDataRef();
-
-    // extract fields required
-    const STKScalarField* wallNormalDistanceSTKFieldPtr =
-        metaData.get_field<scalar>(metaData.side_rank(),
-                                   mesh::wall_normal_distance_ID);
-
-    // Process for no-slip wall parts
-    stk::mesh::Selector selAllSides =
-        metaData.universal_part() &
-        stk::mesh::selectUnion(collectNoSlipWallParts_(domain));
-
-    stk::mesh::BucketVector const& sideBuckets =
-        bulkData.get_buckets(metaData.side_rank(), selAllSides);
-    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
-         ib != sideBuckets.end();
-         ++ib)
-    {
-        stk::mesh::Bucket& sideBucket = **ib;
-
-        // face master element
-        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
-            sideBucket.topology());
-
-        // mapping from ip to nodes for this
-        // ordinal; face perspective (use with
-        // face_node_relations)
-        const label* faceIpNodeMap = meFC->ipNodeMap();
-
-        const stk::mesh::Bucket::size_type length = sideBucket.size();
-
-        for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
-        {
-            // get face
-            stk::mesh::Entity side = sideBucket[k];
-            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
-
-            label numSideNodes = bulkData.num_nodes(side);
-
-            // pointer to face data
-            const scalar* wallNormalDistanceBip =
-                stk::mesh::field_data(*wallNormalDistanceSTKFieldPtr, side);
-
-            // loop over face nodes
-            for (label ip = 0; ip < numSideNodes; ++ip)
-            {
-                const label localFaceNode = faceIpNodeMap[ip];
-
-                // right is on the face
-                stk::mesh::Entity node = sideNodeRels[localFaceNode];
-
-                // assemble to nodal quantities
-                scalar* minD =
-                    stk::mesh::field_data(*minDistanceToWallSTKFieldPtr, node);
-                (*minD) = std::max(*minD, wallNormalDistanceBip[ip] / 4.0);
-            }
-        }
-    }
-    // parallel reduce
-    std::vector<const stk::mesh::FieldBase*> fieldVec;
-    fieldVec.push_back(minDistanceToWallSTKFieldPtr);
-    stk::mesh::parallel_max(bulkData, fieldVec);
 }
 
 } /* namespace accel */

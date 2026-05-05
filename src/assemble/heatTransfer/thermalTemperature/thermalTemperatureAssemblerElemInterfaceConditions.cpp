@@ -2,14 +2,13 @@
 // Created    : Thu Apr 14 2024 8:36:38 (+0100)
 // Author     : Fabian Wermelinger
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef WITH_THERMAL_TEMPERATURE
 #ifdef HAS_INTERFACE
 
-#include "dgInfo.h"
 #include "interface.h"
+#include "ipInfo.h"
 #include "simulation.h"
 #include "thermalTemperatureAssembler.h"
 
@@ -138,42 +137,47 @@ void thermalTemperatureAssembler::assembleElemTermsInterfaceSide_(
         // rotation matrix (in case of rotational periodicity)
         const utils::matrix& rotMat = interfaceSideInfoPtr->rotationMatrix_;
 
-        // extract vector of dgInfo
-        const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-            interfaceSideInfoPtr->dgInfoVec_;
-
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-             iSide++)
+        // GGI path is not yet validated for the thermal-temperature problem;
+        // preserve the original errorMsg behavior at the top of the function
+        // and run the unified loop for DG below.
+        if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+            nonconformalMethod::generalGridInterface)
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+            errorMsg("Not implemented yet");
+            return;
+        }
 
-            // now loop over all the DgInfo objects on this
-            // particular exposed face
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+        // Unified loop over per-IP info.  Storage is owned by the base
+        // interfaceSideInfo; concrete side classes store derived records upcast
+        // to ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is
+        // identical to the original DG implementation.
+        for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
+        {
+            for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
+                ipInfo* ip = faceIpInfoVec[k];
 
-                if (dgInfo->gaussPointExposed_)
+                if (ip->isExposed_)
                     continue;
 
                 // extract current/opposing face/element
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-                stk::mesh::Entity currentElement = dgInfo->currentElement_;
-                stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-                const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-                const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+                stk::mesh::Entity currentFace = ip->currentFace_;
+                stk::mesh::Entity opposingFace = ip->opposingFace_;
+                stk::mesh::Entity currentElement = ip->currentElement_;
+                stk::mesh::Entity opposingElement = ip->opposingElement_;
+                const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+                const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
                 // master element; face and volume
-                MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-                MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-                MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+                MasterElement* meFCCurrent = ip->meFCCurrent_;
+                MasterElement* meFCOpposing = ip->meFCOpposing_;
+                MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+                MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
                 // local ip, ordinals, etc
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                currentIsoParCoords = dgInfo->currentIsoParCoords_;
-                opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+                const label currentGaussPointId = ip->currentGaussPointId_;
+                currentIsoParCoords = ip->currentIsoParCoords_;
+                opposingIsoParCoords = ip->opposingIsoParCoords_;
 
                 // mapping from ip to nodes for this ordinal
                 const label* ipNodeMap =
@@ -367,8 +371,8 @@ void thermalTemperatureAssembler::assembleElemTermsInterfaceSide_(
                 }
 
                 // compute opposing normal: in theory it is assumed
-                // that the current and opposing sub-control surfaces
-                // are sufficiently planar
+                // that the current and opposing sub-control
+                // surfaces are sufficiently planar
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     p_oNx[i] = -p_cNx[i];
@@ -694,41 +698,47 @@ void thermalTemperatureAssembler::assembleElemTermsInterfaceSideHTC_(
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
-
-    for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
+    // GGI path is not yet validated for the thermal-temperature HTC problem;
+    // preserve the original errorMsg behavior at the top of the function and
+    // run the unified loop for DG below.
+    if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+        nonconformalMethod::generalGridInterface)
     {
-        const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+        errorMsg("Not implemented yet");
+        return;
+    }
 
-        // now loop over all the DgInfo objects on this
-        // particular exposed face
-        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+    // Unified loop over per-IP info.  Storage is owned by the base
+    // interfaceSideInfo; concrete side classes store derived records upcast to
+    // ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is
+    // identical to the original DG implementation.
+    for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
+    {
+        for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
         {
-            dgInfo* dgInfo = faceDgInfoVec[k];
+            ipInfo* ip = faceIpInfoVec[k];
 
-            if (dgInfo->gaussPointExposed_)
+            if (ip->isExposed_)
                 continue;
 
             // extract current/opposing face/element
-            stk::mesh::Entity currentFace = dgInfo->currentFace_;
-            stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-            stk::mesh::Entity currentElement = dgInfo->currentElement_;
-            stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-            const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-            const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+            stk::mesh::Entity currentFace = ip->currentFace_;
+            stk::mesh::Entity opposingFace = ip->opposingFace_;
+            stk::mesh::Entity currentElement = ip->currentElement_;
+            stk::mesh::Entity opposingElement = ip->opposingElement_;
+            const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+            const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
             // master element; face and volume
-            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-            MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-            MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+            MasterElement* meFCCurrent = ip->meFCCurrent_;
+            MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+            MasterElement* meFCOpposing = ip->meFCOpposing_;
+            MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
             // local ip, ordinals, etc
-            const label currentGaussPointId = dgInfo->currentGaussPointId_;
-            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-            opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+            const label currentGaussPointId = ip->currentGaussPointId_;
+            currentIsoParCoords = ip->currentIsoParCoords_;
+            opposingIsoParCoords = ip->opposingIsoParCoords_;
 
             // mapping from ip to nodes for this ordinal
             const label* ipNodeMap =

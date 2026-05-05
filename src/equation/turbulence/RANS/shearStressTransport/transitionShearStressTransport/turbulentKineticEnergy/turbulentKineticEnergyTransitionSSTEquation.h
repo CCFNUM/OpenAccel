@@ -2,8 +2,7 @@
 // Created    : Mon Jan 14 2025
 // Author     : Adam Fares
 // Description: Turbulent kinetic energy equation for the transition SST model
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TURBULENTKINETICENERGYTRANSITIONSSTEQUATION_H
 #define TURBULENTKINETICENERGYTRANSITIONSSTEQUATION_H

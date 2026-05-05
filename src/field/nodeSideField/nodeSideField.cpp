@@ -2,8 +2,7 @@
 // Created    : Tue Sep 02 2025 17:41:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "nodeSideField.h"
 #include "boundary.h"

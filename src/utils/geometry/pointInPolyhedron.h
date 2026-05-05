@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Point-in-polyhedron containment tests using half-space and ray
 //              casting
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef POINTINPOLYHEDRON_H
 #define POINTINPOLYHEDRON_H

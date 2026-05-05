@@ -1,3 +1,7 @@
+[submodule "src/solver"]
+	path = src/solver
+	url = https://gitlab.com/hslu_ccfnum/liblinsolve.git
+	branch = main
 [submodule "external/eigen"]
 	path = external/eigen
 	url = https://gitlab.com/libeigen/eigen.git
@@ -7,9 +11,12 @@
 [submodule "external/nanoflann"]
 	path = external/nanoflann
 	url = https://github.com/jlblancoc/nanoflann.git
-[submodule "src/solver"]
-	path = src/solver
-	url = https://github.com/CCFNUM/LibLinSolve.git
 [submodule "external/gplotpp"]
 	path = external/gplotpp
 	url = https://github.com/ziotom78/gplotpp
+[submodule "external/RastClipper"]
+	path = external/RastClipper
+	url = https://github.com/CCFNUM/RastClipper.git
+[submodule "external/Clipper2"]
+	path = external/Clipper2
+	url = https://github.com/AngusJohnson/Clipper2.git

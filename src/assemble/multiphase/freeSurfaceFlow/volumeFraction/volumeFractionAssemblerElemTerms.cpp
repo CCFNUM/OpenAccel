@@ -2,8 +2,7 @@
 // Created    : Mon Jan 27 2025
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "volumeFractionAssembler.h"
 
@@ -24,6 +23,16 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         domain->multiphase_.freeSurfaceModel_.fluxCorrectedTransport_ ? 0.0
                                                                       : 1.0;
 
+    // NSO active only when not using FCT and enabled in expert params
+    const bool NSO =
+        (fct > 0.0) &&
+        mesh.controlsRef().solverRef().solverControl_.expertParameters_.nso_;
+    // 4th-order factor (0.0 = 2nd order, 1.0 = 4th order)
+    const scalar fourthFac =
+        mesh.controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.nsoFourthOrderFac_;
+
     // TODO: Account for BLOCKSIZE in space for LHS/RHS;
     // nodesPerElem*nodesPerElem* and nodesPerElem
     std::vector<scalar> lhs;
@@ -38,6 +47,7 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> ws_beta;
     std::vector<scalar> ws_gradAlpha;
     std::vector<scalar> ws_Gamma;
+    std::vector<scalar> ws_U;
     std::vector<scalar> ws_magU;
     std::vector<scalar> ws_scv_volume;
     std::vector<scalar> ws_nHat;
@@ -53,12 +63,21 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> ws_dndx_scv;
     std::vector<scalar> ws_deriv_scv;
     std::vector<scalar> ws_det_j_scv;
+    std::vector<scalar> ws_gijUpper;
+    std::vector<scalar> ws_gijLower;
+    std::vector<scalar> ws_gij_deriv;
 
     // ip values
     std::vector<scalar> coordIp(SPATIAL_DIM);
 
+    // const-size vectors
+    std::vector<scalar> rhoUIp(SPATIAL_DIM);
+    std::vector<scalar> dalphadxIp(SPATIAL_DIM);
+
     // pointers
     scalar* p_coordIp = &coordIp[0];
+    scalar* p_rhoUIp = &rhoUIp[0];
+    scalar* p_dalphadxIp = &dalphadxIp[0];
 
     // Get transport fields/side fields
     const auto& alphaSTKFieldRef = phi_->stkFieldRef();
@@ -131,6 +150,7 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         ws_shape_function.resize(numScsIp * nodesPerElement);
         ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
 
+        ws_U.resize(nodesPerElement * SPATIAL_DIM);
         ws_magU.resize(nodesPerElement);
         ws_rho.resize(nodesPerElement);
         ws_scv_volume.resize(numScvIp);
@@ -138,6 +158,9 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         ws_dndx_scv.resize(SPATIAL_DIM * numScvIp * nodesPerElement);
         ws_deriv_scv.resize(SPATIAL_DIM * numScvIp * nodesPerElement);
         ws_det_j_scv.resize(numScvIp);
+        ws_gijUpper.resize(numScsIp * SPATIAL_DIM * SPATIAL_DIM);
+        ws_gijLower.resize(numScsIp * SPATIAL_DIM * SPATIAL_DIM);
+        ws_gij_deriv.resize(numScsIp * nodesPerElement * SPATIAL_DIM);
 
         // pointer to lhs/rhs
         scalar* p_lhs = &lhs[0];
@@ -147,12 +170,16 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         scalar* p_beta = &ws_beta[0];
         scalar* p_gradAlpha = &ws_gradAlpha[0];
         scalar* p_Gamma = &ws_Gamma[0];
+        scalar* p_U = &ws_U[0];
         scalar* p_scs_areav = &ws_scs_areav[0];
+        scalar* p_dndx = &ws_dndx[0];
         scalar* p_shape_function = &ws_shape_function[0];
         scalar* p_coordinate_shape_function = &ws_coordinate_shape_function[0];
         scalar* p_scv_volume = &ws_scv_volume[0];
         scalar* p_nHat = &ws_nHat[0];
         scalar* p_rho = &ws_rho[0];
+        scalar* p_gijUp = &ws_gijUpper[0];
+        scalar* p_gijLow = &ws_gijLower[0];
 
         // extract shape function
         if (isShifted)
@@ -232,10 +259,20 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     // gradient of volume fraction
-                    p_gradAlpha[ni * SPATIAL_DIM + j] = gradPhi[j];
+                    p_gradAlpha[niNdim + j] = gradPhi[j];
 
                     // interface normal
-                    p_nHat[ni * SPATIAL_DIM + j] = nHat[j];
+                    p_nHat[niNdim + j] = nHat[j];
+                }
+
+                // NSO fields (velocity)
+                if (NSO)
+                {
+                    const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_U[niNdim + j] = U[j];
+                    }
                 }
             }
 
@@ -273,6 +310,15 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                &ws_deriv[0],
                                &ws_det_j[0],
                                &scs_error);
+            }
+
+            // compute metric tensors (only when NSO active)
+            if (NSO)
+            {
+                meSCS->gij(&ws_coordinates[0],
+                           &ws_gijUpper[0],
+                           &ws_gijLower[0],
+                           &ws_deriv[0]);
             }
 
             for (label ip = 0; ip < numScsIp; ++ip)
@@ -373,6 +419,122 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                 const scalar alhsfacR = 0.5 * (tmDot - std::abs(tmDot));
                 p_lhs[rRiR_i] -= alhsfacR;
                 p_lhs[rLiR_i] += alhsfacR;
+
+                //================================
+                // NSO stabilization
+                //================================
+                if (NSO)
+                {
+                    constexpr scalar Cupw = 0.1;
+                    constexpr scalar small = 1.0e-16;
+
+                    const label gijOffset = ip * SPATIAL_DIM * SPATIAL_DIM;
+
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_rhoUIp[j] = 0.0;
+                        p_dalphadxIp[j] = 0.0;
+                    }
+
+                    scalar dFdxAdv = 0.0;
+                    scalar dFdxCont = 0.0;
+                    scalar alphaIp = 0.0;
+
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const scalar r = p_shape_function[offSetSF + ic];
+                        const scalar alpha = p_alpha[ic];
+                        const scalar rho = p_rho[ic];
+
+                        alphaIp += r * alpha;
+
+                        const label offSetDnDx =
+                            SPATIAL_DIM * nodesPerElement * ip +
+                            ic * SPATIAL_DIM;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar dnj = p_dndx[offSetDnDx + j];
+                            const scalar U = p_U[ic * SPATIAL_DIM + j];
+                            p_dalphadxIp[j] += alpha * dnj;
+                            p_rhoUIp[j] += r * rho * U;
+                            dFdxAdv += rho * U * alpha * dnj;
+                            dFdxCont += rho * U * dnj;
+                        }
+                    }
+
+                    // alternative residual (commutation error)
+                    scalar residualIp = dFdxAdv - alphaIp * dFdxCont;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        residualIp -= p_rhoUIp[j] * p_dalphadxIp[j];
+                    }
+
+                    // denominator for nu and upwind nu
+                    scalar gUpperMagGradAlpha = 0.0;
+                    scalar rhoUiGLowerRhoUj = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        for (label k = 0; k < SPATIAL_DIM; ++k)
+                        {
+                            gUpperMagGradAlpha +=
+                                p_dalphadxIp[j] *
+                                p_gijUp[gijOffset + j * SPATIAL_DIM + k] *
+                                p_dalphadxIp[k];
+                            rhoUiGLowerRhoUj +=
+                                p_rhoUIp[j] *
+                                p_gijLow[gijOffset + j * SPATIAL_DIM + k] *
+                                p_rhoUIp[k];
+                        }
+                    }
+
+                    // artificial viscosity
+                    const scalar nuResidualIp =
+                        std::sqrt((residualIp * residualIp) /
+                                  (gUpperMagGradAlpha + small));
+                    const scalar nuFirstOrder = std::sqrt(rhoUiGLowerRhoUj);
+                    const scalar nuIp =
+                        std::min(Cupw * nuFirstOrder, nuResidualIp);
+
+                    // NSO diffusion-like term:
+                    // -nu * gUpper_ij * (dalpha/dxj - Gjq_j) * areav_i
+                    scalar gijFac = 0.0;
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const scalar r = p_shape_function[offSetSF + ic];
+                        const scalar alpha = p_alpha[ic];
+
+                        const label offSetDnDx =
+                            SPATIAL_DIM * nodesPerElement * ip +
+                            ic * SPATIAL_DIM;
+                        scalar lhsfac = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar axi =
+                                p_scs_areav[ip * SPATIAL_DIM + j];
+                            for (label k = 0; k < SPATIAL_DIM; ++k)
+                            {
+                                const scalar gUp =
+                                    p_gijUp[gijOffset + j * SPATIAL_DIM + k];
+                                const scalar fac =
+                                    gUp * p_dndx[offSetDnDx + k] * axi;
+                                const scalar facGj =
+                                    r * gUp *
+                                    p_gradAlpha[ic * SPATIAL_DIM + k] * axi;
+                                // fourthFac: 0 = 2nd order, 1 = 4th order
+                                gijFac += fac * alpha - facGj * fourthFac;
+                                lhsfac += -fac;
+                            }
+                        }
+
+                        p_lhs[rowL + ic] += nuIp * lhsfac;
+                        p_lhs[rowR + ic] -= nuIp * lhsfac;
+                    }
+
+                    // NSO residual contribution
+                    const scalar residualNSO = -nuIp * gijFac;
+                    p_rhs[indexL] -= residualNSO;
+                    p_rhs[indexR] += residualNSO;
+                }
             }
 
             //================================

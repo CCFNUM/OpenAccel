@@ -3,8 +3,7 @@
 // Author     : Adam Fares
 // Description: Correlation-based transition SST model (Menter 2015) Solves only
 //              gamma transport equation with local correlations
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef CORRELATIONTRANSITIONSHEARSTRESSTRANSPORTMODEL_H
 #define CORRELATIONTRANSITIONSHEARSTRESSTRANSPORTMODEL_H

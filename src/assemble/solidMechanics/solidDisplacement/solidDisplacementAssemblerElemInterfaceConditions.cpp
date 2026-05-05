@@ -2,13 +2,12 @@
 // Created    : Thu Dec 04 2025 12:30:00 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Nonconformal interface treatment for solid displacement
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
-#include "dgInfo.h"
 #include "interface.h"
+#include "ipInfo.h"
 #include "solidDisplacementAssembler.h"
 
 namespace accel
@@ -274,42 +273,47 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
         // rotation matrix (in case of rotational periodicity)
         const auto& rotMat = interfaceSideInfoPtr->rotationMatrix_;
 
-        // extract vector of dgInfo
-        const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-            interfaceSideInfoPtr->dgInfoVec_;
-
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-             iSide++)
+        // GGI path is not yet validated for the solid-displacement problem;
+        // preserve the original errorMsg behavior at the top of the function
+        // and run the unified loop for DG below.
+        if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+            nonconformalMethod::generalGridInterface)
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+            errorMsg("Not implemented yet");
+            return;
+        }
 
-            // now loop over all the DgInfo objects on this particular exposed
-            // face
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+        // Unified loop over per-IP info.  Storage is owned by the base
+        // interfaceSideInfo; concrete side classes store derived records upcast
+        // to ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is
+        // identical to the original DG implementation.
+        for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
+        {
+            for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
+                ipInfo* ip = faceIpInfoVec[k];
 
-                if (dgInfo->gaussPointExposed_)
+                if (ip->isExposed_)
                     continue;
 
                 // extract current/opposing face/element
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-                stk::mesh::Entity currentElement = dgInfo->currentElement_;
-                stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-                const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-                const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+                stk::mesh::Entity currentFace = ip->currentFace_;
+                stk::mesh::Entity opposingFace = ip->opposingFace_;
+                stk::mesh::Entity currentElement = ip->currentElement_;
+                stk::mesh::Entity opposingElement = ip->opposingElement_;
+                const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+                const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
                 // master element; face and volume
-                MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-                MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-                MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+                MasterElement* meFCCurrent = ip->meFCCurrent_;
+                MasterElement* meFCOpposing = ip->meFCOpposing_;
+                MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+                MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
                 // local ip, ordinals, etc
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                currentIsoParCoords = dgInfo->currentIsoParCoords_;
-                opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+                const label currentGaussPointId = ip->currentGaussPointId_;
+                currentIsoParCoords = ip->currentIsoParCoords_;
+                opposingIsoParCoords = ip->opposingIsoParCoords_;
 
                 // mapping from ip to nodes for this ordinal
                 const label* ipNodeMap =
@@ -336,8 +340,8 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                 scratchVals.resize(rhsSize);
                 connectedNodes.resize(totalNodes);
 
-                // algorithm related; element; dndx will be at a single gauss
-                // point
+                // algorithm related; element; dndx will be at a
+                // single gauss point
                 ws_c_elem_disp.resize(currentNodesPerElement * SPATIAL_DIM);
                 ws_o_elem_disp.resize(opposingNodesPerElement * SPATIAL_DIM);
                 ws_c_elem_coordinates.resize(currentNodesPerElement *
@@ -657,9 +661,10 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                 else if (solidMechOption ==
                          solidMechanicsOption::simplifiedNeoHookean)
                 {
-                    // Gradient tensor F = I + grad(u) at interface BIP,
-                    // current side. Layout from general_face_grad_op (1 IP):
-                    // p_c_dndx[ic * SPATIAL_DIM + j] = dN_ic/dx_j
+                    // Gradient tensor F = I + grad(u) at interface
+                    // BIP, current side. Layout from
+                    // general_face_grad_op (1 IP): p_c_dndx[ic *
+                    // SPATIAL_DIM + j] = dN_ic/dx_j
                     scalar c_gradTens[SPATIAL_DIM * SPATIAL_DIM] = {};
                     for (label ic = 0; ic < current_num_elem_nodes; ++ic)
                     {
@@ -676,7 +681,8 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                         c_gradTens[i * SPATIAL_DIM + i] += 1.0;
 
-                    // Gradient tensor F = I + grad(u), opposing side
+                    // Gradient tensor F = I + grad(u), opposing
+                    // side
                     scalar o_gradTens[SPATIAL_DIM * SPATIAL_DIM] = {};
                     for (label ic = 0; ic < opposing_num_elem_nodes; ++ic)
                     {
@@ -693,7 +699,8 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                         o_gradTens[i * SPATIAL_DIM + i] += 1.0;
 
-                    // I1 = tr(F^T F), beta = 1 - 1/(1+I1), J = det(F)
+                    // I1 = tr(F^T F), beta = 1 - 1/(1+I1), J =
+                    // det(F)
                     scalar c_Iconst = 0.0;
                     scalar o_Iconst = 0.0;
                     if (SPATIAL_DIM == 3)
@@ -747,7 +754,8 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                               o_gradTens[2] * o_gradTens[1];
                     }
 
-                    // Effective tangent stiffness: lambda + 2*(mu*beta/J)/3
+                    // Effective tangent stiffness: lambda +
+                    // 2*(mu*beta/J)/3
                     currentStiffness =
                         currentLambdaBip +
                         2.0 * (currentMuBip * c_beta / c_J) / 3.0;
@@ -756,7 +764,8 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                         2.0 * (opposingMuBip * o_beta / o_J) / 3.0;
                 }
 
-                // penalty computation (similar to diffusion penalty)
+                // penalty computation (similar to diffusion
+                // penalty)
                 penaltyIp = penaltyFactor *
                             (currentStiffness * currentInverseLength +
                              opposingStiffness * opposingInverseLength) /
@@ -771,8 +780,8 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                 // extract nearest node
                 const label nn = ipNodeMap[currentGaussPointId];
 
-                // compute general shape function at current and opposing
-                // integration points
+                // compute general shape function at current and
+                // opposing integration points
                 meFCCurrent->general_shape_fcn(1,
                                                &currentIsoParCoords[0],
                                                &ws_c_general_shape_function[0]);
@@ -784,7 +793,8 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                 // assemble for each displacement component
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
-                    // penalty term: enforces displacement continuity
+                    // penalty term: enforces displacement
+                    // continuity
                     const scalar ncPenalty =
                         penaltyIp * (currentDispBip[i] - opposingDispBip[i]);
 

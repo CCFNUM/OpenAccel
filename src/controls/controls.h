@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Simulation controls for time stepping, solver settings, and
 //              output
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef CONTROLS_H
 #define CONTROLS_H
@@ -114,13 +113,6 @@ struct solverDictionary
                     interpolationSchemeType::linearLinear;
                 interpolationSchemeType displacementInterpolationType_ =
                     interpolationSchemeType::linearLinear;
-#ifdef HAS_MHD
-                interpolationSchemeType electricPotentialInterpolationType_ =
-                    interpolationSchemeType::linearLinear;
-                interpolationSchemeType
-                    magneticVectorPotentialInterpolationType_ =
-                        interpolationSchemeType::linearLinear;
-#endif /* HAS_MHD */
 
                 // Gradient interpolation scheme types
                 interpolationSchemeType velocityGradientInterpolationType_ =
@@ -151,14 +143,6 @@ struct solverDictionary
                         interpolationSchemeType::linearLinear;
                 interpolationSchemeType displacementGradientInterpolationType_ =
                     interpolationSchemeType::linearLinear;
-#ifdef HAS_MHD
-                interpolationSchemeType
-                    electricPotentialGradientInterpolationType_ =
-                        interpolationSchemeType::linearLinear;
-                interpolationSchemeType
-                    magneticVectorPotentialGradientInterpolationType_ =
-                        interpolationSchemeType::linearLinear;
-#endif /* HAS_MHD */
             };
 
             struct convergenceCriteriaDictionary
@@ -212,7 +196,6 @@ struct solverDictionary
                     label pressureCorrection_ = 1;
                     label solidDisplacement_ = 1;
                     label segregatedFlow_ = 1;
-                    label coupledFlow_ = 1;
                     label volumeFraction_ = 1;
                 };
 
@@ -261,6 +244,14 @@ struct solverDictionary
             bool bandwidthReduction_ = true;
             bool forceWallDistanceCalculation_ = false;
             bool disablePhysics_ = false;
+            bool nso_ = false;
+            scalar nsoFourthOrderFac_ = 1.0;
+#ifdef HAS_INTERFACE
+            nonconformalMethod nonconformalMethod_ =
+                nonconformalMethod::discontinuousGalerkin;
+            ggiAssemblyMethod ggiAssemblyMethod_ =
+                ggiAssemblyMethod::penaltyMortar;
+#endif /* HAS_INTERFACE */
         };
 
         basicSettingsDictionary basicSettings_;
@@ -337,6 +328,8 @@ public:
     bool isHighResolution() const;
 
     bool isHighResolutionTurbulenceNumerics() const;
+
+    bool isNSO() const;
 
     label getNumberOfStates() const;
 

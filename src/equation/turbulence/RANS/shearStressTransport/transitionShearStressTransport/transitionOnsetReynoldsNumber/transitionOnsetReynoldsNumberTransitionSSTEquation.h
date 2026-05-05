@@ -3,8 +3,7 @@
 // Author     : Adam Fares
 // Description: Transition onset Reynolds number equation for the transition SST
 //              model
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TRANSITIONONSETREYNOLDSNUMBERTRANSITIONSSTEQUATION_H
 #define TRANSITIONONSETREYNOLDSNUMBERTRANSITIONSSTEQUATION_H
@@ -29,6 +28,8 @@ private:
     using Assembler = transitionOnsetReynoldsNumberTransitionSSTAssembler;
 
 public:
+    static constexpr equationID ID = equationID::transitionOnsetReynoldsNumber;
+
     transitionOnsetReynoldsNumberTransitionSSTEquation(
         realm* realm,
         transitionShearStressTransportModel* model);
@@ -50,6 +51,11 @@ public:
     void preTimeStep() override;
 
     void printScales() override;
+
+    equationID getID() override
+    {
+        return ID;
+    }
 
 protected:
     void setResidualScales_() override;

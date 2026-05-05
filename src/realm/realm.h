@@ -3,8 +3,7 @@
 // Author     :
 // Description: Declares the central realm class that owns mesh, fields, and
 //              model registration for a simulation.
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef REALM_H
 #define REALM_H

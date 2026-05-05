@@ -2,8 +2,7 @@
 // Created    : Thu Mar 14 2024 12:50:04 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Turbulent kinetic energy equation for the SST model
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TURBULENTKINETICENERGYSSTEQUATION_H
 #define TURBULENTKINETICENERGYSSTEQUATION_H

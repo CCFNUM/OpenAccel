@@ -3,13 +3,12 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Element based (stencil) assembly kernel implementation for
 //              interfaces
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
-#include "dgInfo.h"
 #include "interface.h"
+#include "ipInfo.h"
 
 namespace accel
 {
@@ -121,10 +120,6 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
     // rotation matrix (in case of rotational periodicity)
     const utils::matrix& rotMat = interfaceSideInfoPtr->rotationMatrix_;
 
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
-
     if (interfaceSideInfoPtr->interfPtr()->isFluidSolidType() &&
         !mediumIndependent)
     {
@@ -132,38 +127,47 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
     }
     else
     {
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-             iSide++)
+        const auto ggiMethod =
+            field_broker_->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.ggiAssemblyMethod_;
+        const bool isGgi = (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+                            nonconformalMethod::generalGridInterface);
+        const scalar multiplier =
+            isGgi
+                ? ((ggiMethod == ggiAssemblyMethod::penaltyMortar) ? 0.5 : 1.0)
+                : 0.5;
+
+        for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-            // now loop over all the DgInfo objects on this
-            // particular exposed face
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+            for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
+                ipInfo* ip = faceIpInfoVec[k];
 
-                if (dgInfo->gaussPointExposed_)
+                if (ip->isExposed_)
                     continue;
 
                 // extract current/opposing face/element
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-                stk::mesh::Entity currentElement = dgInfo->currentElement_;
-                stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-                const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-                const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+                stk::mesh::Entity currentFace = ip->currentFace_;
+                stk::mesh::Entity opposingFace = ip->opposingFace_;
+                stk::mesh::Entity currentElement = ip->currentElement_;
+                stk::mesh::Entity opposingElement = ip->opposingElement_;
+                const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+                const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
                 // master element; face and volume
-                MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-                MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-                MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+                MasterElement* meFCCurrent = ip->meFCCurrent_;
+                MasterElement* meFCOpposing = ip->meFCOpposing_;
+                MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+                MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
                 // local ip, ordinals, etc
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                currentIsoParCoords = dgInfo->currentIsoParCoords_;
-                opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+                const label currentGaussPointId = ip->currentGaussPointId_;
+                const label opposingGaussPointId = ip->opposingGaussPointId_;
+
+                currentIsoParCoords = ip->currentIsoParCoords_;
+                opposingIsoParCoords = ip->opposingIsoParCoords_;
 
                 // mapping from ip to nodes for this ordinal
                 const label* ipNodeMap =
@@ -189,8 +193,7 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 scratchVals.resize(rhsSize);
                 connectedNodes.resize(totalNodes);
 
-                // algorithm related; element; dndx will be at a
-                // single gauss point...
+                // algorithm related; element
                 ws_c_elem_phi.resize(currentNodesPerElement * N);
                 ws_o_elem_phi.resize(opposingNodesPerElement * N);
                 ws_c_elem_coordinates.resize(currentNodesPerElement *
@@ -244,17 +247,14 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 {
                     stk::mesh::Entity node = current_face_node_rels[ni];
 
-                    // gather; scalar
                     p_c_Gamma[ni] =
                         *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
 
-                    // gather N-dim fields
                     const scalar* phi =
                         stk::mesh::field_data(phiSTKFieldRef, node);
                     for (label i = 0; i < N; ++i)
                     {
-                        const label offSet = i * current_num_face_nodes + ni;
-                        p_c_face_phi[offSet] = phi[i];
+                        p_c_face_phi[i * current_num_face_nodes + ni] = phi[i];
                     }
                 }
 
@@ -271,22 +271,18 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 {
                     stk::mesh::Entity node = opposing_face_node_rels[ni];
 
-                    // gather; scalar
                     p_o_Gamma[ni] =
                         *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
 
-                    // gather N-dim fields
                     const scalar* phi =
                         stk::mesh::field_data(phiSTKFieldRef, node);
                     for (label i = 0; i < N; ++i)
                     {
-                        const label offSet = i * opposing_num_face_nodes + ni;
-                        p_o_face_phi[offSet] = phi[i];
+                        p_o_face_phi[i * opposing_num_face_nodes + ni] = phi[i];
                     }
                 }
 
-                // gather current element data; sneak in first of
-                // connected nodes
+                // gather current element data
                 stk::mesh::Entity const* current_elem_node_rels =
                     bulkData.begin_nodes(currentElement);
                 const label current_num_elem_nodes =
@@ -294,11 +290,8 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 for (label ni = 0; ni < current_num_elem_nodes; ++ni)
                 {
                     stk::mesh::Entity node = current_elem_node_rels[ni];
-
-                    // set connected nodes
                     connectedNodes[ni] = node;
 
-                    // gather; vector
                     const scalar* coords =
                         stk::mesh::field_data(coordsSTKFieldRef, node);
                     for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -306,7 +299,6 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                         p_c_elem_coordinates[ni * SPATIAL_DIM + i] = coords[i];
                     }
 
-                    // gather N-dim fields
                     const scalar* phi =
                         stk::mesh::field_data(phiSTKFieldRef, node);
                     for (label i = 0; i < N; ++i)
@@ -315,8 +307,7 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                     }
                 }
 
-                // gather opposing element data; sneak in second
-                // connected nodes
+                // gather opposing element data
                 stk::mesh::Entity const* opposing_elem_node_rels =
                     bulkData.begin_nodes(opposingElement);
                 const label opposing_num_elem_nodes =
@@ -324,11 +315,8 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 for (label ni = 0; ni < opposing_num_elem_nodes; ++ni)
                 {
                     stk::mesh::Entity node = opposing_elem_node_rels[ni];
-
-                    // set connected nodes
                     connectedNodes[ni + current_num_elem_nodes] = node;
 
-                    // gather; vector
                     const scalar* coords =
                         stk::mesh::field_data(coordsSTKFieldRef, node);
                     for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -336,7 +324,6 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                         p_o_elem_coordinates[ni * SPATIAL_DIM + i] = coords[i];
                     }
 
-                    // gather N-dim fields
                     const scalar* phi =
                         stk::mesh::field_data(phiSTKFieldRef, node);
                     for (label i = 0; i < N; ++i)
@@ -357,6 +344,9 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 const scalar* c_areaVec = stk::mesh::field_data(
                     exposedAreaVecSTKFieldRef, currentFace);
 
+                // contact surface area fraction
+                const scalar fcs = ip->areaFraction_;
+
                 scalar c_amag = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -366,7 +356,7 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 }
                 c_amag = std::sqrt(c_amag);
 
-                // now compute normal
+                // compute normal from parent scs area vector
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     p_cNx[i] =
@@ -374,17 +364,24 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                         c_amag;
                 }
 
-                // compute opposing normal: in theory it is assumed
-                // that the current and opposing sub-control surfaces
-                // are sufficiently planar
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     p_oNx[i] = -p_cNx[i];
                 }
 
-                // project from side to element; method deals with
-                // the -1:1 isInElement range to the proper
-                // underlying CVFEM range
+                // use standard isopar coords for current IP
+                // (face-centroid IP location for this gauss point)
+                meFCCurrent->general_shape_fcn(1,
+                                               &currentIsoParCoords[0],
+                                               &ws_c_general_shape_function[0]);
+
+                // compute opposing general shape function
+                meFCOpposing->general_shape_fcn(
+                    1,
+                    &opposingIsoParCoords[0],
+                    &ws_o_general_shape_function[0]);
+
+                // project from side to element
                 meSCSCurrent->sidePcoords_to_elemPcoords(
                     currentFaceOrdinal,
                     1,
@@ -413,14 +410,12 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                     &ws_o_det_j[0],
                     &scs_error);
 
-                // current inverse length scale; can loop over face
-                // nodes to avoid "nodesOnFace" array
+                // current inverse length scale
                 scalar currentInverseLength = 0.0;
                 for (label ic = 0; ic < current_num_face_nodes; ++ic)
                 {
                     const label faceNodeNumber = c_face_node_ordinals[ic];
-                    const label offSetDnDx =
-                        faceNodeNumber * SPATIAL_DIM; // single intg. point
+                    const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         const scalar nxj = p_cNx[j];
@@ -429,14 +424,12 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                     }
                 }
 
-                // opposing inverse length scale; can loop over face
-                // nodes to avoid "nodesOnFace" array
+                // opposing inverse length scale
                 scalar opposingInverseLength = 0.0;
                 for (label ic = 0; ic < opposing_num_face_nodes; ++ic)
                 {
                     const label faceNodeNumber = o_face_node_ordinals[ic];
-                    const label offSetDnDx =
-                        faceNodeNumber * SPATIAL_DIM; // single intg. point
+                    const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         const scalar nxj = p_oNx[j];
@@ -445,7 +438,7 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                     }
                 }
 
-                // interpolate face data; current and opposing...
+                // interpolate face data
                 meFCCurrent->interpolatePoint(N,
                                               &currentIsoParCoords[0],
                                               &ws_c_face_phi[0],
@@ -478,21 +471,16 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 // compute diffusion vector; current
                 for (label ic = 0; ic < currentNodesPerElement; ++ic)
                 {
-                    const label offSetDnDx =
-                        ic * SPATIAL_DIM; // single intg. point
-
+                    const label offSetDnDx = ic * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         const scalar nxj = p_cNx[j];
                         const scalar dndxj = p_c_dndx[offSetDnDx + j];
-
                         for (label i = 0; i < N; ++i)
                         {
-                            const scalar phi = p_c_elem_phi[ic * N + i];
-
-                            // -Gamma*dphi/dxj*Aj
-                            currentDiffFluxBip[i] +=
-                                -currentGammaBip * dndxj * nxj * phi;
+                            currentDiffFluxBip[i] += -currentGammaBip * dndxj *
+                                                     nxj *
+                                                     p_c_elem_phi[ic * N + i];
                         }
                     }
                 }
@@ -500,21 +488,16 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                 // compute diffusion vector; opposing
                 for (label ic = 0; ic < opposingNodesPerElement; ++ic)
                 {
-                    const label offSetDnDx =
-                        ic * SPATIAL_DIM; // single intg. point
-
+                    const label offSetDnDx = ic * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         const scalar nxj = p_oNx[j];
                         const scalar dndxj = p_o_dndx[offSetDnDx + j];
-
                         for (label i = 0; i < N; ++i)
                         {
-                            const scalar phi = p_o_elem_phi[ic * N + i];
-
-                            // -Gamma*dphi/dxj*Aj
-                            opposingDiffFluxBip[i] +=
-                                -opposingGammaBip * dndxj * nxj * phi;
+                            opposingDiffFluxBip[i] += -opposingGammaBip *
+                                                      dndxj * nxj *
+                                                      p_o_elem_phi[ic * N + i];
                         }
                     }
                 }
@@ -529,20 +512,10 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                     p_rhs[p] = 0.0;
                 }
 
-                // extract nearset node
+                // extract nearest node
                 const label nn = ipNodeMap[currentGaussPointId];
 
-                // compute general shape function at current and
-                // opposing integration points
-                meFCCurrent->general_shape_fcn(1,
-                                               &currentIsoParCoords[0],
-                                               &ws_c_general_shape_function[0]);
-                meFCOpposing->general_shape_fcn(
-                    1,
-                    &opposingIsoParCoords[0],
-                    &ws_o_general_shape_function[0]);
-
-                // save mDot
+                // mass flow rate at parent IP; advection
                 const scalar tmDot =
                     includeAdv ? (stk::mesh::field_data(
                                      *mDotSideSTKFieldPtr_,
@@ -550,42 +523,44 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                                : 0.0;
                 const scalar abs_tmDot = std::abs(tmDot);
 
-                // compute penalty
+                // compute penalty (active for penaltyMortar)
                 const scalar penaltyIp =
                     penaltyFactor *
                     (currentGammaBip * currentInverseLength +
                      opposingGammaBip * opposingInverseLength) /
                     2.0;
+                const scalar penaltyMultiplier = 2.0 * (1.0 - multiplier);
 
                 for (label i = 0; i < N; ++i)
                 {
-                    // non conformal diffusive flux
+                    // diffusive flux
                     const scalar ncDiffFlux =
-                        (currentDiffFluxBip[i] - opposingDiffFluxBip[i]) / 2.0;
+                        currentDiffFluxBip[i] * multiplier -
+                        opposingDiffFluxBip[i] * (1.0 - multiplier);
 
-                    // non conformal advection
+                    // advective flux: upwind
                     const scalar ncAdv =
                         tmDot * (currentPhiBip[i] + opposingPhiBip[i]) / 2.0 +
                         abs_tmDot * (currentPhiBip[i] - opposingPhiBip[i]) /
                             2.0;
 
-                    // assemble residual; form proper rhs index for
-                    // current face assembly
+                    // assemble residual weighted by f_cs
                     const label indexR = nn * N + i;
                     p_rhs[indexR] -=
                         ((ncDiffFlux +
-                          penaltyIp * (currentPhiBip[i] - opposingPhiBip[i])) *
-                             c_amag +
-                         ncAdv);
+                          penaltyMultiplier * penaltyIp *
+                              (currentPhiBip[i] - opposingPhiBip[i])) *
+                             fcs * c_amag +
+                         fcs * ncAdv);
 
                     // set-up row for matrix
                     const label rowR = indexR * totalNodes * N;
 
                     // sensitivities; current face (penalty and
-                    // advection); use general shape function for
-                    // this single ip
+                    // advection)
                     const scalar lhsFacC =
-                        penaltyIp * c_amag + (abs_tmDot + tmDot) / 2.0;
+                        penaltyMultiplier * penaltyIp * fcs * c_amag +
+                        fcs * (abs_tmDot + tmDot) / 2.0;
                     for (label ic = 0; ic < currentNodesPerFace; ++ic)
                     {
                         const label icNdim = c_face_node_ordinals[ic] * N;
@@ -596,25 +571,23 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                     // sensitivities; current element (diffusion)
                     for (label ic = 0; ic < currentNodesPerElement; ++ic)
                     {
-                        const label offSetDnDx =
-                            ic * SPATIAL_DIM; // single intg. point
+                        const label offSetDnDx = ic * SPATIAL_DIM;
                         const label icNdim = ic * N;
                         for (label j = 0; j < SPATIAL_DIM; ++j)
                         {
                             const scalar nxj = p_cNx[j];
                             const scalar dndxj = p_c_dndx[offSetDnDx + j];
-
-                            // -Gamma*dphi/dxj*nj*dS
-                            p_lhs[rowR + icNdim + i] +=
-                                -currentGammaBip * dndxj * nxj * c_amag / 2.0;
+                            p_lhs[rowR + icNdim + i] += -currentGammaBip *
+                                                        dndxj * nxj * fcs *
+                                                        c_amag * multiplier;
                         }
                     }
 
                     // sensitivities; opposing face (penalty and
-                    // advection); use general shape function for
-                    // this single ip
+                    // advection)
                     const scalar lhsFacO =
-                        penaltyIp * c_amag + (abs_tmDot - tmDot) / 2.0;
+                        penaltyMultiplier * penaltyIp * fcs * c_amag +
+                        fcs * (abs_tmDot - tmDot) / 2.0;
                     for (label ic = 0; ic < opposingNodesPerFace; ++ic)
                     {
                         const label icNdim = (o_face_node_ordinals[ic] +
@@ -631,8 +604,7 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                     // sensitivities; opposing element (diffusion)
                     for (label ic = 0; ic < opposingNodesPerElement; ++ic)
                     {
-                        const label offSetDnDx =
-                            ic * SPATIAL_DIM; // single intg. point
+                        const label offSetDnDx = ic * SPATIAL_DIM;
                         const label icNdim = (ic + currentNodesPerElement) * N;
                         for (label j = 0; j < N; ++j)
                         {
@@ -640,11 +612,9 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                             {
                                 const scalar nxl = p_oNx[l];
                                 const scalar dndxl = p_o_dndx[offSetDnDx + l];
-
-                                // -Gamma*dphi/dxj*nj*dS
                                 p_lhs[rowR + icNdim + j] -=
-                                    -opposingGammaBip * dndxl * nxl * c_amag /
-                                    2.0 * rotMat(i, j);
+                                    -opposingGammaBip * dndxl * nxl * fcs *
+                                    c_amag * (1.0 - multiplier) * rotMat(i, j);
                             }
                         }
                     }

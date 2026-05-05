@@ -2,11 +2,14 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "pressureCorrectionAssembler.h"
 #include "flowModel.h"
+#ifdef HAS_INTERFACE
+#include "interface.h"
+#include "ipInfo.h"
+#endif
 
 namespace accel
 {
@@ -14,6 +17,14 @@ namespace accel
 pressureCorrectionAssembler::pressureCorrectionAssembler(flowModel* model)
     : phiAssembler<1>(static_cast<fieldBroker*>(model)), model_(model)
 {
+}
+
+void pressureCorrectionAssembler::postAssemble_(const domain* domain,
+                                                Context* ctx)
+{
+    // NOTE: pressureCorrection intentionally does NOT call
+    // Base::postAssemble_() — it skips constraints and relaxation
+    // (original inline empty body).
 }
 
 void pressureCorrectionAssembler::adjustMatrixForPressureReference(

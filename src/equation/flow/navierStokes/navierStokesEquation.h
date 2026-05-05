@@ -2,8 +2,7 @@
 // Created    : Wed Mar 13 2024 10:02:56 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Coupled momentum equations
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef NAVIERSTOKESEQUATION_H
 #define NAVIERSTOKESEQUATION_H
@@ -24,6 +23,8 @@ class navierStokesEquation : public equation, public linearSystem<SPATIAL_DIM>
     using Assembler = navierStokesAssembler;
 
 public:
+    static constexpr equationID ID = equationID::coupledNavierStokes;
+
     navierStokesEquation(realm* realm, flowModel* model);
 
     void checkDomain(const std::shared_ptr<domain> domain) override;
@@ -43,6 +44,11 @@ public:
     void preTimeStep() override;
 
     void printScales() override;
+
+    equationID getID() override
+    {
+        return ID;
+    }
 
 protected:
     void setResidualScales_() override;

@@ -2,8 +2,7 @@
 // Created    : Fri Jan 26 2024 09:07:47 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "equation.h"
 #include "boundary.h"
@@ -12,38 +11,8 @@
 #include "simulation.h"
 #include "zone.h"
 
-#include <cctype>
-
 namespace accel
 {
-
-namespace
-{
-std::string equationKeyFromName_(const std::string& name)
-{
-    std::string key;
-    key.reserve(name.size());
-    for (unsigned char c : name)
-    {
-        if (std::isalnum(c))
-        {
-            key.push_back(static_cast<char>(std::tolower(c)));
-        }
-        else if (c == ' ' || c == '-' || c == '_')
-        {
-            if (key.empty() || key.back() != '_')
-            {
-                key.push_back('_');
-            }
-        }
-    }
-    if (!key.empty() && key.back() == '_')
-    {
-        key.pop_back();
-    }
-    return key;
-}
-} // namespace
 
 stk::mesh::PartVector equation::collectInactiveInteriorParts()
 {
@@ -153,7 +122,7 @@ void equation::initializeAcceleration_()
 
     const auto accelNode =
         solverNode["advanced_options"]["equation_controls"]["acceleration"];
-    const std::string eqKey = equationKeyFromName_(name_);
+    const std::string eqKey = canonicalEquationIDName(name_);
     if (!accelNode[eqKey])
     {
         return;

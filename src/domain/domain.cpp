@@ -2,8 +2,7 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "domain.h"
 #include "boundary.h"
@@ -18,7 +17,7 @@ domain::domain(simulation* simulationPtr,
                zone* zonePtr,
                const YAML::Node& domain_conf)
     : domain_conf_(domain_conf), simulationPtr_(simulationPtr),
-      zonePtr_(zonePtr), energySource_(1), momentumSource_(SPATIAL_DIM)
+      zonePtr_(zonePtr), energySource_(1), generalMomentumSource_()
 {
     this->read_();
 }

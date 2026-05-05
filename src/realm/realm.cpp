@@ -2,8 +2,7 @@
 // Created    :
 // Author     :
 // Description:
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "realm.h"

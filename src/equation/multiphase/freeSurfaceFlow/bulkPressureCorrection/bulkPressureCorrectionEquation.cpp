@@ -2,8 +2,7 @@
 // Created    : Sun Feb 02 2025 20:44:56 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "bulkPressureCorrectionEquation.h"
 #include "realm.h"
@@ -53,7 +52,8 @@ void bulkPressureCorrectionEquation::setup()
     assembler_->setup(&model_->pRef(), null, domainVector_, nullptr);
 
     // linear solver
-    linearSystem::setupSolver(this->name(), model_->meshRef());
+    linearSystem::setupSolver(
+        this->name(), model_->meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
 }

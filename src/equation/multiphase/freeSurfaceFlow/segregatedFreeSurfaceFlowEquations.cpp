@@ -2,8 +2,7 @@
 // Created    : Sun Jan 26 2025 22:53:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "segregatedFreeSurfaceFlowEquations.h"
 
@@ -16,6 +15,8 @@ segregatedFreeSurfaceFlowEquations::segregatedFreeSurfaceFlowEquations(
 {
     U_eq_ = std::make_unique<bulkNavierStokesEquation>(realm, this);
     pCorr_eq_ = std::make_unique<bulkPressureCorrectionEquation>(realm, this);
+    U_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    pCorr_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
 
     for (label iPhase = 0; iPhase < nPhases(); iPhase++)
     {
@@ -469,6 +470,7 @@ void segregatedFreeSurfaceFlowEquations::postSolve()
     FOREACH_DOMAIN(updateMachNumberField_);
     FOREACH_DOMAIN(updateTotalPressureField_);
     FOREACH_DOMAIN(updateRelativeVelocityField_);
+    FOREACH_DOMAIN(updateUWallCoeffs);     // laminar
     FOREACH_DOMAIN(updateWallShearStress); // laminar
     FOREACH_DOMAIN(updateMassImbalance_);
 #ifdef HAS_INTERFACE

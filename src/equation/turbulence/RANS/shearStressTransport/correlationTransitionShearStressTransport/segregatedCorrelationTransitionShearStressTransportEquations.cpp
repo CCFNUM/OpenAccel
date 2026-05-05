@@ -3,8 +3,7 @@
 // Author     : Adam Fares
 // Description: Segregated equations for correlation-based transition SST model
 //              (Menter 2015)
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "segregatedCorrelationTransitionShearStressTransportEquations.h"
 #include "realm.h"
@@ -14,7 +13,7 @@ namespace accel
 
 segregatedCorrelationTransitionShearStressTransportEquations::
     segregatedCorrelationTransitionShearStressTransportEquations(realm* realm)
-    : equation("Segregated Correlation-Transition-SST"),
+    : equation("Segregated Correlation-Transition-Shear-Stress-Transport"),
       correlationTransitionShearStressTransportModel(realm)
 {
     tke_eq_ = std::make_unique<
@@ -24,6 +23,9 @@ segregatedCorrelationTransitionShearStressTransportEquations::
     // correlations
     ti_eq_ = std::make_unique<
         turbulentIntermittencyCorrelationTransitionSSTEquation>(realm, this);
+    tke_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    tef_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    ti_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
 }
 
 void segregatedCorrelationTransitionShearStressTransportEquations::addDomain(

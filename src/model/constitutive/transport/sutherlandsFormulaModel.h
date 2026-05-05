@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Sutherland's formula for temperature-dependent viscosity and
 //              conductivity
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef SUTHERLANDSFORMULAMODEL_H
 #define SUTHERLANDSFORMULAMODEL_H

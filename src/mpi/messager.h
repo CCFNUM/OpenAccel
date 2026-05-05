@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: MPI communication wrapper for reductions, broadcasts, and
 //              gathers
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef MESSAGER_H
 #define MESSAGER_H

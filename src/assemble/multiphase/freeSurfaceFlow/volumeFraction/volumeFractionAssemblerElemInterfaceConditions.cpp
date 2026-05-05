@@ -2,12 +2,10 @@
 // Created    : Thu Apr 17 2025 22:07:40 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
-#include "dgInfo.h"
 #include "interface.h"
 #include "volumeFractionAssembler.h"
 

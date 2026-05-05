@@ -2,8 +2,7 @@
 // Created    : Fri Dec 13 2024 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "meshMotion.h"
@@ -12,6 +11,8 @@
 #include "transformation.h"
 #include "zoneDeformation.h"
 #include "zoneTransformation.h"
+#ifdef HAS_INTERFACE
+#endif
 
 namespace accel
 {
@@ -521,28 +522,26 @@ void meshMotion::updateMeshVelocityDivergenceField_()
                     if (interf->isInternal())
                     {
                         // Internal interface: both master and slave sides
-                        // are in this domain. Use dgInfo iteration.
+                        // are in this domain. Use ipInfo iteration.
                         sidesToProcess.clear();
                         sidesToProcess.push_back(interf->masterInfoPtr());
                         sidesToProcess.push_back(interf->slaveInfoPtr());
 
                         for (const auto* sideInfo : sidesToProcess)
                         {
-                            const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                                sideInfo->dgInfoVec_;
+                            const auto& ipInfoVec = sideInfo->ipInfoVec();
 
                             for (label iSide = 0;
-                                 iSide < static_cast<label>(dgInfoVec.size());
+                                 iSide < static_cast<label>(ipInfoVec.size());
                                  iSide++)
                             {
-                                const std::vector<dgInfo*>& faceDgInfoVec =
-                                    dgInfoVec[iSide];
+                                const auto& faceIpInfoVec = ipInfoVec[iSide];
 
                                 for (label k = 0; k < static_cast<label>(
-                                                          faceDgInfoVec.size());
+                                                          faceIpInfoVec.size());
                                      ++k)
                                 {
-                                    dgInfo* dg = faceDgInfoVec[k];
+                                    ipInfo* dg = faceIpInfoVec[k];
 
                                     stk::mesh::Entity currentFace =
                                         dg->currentFace_;
@@ -562,7 +561,8 @@ void meshMotion::updateMeshVelocityDivergenceField_()
                                                  SPATIAL_DIM);
                                     scalar* p_Um = &ws_Um[0];
 
-                                    // gather Um on current face nodes
+                                    // gather Um on current face
+                                    // nodes
                                     stk::mesh::Entity const*
                                         current_face_node_rels =
                                             bulkData.begin_nodes(currentFace);
@@ -774,26 +774,24 @@ void meshMotion::updateMeshVelocityDivergenceField_()
                     }
                     else
                     {
-                        // External non-fluid-solid interface: use dgInfo
+                        // External non-fluid-solid interface: use ipInfo
                         // iteration for our side only
                         const auto* sideInfo =
                             interf->interfaceSideInfoPtr(iZone);
 
-                        const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                            sideInfo->dgInfoVec_;
+                        const auto& ipInfoVec = sideInfo->ipInfoVec();
 
                         for (label iSide = 0;
-                             iSide < static_cast<label>(dgInfoVec.size());
+                             iSide < static_cast<label>(ipInfoVec.size());
                              iSide++)
                         {
-                            const std::vector<dgInfo*>& faceDgInfoVec =
-                                dgInfoVec[iSide];
+                            const auto& faceIpInfoVec = ipInfoVec[iSide];
 
                             for (label k = 0;
-                                 k < static_cast<label>(faceDgInfoVec.size());
+                                 k < static_cast<label>(faceIpInfoVec.size());
                                  ++k)
                             {
-                                dgInfo* dg = faceDgInfoVec[k];
+                                ipInfo* dg = faceIpInfoVec[k];
 
                                 stk::mesh::Entity currentFace =
                                     dg->currentFace_;

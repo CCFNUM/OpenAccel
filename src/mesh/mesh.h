@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Finite volume mesh container with topology, zones, and geometric
 //              fields
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef MESH_H
 #define MESH_H

@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
+cmake_policy(SET CMP0079 NEW)
 
 project(OpenAccel)
 
@@ -13,6 +14,7 @@ option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
 option(WITH_FASTMATH "Use fast math optimization" OFF)
 option(WITH_FSI "Build with Utopia FSI support" OFF)
 option(WITH_INTERFACE "Enable interface support" ON)
+option(WITH_CLIPPER2 "Use Clipper2 for GGI area fractions (default: RastClipper)" OFF)
 option(WITH_MHD "Build with MHD support" OFF)
 option(WITH_OVERSET "Build with overset mesh support" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
@@ -45,6 +47,12 @@ set(exec "openaccel${exec_suffix}.exe")
 if(CMAKE_BUILD_TYPE STREQUAL DEBUG OR CMAKE_BUILD_TYPE STREQUAL Debug)
    set(exec "openaccel${exec_suffix}-debug.exe")
 endif()
+
+# NOTE [faw 2026-05-04]: silence trilinos stk_topology related deprecation
+# warnings
+add_compile_options(
+    -Wno-deprecated-declarations
+)
 
 if(WITH_WARNINGS)
 add_compile_options(
@@ -182,6 +190,16 @@ if(WITH_INTERFACE)
     message("-- Interface support: ENABLED")
 else()
     message("-- Interface support: DISABLED")
+endif()
+
+# GGI polygon clipping backend
+if(WITH_INTERFACE)
+    if(WITH_CLIPPER2)
+        add_compile_definitions(USE_CLIPPER2)
+        message("-- GGI polygon clipping backend: Clipper2")
+    else()
+        message("-- GGI polygon clipping backend: RastClipper")
+    endif()
 endif()
 
 # Solid mechanics assembler

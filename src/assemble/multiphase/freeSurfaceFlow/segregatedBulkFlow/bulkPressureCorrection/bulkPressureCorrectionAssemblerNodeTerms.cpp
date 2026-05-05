@@ -2,8 +2,7 @@
 // Created    : Wed Feb 05 2025 01:09:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "bulkPressureCorrectionAssembler.h"

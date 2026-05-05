@@ -2,8 +2,7 @@
 // Created    : Fri Jun 20 2024 16:48:19 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "initialConditions.h"
 #include "messager.h"
@@ -378,8 +377,6 @@ void turbulenceModel::updateUWallCoeffs(const std::shared_ptr<domain> domain)
     auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
     auto& muSTKFieldRef = muRef().stkFieldRef();
 
-    const auto& wallNormalDistanceSTKFieldRef = *metaData.get_field<scalar>(
-        metaData.side_rank(), mesh::wall_normal_distance_ID);
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
@@ -507,121 +504,115 @@ void turbulenceModel::updateTWallCoeffs(const std::shared_ptr<domain> domain)
 
     // update TWallCoeffs field at no slip walls and fluid-solid interfaces, the
     // fluid side
+    stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+
+    // Get fields
+    const STKScalarField* TPlusSTKFieldPtr = TPlusRef().stkFieldPtr();
+    const STKScalarField* uStarSTKFieldPtr = uStarRef().stkFieldPtr();
+    STKScalarField* TWallCoeffsSTKFieldPtr = TWallCoeffsRef().stkFieldPtr();
+
+    const auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
+    const auto& cpSTKFieldRef = cpRef().stkFieldRef();
+
+    // nodal fields to gather
+    std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_cp;
+
+    // master element
+    std::vector<scalar> ws_face_shape_function;
+
+    // select all sides: only those sitting on
+    // no-slip walls
+    stk::mesh::Selector selAllSides =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(collectNoSlipWallParts_(domain));
+
+    // shifted ip's for fields?
+    const bool isTShifted = TRef().isShifted();
+
+    stk::mesh::BucketVector const& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selAllSides);
+    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
     {
-        stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
-        stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+        stk::mesh::Bucket& sideBucket = **ib;
 
-        // Get fields
-        const STKScalarField* TPlusSTKFieldPtr = TPlusRef().stkFieldPtr();
-        const STKScalarField* uStarSTKFieldPtr = uStarRef().stkFieldPtr();
-        STKScalarField* TWallCoeffsSTKFieldPtr = TWallCoeffsRef().stkFieldPtr();
+        // face master element
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
+        const label nodesPerSide = meFC->nodesPerElement_;
+        const label numScsBip = meFC->numIntPoints_;
 
-        const auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
-        const auto& cpSTKFieldRef = cpRef().stkFieldRef();
+        // algorithm related; element
+        ws_rho.resize(nodesPerSide);
+        ws_cp.resize(nodesPerSide);
+        ws_face_shape_function.resize(numScsBip * nodesPerSide);
 
-        // nodal fields to gather
-        std::vector<scalar> ws_rho;
-        std::vector<scalar> ws_cp;
+        // pointers
+        scalar* p_rho = &ws_rho[0];
+        scalar* p_cp = &ws_cp[0];
+        scalar* p_face_shape_function = &ws_face_shape_function[0];
 
-        // master element
-        std::vector<scalar> ws_face_shape_function;
-
-        // select all sides: only those sitting on
-        // no-slip walls
-        stk::mesh::Selector selAllSides =
-            metaData.universal_part() &
-            stk::mesh::selectUnion(collectNoSlipWallParts_(domain));
-
-        // shifted ip's for fields?
-        const bool isTShifted = TRef().isShifted();
-
-        stk::mesh::BucketVector const& sideBuckets =
-            bulkData.get_buckets(metaData.side_rank(), selAllSides);
-        for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
-             ib != sideBuckets.end();
-             ++ib)
+        // shape functions
+        if (isTShifted)
         {
-            stk::mesh::Bucket& sideBucket = **ib;
+            meFC->shifted_shape_fcn(&p_face_shape_function[0]);
+        }
+        else
+        {
+            meFC->shape_fcn(&p_face_shape_function[0]);
+        }
 
-            // face master element
-            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
-                sideBucket.topology());
-            const label nodesPerSide = meFC->nodesPerElement_;
-            const label numScsBip = meFC->numIntPoints_;
+        const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
 
-            // algorithm related; element
-            ws_rho.resize(nodesPerSide);
-            ws_cp.resize(nodesPerSide);
-            ws_face_shape_function.resize(numScsBip * nodesPerSide);
+        for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSidesPerBucket;
+             ++iSide)
+        {
+            // get face
+            stk::mesh::Entity side = sideBucket[iSide];
+            label numSideNodes = bulkData.num_nodes(side);
 
-            // pointers
-            scalar* p_rho = &ws_rho[0];
-            scalar* p_cp = &ws_cp[0];
-            scalar* p_face_shape_function = &ws_face_shape_function[0];
-
-            // shape functions
-            if (isTShifted)
+            //======================================
+            // gather nodal data off of face
+            //======================================
+            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
+            for (label ni = 0; ni < nodesPerSide; ++ni)
             {
-                meFC->shifted_shape_fcn(&p_face_shape_function[0]);
+                stk::mesh::Entity node = sideNodeRels[ni];
+
+                // gather scalars
+                p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
             }
-            else
+
+            // pointer to face data
+            const scalar* TPlusBip =
+                stk::mesh::field_data(*TPlusSTKFieldPtr, side);
+            const scalar* uStarBip =
+                stk::mesh::field_data(*uStarSTKFieldPtr, side);
+
+            scalar* TWallCoeffsBip =
+                stk::mesh::field_data(*TWallCoeffsSTKFieldPtr, side);
+
+            // loop over face nodes
+            for (label ip = 0; ip < numSideNodes; ++ip)
             {
-                meFC->shape_fcn(&p_face_shape_function[0]);
-            }
+                const label offSetSF_face = ip * nodesPerSide;
 
-            const stk::mesh::Bucket::size_type nSidesPerBucket =
-                sideBucket.size();
-
-            for (stk::mesh::Bucket::size_type iSide = 0;
-                 iSide < nSidesPerBucket;
-                 ++iSide)
-            {
-                // get face
-                stk::mesh::Entity side = sideBucket[iSide];
-                label numSideNodes = bulkData.num_nodes(side);
-
-                //======================================
-                // gather nodal data off of face
-                //======================================
-                stk::mesh::Entity const* sideNodeRels =
-                    bulkData.begin_nodes(side);
-                for (label ni = 0; ni < nodesPerSide; ++ni)
+                // interpolate to bip
+                scalar rhoBip = 0.0;
+                scalar cpBip = 0.0;
+                for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
-                    stk::mesh::Entity node = sideNodeRels[ni];
-
-                    // gather scalars
-                    p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
-                    p_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
+                    const scalar r = p_face_shape_function[offSetSF_face + ic];
+                    rhoBip += r * p_rho[ic];
+                    cpBip += r * p_cp[ic];
                 }
 
-                // pointer to face data
-                const scalar* TPlusBip =
-                    stk::mesh::field_data(*TPlusSTKFieldPtr, side);
-                const scalar* uStarBip =
-                    stk::mesh::field_data(*uStarSTKFieldPtr, side);
-
-                scalar* TWallCoeffsBip =
-                    stk::mesh::field_data(*TWallCoeffsSTKFieldPtr, side);
-
-                // loop over face nodes
-                for (label ip = 0; ip < numSideNodes; ++ip)
-                {
-                    const label offSetSF_face = ip * nodesPerSide;
-
-                    // interpolate to bip
-                    scalar rhoBip = 0.0;
-                    scalar cpBip = 0.0;
-                    for (label ic = 0; ic < nodesPerSide; ++ic)
-                    {
-                        const scalar r =
-                            p_face_shape_function[offSetSF_face + ic];
-                        rhoBip += r * p_rho[ic];
-                        cpBip += r * p_cp[ic];
-                    }
-
-                    TWallCoeffsBip[ip] =
-                        rhoBip * cpBip * uStarBip[ip] / TPlusBip[ip];
-                }
+                TWallCoeffsBip[ip] =
+                    rhoBip * cpBip * uStarBip[ip] / TPlusBip[ip];
             }
         }
     }
@@ -827,6 +818,8 @@ void turbulenceModel::updateWallShearStress(
 
 void turbulenceModel::updateYStarScalable_(const std::shared_ptr<domain> domain)
 {
+    assert(domain->turbulence_.option_ == turbulenceOption::kEpsilon);
+
     stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
     stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
 
@@ -936,7 +929,7 @@ void turbulenceModel::updateYStarScalable_(const std::shared_ptr<domain> domain)
                 }
 
                 // extract bip data
-                const scalar yp = wallNormalDistanceBip[ip] / 4.0;
+                const scalar yp = NWDFactor_ * wallNormalDistanceBip[ip];
                 const scalar uStar = uStarBip[ip];
 
                 // determine yplus
@@ -1170,7 +1163,7 @@ void turbulenceModel::updateYPlusScalable_(const std::shared_ptr<domain> domain)
                 }
 
                 // extract bip data
-                const scalar yp = wallNormalDistanceBip[ip] / 4.0;
+                const scalar yp = NWDFactor_ * wallNormalDistanceBip[ip];
                 const scalar uStar = uStarBip[ip];
 
                 // determine yplus
@@ -1211,8 +1204,6 @@ void turbulenceModel::updateUTauScalable_(const std::shared_ptr<domain> domain)
 
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
         stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
-    const auto& wallNormalDistanceSTKFieldRef = *metaData.get_field<scalar>(
-        metaData.side_rank(), mesh::wall_normal_distance_ID);
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
@@ -1533,7 +1524,7 @@ void turbulenceModel::updateYStarAutomatic_(
                 }
 
                 // extract bip data
-                const scalar yp = wallNormalDistanceBip[ip];
+                const scalar yp = NWDFactor_ * wallNormalDistanceBip[ip];
                 const scalar uStar = uStarBip[ip];
 
                 // determine yplus
@@ -1761,7 +1752,7 @@ void turbulenceModel::updateUStarAutomatic_(
                 uTangential = std::sqrt(uTangential);
 
                 // extract bip data
-                const scalar yp = wallNormalDistanceBip[ip];
+                const scalar yp = NWDFactor_ * wallNormalDistanceBip[ip];
 
                 // determine ustar
                 scalar uStar_vis =
@@ -1886,7 +1877,7 @@ void turbulenceModel::updateYPlusAutomatic_(
                 }
 
                 // extract bip data
-                const scalar yp = wallNormalDistanceBip[ip];
+                const scalar yp = NWDFactor_ * wallNormalDistanceBip[ip];
                 const scalar uStar = uStarBip[ip];
 
                 // determine yplus
@@ -2130,8 +2121,9 @@ void turbulenceModel::updateUTauAutomatic_(const std::shared_ptr<domain> domain)
                 }
                 uTangential = std::sqrt(uTangential);
 
-                scalar uTauVis = sqrt(muBip * uTangential /
-                                      (rhoBip * wallNormalDistanceBip[ip]));
+                scalar uTauVis =
+                    sqrt(muBip * uTangential /
+                         (rhoBip * NWDFactor_ * wallNormalDistanceBip[ip]));
 
                 scalar yPlusMin = 0.17871;
                 scalar uPlusLog = std::log(yPlusBip[ip]) / kappa_ + B_;

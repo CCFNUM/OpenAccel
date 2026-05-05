@@ -2,8 +2,7 @@
 // Created    : Thu Mar 14 2024 12:50:04 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Pressure correction (continuity) equation
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef PRESSURECORRECTIONEQUATION_H
 #define PRESSURECORRECTIONEQUATION_H
@@ -26,6 +25,8 @@ private:
     using Assembler = pressureCorrectionAssembler;
 
 public:
+    static constexpr equationID ID = equationID::pressureCorrection;
+
     pressureCorrectionEquation(realm* realm, flowModel* model);
 
     void checkDomain(const std::shared_ptr<domain> domain) override;
@@ -47,6 +48,11 @@ public:
     void preTimeStep() override;
 
     void printScales() override;
+
+    equationID getID() override
+    {
+        return ID;
+    }
 
 protected:
     void setResidualScales_() override;

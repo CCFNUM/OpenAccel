@@ -2,15 +2,13 @@
 // Created    : Fri Aug 25 2023 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Field defined at integration points on boundary sides
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef SIDEFIELD_H
 #define SIDEFIELD_H
 
 // code
 #ifdef HAS_INTERFACE
-#include "dgInfo.h"
 #include "interface.h"
 #endif /* HAS_INTERFACE */
 #include "field.h"

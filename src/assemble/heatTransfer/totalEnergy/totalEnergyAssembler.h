@@ -2,8 +2,7 @@
 // Created    : Thu Apr 02 2025 15:40:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Assembler for the total energy conservation equation
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TOTALENERGYASSEMBLER_H
 #define TOTALENERGYASSEMBLER_H
@@ -54,11 +53,6 @@ protected:
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx);
-
-    void assembleElemTermsInterfaceSideHybrid_(
-        const domain* domain,
-        const interfaceSideInfo* interfaceSideInfoPtr,
-        Context* ctx);
 #endif /* HAS_INTERFACE */
 
     // boundary conditions
@@ -66,7 +60,7 @@ protected:
                                     Context* ctx) override;
     void assembleElemTermsBoundarySymmetry_(const domain* domain,
                                             const boundary* boundary,
-                                            Context* ctx);
+                                            Context* ctx) override;
     void assembleElemTermsBoundaryWallZeroGradient_(const domain* domain,
                                                     const boundary* boundary,
                                                     Context* ctx) override;

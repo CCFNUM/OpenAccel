@@ -2,13 +2,15 @@
 // Created    : Tue Sep 02 2025 17:52:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "sideField.h"
 #include "boundary.h"
 #include "controls.h"
 #include "nodeSideField.h"
+#ifdef HAS_INTERFACE
+#include "ipInfo.h"
+#endif
 
 namespace accel
 {
@@ -507,35 +509,30 @@ void sideField<scalar, 1>::transfer(label iInterface,
                       << interfaceSideInfoPtr->name() << std::endl;
         }
 
-        // extract vector of dgInfo
-        const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-            interfaceSideInfoPtr->dgInfoVec_;
-
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-             iSide++)
+        for (const auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+            for (const ipInfo* ip : faceIpInfoVec)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
-
-                if (dgInfo->gaussPointExposed_)
+                if (ip->isExposed_)
                     continue;
 
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
+                scalar* c_field =
+                    stk::mesh::field_data(sideSTKFieldRef, ip->currentFace_);
+                c_field[ip->currentGaussPointId_] = 0.0;
+            }
 
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                const label opposingGaussPointId =
-                    dgInfo->opposingGaussPointId_;
+            for (const ipInfo* ip : faceIpInfoVec)
+            {
+                if (ip->isExposed_)
+                    continue;
 
                 scalar* c_field =
-                    stk::mesh::field_data(sideSTKFieldRef, currentFace);
+                    stk::mesh::field_data(sideSTKFieldRef, ip->currentFace_);
                 const scalar* o_field =
-                    stk::mesh::field_data(sideSTKFieldRef, opposingFace);
+                    stk::mesh::field_data(sideSTKFieldRef, ip->opposingFace_);
 
-                c_field[currentGaussPointId] = o_field[opposingGaussPointId];
+                c_field[ip->currentGaussPointId_] +=
+                    ip->areaFraction_ * o_field[ip->opposingGaussPointId_];
             }
         }
     }
@@ -561,31 +558,26 @@ void sideField<scalar, 1>::transfer(label iInterface,
         std::vector<scalar> ws_pseudo_nodal;
         MasterElement* prevMeFCOpposing = nullptr;
 
-        // extract vector of dgInfo
-        const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-            interfaceSideInfoPtr->dgInfoVec_;
-
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-             iSide++)
+        for (const auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-            // now loop over all the DgInfo objects on this
-            // particular exposed face
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+            for (const ipInfo* ip : faceIpInfoVec)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
-
-                if (dgInfo->gaussPointExposed_)
+                if (ip->isExposed_)
                     continue;
 
-                // extract current/opposing face
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-                MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+                scalar* c_field =
+                    stk::mesh::field_data(sideSTKFieldRef, ip->currentFace_);
+                c_field[ip->currentGaussPointId_] = 0.0;
+            }
 
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+            for (const ipInfo* ip : faceIpInfoVec)
+            {
+                if (ip->isExposed_)
+                    continue;
+
+                MasterElement* meFCOpposing = ip->meFCOpposing_;
+                const label currentGaussPointId = ip->currentGaussPointId_;
+                opposingIsoParCoords = ip->opposingIsoParCoords_;
 
                 const label npe = meFCOpposing->nodesPerElement_;
 
@@ -655,9 +647,9 @@ void sideField<scalar, 1>::transfer(label iInterface,
                 }
 
                 scalar* c_field =
-                    stk::mesh::field_data(sideSTKFieldRef, currentFace);
+                    stk::mesh::field_data(sideSTKFieldRef, ip->currentFace_);
                 const scalar* o_field =
-                    stk::mesh::field_data(sideSTKFieldRef, opposingFace);
+                    stk::mesh::field_data(sideSTKFieldRef, ip->opposingFace_);
 
                 // Convert ip values to pseudo-nodal values:
                 // c_node = sum_ip( M_inv[node][ip] * f_ip )
@@ -678,10 +670,10 @@ void sideField<scalar, 1>::transfer(label iInterface,
                                                &ws_pseudo_nodal[0],
                                                &interpValue);
 
-                c_field[currentGaussPointId] = interpValue;
+                c_field[currentGaussPointId] += ip->areaFraction_ * interpValue;
             }
         }
-    } // else (non-conformal)
+    }
 
     if (verbose)
     {
@@ -874,38 +866,34 @@ void sideField<scalar, SPATIAL_DIM>::transfer(label iInterface,
                       << interfaceSideInfoPtr->name() << std::endl;
         }
 
-        // extract vector of dgInfo
-        const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-            interfaceSideInfoPtr->dgInfoVec_;
-
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-             iSide++)
+        for (const auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+            for (const ipInfo* ip : faceIpInfoVec)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
-
-                if (dgInfo->gaussPointExposed_)
+                if (ip->isExposed_)
                     continue;
 
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
+                scalar* c_field =
+                    stk::mesh::field_data(sideSTKFieldRef, ip->currentFace_);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                    c_field[ip->currentGaussPointId_ * SPATIAL_DIM + j] = 0.0;
+            }
 
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                const label opposingGaussPointId =
-                    dgInfo->opposingGaussPointId_;
+            for (const ipInfo* ip : faceIpInfoVec)
+            {
+                if (ip->isExposed_)
+                    continue;
 
                 scalar* c_field =
-                    stk::mesh::field_data(sideSTKFieldRef, currentFace);
+                    stk::mesh::field_data(sideSTKFieldRef, ip->currentFace_);
                 const scalar* o_field =
-                    stk::mesh::field_data(sideSTKFieldRef, opposingFace);
+                    stk::mesh::field_data(sideSTKFieldRef, ip->opposingFace_);
 
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    c_field[currentGaussPointId * SPATIAL_DIM + j] =
-                        o_field[opposingGaussPointId * SPATIAL_DIM + j];
+                    c_field[ip->currentGaussPointId_ * SPATIAL_DIM + j] +=
+                        ip->areaFraction_ *
+                        o_field[ip->opposingGaussPointId_ * SPATIAL_DIM + j];
                 }
             }
         }
@@ -923,6 +911,7 @@ void sideField<scalar, SPATIAL_DIM>::transfer(label iInterface,
         }
 
         std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
+        std::vector<scalar> interpValue(SPATIAL_DIM);
 
         // Workspace for ip-to-node conversion and transposed field.
         // M[ip][node] = N_node(xi_ip) is the shape-function matrix at the
@@ -932,31 +921,27 @@ void sideField<scalar, SPATIAL_DIM>::transfer(label iInterface,
         std::vector<scalar> ws_pseudo_nodal;
         MasterElement* prevMeFCOpposing = nullptr;
 
-        // extract vector of dgInfo
-        const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-            interfaceSideInfoPtr->dgInfoVec_;
-
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-             iSide++)
+        for (const auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-            // now loop over all the DgInfo objects on this
-            // particular exposed face
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+            for (const ipInfo* ip : faceIpInfoVec)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
-
-                if (dgInfo->gaussPointExposed_)
+                if (ip->isExposed_)
                     continue;
 
-                // extract current/opposing face
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-                MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+                scalar* c_field =
+                    stk::mesh::field_data(sideSTKFieldRef, ip->currentFace_);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                    c_field[ip->currentGaussPointId_ * SPATIAL_DIM + j] = 0.0;
+            }
 
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+            for (const ipInfo* ip : faceIpInfoVec)
+            {
+                if (ip->isExposed_)
+                    continue;
+
+                MasterElement* meFCOpposing = ip->meFCOpposing_;
+                const label currentGaussPointId = ip->currentGaussPointId_;
+                opposingIsoParCoords = ip->opposingIsoParCoords_;
 
                 const label npe = meFCOpposing->nodesPerElement_;
 
@@ -1026,14 +1011,12 @@ void sideField<scalar, SPATIAL_DIM>::transfer(label iInterface,
                 }
 
                 scalar* c_field =
-                    stk::mesh::field_data(sideSTKFieldRef, currentFace);
+                    stk::mesh::field_data(sideSTKFieldRef, ip->currentFace_);
                 const scalar* o_field =
-                    stk::mesh::field_data(sideSTKFieldRef, opposingFace);
+                    stk::mesh::field_data(sideSTKFieldRef, ip->opposingFace_);
 
-                // Convert ip values to pseudo-nodal values in
-                // component-major layout for interpolatePoint:
-                // c[comp * npe + node] = sum_ip( M_inv[node][ip] *
-                //                                f_ip[ip * NDIM + comp] )
+                // Convert ip values to pseudo-nodal values in component-major
+                // layout for interpolatePoint.
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     for (label node = 0; node < npe; ++node)
@@ -1057,12 +1040,12 @@ void sideField<scalar, SPATIAL_DIM>::transfer(label iInterface,
 
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    c_field[currentGaussPointId * SPATIAL_DIM + j] =
-                        interpValue[j];
+                    c_field[currentGaussPointId * SPATIAL_DIM + j] +=
+                        ip->areaFraction_ * interpValue[j];
                 }
             }
         }
-    } // else (non-conformal)
+    }
 
     if (verbose)
     {

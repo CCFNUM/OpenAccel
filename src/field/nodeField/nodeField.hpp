@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Template and inline implementations for nodal field storage and
 //              access.
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 namespace accel
 {
@@ -561,7 +560,7 @@ void nodeField<N, M>::registerSideFieldsForInterfaceSide(label iInterface,
     {
         const auto& interf = this->meshRef().interfaceRef(iInterface);
 
-        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap_)
+        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap())
             return;
 
         // Instantiate if not yet
@@ -589,7 +588,7 @@ void nodeField<N, M>::registerSideFieldsForInterfaceSide(label iInterface,
     {
         const auto& interf = this->meshRef().interfaceRef(iInterface);
 
-        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap_)
+        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap())
             return;
 
         // Instantiate if not yet
@@ -625,7 +624,7 @@ void nodeField<N, M>::registerSideFluxFieldForInterfaceSide(
     {
         const auto& interf = this->meshRef().interfaceRef(iInterface);
 
-        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap_)
+        if (onlyIfNonoverlap && !interf.masterInfoRef().hasNonoverlap())
             return;
 
         // Instantiate if not yet
@@ -645,7 +644,7 @@ void nodeField<N, M>::registerSideFluxFieldForInterfaceSide(
     {
         const auto& interf = this->meshRef().interfaceRef(iInterface);
 
-        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap_)
+        if (onlyIfNonoverlap && !interf.slaveInfoRef().hasNonoverlap())
             return;
 
         // Instantiate if not yet
@@ -2471,40 +2470,36 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
             {
                 const auto& masterInterface = interf->masterInfoRef();
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    masterInterface.dgInfoVec_;
+                const auto& ipInfoVec = masterInterface.ipInfoVec();
 
                 for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide < static_cast<label>(ipInfoVec.size());
                      iSide++)
                 {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
+                    const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                    // now loop over all the DgInfo objects on this
+                    // now loop over all the interface IP info objects on this
                     // particular exposed face
                     for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
+                         k < static_cast<label>(faceIpInfoVec.size());
                          ++k)
                     {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
+                        const ipInfo* ip = faceIpInfoVec[k];
 
                         // extract current/opposing face/element
-                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                        stk::mesh::Entity currentElement =
-                            dgInfo->currentElement_;
+                        stk::mesh::Entity currentFace = ip->currentFace_;
+                        stk::mesh::Entity currentElement = ip->currentElement_;
                         const label currentFaceOrdinal =
-                            dgInfo->currentFaceOrdinal_;
+                            ip->currentFaceOrdinal_;
 
                         // master element; face and volume
-                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+                        MasterElement* meFCCurrent = ip->meFCCurrent_;
+                        MasterElement* meSCSCurrent = ip->meSCSCurrent_;
 
                         // local ip, ordinals, etc
                         const label currentGaussPointId =
-                            dgInfo->currentGaussPointId_;
-                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                            ip->currentGaussPointId_;
+                        currentIsoParCoords = ip->currentIsoParCoords_;
 
                         // mapping from ip to nodes for this ordinal
                         const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
@@ -2649,40 +2644,36 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
             {
                 const auto& slaveInterface = interf->slaveInfoRef();
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    slaveInterface.dgInfoVec_;
+                const auto& ipInfoVec = slaveInterface.ipInfoVec();
 
                 for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide < static_cast<label>(ipInfoVec.size());
                      iSide++)
                 {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
+                    const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                    // now loop over all the DgInfo objects on this
+                    // now loop over all the interface IP info objects on this
                     // particular exposed face
                     for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
+                         k < static_cast<label>(faceIpInfoVec.size());
                          ++k)
                     {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
+                        const ipInfo* ip = faceIpInfoVec[k];
 
                         // extract current/opposing face/element
-                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                        stk::mesh::Entity currentElement =
-                            dgInfo->currentElement_;
+                        stk::mesh::Entity currentFace = ip->currentFace_;
+                        stk::mesh::Entity currentElement = ip->currentElement_;
                         const label currentFaceOrdinal =
-                            dgInfo->currentFaceOrdinal_;
+                            ip->currentFaceOrdinal_;
 
                         // master element; face and volume
-                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+                        MasterElement* meFCCurrent = ip->meFCCurrent_;
+                        MasterElement* meSCSCurrent = ip->meSCSCurrent_;
 
                         // local ip, ordinals, etc
                         const label currentGaussPointId =
-                            dgInfo->currentGaussPointId_;
-                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                            ip->currentGaussPointId_;
+                        currentIsoParCoords = ip->currentIsoParCoords_;
 
                         // mapping from ip to nodes for this ordinal
                         const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
@@ -2847,36 +2838,32 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
             const auto* interfaceSideInfoPtr =
                 interf->interfaceSideInfoPtr(iZone);
 
-            // extract vector of dgInfo
-            const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                interfaceSideInfoPtr->dgInfoVec_;
+            const auto& ipInfoVec = (*interfaceSideInfoPtr).ipInfoVec();
 
-            for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
+            for (label iSide = 0; iSide < static_cast<label>(ipInfoVec.size());
                  iSide++)
             {
-                const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+                const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                // now loop over all the DgInfo objects on this
+                // now loop over all the interface IP info objects on this
                 // particular exposed face
-                for (label k = 0; k < static_cast<label>(faceDgInfoVec.size());
+                for (label k = 0; k < static_cast<label>(faceIpInfoVec.size());
                      ++k)
                 {
-                    dgInfo* dgInfo = faceDgInfoVec[k];
+                    const ipInfo* ip = faceIpInfoVec[k];
 
                     // extract current/opposing face/element
-                    stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                    stk::mesh::Entity currentElement = dgInfo->currentElement_;
-                    const label currentFaceOrdinal =
-                        dgInfo->currentFaceOrdinal_;
+                    stk::mesh::Entity currentFace = ip->currentFace_;
+                    stk::mesh::Entity currentElement = ip->currentElement_;
+                    const label currentFaceOrdinal = ip->currentFaceOrdinal_;
 
                     // master element; face and volume
-                    MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                    MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+                    MasterElement* meFCCurrent = ip->meFCCurrent_;
+                    MasterElement* meSCSCurrent = ip->meSCSCurrent_;
 
                     // local ip, ordinals, etc
-                    const label currentGaussPointId =
-                        dgInfo->currentGaussPointId_;
-                    currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                    const label currentGaussPointId = ip->currentGaussPointId_;
+                    currentIsoParCoords = ip->currentIsoParCoords_;
 
                     // mapping from ip to nodes for this ordinal
                     const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
@@ -3520,40 +3507,37 @@ void nodeField<N, M>::updateGradientField(label iZone)
             {
                 const auto& masterInterface = interf->masterInfoRef();
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    masterInterface.dgInfoVec_;
+                const auto& ipInfoVec = masterInterface.ipInfoVec();
 
                 for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide < static_cast<label>(ipInfoVec.size());
                      iSide++)
                 {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
+                    const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                    // now loop over all the DgInfo objects on this
+                    // now loop over all the interface IP info objects on this
                     // particular exposed face
                     for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
+                         k < static_cast<label>(faceIpInfoVec.size());
                          ++k)
                     {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
+                        const ipInfo* ip = faceIpInfoVec[k];
 
-                        if (dgInfo->gaussPointExposed_)
+                        if (ip->isExposed_)
                         {
                             // extract current/opposing face/element
-                            stk::mesh::Entity currentFace =
-                                dgInfo->currentFace_;
+                            stk::mesh::Entity currentFace = ip->currentFace_;
 
                             // master element
-                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                            MasterElement* meFCCurrent = ip->meFCCurrent_;
 
                             // local ip, ordinals, etc
                             const label currentGaussPointId =
-                                dgInfo->currentGaussPointId_;
-                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                                ip->currentGaussPointId_;
+                            currentIsoParCoords = ip->currentIsoParCoords_;
 
-                            // mapping from ip to nodes for this ordinal
+                            // mapping from ip to nodes for this
+                            // ordinal
                             const label* faceIpNodeMap =
                                 meFCCurrent->ipNodeMap();
 
@@ -3595,7 +3579,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 &ws_c_phi[0],
                                 &currentPhiBip[0]);
 
-                            // extract pointers to nearest node fields
+                            // extract pointers to nearest node
+                            // fields
                             const label nn = faceIpNodeMap[currentGaussPointId];
                             stk::mesh::Entity nNode =
                                 current_face_node_rels[nn];
@@ -3623,6 +3608,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
                                     scalar fac = (phiip - incMult * phic) *
+                                                 ip->areaFraction_ *
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
@@ -3634,23 +3620,21 @@ void nodeField<N, M>::updateGradientField(label iZone)
                         else
                         {
                             // extract current/opposing face/element
-                            stk::mesh::Entity currentFace =
-                                dgInfo->currentFace_;
-                            stk::mesh::Entity opposingFace =
-                                dgInfo->opposingFace_;
+                            stk::mesh::Entity currentFace = ip->currentFace_;
+                            stk::mesh::Entity opposingFace = ip->opposingFace_;
 
                             // master element
-                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+                            MasterElement* meFCCurrent = ip->meFCCurrent_;
+                            MasterElement* meFCOpposing = ip->meFCOpposing_;
 
                             // local ip, ordinals, etc
                             const label currentGaussPointId =
-                                dgInfo->currentGaussPointId_;
-                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-                            opposingIsoParCoords =
-                                dgInfo->opposingIsoParCoords_;
+                                ip->currentGaussPointId_;
+                            currentIsoParCoords = ip->currentIsoParCoords_;
+                            opposingIsoParCoords = ip->opposingIsoParCoords_;
 
-                            // mapping from ip to nodes for this ordinal
+                            // mapping from ip to nodes for this
+                            // ordinal
                             const label* faceIpNodeMap =
                                 meFCCurrent->ipNodeMap();
 
@@ -3727,7 +3711,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 &ws_o_phi[0],
                                 &opposingPhiBip[0]);
 
-                            // extract pointers to nearest node fields
+                            // extract pointers to nearest node
+                            // fields
                             const label nn = faceIpNodeMap[currentGaussPointId];
                             stk::mesh::Entity nNode =
                                 current_face_node_rels[nn];
@@ -3756,6 +3741,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
                                     scalar fac = (phiip - incMult * phic) *
+                                                 ip->areaFraction_ *
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
@@ -3772,40 +3758,37 @@ void nodeField<N, M>::updateGradientField(label iZone)
             {
                 const auto& slaveInterface = interf->slaveInfoRef();
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    slaveInterface.dgInfoVec_;
+                const auto& ipInfoVec = slaveInterface.ipInfoVec();
 
                 for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide < static_cast<label>(ipInfoVec.size());
                      iSide++)
                 {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
+                    const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                    // now loop over all the DgInfo objects on this
+                    // now loop over all the interface IP info objects on this
                     // particular exposed face
                     for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
+                         k < static_cast<label>(faceIpInfoVec.size());
                          ++k)
                     {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
+                        const ipInfo* ip = faceIpInfoVec[k];
 
-                        if (dgInfo->gaussPointExposed_)
+                        if (ip->isExposed_)
                         {
                             // extract current/opposing face/element
-                            stk::mesh::Entity currentFace =
-                                dgInfo->currentFace_;
+                            stk::mesh::Entity currentFace = ip->currentFace_;
 
                             // master element
-                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                            MasterElement* meFCCurrent = ip->meFCCurrent_;
 
                             // local ip, ordinals, etc
                             const label currentGaussPointId =
-                                dgInfo->currentGaussPointId_;
-                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                                ip->currentGaussPointId_;
+                            currentIsoParCoords = ip->currentIsoParCoords_;
 
-                            // mapping from ip to nodes for this ordinal
+                            // mapping from ip to nodes for this
+                            // ordinal
                             const label* faceIpNodeMap =
                                 meFCCurrent->ipNodeMap();
 
@@ -3846,7 +3829,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 &ws_c_phi[0],
                                 &currentPhiBip[0]);
 
-                            // extract pointers to nearest node fields
+                            // extract pointers to nearest node
+                            // fields
                             const label nn = faceIpNodeMap[currentGaussPointId];
                             stk::mesh::Entity nNode =
                                 current_face_node_rels[nn];
@@ -3874,6 +3858,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
                                     scalar fac = (phiip - incMult * phic) *
+                                                 ip->areaFraction_ *
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
@@ -3885,23 +3870,21 @@ void nodeField<N, M>::updateGradientField(label iZone)
                         else
                         {
                             // extract current/opposing face/element
-                            stk::mesh::Entity currentFace =
-                                dgInfo->currentFace_;
-                            stk::mesh::Entity opposingFace =
-                                dgInfo->opposingFace_;
+                            stk::mesh::Entity currentFace = ip->currentFace_;
+                            stk::mesh::Entity opposingFace = ip->opposingFace_;
 
                             // master element
-                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+                            MasterElement* meFCCurrent = ip->meFCCurrent_;
+                            MasterElement* meFCOpposing = ip->meFCOpposing_;
 
                             // local ip, ordinals, etc
                             const label currentGaussPointId =
-                                dgInfo->currentGaussPointId_;
-                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-                            opposingIsoParCoords =
-                                dgInfo->opposingIsoParCoords_;
+                                ip->currentGaussPointId_;
+                            currentIsoParCoords = ip->currentIsoParCoords_;
+                            opposingIsoParCoords = ip->opposingIsoParCoords_;
 
-                            // mapping from ip to nodes for this ordinal
+                            // mapping from ip to nodes for this
+                            // ordinal
                             const label* faceIpNodeMap =
                                 meFCCurrent->ipNodeMap();
 
@@ -3978,7 +3961,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 &ws_o_phi[0],
                                 &opposingPhiBip[0]);
 
-                            // extract pointers to nearest node fields
+                            // extract pointers to nearest node
+                            // fields
                             const label nn = faceIpNodeMap[currentGaussPointId];
                             stk::mesh::Entity nNode =
                                 current_face_node_rels[nn];
@@ -4007,6 +3991,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
                                     scalar fac = (phiip - incMult * phic) *
+                                                 ip->areaFraction_ *
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
@@ -4057,42 +4042,39 @@ void nodeField<N, M>::updateGradientField(label iZone)
                     std::vector<scalar> ws_c_phi;
                     std::vector<scalar> ws_o_phi;
 
-                    // extract vector of dgInfo
-                    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                        interfaceSideInfoPtr->dgInfoVec_;
+                    const auto& ipInfoVec = (*interfaceSideInfoPtr).ipInfoVec();
 
                     for (label iSide = 0;
-                         iSide < static_cast<label>(dgInfoVec.size());
+                         iSide < static_cast<label>(ipInfoVec.size());
                          iSide++)
                     {
-                        const std::vector<dgInfo*>& faceDgInfoVec =
-                            dgInfoVec[iSide];
+                        const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                        // now loop over all the DgInfo objects on this
-                        // particular exposed face
+                        // now loop over all the ipInfo objects on
+                        // this particular exposed face
                         for (label k = 0;
-                             k < static_cast<label>(faceDgInfoVec.size());
+                             k < static_cast<label>(faceIpInfoVec.size());
                              ++k)
                         {
-                            dgInfo* dgInfo = faceDgInfoVec[k];
+                            const ipInfo* ip = faceIpInfoVec[k];
 
-                            if (dgInfo->gaussPointExposed_)
+                            if (ip->isExposed_)
                             {
-                                // extract current/opposing face/element
+                                // extract current/opposing
+                                // face/element
                                 stk::mesh::Entity currentFace =
-                                    dgInfo->currentFace_;
+                                    ip->currentFace_;
 
                                 // master element
-                                MasterElement* meFCCurrent =
-                                    dgInfo->meFCCurrent_;
+                                MasterElement* meFCCurrent = ip->meFCCurrent_;
 
                                 // local ip, ordinals, etc
                                 const label currentGaussPointId =
-                                    dgInfo->currentGaussPointId_;
-                                currentIsoParCoords =
-                                    dgInfo->currentIsoParCoords_;
+                                    ip->currentGaussPointId_;
+                                currentIsoParCoords = ip->currentIsoParCoords_;
 
-                                // mapping from ip to nodes for this ordinal
+                                // mapping from ip to nodes for this
+                                // ordinal
                                 const label* faceIpNodeMap =
                                     meFCCurrent->ipNodeMap();
 
@@ -4134,7 +4116,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                     &ws_c_phi[0],
                                     &currentPhiBip[0]);
 
-                                // extract pointers to nearest node fields
+                                // extract pointers to nearest node
+                                // fields
                                 const label nn =
                                     faceIpNodeMap[currentGaussPointId];
                                 stk::mesh::Entity nNode =
@@ -4174,27 +4157,26 @@ void nodeField<N, M>::updateGradientField(label iZone)
                             }
                             else
                             {
-                                // extract current/opposing face/element
+                                // extract current/opposing
+                                // face/element
                                 stk::mesh::Entity currentFace =
-                                    dgInfo->currentFace_;
+                                    ip->currentFace_;
                                 stk::mesh::Entity opposingFace =
-                                    dgInfo->opposingFace_;
+                                    ip->opposingFace_;
 
                                 // master element
-                                MasterElement* meFCCurrent =
-                                    dgInfo->meFCCurrent_;
-                                MasterElement* meFCOpposing =
-                                    dgInfo->meFCOpposing_;
+                                MasterElement* meFCCurrent = ip->meFCCurrent_;
+                                MasterElement* meFCOpposing = ip->meFCOpposing_;
 
                                 // local ip, ordinals, etc
                                 const label currentGaussPointId =
-                                    dgInfo->currentGaussPointId_;
-                                currentIsoParCoords =
-                                    dgInfo->currentIsoParCoords_;
+                                    ip->currentGaussPointId_;
+                                currentIsoParCoords = ip->currentIsoParCoords_;
                                 opposingIsoParCoords =
-                                    dgInfo->opposingIsoParCoords_;
+                                    ip->opposingIsoParCoords_;
 
-                                // mapping from ip to nodes for this ordinal
+                                // mapping from ip to nodes for this
+                                // ordinal
                                 const label* faceIpNodeMap =
                                     meFCCurrent->ipNodeMap();
 
@@ -4274,7 +4256,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                     &ws_o_phi[0],
                                     &opposingPhiBip[0]);
 
-                                // extract pointers to nearest node fields
+                                // extract pointers to nearest node
+                                // fields
                                 const label nn =
                                     faceIpNodeMap[currentGaussPointId];
                                 stk::mesh::Entity nNode =
@@ -4516,40 +4499,37 @@ void nodeField<N, M>::updateGradientField(label iZone)
                 const auto* interfaceSideInfoPtr =
                     interf->interfaceSideInfoPtr(iZone);
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    interfaceSideInfoPtr->dgInfoVec_;
+                const auto& ipInfoVec = (*interfaceSideInfoPtr).ipInfoVec();
 
                 for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide < static_cast<label>(ipInfoVec.size());
                      iSide++)
                 {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
+                    const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                    // now loop over all the DgInfo objects on this
+                    // now loop over all the interface IP info objects on this
                     // particular exposed face
                     for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
+                         k < static_cast<label>(faceIpInfoVec.size());
                          ++k)
                     {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
+                        const ipInfo* ip = faceIpInfoVec[k];
 
-                        if (dgInfo->gaussPointExposed_)
+                        if (ip->isExposed_)
                         {
                             // extract current/opposing face/element
-                            stk::mesh::Entity currentFace =
-                                dgInfo->currentFace_;
+                            stk::mesh::Entity currentFace = ip->currentFace_;
 
                             // master element
-                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
+                            MasterElement* meFCCurrent = ip->meFCCurrent_;
 
                             // local ip, ordinals, etc
                             const label currentGaussPointId =
-                                dgInfo->currentGaussPointId_;
-                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                                ip->currentGaussPointId_;
+                            currentIsoParCoords = ip->currentIsoParCoords_;
 
-                            // mapping from ip to nodes for this ordinal
+                            // mapping from ip to nodes for this
+                            // ordinal
                             const label* faceIpNodeMap =
                                 meFCCurrent->ipNodeMap();
 
@@ -4590,7 +4570,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 &ws_c_phi[0],
                                 &currentPhiBip[0]);
 
-                            // extract pointers to nearest node fields
+                            // extract pointers to nearest node
+                            // fields
                             const label nn = faceIpNodeMap[currentGaussPointId];
                             stk::mesh::Entity nNode =
                                 current_face_node_rels[nn];
@@ -4618,6 +4599,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
                                     scalar fac = (phiip - incMult * phic) *
+                                                 ip->areaFraction_ *
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
@@ -4629,23 +4611,21 @@ void nodeField<N, M>::updateGradientField(label iZone)
                         else
                         {
                             // extract current/opposing face/element
-                            stk::mesh::Entity currentFace =
-                                dgInfo->currentFace_;
-                            stk::mesh::Entity opposingFace =
-                                dgInfo->opposingFace_;
+                            stk::mesh::Entity currentFace = ip->currentFace_;
+                            stk::mesh::Entity opposingFace = ip->opposingFace_;
 
                             // master element
-                            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
+                            MasterElement* meFCCurrent = ip->meFCCurrent_;
+                            MasterElement* meFCOpposing = ip->meFCOpposing_;
 
                             // local ip, ordinals, etc
                             const label currentGaussPointId =
-                                dgInfo->currentGaussPointId_;
-                            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-                            opposingIsoParCoords =
-                                dgInfo->opposingIsoParCoords_;
+                                ip->currentGaussPointId_;
+                            currentIsoParCoords = ip->currentIsoParCoords_;
+                            opposingIsoParCoords = ip->opposingIsoParCoords_;
 
-                            // mapping from ip to nodes for this ordinal
+                            // mapping from ip to nodes for this
+                            // ordinal
                             const label* faceIpNodeMap =
                                 meFCCurrent->ipNodeMap();
 
@@ -4723,7 +4703,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 &ws_o_phi[0],
                                 &opposingPhiBip[0]);
 
-                            // extract pointers to nearest node fields
+                            // extract pointers to nearest node
+                            // fields
                             const label nn = faceIpNodeMap[currentGaussPointId];
                             stk::mesh::Entity nNode =
                                 current_face_node_rels[nn];
@@ -4752,6 +4733,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
                                     scalar fac = (phiip - incMult * phic) *
+                                                 ip->areaFraction_ *
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
@@ -5292,40 +5274,36 @@ void nodeField<N, M>::limitGradientField_(label iZone)
             {
                 const auto& masterInterface = interf->masterInfoRef();
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    masterInterface.dgInfoVec_;
+                const auto& ipInfoVec = masterInterface.ipInfoVec();
 
                 for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide < static_cast<label>(ipInfoVec.size());
                      iSide++)
                 {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
+                    const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                    // now loop over all the DgInfo objects on this
+                    // now loop over all the interface IP info objects on this
                     // particular exposed face
                     for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
+                         k < static_cast<label>(faceIpInfoVec.size());
                          ++k)
                     {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
+                        const ipInfo* ip = faceIpInfoVec[k];
 
                         // extract current/opposing face/element
-                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                        stk::mesh::Entity currentElement =
-                            dgInfo->currentElement_;
+                        stk::mesh::Entity currentFace = ip->currentFace_;
+                        stk::mesh::Entity currentElement = ip->currentElement_;
                         const label currentFaceOrdinal =
-                            dgInfo->currentFaceOrdinal_;
+                            ip->currentFaceOrdinal_;
 
                         // master element; face and volume
-                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+                        MasterElement* meFCCurrent = ip->meFCCurrent_;
+                        MasterElement* meSCSCurrent = ip->meSCSCurrent_;
 
                         // local ip, ordinals, etc
                         const label currentGaussPointId =
-                            dgInfo->currentGaussPointId_;
-                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                            ip->currentGaussPointId_;
+                        currentIsoParCoords = ip->currentIsoParCoords_;
 
                         // mapping from ip to nodes for this ordinal
                         const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
@@ -5453,40 +5431,36 @@ void nodeField<N, M>::limitGradientField_(label iZone)
             {
                 const auto& slaveInterface = interf->slaveInfoRef();
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    slaveInterface.dgInfoVec_;
+                const auto& ipInfoVec = slaveInterface.ipInfoVec();
 
                 for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
+                     iSide < static_cast<label>(ipInfoVec.size());
                      iSide++)
                 {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
+                    const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                    // now loop over all the DgInfo objects on this
+                    // now loop over all the interface IP info objects on this
                     // particular exposed face
                     for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
+                         k < static_cast<label>(faceIpInfoVec.size());
                          ++k)
                     {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
+                        const ipInfo* ip = faceIpInfoVec[k];
 
                         // extract current/opposing face/element
-                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                        stk::mesh::Entity currentElement =
-                            dgInfo->currentElement_;
+                        stk::mesh::Entity currentFace = ip->currentFace_;
+                        stk::mesh::Entity currentElement = ip->currentElement_;
                         const label currentFaceOrdinal =
-                            dgInfo->currentFaceOrdinal_;
+                            ip->currentFaceOrdinal_;
 
                         // master element; face and volume
-                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+                        MasterElement* meFCCurrent = ip->meFCCurrent_;
+                        MasterElement* meSCSCurrent = ip->meSCSCurrent_;
 
                         // local ip, ordinals, etc
                         const label currentGaussPointId =
-                            dgInfo->currentGaussPointId_;
-                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                            ip->currentGaussPointId_;
+                        currentIsoParCoords = ip->currentIsoParCoords_;
 
                         // mapping from ip to nodes for this ordinal
                         const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
@@ -5634,36 +5608,32 @@ void nodeField<N, M>::limitGradientField_(label iZone)
             const auto* interfaceSideInfoPtr =
                 interf->interfaceSideInfoPtr(iZone);
 
-            // extract vector of dgInfo
-            const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                interfaceSideInfoPtr->dgInfoVec_;
+            const auto& ipInfoVec = (*interfaceSideInfoPtr).ipInfoVec();
 
-            for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
+            for (label iSide = 0; iSide < static_cast<label>(ipInfoVec.size());
                  iSide++)
             {
-                const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+                const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                // now loop over all the DgInfo objects on this
+                // now loop over all the interface IP info objects on this
                 // particular exposed face
-                for (label k = 0; k < static_cast<label>(faceDgInfoVec.size());
+                for (label k = 0; k < static_cast<label>(faceIpInfoVec.size());
                      ++k)
                 {
-                    dgInfo* dgInfo = faceDgInfoVec[k];
+                    const ipInfo* ip = faceIpInfoVec[k];
 
                     // extract current/opposing face/element
-                    stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                    stk::mesh::Entity currentElement = dgInfo->currentElement_;
-                    const label currentFaceOrdinal =
-                        dgInfo->currentFaceOrdinal_;
+                    stk::mesh::Entity currentFace = ip->currentFace_;
+                    stk::mesh::Entity currentElement = ip->currentElement_;
+                    const label currentFaceOrdinal = ip->currentFaceOrdinal_;
 
                     // master element; face and volume
-                    MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                    MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+                    MasterElement* meFCCurrent = ip->meFCCurrent_;
+                    MasterElement* meSCSCurrent = ip->meSCSCurrent_;
 
                     // local ip, ordinals, etc
-                    const label currentGaussPointId =
-                        dgInfo->currentGaussPointId_;
-                    currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                    const label currentGaussPointId = ip->currentGaussPointId_;
+                    currentIsoParCoords = ip->currentIsoParCoords_;
 
                     // mapping from ip to nodes for this ordinal
                     const label* faceIpNodeMap = meFCCurrent->ipNodeMap();

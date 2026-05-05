@@ -2,8 +2,7 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "flowModel.h"
@@ -61,6 +60,12 @@ void navierStokesAssembler::assembleNodeTermsFusedSteady_(const domain* domain,
             ? domain->zonePtr()->transformationRef().rotation().coriolisMatrix_
             : utils::matrix::Zero();
     const scalar* p_mat = coriolisMatrix.data();
+
+    // momentum sources: add if not redistributed
+    const auto msrc = domain->generalMomentumSourceRef().redistributeInRhieChow_
+                          ? std::vector<scalar>(SPATIAL_DIM, 0.0)
+                          : domain->generalMomentumSourceRef().value_;
+    const scalar* p_msrc = msrc.data();
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -137,9 +142,9 @@ void navierStokesAssembler::assembleNodeTermsFusedSteady_(const domain* domain,
                               Ub[SPATIAL_DIM * iNode + j] * vol;
                 }
 
-                // body forces
+                // body forces + sources
                 scalar Fi = Fb[SPATIAL_DIM * iNode + i];
-                rhs[i] += Fi * vol;
+                rhs[i] += (Fi + p_msrc[i]) * vol;
             }
 
             assembler::applyCoeff_(
@@ -197,6 +202,12 @@ void navierStokesAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
     // time integrator
     const scalar dt = field_broker_->meshRef().controlsRef().getTimestep();
     const auto c = BDF1::coeff();
+
+    // momentum sources: add if not redistributed
+    const auto msrc = domain->generalMomentumSourceRef().redistributeInRhieChow_
+                          ? std::vector<scalar>(SPATIAL_DIM, 0.0)
+                          : domain->generalMomentumSourceRef().value_;
+    const scalar* p_msrc = msrc.data();
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -270,9 +281,9 @@ void navierStokesAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
                 scalar gradPi = gradPb[SPATIAL_DIM * iNode + i];
                 rhs[i] -= gradPi * vol;
 
-                // body forces
+                // body forces + sources
                 scalar Fi = Fb[SPATIAL_DIM * iNode + i];
-                rhs[i] += Fi * vol;
+                rhs[i] += (Fi + p_msrc[i]) * vol;
             }
 
             this->applyCoeff_(
@@ -334,6 +345,12 @@ void navierStokesAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
     // time integrator
     const scalar dt = field_broker_->meshRef().controlsRef().getTimestep();
     const auto c = BDF2::coeff(dt, mesh.controlsRef().getTimestep(-1));
+
+    // momentum sources: add if not redistributed
+    const auto msrc = domain->generalMomentumSourceRef().redistributeInRhieChow_
+                          ? std::vector<scalar>(SPATIAL_DIM, 0.0)
+                          : domain->generalMomentumSourceRef().value_;
+    const scalar* p_msrc = msrc.data();
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -415,9 +432,9 @@ void navierStokesAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
                 scalar gradPi = gradPb[SPATIAL_DIM * iNode + i];
                 rhs[i] -= gradPi * vol;
 
-                // body forces
+                // body forces + sources
                 scalar Fi = Fb[SPATIAL_DIM * iNode + i];
-                rhs[i] += Fi * vol;
+                rhs[i] += (Fi + p_msrc[i]) * vol;
             }
 
             this->applyCoeff_(

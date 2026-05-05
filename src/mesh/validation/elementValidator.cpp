@@ -2,8 +2,8 @@
 // Created    : Mon Oct 7 2025
 // Author     : Mhamad Mahdi Alloush
 // Description: Element quality validation and correction system implementation
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause Ported from flash CVFEM code element correction functionality
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
+// Ported from flash CVFEM code element correction functionality
 
 // Element validation and correction is only supported in 3D
 #if SPATIAL_DIM == 3

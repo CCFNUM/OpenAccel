@@ -2,12 +2,12 @@
 // Created    : Tue Apr 20 2024 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
 #include "interface.h"
+#include "controls.h"
 #include "messager.h"
 #include "surfaceComparator.h"
 
@@ -43,6 +43,11 @@ void computePreciseGhostingLists(
 interface::interface(mesh* meshPtr, label index, std::string name)
     : meshPtr_(meshPtr), name_(name), index_(index), interfaceGhosting_(nullptr)
 {
+    // Determine which non-conformal treatment to use
+    nonconformalMethod_ =
+        meshPtr_->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.nonconformalMethod_;
 }
 
 // Methods
@@ -149,8 +154,10 @@ void interface::initializeGhostings_()
     if (nGlobalGhostedElements > 0)
     {
         if (messager::master())
-            std::cout << "  DG algorithm will ghost " << nGlobalGhostedElements
-                      << " entities: " << std::endl;
+        {
+            std::cout << "  Non-conformal interface algorithm will ghost "
+                      << nGlobalGhostedElements << " entities: " << std::endl;
+        }
 
         stk::mesh::BulkData& bulkData = meshPtr_->bulkDataRef();
 

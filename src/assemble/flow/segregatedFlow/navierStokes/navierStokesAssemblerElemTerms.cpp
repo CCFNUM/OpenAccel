@@ -2,8 +2,7 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "flowModel.h"
@@ -15,11 +14,22 @@ namespace accel
 void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                                                        Context* ctx)
 {
-    auto& mesh = field_broker_->meshRef();
+    auto& mesh = model_->meshRef();
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
 
-    const bool compressible = domain->isMaterialCompressible();
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+
+    // NSO switching factor and 4th-order factor (0.0 = 2nd order, 1.0 = 4th
+    // order)
+    const scalar nsoFac =
+        model_->controlsRef().solverRef().solverControl_.expertParameters_.nso_
+            ? 1.0
+            : 0.0;
+    const scalar fourthFac =
+        model_->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.nsoFourthOrderFac_;
 
     stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     stk::mesh::MetaData& metaData = mesh.metaDataRef();
@@ -35,7 +45,7 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> ws_U;
     std::vector<scalar> ws_beta;
     std::vector<scalar> ws_coordinates;
-    std::vector<scalar> ws_dudx;
+    std::vector<scalar> ws_gradU;
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_muEff;
 
@@ -46,20 +56,28 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> ws_det_j;
     std::vector<scalar> ws_velocity_shape_function;
     std::vector<scalar> ws_coordinate_shape_function;
+    std::vector<scalar> ws_gijUpper;
+    std::vector<scalar> ws_gijLower;
 
     // ip values
-    std::vector<scalar> uIp(SPATIAL_DIM);
+    std::vector<scalar> UIp(SPATIAL_DIM);
     std::vector<scalar> coordIp(SPATIAL_DIM);
 
     // extrapolated value from the L/R direction
-    std::vector<scalar> uIpL(SPATIAL_DIM);
-    std::vector<scalar> uIpR(SPATIAL_DIM);
+    std::vector<scalar> UIpL(SPATIAL_DIM);
+    std::vector<scalar> UIpR(SPATIAL_DIM);
+
+    // const-size vectors
+    std::vector<scalar> rhoUIp(SPATIAL_DIM);
+    std::vector<scalar> dUidxIp(SPATIAL_DIM);
 
     // pointers for fast access
-    scalar* p_uIp = &uIp[0];
-    scalar* p_uIpL = &uIpL[0];
-    scalar* p_uIpR = &uIpR[0];
+    scalar* p_UIp = &UIp[0];
+    scalar* p_UIpL = &UIpL[0];
+    scalar* p_UIpR = &UIpR[0];
     scalar* p_coordIp = &coordIp[0];
+    scalar* p_rhoUIp = &rhoUIp[0];
+    scalar* p_dUidx = &dUidxIp[0];
 
     // deal with state
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
@@ -121,7 +139,7 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
         ws_U.resize(nodesPerElement * SPATIAL_DIM);
         ws_beta.resize(nodesPerElement * SPATIAL_DIM);
         ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
-        ws_dudx.resize(nodesPerElement * SPATIAL_DIM * SPATIAL_DIM);
+        ws_gradU.resize(nodesPerElement * SPATIAL_DIM * SPATIAL_DIM);
         ws_rho.resize(nodesPerElement);
         ws_muEff.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
@@ -130,6 +148,8 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
         ws_det_j.resize(numScsIp);
         ws_velocity_shape_function.resize(numScsIp * nodesPerElement);
         ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
+        ws_gijUpper.resize(numScsIp * SPATIAL_DIM * SPATIAL_DIM);
+        ws_gijLower.resize(numScsIp * SPATIAL_DIM * SPATIAL_DIM);
 
         // pointers
         scalar* p_lhs = &lhs[0];
@@ -137,13 +157,15 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
         scalar* p_U = &ws_U[0];
         scalar* p_beta = &ws_beta[0];
         scalar* p_coordinates = &ws_coordinates[0];
-        scalar* p_dudx = &ws_dudx[0];
+        scalar* p_gradU = &ws_gradU[0];
         scalar* p_rho = &ws_rho[0];
         scalar* p_muEff = &ws_muEff[0];
         scalar* p_scs_areav = &ws_scs_areav[0];
         scalar* p_dndx = &ws_dndx[0];
         scalar* p_velocity_shape_function = &ws_velocity_shape_function[0];
         scalar* p_coordinate_shape_function = &ws_coordinate_shape_function[0];
+        scalar* p_gijUp = &ws_gijUpper[0];
+        scalar* p_gijLow = &ws_gijLower[0];
 
         // extract shape function
         if (isUShifted)
@@ -200,7 +222,7 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
 
                 const scalar* coords =
                     stk::mesh::field_data(coordsSTKFieldRef, node);
-                const scalar* dudx =
+                const scalar* gradU =
                     stk::mesh::field_data(gradUSTKFieldRef, node);
                 const scalar rho = *stk::mesh::field_data(rhoSTKFieldRef, node);
                 const scalar muEff =
@@ -223,7 +245,8 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                     const label row_dudx = i * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
-                        p_dudx[row_p_dudx + row_dudx + j] = dudx[row_dudx + j];
+                        p_gradU[row_p_dudx + row_dudx + j] =
+                            gradU[row_dudx + j];
                     }
                 }
             }
@@ -253,6 +276,12 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                                &scs_error);
             }
 
+            // compute metric tensors
+            meSCS->gij(&p_coordinates[0],
+                       &ws_gijUpper[0],
+                       &ws_gijLower[0],
+                       &ws_deriv[0]);
+
             for (label ip = 0; ip < numScsIp; ++ip)
             {
                 const label ipNdim = ip * SPATIAL_DIM;
@@ -273,7 +302,7 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                 // zero out values of interest for this ip
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    p_uIp[j] = 0.0;
+                    p_UIp[j] = 0.0;
                     p_coordIp[j] = 0.0;
                 }
 
@@ -292,19 +321,19 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                         SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        const scalar ui = p_U[ic * SPATIAL_DIM + i];
-                        p_uIp[i] += r * ui;
+                        const scalar Ui = p_U[ic * SPATIAL_DIM + i];
+                        p_UIp[i] += r * Ui;
                         p_coordIp[i] +=
                             r_coord * p_coordinates[ic * SPATIAL_DIM + i];
-                        divU += ui * p_dndx[offSetDnDx + i];
+                        divU += Ui * p_dndx[offSetDnDx + i];
                     }
                 }
 
                 // final upwind extrapolation;
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
-                    p_uIpL[i] = p_U[ilNdim + i];
-                    p_uIpR[i] = p_U[irNdim + i];
+                    p_UIpL[i] = p_U[ilNdim + i];
+                    p_UIpR[i] = p_U[irNdim + i];
                 }
 
                 // assemble advection; rhs and upwind contributions; add divU
@@ -315,7 +344,7 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                     scalar dcorr = 0;
                     if (tmDot > 0)
                     {
-                        uiUpwind = p_uIpL[i];
+                        uiUpwind = p_UIpL[i];
 
                         // deferred correction
                         for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -324,13 +353,13 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                                 p_coordIp[j] -
                                 p_coordinates[il * SPATIAL_DIM + j];
                             dcorr += p_beta[SPATIAL_DIM * il + i] * dxj *
-                                     p_dudx[il * (SPATIAL_DIM * SPATIAL_DIM) +
-                                            i * SPATIAL_DIM + j];
+                                     p_gradU[il * (SPATIAL_DIM * SPATIAL_DIM) +
+                                             i * SPATIAL_DIM + j];
                         }
                     }
                     else
                     {
-                        uiUpwind = p_uIpR[i];
+                        uiUpwind = p_UIpR[i];
 
                         // deferred correction
                         for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -339,8 +368,8 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                                 p_coordIp[j] -
                                 p_coordinates[ir * SPATIAL_DIM + j];
                             dcorr += p_beta[SPATIAL_DIM * ir + i] * dxj *
-                                     p_dudx[ir * (SPATIAL_DIM * SPATIAL_DIM) +
-                                            i * SPATIAL_DIM + j];
+                                     p_gradU[ir * (SPATIAL_DIM * SPATIAL_DIM) +
+                                             i * SPATIAL_DIM + j];
                         }
                     }
 
@@ -348,10 +377,8 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                     const scalar aflux = tmDot * (uiUpwind + dcorr);
 
                     // divU stress term
-                    const scalar divUstress = compressible
-                                                  ? 2.0 / 3.0 * muEffIp * divU *
-                                                        p_scs_areav[ipNdim + i]
-                                                  : 0.0;
+                    const scalar divUstress = 2.0 / 3.0 * muEffIp * divU *
+                                              p_scs_areav[ipNdim + i] * comp;
 
                     const label indexL = ilNdim + i;
                     const label indexR = irNdim + i;
@@ -379,6 +406,168 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                     p_lhs[rLiR_i] += alhsfacR;
                 }
 
+                //================================
+                // NSO stabilization
+                //================================
+                {
+                    constexpr scalar Cupw = 0.1;
+                    constexpr scalar small = 1.0e-16;
+
+                    const label gijOffset = ip * SPATIAL_DIM * SPATIAL_DIM;
+
+                    // scalars that prevail over all components k
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_rhoUIp[i] = 0.0;
+                    }
+
+                    scalar dFdxCont = 0.0;
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const scalar r =
+                            p_velocity_shape_function[offSetSF + ic];
+                        const scalar rho = p_rho[ic];
+
+                        const label offSetDnDx =
+                            SPATIAL_DIM * nodesPerElement * ip +
+                            ic * SPATIAL_DIM;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar dnj = p_dndx[offSetDnDx + j];
+                            const scalar Uj = p_U[ic * SPATIAL_DIM + j];
+                            p_rhoUIp[j] += r * rho * Uj;
+                            dFdxCont += rho * Uj * dnj;
+                        }
+                    }
+
+                    // upwind nu denominator (constant for all components)
+                    scalar rhoUiGLowerRhoUj = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            rhoUiGLowerRhoUj +=
+                                p_rhoUIp[i] *
+                                p_gijLow[gijOffset + i * SPATIAL_DIM + j] *
+                                p_rhoUIp[j];
+                        }
+                    }
+
+                    const scalar nuFirstOrder = std::sqrt(rhoUiGLowerRhoUj);
+
+                    // assemble each velocity component
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        const label indexL = ilNdim + i;
+                        const label indexR = irNdim + i;
+
+                        // compute dui/dxj at scs and advection residual
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_dUidx[j] = 0.0;
+                        }
+
+                        scalar dFdxkAdv = 0.0;
+                        scalar UiIp = 0.0;
+                        for (label ic = 0; ic < nodesPerElement; ++ic)
+                        {
+                            const scalar r =
+                                p_velocity_shape_function[offSetSF + ic];
+                            const scalar Ui = p_U[ic * SPATIAL_DIM + i];
+                            const scalar rho = p_rho[ic];
+
+                            UiIp += r * Ui;
+
+                            const label offSetDnDx =
+                                SPATIAL_DIM * nodesPerElement * ip +
+                                ic * SPATIAL_DIM;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar dnj = p_dndx[offSetDnDx + j];
+                                p_dUidx[j] += Ui * dnj;
+                                dFdxkAdv +=
+                                    rho * p_U[ic * SPATIAL_DIM + j] * Ui * dnj;
+                            }
+                        }
+
+                        // alternative residual (commutation error)
+                        scalar residualIp = dFdxkAdv - UiIp * dFdxCont;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            residualIp -= p_rhoUIp[j] * p_dUidx[j];
+                        }
+
+                        // gradient denominator for nu
+                        scalar gUpperMagGradQ = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            for (label k = 0; k < SPATIAL_DIM; ++k)
+                            {
+                                gUpperMagGradQ +=
+                                    p_dUidx[j] *
+                                    p_gijUp[gijOffset + j * SPATIAL_DIM + k] *
+                                    p_dUidx[k];
+                            }
+                        }
+
+                        // artificial viscosity
+                        const scalar nuResidualIp =
+                            std::sqrt((residualIp * residualIp) /
+                                      (gUpperMagGradQ + small));
+                        const scalar nuIp =
+                            nsoFac *
+                            std::min(Cupw * nuFirstOrder, nuResidualIp);
+
+                        // NSO diffusion-like term:
+                        // -nu * gUpper_ij * (duk/dxj - Gju_kj) * areav_i
+                        scalar gijFac = 0.0;
+                        for (label ic = 0; ic < nodesPerElement; ++ic)
+                        {
+                            const scalar r =
+                                p_velocity_shape_function[offSetSF + ic];
+                            const label icNdim = ic * SPATIAL_DIM;
+                            const scalar Ui = p_U[icNdim + i];
+
+                            const label offSetDnDx =
+                                SPATIAL_DIM * nodesPerElement * ip + icNdim;
+                            scalar lhsfac = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar axj = p_scs_areav[ipNdim + j];
+                                for (label k = 0; k < SPATIAL_DIM; ++k)
+                                {
+                                    const scalar gUp =
+                                        p_gijUp[gijOffset + j * SPATIAL_DIM +
+                                                k];
+                                    const scalar fac =
+                                        gUp * p_dndx[offSetDnDx + k] * axj;
+                                    const scalar facGj =
+                                        r * gUp *
+                                        p_gradU[icNdim * SPATIAL_DIM +
+                                                i * SPATIAL_DIM + k] *
+                                        axj;
+                                    // fourthFac: 0 = 2nd order, 1 = 4th order
+                                    gijFac += fac * Ui - facGj * fourthFac;
+                                    lhsfac += -fac;
+                                }
+                            }
+
+                            // no coupling between velocity components
+                            const label rowL =
+                                indexL * nodesPerElement * SPATIAL_DIM;
+                            const label rowR =
+                                indexR * nodesPerElement * SPATIAL_DIM;
+                            p_lhs[rowL + icNdim + i] += nuIp * lhsfac;
+                            p_lhs[rowR + icNdim + i] -= nuIp * lhsfac;
+                        }
+
+                        // NSO residual contribution
+                        const scalar residualNSO = -nuIp * gijFac;
+                        p_rhs[indexL] -= residualNSO;
+                        p_rhs[indexR] += residualNSO;
+                    }
+                }
+
                 // stress
                 for (label ic = 0; ic < nodesPerElement; ++ic)
                 {
@@ -401,7 +590,7 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                         for (label j = 0; j < SPATIAL_DIM; ++j)
                         {
                             const scalar axj = p_scs_areav[ipNdim + j];
-                            const scalar uj = p_U[icNdim + j];
+                            const scalar Uj = p_U[icNdim + j];
 
                             // -mu*dui/dxj*A_j; fixed i over j loop; see below..
                             const scalar lhsfacDiff_i =
@@ -419,17 +608,17 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                             p_lhs[rowR + icNdim + j] -= lhsfacDiff_j;
 
                             // rhs; il then ir
-                            p_rhs[indexL] -= lhsfacDiff_j * uj;
-                            p_rhs[indexR] += lhsfacDiff_j * uj;
+                            p_rhs[indexL] -= lhsfacDiff_j * Uj;
+                            p_rhs[indexR] += lhsfacDiff_j * Uj;
                         }
 
                         // deal with accumulated lhs and flux for -mu*dui/dxj*Aj
                         p_lhs[rowL + icNdim + i] += lhs_riC_i;
                         p_lhs[rowR + icNdim + i] -= lhs_riC_i;
 
-                        const scalar ui = p_U[icNdim + i];
-                        p_rhs[indexL] -= lhs_riC_i * ui;
-                        p_rhs[indexR] += lhs_riC_i * ui;
+                        const scalar Ui = p_U[icNdim + i];
+                        p_rhs[indexL] -= lhs_riC_i * Ui;
+                        p_rhs[indexR] += lhs_riC_i * Ui;
                     }
                 }
             }

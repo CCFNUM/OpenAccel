@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Base thermodynamic model for density, enthalpy, and temperature
 //              properties
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef THERMOMODEL_H
 #define THERMOMODEL_H

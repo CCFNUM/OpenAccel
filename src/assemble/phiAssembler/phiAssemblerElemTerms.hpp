@@ -2,8 +2,8 @@
 // Created    : Thu Feb 29 2024 10:44:13 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Element based (stencil) assembly kernel implementation
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
+
 namespace accel
 {
 
@@ -21,6 +21,16 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
+    // NSO active only when advection is present and enabled in expert params
+    const bool NSO =
+        includeAdv &&
+        mesh.controlsRef().solverRef().solverControl_.expertParameters_.nso_;
+    // 4th-order factor (0.0 = 2nd order, 1.0 = 4th order)
+    const scalar fourthFac =
+        mesh.controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.nsoFourthOrderFac_;
+
     // TODO: Account for BLOCKSIZE in space for LHS/RHS;
     // nodesPerElem*nodesPerElem* and nodesPerElem
     std::vector<scalar> lhs;
@@ -35,6 +45,8 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> ws_beta;
     std::vector<scalar> ws_gradPhi;
     std::vector<scalar> ws_Gamma;
+    std::vector<scalar> ws_U;
+    std::vector<scalar> ws_rho;
 
     // geometry related to populate
     std::vector<scalar> ws_scs_areav;
@@ -43,6 +55,9 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> ws_det_j;
     std::vector<scalar> ws_shape_function;
     std::vector<scalar> ws_coordinate_shape_function;
+    std::vector<scalar> ws_gijUpper;
+    std::vector<scalar> ws_gijLower;
+    std::vector<scalar> ws_gij_deriv;
 
     // ip values
     std::vector<scalar> phiIp(N);
@@ -52,17 +67,26 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> phiIpL(N);
     std::vector<scalar> phiIpR(N);
 
+    // const-size vectors
+    std::vector<scalar> rhoUIp(SPATIAL_DIM);
+    std::vector<scalar> dphiidxIp(SPATIAL_DIM);
+
     // pointers
     scalar* p_phiIp = &phiIp[0];
     scalar* p_phiIpL = &phiIpL[0];
     scalar* p_phiIpR = &phiIpR[0];
     scalar* p_coordIp = &coordIp[0];
+    scalar* p_rhoUIp = &rhoUIp[0];
+    scalar* p_dphiidxIp = &dphiidxIp[0];
 
     // Get transport fields/side fields
     const auto& phiSTKFieldRef = phi_->stkFieldRef();
     const auto& gradPhiSTKFieldRef = phi_->gradRef().stkFieldRef();
     const auto& blendingFactorSTKFieldRef =
         phi_->blendingFactorRef().stkFieldRef();
+    const auto* USTKFieldPtr =
+        NSO ? field_broker_->URef().stkFieldPtr() : nullptr;
+    const auto* rhoSTKFieldPtr = NSO ? this->rhoRef().stkFieldPtr() : nullptr;
 
     // Get geometric fields
     const auto& coordinatesRef = *metaData.get_field<scalar>(
@@ -115,12 +139,17 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
         ws_beta.resize(nodesPerElement * N);
         ws_gradPhi.resize(nodesPerElement * N * SPATIAL_DIM);
         ws_Gamma.resize(nodesPerElement);
+        ws_U.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rho.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
         ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_det_j.resize(numScsIp);
         ws_shape_function.resize(numScsIp * nodesPerElement);
         ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
+        ws_gijUpper.resize(numScsIp * SPATIAL_DIM * SPATIAL_DIM);
+        ws_gijLower.resize(numScsIp * SPATIAL_DIM * SPATIAL_DIM);
+        ws_gij_deriv.resize(numScsIp * nodesPerElement * SPATIAL_DIM);
 
         // pointer to lhs/rhs
         scalar* p_lhs = &lhs[0];
@@ -130,10 +159,14 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
         scalar* p_beta = &ws_beta[0];
         scalar* p_gradPhi = &ws_gradPhi[0];
         scalar* p_Gamma = &ws_Gamma[0];
+        scalar* p_U = &ws_U[0];
+        scalar* p_rho = &ws_rho[0];
         scalar* p_scs_areav = &ws_scs_areav[0];
         scalar* p_dndx = &ws_dndx[0];
         scalar* p_shape_function = &ws_shape_function[0];
         scalar* p_coordinate_shape_function = &ws_coordinate_shape_function[0];
+        scalar* p_gijUp = &ws_gijUpper[0];
+        scalar* p_gijLow = &ws_gijLower[0];
 
         // extract shape function
         if (isShifted)
@@ -212,6 +245,18 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
                             gradPhi[i * SPATIAL_DIM + j];
                     }
                 }
+
+                // NSO fields (velocity, density)
+                if (NSO)
+                {
+                    const scalar* U =
+                        stk::mesh::field_data(*USTKFieldPtr, node);
+                    p_rho[ni] = *stk::mesh::field_data(*rhoSTKFieldPtr, node);
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_U[niNdim + i] = U[i];
+                    }
+                }
             }
 
             // compute geometry
@@ -237,6 +282,15 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
                                &ws_deriv[0],
                                &ws_det_j[0],
                                &scs_error);
+            }
+
+            // compute metric tensors (only when NSO active)
+            if (NSO)
+            {
+                meSCS->gij(&ws_coordinates[0],
+                           &ws_gijUpper[0],
+                           &ws_gijLower[0],
+                           &ws_deriv[0]);
             }
 
             for (label ip = 0; ip < numScsIp; ++ip)
@@ -358,6 +412,135 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
                     const scalar alhsfacR = 0.5 * (tmDot - std::abs(tmDot));
                     p_lhs[rRiR_i] -= alhsfacR;
                     p_lhs[rLiR_i] += alhsfacR;
+                }
+
+                //================================
+                // NSO stabilization
+                //================================
+                if (NSO)
+                {
+                    constexpr scalar Cupw = 0.1;
+                    constexpr scalar small = 1.0e-16;
+
+                    const label gijOffset = ip * SPATIAL_DIM * SPATIAL_DIM;
+
+                    for (label i = 0; i < N; ++i)
+                    {
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_rhoUIp[j] = 0.0;
+                            p_dphiidxIp[j] = 0.0;
+                        }
+
+                        scalar dFdxAdv = 0.0;
+                        scalar dFdxCont = 0.0;
+                        scalar phiIp = 0.0;
+
+                        for (label ic = 0; ic < nodesPerElement; ++ic)
+                        {
+                            const scalar r = p_shape_function[offSetSF + ic];
+                            const scalar phi = p_phi[ic * N + i];
+                            const scalar rho = p_rho[ic];
+
+                            phiIp += r * phi;
+
+                            const label offSetDnDx =
+                                SPATIAL_DIM * nodesPerElement * ip +
+                                ic * SPATIAL_DIM;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar dnj = p_dndx[offSetDnDx + j];
+                                const scalar U = p_U[ic * SPATIAL_DIM + j];
+                                p_dphiidxIp[j] += phi * dnj;
+                                p_rhoUIp[j] += r * rho * U;
+                                dFdxAdv += rho * U * phi * dnj;
+                                dFdxCont += rho * U * dnj;
+                            }
+                        }
+
+                        // alternative residual (commutation error)
+                        scalar residualIp = dFdxAdv - phiIp * dFdxCont;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            residualIp -= p_rhoUIp[j] * p_dphiidxIp[j];
+                        }
+
+                        // denominator for nu and upwind nu
+                        scalar gUpperMagGradPhi = 0.0;
+                        scalar rhoUiGLowerRhoUj = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            for (label k = 0; k < SPATIAL_DIM; ++k)
+                            {
+                                gUpperMagGradPhi +=
+                                    p_dphiidxIp[j] *
+                                    p_gijUp[gijOffset + j * SPATIAL_DIM + k] *
+                                    p_dphiidxIp[k];
+                                rhoUiGLowerRhoUj +=
+                                    p_rhoUIp[j] *
+                                    p_gijLow[gijOffset + j * SPATIAL_DIM + k] *
+                                    p_rhoUIp[k];
+                            }
+                        }
+
+                        // artificial viscosity
+                        const scalar nuResidualIp =
+                            std::sqrt((residualIp * residualIp) /
+                                      (gUpperMagGradPhi + small));
+                        const scalar nuFirstOrder = std::sqrt(rhoUiGLowerRhoUj);
+                        const scalar nuIp =
+                            std::min(Cupw * nuFirstOrder, nuResidualIp);
+
+                        // NSO diffusion-like term:
+                        // -nu * gUpper_ij * (dphi/dxj - Gjq_j) * areav_i
+                        scalar gijFac = 0.0;
+                        for (label ic = 0; ic < nodesPerElement; ++ic)
+                        {
+                            const scalar r = p_shape_function[offSetSF + ic];
+                            const scalar phi = p_phi[ic * N + i];
+
+                            const label offSetDnDx =
+                                SPATIAL_DIM * nodesPerElement * ip +
+                                ic * SPATIAL_DIM;
+                            scalar lhsfac = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar axi =
+                                    p_scs_areav[ip * SPATIAL_DIM + j];
+                                for (label k = 0; k < SPATIAL_DIM; ++k)
+                                {
+                                    const scalar gUp =
+                                        p_gijUp[gijOffset + j * SPATIAL_DIM +
+                                                k];
+                                    const scalar fac =
+                                        gUp * p_dndx[offSetDnDx + k] * axi;
+                                    const scalar facGj =
+                                        r * gUp *
+                                        p_gradPhi[ic * N * SPATIAL_DIM +
+                                                  i * SPATIAL_DIM + k] *
+                                        axi;
+                                    // fourthFac: 0 = 2nd order, 1 = 4th order
+                                    gijFac += fac * phi - facGj * fourthFac;
+                                    lhsfac += -fac;
+                                }
+                            }
+
+                            const label indexL = il * N + i;
+                            const label indexR = ir * N + i;
+                            const label rowL = indexL * nodesPerElement * N;
+                            const label rowR = indexR * nodesPerElement * N;
+
+                            p_lhs[rowL + ic * N + i] += nuIp * lhsfac;
+                            p_lhs[rowR + ic * N + i] -= nuIp * lhsfac;
+                        }
+
+                        // NSO residual contribution
+                        const scalar residualNSO = -nuIp * gijFac;
+                        const label indexL = il * N + i;
+                        const label indexR = ir * N + i;
+                        p_rhs[indexL] -= residualNSO;
+                        p_rhs[indexR] += residualNSO;
+                    }
                 }
 
                 //================================

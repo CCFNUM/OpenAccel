@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Templated base class for element fields with side fields and
 //              time history
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef ELEMENTFIELD_H
 #define ELEMENTFIELD_H

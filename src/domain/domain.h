@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Physical domain definition with material properties and equation
 //              models
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef DOMAIN_H
 #define DOMAIN_H
@@ -192,14 +191,29 @@ struct material
 
 struct source
 {
-    sourceOption option_ = sourceOption::source;
-    std::vector<scalar> value_;
-
     source() = default;
 
     source(label dim) : value_(dim, 0.0)
     {
     }
+
+    std::vector<scalar> value_;
+};
+
+struct equationSource : source
+{
+    using source::source;
+
+    sourceOption option_ = sourceOption::source;
+};
+
+struct generalMomentumSource : source
+{
+    generalMomentumSource() : source(SPATIAL_DIM)
+    {
+    }
+
+    bool redistributeInRhieChow_ = false;
 };
 
 class domain
@@ -244,14 +258,11 @@ protected:
 
     void setupPressureLevelInformation_();
 
-    // domain uniform body force
-    std::array<scalar, SPATIAL_DIM> uniformBodyForce_{0};
-
     // equation sources
 
-    source energySource_;
+    equationSource energySource_;
 
-    source momentumSource_;
+    generalMomentumSource generalMomentumSource_;
 
     void read_();
 
@@ -297,12 +308,6 @@ public:
     {
         assert(type_ == domainType::fluid);
         return associatedPartitionRankForPressureLevelNode_;
-    }
-
-    std::array<scalar, SPATIAL_DIM> uniformBodyForce() const
-    {
-        assert(type_ == domainType::fluid);
-        return uniformBodyForce_;
     }
 
     void addEquation(const equationID eq_id)
@@ -360,14 +365,24 @@ public:
 
     const mesh& meshRef() const;
 
-    const source& energySource() const
+    equationSource& energySourceRef()
     {
         return energySource_;
     }
 
-    const source& momentumSource() const
+    const equationSource& energySourceRef() const
     {
-        return momentumSource_;
+        return energySource_;
+    }
+
+    generalMomentumSource& generalMomentumSourceRef()
+    {
+        return generalMomentumSource_;
+    }
+
+    const generalMomentumSource& generalMomentumSourceRef() const
+    {
+        return generalMomentumSource_;
     }
 
     // materials

@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Assembler for the pressure correction equation in segregated
 //              flow
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef PRESSURECORRECTIONASSEMBLER_H
 #define PRESSURECORRECTIONASSEMBLER_H
@@ -46,9 +45,7 @@ protected:
     {
     }
 
-    void postAssemble_(const domain*, Context*) override
-    {
-    }
+    void postAssemble_(const domain*, Context*) override;
 
 private:
     flowModel* model_;
@@ -83,7 +80,7 @@ private:
     // boundary conditions
     void assembleElemTermsBoundarySymmetry_(const domain* domain,
                                             const boundary* boundary,
-                                            Context* ctx);
+                                            Context* ctx) override;
     void assembleElemTermsBoundaryWallNoSlip_(const domain* domain,
                                               const boundary* boundary,
                                               Context* ctx);

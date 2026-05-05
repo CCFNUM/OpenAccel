@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2025 13:38:51 (+0100)
 // Author     : Achraf Nagihi
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "kEpsilonModel.h"
 #include "messager.h"
@@ -206,8 +205,8 @@ void kEpsilonModel::updateEpsilonAtWalls(const std::shared_ptr<domain> domain)
                         stk::mesh::field_data(*epsilonSTKFieldPtr, node);
                     scalar* bcEpsilon =
                         stk::mesh::field_data(*bcEpsilonSTKFieldPtr, node);
-                    scalar yStar = (rhoBip * uStarBip[ip] *
-                                    wallNormalDistanceBip[ip] / 4.0) /
+                    scalar yStar = (rhoBip * uStarBip[ip] * NWDFactor_ *
+                                    wallNormalDistanceBip[ip]) /
                                    muBip;
 
                     scalar yStarTilde = std::max(yStar, 11.06);
