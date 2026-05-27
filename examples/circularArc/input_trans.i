@@ -29,7 +29,6 @@ simulation:
                     option: cartesian_components
                     x: 1
                     y: 0
-                    z: 0
                 heat_transfer:
                     option: total_temperature
                     total_temperature: 327.3549
@@ -52,7 +51,7 @@ simulation:
           initialization:
             velocity:
                 option: value
-                velocity: [234.415, 0, 0]
+                velocity: [234.415, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -106,6 +105,7 @@ simulation:
                                 trunc_factor: 0.3 # Keeps the solver lean
             expert_parameters:
                 consistent: true
+                relax_gradients: false
         output_control:
             file_path: results_trans.e
             output_frequency: 10

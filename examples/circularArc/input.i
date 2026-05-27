@@ -29,7 +29,6 @@ simulation:
                     option: cartesian_components
                     x: 1
                     y: 0
-                    z: 0
                 heat_transfer:
                     option: total_temperature
                     total_temperature: 315.0095
@@ -46,13 +45,10 @@ simulation:
             boundary_details:
                 mass_and_momentum:
                     option: free_slip_wall
-          - name: symmetry
-            type: symmetry
-            location: [symmetry]
           initialization:
             velocity:
                 option: value
-                velocity: [173.64, 0, 0]
+                velocity: [173.64, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -104,6 +100,7 @@ simulation:
                                 trunc_factor: 0.3 # Keeps the solver lean
             expert_parameters:
                 consistent: true
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 10
