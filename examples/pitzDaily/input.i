@@ -9,7 +9,7 @@ simulation:
             option: steady_state
         domains:
         - name: default_domain
-          location: [fluid-hex]
+          location: [fluid-quad]
           materials: [air]
           type: fluid
           domain_models:
@@ -20,7 +20,7 @@ simulation:
           boundaries:
           - name: wall
             type: wall
-            location: [lower_wall, upper_wall]
+            location: [wall]
           - name: inlet
             type: inlet
             location: [inlet]
@@ -29,7 +29,6 @@ simulation:
                     option: velocity_components
                     u: 10
                     v: 0
-                    w: 0
                 turbulence:
                     option: k_and_omega
                     k: 0.375
@@ -41,13 +40,10 @@ simulation:
                 mass_and_momentum:
                     option: static_pressure
                     relative_pressure: 0
-          - name: front_and_back
-            type: symmetry
-            location: [front_and_back]
           initialization:
             velocity:
                 option: value
-                velocity: [0, 0, 0]
+                velocity: [0, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -64,14 +60,14 @@ simulation:
                 turbulence_numerics: upwind
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 2500
+                    max_iterations: 1500
                     physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.5
-                        pressure_relaxation_factor: 0.3
+                        velocity_relaxation_factor: 0.9
+                        turbulence_relaxation_factor: 0.5
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-8
+                    residual_target: 1e-6
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:
@@ -105,6 +101,7 @@ simulation:
                                 aggressive_levels: 1
                                 trunc_factor: 0.3
             expert_parameters:
+                consistent: true
                 wall_distance_method: mesh_wave
         output_control:
             file_path: results.e
