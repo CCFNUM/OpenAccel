@@ -41,16 +41,10 @@ protected:
                                                    Context* ctx) override;
     void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
                                                     Context* ctx) override;
-    void assembleElemTermsInterior_(const domain* domain,
-                                    Context* ctx) override;
 
 #ifdef HAS_INTERFACE
     void assembleElemTermsInterfaces_(const domain* domain,
                                       Context* ctx) override;
-    void assembleElemTermsInterfaceSide_(
-        const domain* domain,
-        const interfaceSideInfo* interfaceSideInfoPtr,
-        Context* ctx) override;
     void assembleElemTermsInterfaceSideNoSlipWall_(
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,

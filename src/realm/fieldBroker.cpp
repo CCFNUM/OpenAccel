@@ -1157,18 +1157,26 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
     }
 }
 
+void fieldBroker::setupPressureCorrection(const std::shared_ptr<domain> domain)
+{
+    if (pCorrRef().isZoneUnset(domain->index()))
+    {
+        pCorrRef().setZone(domain->index());
+
+        // The pressure correction p' is a fresh quantity every outer iteration,
+        // so its gradient must NOT be relaxed across iterations: force the
+        // gradient under-relaxation factor to 1 (full gradient). This is what
+        // lets the segregated velocity correction U -= D*grad(p') use the true
+        // increment while the pressure field gradient itself may be relaxed.
+        pCorrRef().setGradURF(1);
+    }
+}
+
 void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
 {
     if (pRef().isZoneUnset(domain->index()))
     {
         pRef().setZone(domain->index());
-
-        // FIXME: pressure correction gradient is not stored hence we
-        // reconstruct it at correction level, the fact which requires a
-        // non-relaxed pressure gradient. This puts a limitation but works well,
-        // at time no extra storage has to be dedicated to a pressure correction
-        // field and its gradient
-        pRef().setGradURF(1);
 
         // set initial conditions from input
         initialCondition::setupFieldInitializationOverDomainFromInput(
@@ -4052,6 +4060,15 @@ void fieldBroker::updatePressureGradientField(
     }
 }
 
+void fieldBroker::updatePressureCorrectionGradientField(
+    const std::shared_ptr<domain> domain)
+{
+    if (realmPtr_->pCorr_)
+    {
+        pCorrRef().updateGradientField(domain->index());
+    }
+}
+
 void fieldBroker::updateTemperatureGradientField(
     const std::shared_ptr<domain> domain)
 {
@@ -4769,6 +4786,26 @@ const pressure& fieldBroker::pRef() const
 {
     RETURN_REF_ALLOC(
         realmPtr_->p_, pressure, realmPtr_, realm::p_ID, n_states, high_res);
+}
+
+pressureCorrection& fieldBroker::pCorrRef()
+{
+    RETURN_REF_ALLOC(realmPtr_->pCorr_,
+                     pressureCorrection,
+                     realmPtr_,
+                     realm::pCorr_ID,
+                     n_states,
+                     high_res);
+}
+
+const pressureCorrection& fieldBroker::pCorrRef() const
+{
+    RETURN_REF_ALLOC(realmPtr_->pCorr_,
+                     pressureCorrection,
+                     realmPtr_,
+                     realm::pCorr_ID,
+                     n_states,
+                     high_res);
 }
 
 simpleScalarField& fieldBroker::p0Ref()

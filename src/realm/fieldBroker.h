@@ -110,6 +110,8 @@ public:
 
     virtual void setupPressure(const std::shared_ptr<domain> domain);
 
+    virtual void setupPressureCorrection(const std::shared_ptr<domain> domain);
+
     virtual void setupTemperature(const std::shared_ptr<domain> domain);
 
     virtual void setupSpecificEnthalpy(const std::shared_ptr<domain> domain);
@@ -453,6 +455,9 @@ public:
 
     virtual void
     updatePressureGradientField(const std::shared_ptr<domain> domain);
+
+    virtual void
+    updatePressureCorrectionGradientField(const std::shared_ptr<domain> domain);
 
     virtual void
     updateTemperatureGradientField(const std::shared_ptr<domain> domain);
@@ -875,6 +880,10 @@ protected:
     pressure& pRef();
 
     const pressure& pRef() const;
+
+    pressureCorrection& pCorrRef();
+
+    const pressureCorrection& pCorrRef() const;
 
     simpleScalarField& p0Ref();
 

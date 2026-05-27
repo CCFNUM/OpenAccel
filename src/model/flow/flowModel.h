@@ -31,6 +31,7 @@ public:
     using fieldBroker::muEffRef;
     using fieldBroker::muRef;
     using fieldBroker::p0Ref;
+    using fieldBroker::pCorrRef;
     using fieldBroker::pRef;
     using fieldBroker::psiRef;
     using fieldBroker::TRef;

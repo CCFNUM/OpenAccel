@@ -47,6 +47,9 @@ void pressureCorrectionEquation::setup()
     // setup pressure
     FOREACH_DOMAIN(model_->setupPressure);
 
+    // setup the dedicated pressure correction field
+    FOREACH_DOMAIN(model_->setupPressureCorrection);
+
     // setup assembler
     assembler_->setup(&model_->pRef(), null, domainVector_, nullptr);
 

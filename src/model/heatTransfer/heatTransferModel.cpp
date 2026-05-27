@@ -12,9 +12,6 @@
 #include "realm.h"
 #include "simulation.h"
 #include "sutherlandsFormulaModel.h"
-#ifdef HAS_INTERFACE
-#include "ipInfo.h"
-#endif
 
 namespace accel
 {

@@ -24,7 +24,6 @@ target_sources(main_obj PRIVATE
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionEquation.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionAssemblerElemBoundaryConditions.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionAssemblerElemInterfaceConditions.cpp
-    ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionAssemblerElemTerms.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionAssemblerNodeTerms.cpp
 )
 

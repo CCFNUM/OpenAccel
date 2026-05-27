@@ -546,12 +546,20 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
 
                     // assemble residual weighted by f_cs
                     const label indexR = nn * N + i;
-                    p_rhs[indexR] -=
+                    const scalar fluxResid =
                         ((ncDiffFlux +
                           penaltyMultiplier * penaltyIp *
                               (currentPhiBip[i] - opposingPhiBip[i])) *
                              fcs * c_amag +
                          fcs * ncAdv);
+                    p_rhs[indexR] -= fluxResid;
+
+                    // diagnostics hook. Only meaningful for scalar phi (N==1).
+                    if constexpr (N == 1)
+                    {
+                        this->recordInterfaceFlux_(
+                            currentFace, currentGaussPointId, fluxResid);
+                    }
 
                     // set-up row for matrix
                     const label rowR = indexR * totalNodes * N;

@@ -89,6 +89,18 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
                 .solverRef()
                 .solverControl_.expertParameters_.incrementalGradientChange_;
 
+        // relax the gradient across outer iterations? if disabled, force the
+        // gradient under-relaxation factor to 1 (full, un-relaxed gradient)
+        const bool relaxGradients =
+            this->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.relaxGradients_;
+        if (!relaxGradients)
+        {
+            gradURF_ = 1.0;
+        }
+
         // setup the gradient
         this->setupGradientField();
     }

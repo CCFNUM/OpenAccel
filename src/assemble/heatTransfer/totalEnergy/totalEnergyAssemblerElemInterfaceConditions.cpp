@@ -152,25 +152,29 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
         const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
             metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-        // GGI path is not yet validated for the total-energy problem; preserve
-        // the original errorMsg behavior at the top of the function and run the
-        // unified loop for DG below.
-        if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-            nonconformalMethod::generalGridInterface)
-        {
-            errorMsg("Not implemented yet");
-            return;
-        }
+        // extract vector of interface IP info
 
-        // Unified loop over per-IP info.  Storage is owned by the base
-        // interfaceSideInfo; concrete side classes store derived records upcast
-        // to ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is
-        // identical to the original DG implementation.
-        for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
+        const auto ggiMethod =
+            field_broker_->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.ggiAssemblyMethod_;
+        const bool useGgiNonPenalty =
+            interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+                nonconformalMethod::generalGridInterface &&
+            ggiMethod != ggiAssemblyMethod::penaltyMortar;
+        const scalar multiplier = useGgiNonPenalty ? 1.0 : 0.5;
+
+        const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
+
+        for (label iSide = 0; iSide < static_cast<label>(ipInfoVec.size());
+             iSide++)
         {
+            const auto& faceIpInfoVec = ipInfoVec[iSide];
+
             for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
-                ipInfo* ip = faceIpInfoVec[k];
+                const ipInfo* ip = faceIpInfoVec[k];
 
                 if (ip->isExposed_)
                     continue;
@@ -460,10 +464,6 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 }
 
                 // apply transformations
-                interfaceSideInfoPtr->rotateVectorListCompact<1>(
-                    ws_o_face_h0, opposing_num_face_nodes);
-                interfaceSideInfoPtr->rotateVectorList<1>(
-                    ws_o_elem_h0, opposing_num_elem_nodes);
                 interfaceSideInfoPtr->transformCoordinateList(
                     ws_o_elem_coordinates, opposing_num_elem_nodes);
 
@@ -472,6 +472,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     stk::mesh::field_data(qDotSideSTKFieldRef, currentFace);
                 const scalar* c_areaVec = stk::mesh::field_data(
                     exposedAreaVecSTKFieldRef, currentFace);
+
+                // contact surface area fraction
+                const scalar fcs = ip->areaFraction_;
 
                 scalar c_amag = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -482,7 +485,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 }
                 c_amag = std::sqrt(c_amag);
 
-                // now compute normal
+                // compute normal from parent scs area vector
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     p_cNx[i] =
@@ -491,8 +494,8 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 }
 
                 // compute opposing normal: in theory it is assumed
-                // that the current and opposing sub-control
-                // surfaces are sufficiently planar
+                // that the current and opposing sub-control surfaces are
+                // sufficiently planar
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     p_oNx[i] = -p_cNx[i];
@@ -664,7 +667,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     p_rhs[p] = 0.0;
                 }
 
-                // extract nearset node
+                // extract nearest node
                 const label nn = ipNodeMap[currentGaussPointId];
 
                 // compute general shape function at current and
@@ -686,16 +689,18 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                 const scalar abs_tmDot = std::abs(tmDot);
 
-                // compute penalty
+                // compute penalty (active for penaltyMortar)
                 const scalar penaltyIp =
                     penaltyFactor *
                     (currentLambdaEffBip * currentInverseLength +
                      opposingLambdaEffBip * opposingInverseLength) /
                     2.0;
+                const scalar penaltyMultiplier = 2.0 * (1.0 - multiplier);
 
                 // non conformal diffusive flux
                 const scalar ncDiffFlux =
-                    (currentDiffFluxBip - opposingDiffFluxBip) / 2.0;
+                    currentDiffFluxBip * multiplier -
+                    opposingDiffFluxBip * (1.0 - multiplier);
 
                 // non conformal advection
                 const scalar ncAdv =
@@ -706,15 +711,17 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // current face assembly
                 const label indexR = nn;
                 p_rhs[indexR] -=
-                    ((ncDiffFlux + penaltyIp * (currentTBip - opposingTBip)) *
-                         c_amag +
-                     ncAdv);
+                    ((ncDiffFlux + penaltyIp * penaltyMultiplier *
+                                       (currentTBip - opposingTBip)) *
+                         fcs * c_amag +
+                     fcs * ncAdv);
 
                 // fill the nc-heat flow rate
                 qDot[currentGaussPointId] =
-                    ((ncDiffFlux + penaltyIp * (currentTBip - opposingTBip)) *
-                         c_amag +
-                     ncAdv);
+                    ((ncDiffFlux + penaltyIp * penaltyMultiplier *
+                                       (currentTBip - opposingTBip)) *
+                         fcs * c_amag +
+                     fcs * ncAdv);
 
                 // set-up row for matrix
                 const label rowR = indexR * totalNodes;
@@ -722,8 +729,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // sensitivities; current face (penalty and
                 // advection); use general shape function for
                 // this single ip
-                const scalar lhsFacC = penaltyIp / currentCpBip * c_amag +
-                                       (abs_tmDot + tmDot) / 2.0;
+                const scalar lhsFacC = penaltyMultiplier * penaltyIp /
+                                           currentCpBip * fcs * c_amag +
+                                       fcs * (abs_tmDot + tmDot) / 2.0;
                 for (label ic = 0; ic < currentNodesPerFace; ++ic)
                 {
                     const label icNdim = c_face_node_ordinals[ic];
@@ -744,16 +752,16 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                         // -Gamma*dphi/dxj*nj*dS
                         p_lhs[rowR + icNdim] += -currentLambdaEffBip * dndxj *
-                                                nxj * c_amag / 2.0 /
-                                                currentCpBip;
+                                                nxj * fcs * c_amag *
+                                                multiplier / currentCpBip;
                     }
                 }
 
                 // sensitivities; opposing face (penalty and
-                // advection); use general shape function for
-                // this single ip
-                const scalar lhsFacO = penaltyIp / opposingCpBip * c_amag +
-                                       (abs_tmDot - tmDot) / 2.0;
+                // advection)
+                const scalar lhsFacO = penaltyMultiplier * penaltyIp /
+                                           opposingCpBip * fcs * c_amag +
+                                       fcs * (abs_tmDot - tmDot) / 2.0;
                 for (label ic = 0; ic < opposingNodesPerFace; ++ic)
                 {
                     const label icNdim =
@@ -774,9 +782,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                         const scalar dndxl = p_o_dndx[offSetDnDx + l];
 
                         // -Gamma*dphi/dxj*nj*dS
-                        p_lhs[rowR + icNdim] -= -opposingLambdaEffBip * dndxl *
-                                                nxl * c_amag / 2.0 /
-                                                opposingCpBip;
+                        p_lhs[rowR + icNdim] -=
+                            -opposingLambdaEffBip * dndxl * nxl * fcs * c_amag *
+                            (1.0 - multiplier) / opposingCpBip;
                     }
                 }
 

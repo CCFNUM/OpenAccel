@@ -845,6 +845,14 @@ protected:
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx);
+
+    // Optional per-IP hook called once per non-exposed interface fragment
+    // from inside assembleElemTermsInterfaceSide_. Only invoked for N==1.
+    virtual void recordInterfaceFlux_(stk::mesh::Entity /*face*/,
+                                      label /*currentGaussPointId*/,
+                                      scalar /*fluxValue*/)
+    {
+    }
 #endif /* HAS_INTERFACE */
 
     virtual void assembleElemTermsBoundary_(const domain* domain, Context* ctx);

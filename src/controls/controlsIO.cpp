@@ -941,6 +941,12 @@ void controls::read(YAML::Node inputNode)
                         .template as<bool>();
             }
 
+            if (expertParameters["relax_gradients"])
+            {
+                solver_.solverControl_.expertParameters_.relaxGradients_ =
+                    expertParameters["relax_gradients"].template as<bool>();
+            }
+
             if (expertParameters["false_mass_accumulation"])
             {
                 solver_.solverControl_.expertParameters_

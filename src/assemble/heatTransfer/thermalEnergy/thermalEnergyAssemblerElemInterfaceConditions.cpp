@@ -107,10 +107,16 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
         std::vector<scalar> ws_o_face_h;
         std::vector<scalar> ws_c_elem_h;
         std::vector<scalar> ws_o_elem_h;
+        std::vector<scalar> ws_c_face_T;
+        std::vector<scalar> ws_o_face_T;
+        std::vector<scalar> ws_c_elem_T;
+        std::vector<scalar> ws_o_elem_T;
         std::vector<scalar> ws_c_elem_coordinates;
         std::vector<scalar> ws_o_elem_coordinates;
-        std::vector<scalar> ws_c_Gamma;
-        std::vector<scalar> ws_o_Gamma;
+        std::vector<scalar> ws_c_lambdaEff;
+        std::vector<scalar> ws_o_lambdaEff;
+        std::vector<scalar> ws_c_cp;
+        std::vector<scalar> ws_o_cp;
 
         // master element data
         std::vector<scalar> ws_c_dndx;
@@ -123,6 +129,7 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
         // Get transport fields/side fields
         const auto& hSTKFieldRef = phi_->stkFieldRef();
         const auto& TSTKFieldRef = model_->TRef().stkFieldRef();
+        const auto& cpSTKFieldRef = model_->cpRef().stkFieldRef();
         auto& qDotSideSTKFieldRef =
             model_->qDotRef().sideFieldRef().stkFieldRef();
 
@@ -175,8 +182,6 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                 // local ip, ordinals, etc
                 const label currentGaussPointId = ip->currentGaussPointId_;
-                const label opposingGaussPointId = ip->opposingGaussPointId_;
-
                 currentIsoParCoords = ip->currentIsoParCoords_;
                 opposingIsoParCoords = ip->opposingIsoParCoords_;
 
@@ -204,9 +209,12 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 scratchVals.resize(rhsSize);
                 connectedNodes.resize(totalNodes);
 
-                // algorithm related; element
+                // algorithm related; element; dndx will be at a
+                // single gauss point...
                 ws_c_elem_h.resize(currentNodesPerElement);
                 ws_o_elem_h.resize(opposingNodesPerElement);
+                ws_c_elem_T.resize(currentNodesPerElement);
+                ws_o_elem_T.resize(opposingNodesPerElement);
                 ws_c_elem_coordinates.resize(currentNodesPerElement *
                                              SPATIAL_DIM);
                 ws_o_elem_coordinates.resize(opposingNodesPerElement *
@@ -219,8 +227,12 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // algorithm related; face
                 ws_c_face_h.resize(currentNodesPerFace);
                 ws_o_face_h.resize(opposingNodesPerFace);
-                ws_c_Gamma.resize(currentNodesPerFace);
-                ws_o_Gamma.resize(opposingNodesPerFace);
+                ws_c_face_T.resize(currentNodesPerFace);
+                ws_o_face_T.resize(opposingNodesPerFace);
+                ws_c_lambdaEff.resize(currentNodesPerFace);
+                ws_o_lambdaEff.resize(opposingNodesPerFace);
+                ws_c_cp.resize(currentNodesPerFace);
+                ws_o_cp.resize(opposingNodesPerFace);
                 ws_c_general_shape_function.resize(currentNodesPerFace);
                 ws_o_general_shape_function.resize(opposingNodesPerFace);
 
@@ -232,10 +244,16 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 scalar* p_o_face_h = &ws_o_face_h[0];
                 scalar* p_c_elem_h = &ws_c_elem_h[0];
                 scalar* p_o_elem_h = &ws_o_elem_h[0];
+                scalar* p_c_face_T = &ws_c_face_T[0];
+                scalar* p_o_face_T = &ws_o_face_T[0];
+                scalar* p_c_elem_T = &ws_c_elem_T[0];
+                scalar* p_o_elem_T = &ws_o_elem_T[0];
                 scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
                 scalar* p_o_elem_coordinates = &ws_o_elem_coordinates[0];
-                scalar* p_c_Gamma = &ws_c_Gamma[0];
-                scalar* p_o_Gamma = &ws_o_Gamma[0];
+                scalar* p_c_lambdaEff = &ws_c_lambdaEff[0];
+                scalar* p_o_lambdaEff = &ws_o_lambdaEff[0];
+                scalar* p_c_cp = &ws_c_cp[0];
+                scalar* p_o_cp = &ws_o_cp[0];
 
                 // me pointers
                 scalar* p_c_general_shape_function =
@@ -260,8 +278,12 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                     // gather; scalar
                     p_c_face_h[ni] = *stk::mesh::field_data(hSTKFieldRef, node);
-                    p_c_Gamma[ni] =
+                    p_c_face_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
+                    p_c_lambdaEff[ni] =
                         *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
+                    p_c_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
+
+                    p_c_lambdaEff[ni] *= p_c_cp[ni];
                 }
 
                 // populate opposing face_node_ordinals
@@ -279,8 +301,12 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                     // gather; scalar
                     p_o_face_h[ni] = *stk::mesh::field_data(hSTKFieldRef, node);
-                    p_o_Gamma[ni] =
+                    p_o_face_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
+                    p_o_lambdaEff[ni] =
                         *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
+                    p_o_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
+
+                    p_o_lambdaEff[ni] *= p_o_cp[ni];
                 }
 
                 // gather current element data; sneak in first of
@@ -298,6 +324,7 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                     // gather scalar
                     p_c_elem_h[ni] = *stk::mesh::field_data(hSTKFieldRef, node);
+                    p_c_elem_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
 
                     // gather; vector
                     const scalar* coords =
@@ -323,6 +350,7 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                     // gather scalar
                     p_o_elem_h[ni] = *stk::mesh::field_data(hSTKFieldRef, node);
+                    p_o_elem_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
 
                     // gather; vector
                     const scalar* coords =
@@ -363,24 +391,17 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                         c_amag;
                 }
 
+                // compute opposing normal: in theory it is assumed
+                // that the current and opposing sub-control surfaces are
+                // sufficiently planar
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     p_oNx[i] = -p_cNx[i];
                 }
 
-                // use standard isopar coords for current IP
-                // (face-centroid IP location for this gauss point)
-                meFCCurrent->general_shape_fcn(1,
-                                               &currentIsoParCoords[0],
-                                               &ws_c_general_shape_function[0]);
-
-                // compute opposing general shape function
-                meFCOpposing->general_shape_fcn(
-                    1,
-                    &opposingIsoParCoords[0],
-                    &ws_o_general_shape_function[0]);
-
-                // project from side to element
+                // project from side to element; method deals with
+                // the -1:1 isInElement range to the proper
+                // underlying CVFEM range
                 meSCSCurrent->sidePcoords_to_elemPcoords(
                     currentFaceOrdinal,
                     1,
@@ -409,12 +430,14 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     &ws_o_det_j[0],
                     &scs_error);
 
-                // current inverse length scale
+                // current inverse length scale; can loop over face
+                // nodes to avoid "nodesOnFace" array
                 scalar currentInverseLength = 0.0;
                 for (label ic = 0; ic < current_num_face_nodes; ++ic)
                 {
                     const label faceNodeNumber = c_face_node_ordinals[ic];
-                    const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
+                    const label offSetDnDx =
+                        faceNodeNumber * SPATIAL_DIM; // single intg. point
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         const scalar nxj = p_cNx[j];
@@ -423,12 +446,14 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     }
                 }
 
-                // opposing inverse length scale
+                // opposing inverse length scale; can loop over face
+                // nodes to avoid "nodesOnFace" array
                 scalar opposingInverseLength = 0.0;
                 for (label ic = 0; ic < opposing_num_face_nodes; ++ic)
                 {
                     const label faceNodeNumber = o_face_node_ordinals[ic];
-                    const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
+                    const label offSetDnDx =
+                        faceNodeNumber * SPATIAL_DIM; // single intg. point
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         const scalar nxj = p_oNx[j];
@@ -448,17 +473,35 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                                                &ws_o_face_h[0],
                                                &opposingHBip);
 
-                scalar currentGammaBip = 0.0;
-                meFCCurrent->interpolatePoint(1,
-                                              &currentIsoParCoords[0],
-                                              &ws_c_Gamma[0],
-                                              &currentGammaBip);
+                scalar currentTBip = 0.0;
+                meFCCurrent->interpolatePoint(
+                    1, &currentIsoParCoords[0], &ws_c_face_T[0], &currentTBip);
 
-                scalar opposingGammaBip = 0.0;
+                scalar opposingTBip = 0.0;
                 meFCOpposing->interpolatePoint(1,
                                                &opposingIsoParCoords[0],
-                                               &ws_o_Gamma[0],
-                                               &opposingGammaBip);
+                                               &ws_o_face_T[0],
+                                               &opposingTBip);
+
+                scalar currentLambdaEffBip = 0.0;
+                meFCCurrent->interpolatePoint(1,
+                                              &currentIsoParCoords[0],
+                                              &ws_c_lambdaEff[0],
+                                              &currentLambdaEffBip);
+
+                scalar opposingLambdaEffBip = 0.0;
+                meFCOpposing->interpolatePoint(1,
+                                               &opposingIsoParCoords[0],
+                                               &ws_o_lambdaEff[0],
+                                               &opposingLambdaEffBip);
+
+                scalar currentCpBip = 0.0;
+                meFCCurrent->interpolatePoint(
+                    1, &currentIsoParCoords[0], &ws_c_cp[0], &currentCpBip);
+
+                scalar opposingCpBip = 0.0;
+                meFCOpposing->interpolatePoint(
+                    1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
 
                 // compute diffusion vector; current
                 scalar currentDiffFluxBip = 0;
@@ -472,11 +515,11 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                         const scalar nxj = p_cNx[j];
                         const scalar dndxj = p_c_dndx[offSetDnDx + j];
 
-                        const scalar h = p_c_elem_h[ic];
+                        const scalar T = p_c_elem_T[ic];
 
                         // -Gamma*dphi/dxj*Aj
                         currentDiffFluxBip +=
-                            -currentGammaBip * dndxj * nxj * h;
+                            -currentLambdaEffBip * dndxj * nxj * T;
                     }
                 }
 
@@ -492,11 +535,11 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                         const scalar nxj = p_oNx[j];
                         const scalar dndxj = p_o_dndx[offSetDnDx + j];
 
-                        const scalar h = p_o_elem_h[ic];
+                        const scalar T = p_o_elem_T[ic];
 
                         // -Gamma*dphi/dxj*Aj
                         opposingDiffFluxBip +=
-                            -opposingGammaBip * dndxj * nxj * h;
+                            -opposingLambdaEffBip * dndxj * nxj * T;
                     }
                 }
 
@@ -513,19 +556,30 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // extract nearest node
                 const label nn = ipNodeMap[currentGaussPointId];
 
-                // mass flow rate at parent IP; advection
+                // compute general shape function at current and
+                // opposing integration points
+                meFCCurrent->general_shape_fcn(1,
+                                               &currentIsoParCoords[0],
+                                               &ws_c_general_shape_function[0]);
+                meFCOpposing->general_shape_fcn(
+                    1,
+                    &opposingIsoParCoords[0],
+                    &ws_o_general_shape_function[0]);
+
+                // save mDot
                 const scalar tmDot =
                     includeAdv ? (stk::mesh::field_data(
                                      *mDotSideSTKFieldPtr_,
                                      currentFace))[currentGaussPointId]
                                : 0.0;
+
                 const scalar abs_tmDot = std::abs(tmDot);
 
                 // compute penalty (active for penaltyMortar)
                 const scalar penaltyIp =
                     penaltyFactor *
-                    (currentGammaBip * currentInverseLength +
-                     opposingGammaBip * opposingInverseLength) /
+                    (currentLambdaEffBip * currentInverseLength +
+                     opposingLambdaEffBip * opposingInverseLength) /
                     2.0;
                 const scalar penaltyMultiplier = 2.0 * (1.0 - multiplier);
 
@@ -544,14 +598,14 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 const label indexR = nn;
                 p_rhs[indexR] -=
                     ((ncDiffFlux + penaltyIp * penaltyMultiplier *
-                                       (currentHBip - opposingHBip)) *
+                                       (currentTBip - opposingTBip)) *
                          fcs * c_amag +
                      fcs * ncAdv);
 
                 // fill the nc-heat flow rate
                 qDot[currentGaussPointId] =
                     ((ncDiffFlux + penaltyIp * penaltyMultiplier *
-                                       (currentHBip - opposingHBip)) *
+                                       (currentTBip - opposingTBip)) *
                          fcs * c_amag +
                      fcs * ncAdv);
 
@@ -561,9 +615,9 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // sensitivities; current face (penalty and
                 // advection); use general shape function for
                 // this single ip
-                const scalar lhsFacC =
-                    penaltyMultiplier * penaltyIp * fcs * c_amag +
-                    fcs * (abs_tmDot + tmDot) / 2.0;
+                const scalar lhsFacC = penaltyMultiplier * penaltyIp /
+                                           currentCpBip * fcs * c_amag +
+                                       fcs * (abs_tmDot + tmDot) / 2.0;
                 for (label ic = 0; ic < currentNodesPerFace; ++ic)
                 {
                     const label icNdim = c_face_node_ordinals[ic];
@@ -583,16 +637,17 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                         const scalar dndxj = p_c_dndx[offSetDnDx + j];
 
                         // -Gamma*dphi/dxj*nj*dS
-                        p_lhs[rowR + icNdim] += -currentGammaBip * dndxj * nxj *
-                                                fcs * c_amag * multiplier;
+                        p_lhs[rowR + icNdim] += -currentLambdaEffBip * dndxj *
+                                                nxj * fcs * c_amag *
+                                                multiplier / currentCpBip;
                     }
                 }
 
                 // sensitivities; opposing face (penalty and
                 // advection)
-                const scalar lhsFacO =
-                    penaltyMultiplier * penaltyIp * fcs * c_amag +
-                    fcs * (abs_tmDot - tmDot) / 2.0;
+                const scalar lhsFacO = penaltyMultiplier * penaltyIp /
+                                           opposingCpBip * fcs * c_amag +
+                                       fcs * (abs_tmDot - tmDot) / 2.0;
                 for (label ic = 0; ic < opposingNodesPerFace; ++ic)
                 {
                     const label icNdim =
@@ -613,9 +668,9 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                         const scalar dndxl = p_o_dndx[offSetDnDx + l];
 
                         // -Gamma*dphi/dxj*nj*dS
-                        p_lhs[rowR + icNdim] -= -opposingGammaBip * dndxl *
-                                                nxl * fcs * c_amag *
-                                                (1.0 - multiplier);
+                        p_lhs[rowR + icNdim] -=
+                            -opposingLambdaEffBip * dndxl * nxl * fcs * c_amag *
+                            (1.0 - multiplier) / opposingCpBip;
                     }
                 }
 
@@ -639,6 +694,8 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
+    const bool includeAdv = domain->type() == domainType::fluid;
+
     // space for LHS/RHS; nodesPerElem*nodesPerElem and nodesPerElem
     std::vector<scalar> lhs;
     std::vector<scalar> rhs;
@@ -658,20 +715,14 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
     std::vector<scalar> ws_o_face_T;
     std::vector<scalar> ws_c_cp;
     std::vector<scalar> ws_o_cp;
-    std::vector<scalar> ws_c_face_U;
-    std::vector<scalar> ws_o_face_U;
 
     // master element data
     std::vector<scalar> ws_c_general_shape_function;
     std::vector<scalar> ws_o_general_shape_function;
 
-    // workspace for velocity interpolation
-    std::vector<scalar> UBip(SPATIAL_DIM);
-
     // Get transport fields/side fields
     const auto& TSTKFieldRef = model_->TRef().stkFieldRef();
     const auto& cpSTKFieldRef = model_->cpRef().stkFieldRef();
-    const auto& USTKFieldRef = model_->URef().stkFieldRef();
     const auto* TWallCoeffsSTKFieldPtr = model_->TWallCoeffsRef().stkFieldPtr();
     auto& qDotSideSTKFieldRef = model_->qDotRef().sideFieldRef().stkFieldRef();
 
@@ -681,25 +732,25 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-    // extract vector of interface IP info
-
-    const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
-
-    // Compressibility flag: 1.0 for compressible, 0.0 otherwise
-    // Used to avoid branching in hot loop
-    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
-    const bool currentIsFluid = (domain->type() == domainType::fluid);
-    const scalar currentFluidFlag = currentIsFluid ? 1.0 : 0.0;
-
-    for (label iSide = 0; iSide < static_cast<label>(ipInfoVec.size()); iSide++)
+    // GGI path is not yet validated for the total-energy HTC problem;
+    // preserve the original errorMsg behavior at the top of the function and
+    // run the unified loop for DG below.
+    if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+        nonconformalMethod::generalGridInterface)
     {
-        const auto& faceIpInfoVec = ipInfoVec[iSide];
+        errorMsg("Not implemented yet");
+        return;
+    }
 
-        // now loop over all the ipInfo objects on this
-        // particular exposed face
+    // Unified loop over per-IP info.  Storage is owned by the base
+    // interfaceSideInfo; concrete side classes store derived records upcast to
+    // ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is
+    // identical to the original DG implementation.
+    for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
+    {
         for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
         {
-            const ipInfo* ip = faceIpInfoVec[k];
+            ipInfo* ip = faceIpInfoVec[k];
 
             if (ip->isExposed_)
                 continue;
@@ -750,8 +801,6 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
             ws_o_face_T.resize(opposingNodesPerFace);
             ws_c_cp.resize(currentNodesPerFace);
             ws_o_cp.resize(opposingNodesPerFace);
-            ws_c_face_U.resize(currentNodesPerFace * SPATIAL_DIM);
-            ws_o_face_U.resize(opposingNodesPerFace * SPATIAL_DIM);
             ws_c_general_shape_function.resize(currentNodesPerFace);
             ws_o_general_shape_function.resize(opposingNodesPerFace);
 
@@ -786,13 +835,6 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
                 // gather; scalar
                 p_c_face_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
                 p_c_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
-
-                // gather; vector (velocity)
-                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    ws_c_face_U[ni * SPATIAL_DIM + j] = U[j];
-                }
             }
 
             // gather opposing face data
@@ -807,13 +849,6 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
                 // gather; scalar
                 p_o_face_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
                 p_o_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
-
-                // gather; vector (velocity)
-                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    ws_o_face_U[ni * SPATIAL_DIM + j] = U[j];
-                }
             }
 
             // populate opposing face_node_ordinals
@@ -882,37 +917,12 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
             meFCOpposing->interpolatePoint(
                 1, &opposingIsoParCoords[0], &ws_o_face_T[0], &opposingTBip);
 
-            // interpolate Cp at integration points
             scalar currentCpBip = 0.0;
             meFCCurrent->interpolatePoint(
                 1, &currentIsoParCoords[0], &ws_c_cp[0], &currentCpBip);
             scalar opposingCpBip = 0.0;
             meFCOpposing->interpolatePoint(
                 1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
-
-            // Compute dynamic temperature T_dyn = u²/(2*Cp) for
-            // compressible flow Velocity is zero in solid, so we
-            // interpolate from both sides and the solid
-            // contribution vanishes naturally (branch-free)
-
-            // Interpolate velocity from current side (zero if
-            // solid)
-            meFCCurrent->interpolatePoint(
-                1, &currentIsoParCoords[0], &ws_c_face_U[0], &UBip[0]);
-            scalar uMagSq = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
-                uMagSq += UBip[j] * UBip[j];
-            }
-
-            // Interpolate velocity from opposing side (zero if
-            // solid) and add
-            meFCOpposing->interpolatePoint(
-                1, &opposingIsoParCoords[0], &ws_o_face_U[0], &UBip[0]);
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
-                uMagSq += UBip[j] * UBip[j];
-            }
 
             // zero lhs/rhs
             for (label p = 0; p < lhsSize; ++p)

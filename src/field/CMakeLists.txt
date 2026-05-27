@@ -23,6 +23,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/nodeField/scalar/property/turbulence/turbulentThermalConductivity.cpp
     ${DIR}/nodeField/scalar/property/turbulence/turbulentViscosity.cpp
     ${DIR}/nodeField/scalar/transport/flow/pressure.cpp
+    ${DIR}/nodeField/scalar/transport/flow/pressureCorrection.cpp
     ${DIR}/nodeField/scalar/transport/heatTransfer/specificEnthalpy.cpp
     ${DIR}/nodeField/scalar/transport/heatTransfer/specificTotalEnthalpy.cpp
     ${DIR}/nodeField/scalar/transport/heatTransfer/temperature.cpp
