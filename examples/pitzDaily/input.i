@@ -9,7 +9,7 @@ simulation:
             option: steady_state
         domains:
         - name: default_domain
-          location: [fluid-quad]
+          location: [fluid]
           materials: [air]
           type: fluid
           domain_models:
@@ -64,12 +64,10 @@ simulation:
                     physical_timescale: 1
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.9
-                        turbulence_relaxation_factor: 0.5
+                        turbulence_relaxation_factor: 0.7
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-6
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
             advanced_options:
                 linear_solver_settings:
                     default:
@@ -101,6 +99,7 @@ simulation:
                                 aggressive_levels: 1
                                 trunc_factor: 0.3
             expert_parameters:
+                relax_gradients: false
                 consistent: true
                 wall_distance_method: mesh_wave
         output_control:
