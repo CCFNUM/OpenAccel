@@ -58,16 +58,16 @@ simulation:
     solver:
         solver_control:
             basic_settings:
-                advection_scheme: upwind
+                advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 1000
-                    physical_timescale: 1e-2
+                    max_iterations: 1500
+                    physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.95
+                        velocity_relaxation_factor: 0.75
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-6
+                    residual_target: 1e-8
             advanced_options:
                 linear_solver_settings:
                     default:

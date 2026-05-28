@@ -45,9 +45,6 @@ simulation:
             boundary_details:
                 mass_and_momentum:
                     option: free_slip_wall
-          - name: symmetry
-            type: symmetry
-            location: [symmetry]
           initialization:
             velocity:
                 option: value
@@ -64,15 +61,13 @@ simulation:
                 advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 1000
-                    physical_timescale: 1e-2
+                    max_iterations: 2500
+                    physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.9
+                        velocity_relaxation_factor: 0.85
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-8
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
             advanced_options:
                 linear_solver_settings:
                     default:
