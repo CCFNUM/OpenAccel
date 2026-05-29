@@ -21,7 +21,7 @@ simulation:
                     timestep_increase_factor: 1.06
         domains:
         - name: default_domain
-          location: [fluid-hex]
+          location: [fluid]
           materials: [water, air]
           type: fluid
           domain_models:
@@ -42,13 +42,10 @@ simulation:
           - name: walls
             type: symmetry
             location: [walls]
-          - name: front_and_back
-            type: symmetry
-            location: [front_and_back]
           initialization:
             velocity:
                 option: value
-                velocity: [0, 0, 0]
+                velocity: [0, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -71,15 +68,16 @@ simulation:
                 convergence_controls:
                     min_iterations: 1
                     max_iterations: 10
+                    relaxation_parameters:
+                        velocity_relaxation_factor: 0.7
+                        pressure_relaxation_factor: 0.3
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-6
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
             advanced_options:
                 pressure_level_information:
                     option: cartesian_coordinates
-                    cartesian_coordinates: [0, 0, 0]
+                    cartesian_coordinates: [0, 0]
                     relative_pressure_level: 0
                 equation_controls:
                     volume_fraction_smoothing:
@@ -105,8 +103,10 @@ simulation:
                         options:
                             belos_solver: gmres
                             preconditioner: ilu
-            expert_parameters:
+            expert_parameters:            
                 body_force_redistribution: true
+                relax_gradients: false
+                incremental_gradient_change: false
         output_control:
             file_path: results.e
             output_frequency:
