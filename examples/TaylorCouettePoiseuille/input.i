@@ -1,4 +1,5 @@
 # vim: ft=yaml
+# This is a 3D case and must be run with a 3D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -131,4 +132,3 @@ simulation:
         dynamic_viscosity:
             option: value
             dynamic_viscosity: 1.3185
-

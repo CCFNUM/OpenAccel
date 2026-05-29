@@ -1,3 +1,5 @@
+# vim: ft=yaml
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -15,7 +17,7 @@ simulation:
                 reference_pressure: 101325
             fluid_models:
                 turbulence:     
-                    option: shear-stress-transport
+                    option: shear_stress_transport
             boundaries:
               - name: bump
                 type: wall
