@@ -21,14 +21,14 @@ simulation:
                     timestep_increase_factor: 1.06
         domains:
         - name: default_domain
-          location: [fluid-hex]
+          location: [fluid]
           materials: [water, air]
           type: fluid
           domain_models:
             reference_pressure: 101325
             buoyancy_model:
                 option: buoyant
-                gravity: [0, -9.81, 0]
+                gravity: [0, -9.81]
                 buoyancy_reference_density: 1
           fluid_models:
             turbulence:
@@ -60,7 +60,6 @@ simulation:
                     option: cartesian_components
                     x: 0
                     y: -1
-                    z: 0
             fluid_values:
                 water:
                     volume_fraction:
@@ -70,13 +69,10 @@ simulation:
                     volume_fraction:
                         option: value
                         volume_fraction: 1
-          - name: front_and_back
-            type: symmetry
-            location: [sym]
           initialization:
             velocity:
                 option: value
-                velocity: [0, 0, 0]
+                velocity: [0, 0]
             pressure:
                 option: value
                 pressure: 0
