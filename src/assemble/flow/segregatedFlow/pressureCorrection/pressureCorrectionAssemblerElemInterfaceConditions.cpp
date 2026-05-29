@@ -166,8 +166,6 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
     const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
     const auto& gradPSTKFieldRef = model_->pRef().gradRef().stkFieldRef();
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
-    const auto& mDotSideSTKFieldRef =
-        model_->mDotRef().sideFieldRef().stkFieldRef();
 
     const auto* psiSTKFieldPtr =
         compressible ? model_->psiRef().stkFieldPtr() : nullptr;
@@ -241,7 +239,6 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
 
             // local ip
             const label currentGaussPointId = ip->currentGaussPointId_;
-            const label opposingGaussPointId = ip->opposingGaussPointId_;
 
             currentIsoParCoords = ip->currentIsoParCoords_;
             opposingIsoParCoords = ip->opposingIsoParCoords_;
@@ -743,14 +740,6 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                 p_rhs[p] = 0.0;
             }
 
-            // save mDot from previous iteration
-            // (for compressibility linearization)
-            const scalar tmDot =
-                (stk::mesh::field_data(mDotSideSTKFieldRef,
-                                       currentFace))[currentGaussPointId] *
-                fcs;
-            const scalar abs_tmDot = std::abs(tmDot);
-
             // pressure diffusivity for penalty
             scalar currentDiffBipmag = 0;
             scalar opposingDiffBipmag = 0;
@@ -834,7 +823,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             // (penalty and compressibility linearization)
             scalar lhsFacC =
                 penaltyMultiplier * penaltyIp * fcs * c_amag +
-                (abs_tmDot + tmDot) / 2.0 * cPsiBip / cRhoBip * comp;
+                (std::abs(mDot) + mDot) / 2.0 * cPsiBip / cRhoBip * comp;
             meFCCurrent->general_shape_fcn(
                 1, &currentIsoParCoords[0], &ws_c_general_shape_function[0]);
             for (label ic = 0; ic < currentNodesPerSide; ++ic)
@@ -863,7 +852,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             // (penalty and compressibility linearization)
             scalar lhsFacO =
                 penaltyMultiplier * penaltyIp * fcs * c_amag +
-                (abs_tmDot - tmDot) / 2.0 * oPsiBip / oRhoBip * comp;
+                (std::abs(mDot) - mDot) / 2.0 * oPsiBip / oRhoBip * comp;
             meFCOpposing->general_shape_fcn(
                 1, &opposingIsoParCoords[0], &ws_o_general_shape_function[0]);
             for (label ic = 0; ic < opposingNodesPerSide; ++ic)

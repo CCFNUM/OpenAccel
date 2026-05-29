@@ -286,15 +286,17 @@ protected:
                     {
                         if (newVal > upperBoundValue)
                         {
-                            newVal = fieldVal[i * FIELD_DIM + k] +
-                                     clipFactor * (upperBoundValue -
-                                                   fieldVal[i * FIELD_DIM + k]);
+                            newVal = upperBoundValue +
+                                     (scalar(1) - clipFactor) *
+                                         (fieldVal[i * FIELD_DIM + k] -
+                                          upperBoundValue);
                         }
                         else if (newVal < lowerBoundValue)
                         {
-                            newVal = fieldVal[i * FIELD_DIM + k] +
-                                     clipFactor * (lowerBoundValue -
-                                                   fieldVal[i * FIELD_DIM + k]);
+                            newVal = lowerBoundValue +
+                                     (scalar(1) - clipFactor) *
+                                         (fieldVal[i * FIELD_DIM + k] -
+                                          lowerBoundValue);
                         }
                     }
 

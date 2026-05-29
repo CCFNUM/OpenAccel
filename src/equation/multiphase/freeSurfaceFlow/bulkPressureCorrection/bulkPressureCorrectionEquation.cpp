@@ -48,6 +48,9 @@ void bulkPressureCorrectionEquation::setup()
     // setup of fields (initial values and boundary conditions)
     FOREACH_DOMAIN(model_->setupPressure);
 
+    // setup the dedicated pressure correction field
+    FOREACH_DOMAIN(model_->setupPressureCorrection);
+
     // setup assembler
     assembler_->setup(&model_->pRef(), null, domainVector_, nullptr);
 

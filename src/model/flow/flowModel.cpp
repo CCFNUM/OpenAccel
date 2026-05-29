@@ -15183,8 +15183,8 @@ void flowModel::updateSideMassFlowRateFraction_(
                                                 parentTopo;
 
                                             // define some common selectors
-                                            stk::mesh::Selector selAllSides =
-                                                metaData.universal_part() &
+                                            stk::mesh::Selector selOwnedSides =
+                                                metaData.locally_owned_part() &
                                                 stk::mesh::selectUnion(
                                                     this->meshRef()
                                                         .zonePtr(
@@ -15200,7 +15200,7 @@ void flowModel::updateSideMassFlowRateFraction_(
                                                 sideBuckets =
                                                     bulkData.get_buckets(
                                                         metaData.side_rank(),
-                                                        selAllSides);
+                                                        selOwnedSides);
                                             for (stk::mesh::BucketVector::
                                                      const_iterator ib =
                                                          sideBuckets.begin();
@@ -15588,6 +15588,10 @@ void flowModel::updateSideMassFlowRateFraction_(
                                                 }
                                             }
 
+                                            // accumulate from procs
+                                            messager::sumReduce(amDotTotal);
+
+                                            // calc mass fraction
                                             scalar F = mDotTotal /
                                                        (amDotTotal + SMALL);
 
@@ -15697,8 +15701,8 @@ void flowModel::updateSideMassFlowRateFraction_(
                                                 parentTopo;
 
                                             // define some common selectors
-                                            stk::mesh::Selector selAllSides =
-                                                metaData.universal_part() &
+                                            stk::mesh::Selector selOwnedSides =
+                                                metaData.locally_owned_part() &
                                                 stk::mesh::selectUnion(
                                                     this->meshRef()
                                                         .zonePtr(
@@ -15714,7 +15718,7 @@ void flowModel::updateSideMassFlowRateFraction_(
                                                 sideBuckets =
                                                     bulkData.get_buckets(
                                                         metaData.side_rank(),
-                                                        selAllSides);
+                                                        selOwnedSides);
                                             for (stk::mesh::BucketVector::
                                                      const_iterator ib =
                                                          sideBuckets.begin();
@@ -16102,6 +16106,10 @@ void flowModel::updateSideMassFlowRateFraction_(
                                                 }
                                             }
 
+                                            // accumulate from procs
+                                            messager::sumReduce(amDotTotal);
+
+                                            // calc mass fraction
                                             scalar F = mDotTotal /
                                                        (amDotTotal + SMALL);
 

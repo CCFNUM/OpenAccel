@@ -24,8 +24,20 @@ density::density(realm* realmPtr,
 {
     realmPtr->registerRestartField(name);
 
-    // set special gradient urf
-    gradURF_ = 0.25;
+    const bool relaxGradients =
+        this->meshRef()
+            .controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.relaxGradients_;
+    if (!relaxGradients)
+    {
+        gradURF_ = 1.0;
+    }
+    else
+    {
+        // set special gradient urf
+        gradURF_ = 0.25;
+    }
 }
 
 } // namespace accel

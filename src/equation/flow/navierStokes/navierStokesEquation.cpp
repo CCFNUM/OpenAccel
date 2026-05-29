@@ -6,7 +6,6 @@
 
 #include "navierStokesEquation.h"
 #include "realm.h"
-#include "turbulenceModel.h"
 
 namespace accel
 {
@@ -210,9 +209,6 @@ void navierStokesEquation::solve()
         }
 
         // post correction
-
-        // necessary to have a momentum-satisfying mass flux
-        FOREACH_DOMAIN(model_->updateMassFlowRate);
 
         // velocity gradient must be only updated after corrector step ...
 

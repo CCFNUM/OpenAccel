@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 cmake_policy(SET CMP0079 NEW)
 
-project(OpenAccel)
+project(Accel)
 
 # Set C++ standard (optional but recommended)
 set(CMAKE_CXX_STANDARD 20)
@@ -43,9 +43,9 @@ set(exec_suffix "-${SPATIAL_DIM}D")
 if(WITH_CANONICAL_SUFFIX)
     set(exec_suffix "-stk")
 endif()
-set(exec "openaccel${exec_suffix}.exe")
+set(exec "accel${exec_suffix}.exe")
 if(CMAKE_BUILD_TYPE STREQUAL DEBUG OR CMAKE_BUILD_TYPE STREQUAL Debug)
-   set(exec "openaccel${exec_suffix}-debug.exe")
+   set(exec "accel${exec_suffix}-debug.exe")
 endif()
 
 # NOTE [faw 2026-05-04]: silence trilinos stk_topology related deprecation
@@ -135,53 +135,27 @@ if(DEFINED PETSC_DIR)
 else()
     if (PKG_CONFIG_FOUND)
         # https://gitlab.com/petsc/petsc/-/merge_requests/5992
-        pkg_check_modules(PETSC petsc)
+        pkg_check_modules(PETSC QUIET petsc)
 
         if(PETSC_FOUND)
             add_compile_definitions(HAS_PETSC)
             include_directories(${PETSC_INCLUDE_DIRS})
             link_directories(${PETSC_LIBRARY_DIRS})
         else()
-            message("-- PETSc functionalities are disabled.")
+            message("-- PETSc functionalities are DISABLED")
         endif()
     endif()
 endif()
 
-# HYPRE (>= 3.0 required)
-set(HYPRE_FOUND FALSE)
-
-if(DEFINED HYPRE_DIR)
-    set(HYPRE_SEARCH_PATHS ${HYPRE_DIR}/include)
-else()
-    set(HYPRE_SEARCH_PATHS /usr/include/hypre /usr/local/include/hypre /usr/include)
-endif()
-
-# 1. Look for the header and library
-find_path(HYPRE_INCLUDE_DIR NAMES HYPRE.h hypre.h PATHS ${HYPRE_SEARCH_PATHS} NO_DEFAULT_PATH)
-
-if(DEFINED HYPRE_DIR)
-    find_library(HYPRE_LIB NAMES HYPRE hypre
-                 PATHS ${HYPRE_DIR}/lib ${HYPRE_DIR}/lib64
-                 NO_DEFAULT_PATH)
-else()
-    find_library(HYPRE_LIB NAMES HYPRE hypre
-                 PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib /usr/lib /usr/lib64)
-endif()
-
-if(HYPRE_INCLUDE_DIR AND HYPRE_LIB)
-    set(HYPRE_FOUND TRUE)
-    set(HYPRE_INCLUDE_DIRS ${HYPRE_INCLUDE_DIR})
-    set(HYPRE_LIBRARIES ${HYPRE_LIB})
-endif()
-
-# 2. Final Activation Logic
+# HYPRE
+find_package(HYPRE QUIET)
 if(HYPRE_FOUND)
     message("-- HYPRE found and enabled.")
     add_compile_definitions(HAS_HYPRE)
     include_directories(${HYPRE_INCLUDE_DIRS})
     link_directories(${HYPRE_LIBRARY_DIRS})
 else()
-    message("-- HYPRE functionalities are DISABLED (not found).")
+    message("-- HYPRE functionalities are DISABLED")
 endif()
 
 # Interface support (enabled by default)
@@ -280,20 +254,7 @@ endif()
 
 # Link to HYPRE libraries
 if(HYPRE_FOUND)
-    # If we found it via the custom HYPRE_DIR path
-    if(DEFINED HYPRE_DIR)
-        # Find the actual library file in the custom directory
-        find_library(HYPRE_CUSTOM_LIB NAMES HYPRE hypre 
-                     PATHS ${HYPRE_DIR}/lib ${HYPRE_DIR}/lib64 
-                     NO_DEFAULT_PATH)
-        target_link_libraries(main_obj PUBLIC ${HYPRE_CUSTOM_LIB})
-        message("-- Linking against custom HYPRE: ${HYPRE_CUSTOM_LIB}")
-    else()
-        # Fallback for system-wide/pkg-config installs
-        target_link_libraries(main_obj PUBLIC ${HYPRE_LIBRARIES})
-    endif()
-else()
-    # ... your existing 'disabled' logic ...
+    target_link_libraries(main_obj PUBLIC HYPRE::HYPRE)
 endif()
 
 

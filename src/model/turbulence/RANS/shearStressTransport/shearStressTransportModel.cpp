@@ -591,6 +591,50 @@ void shearStressTransportModel::updateTurbulentProduction(
             }
         }
     }
+
+    // Apply production limiter
+    {
+        const STKScalarField* kSTKFieldPtr = kRef().stkFieldPtr();
+        const STKScalarField* omegaSTKFieldPtr = omegaRef().stkFieldPtr();
+
+        scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+
+        const scalar betaStar = this->betaStar();
+        const scalar tkeProdLimitRatio = this->tkeProdLimitRatio();
+
+        stk::mesh::Selector selAllNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
+
+            // get field chunks
+            const scalar* kb = stk::mesh::field_data(*kSTKFieldPtr, nodeBucket);
+            const scalar* omegab =
+                stk::mesh::field_data(*omegaSTKFieldPtr, nodeBucket);
+            const scalar* rhob =
+                stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
+            scalar* Pkb = stk::mesh::field_data(*PkSTKFieldPtr, nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
+            {
+                Pkb[iNode] =
+                    std::min(Pkb[iNode],
+                             tkeProdLimitRatio * betaStar * rhob[iNode] *
+                                 omegab[iNode] * kb[iNode]);
+            }
+        }
+    }
 }
 
 void shearStressTransportModel::updateTurbulentDynamicViscosity(

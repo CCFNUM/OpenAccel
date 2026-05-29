@@ -45,7 +45,6 @@ void turbulentKineticEnergySSTAssembler::assembleNodeTermsFusedSteady_(
     const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -109,12 +108,6 @@ void turbulentKineticEnergySSTAssembler::assembleNodeTermsFusedSteady_(
             // production/dissipation
             scalar Dk = betaStar * rho * omega * k;
 
-            // limit production
-            if (Pk > tkeProdLimitRatio * Dk)
-            {
-                Pk = tkeProdLimitRatio * Dk;
-            }
-
             rhs[0] += (Pk - Dk) * vol;
             lhs[0] += betaStar * rho * omega * vol;
 
@@ -166,7 +159,6 @@ void turbulentKineticEnergySSTAssembler::
     const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     const STKScalarField* divUmSTKFieldPtr =
         meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
@@ -239,12 +231,6 @@ void turbulentKineticEnergySSTAssembler::
             // production/dissipation
             scalar Dk = betaStar * rho * omega * k;
 
-            // limit production
-            if (Pk > tkeProdLimitRatio * Dk)
-            {
-                Pk = tkeProdLimitRatio * Dk;
-            }
-
             rhs[0] += (Pk - Dk) * vol;
             lhs[0] += betaStar * rho * omega * vol;
 
@@ -307,7 +293,6 @@ void turbulentKineticEnergySSTAssembler::
     const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     const STKScalarField* divUmSTKFieldPtr =
         meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
@@ -383,12 +368,6 @@ void turbulentKineticEnergySSTAssembler::
 
             // production/dissipation
             scalar Dk = betaStar * rho * omega * k;
-
-            // limit production
-            if (Pk > tkeProdLimitRatio * Dk)
-            {
-                Pk = tkeProdLimitRatio * Dk;
-            }
 
             rhs[0] += (Pk - Dk) * vol;
             lhs[0] += betaStar * rho * omega * vol;
