@@ -1,5 +1,5 @@
 # vim: ft=yaml
-# This is a 3D case and must be run with a 3D-compiled binary.
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -30,7 +30,6 @@ simulation:
                     option: velocity_components
                     u: 0.02083
                     v: 0
-                    w: 0
                 heat_transfer:
                     option: static_temperature
                     static_temperature: 300
@@ -50,13 +49,10 @@ simulation:
             boundary_details:
                 mass_and_momentum:
                     option: free_slip_wall
-          - name: symmetry
-            type: symmetry
-            location: [fluidfrontandback]
           initialization:
             velocity:
                 option: value
-                velocity: [0.02083, 0, 0]
+                velocity: [0.02083, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -81,9 +77,6 @@ simulation:
           - name: leftandright
             type: wall
             location: [solidsides]
-          - name: symmetry
-            type: symmetry
-            location: [solidfrontandback]
           initialization:
             temperature:
                 option: value
@@ -125,6 +118,8 @@ simulation:
                         options:
                             belos_solver: gmres
                             preconditioner: ilu
+            expert_parameters:
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 10
