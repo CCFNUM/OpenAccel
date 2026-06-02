@@ -2,8 +2,7 @@
 // Created    : Thu Mar 14 2024 12:50:04 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Pressure correction (continuity) equation
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef PRESSURECORRECTIONEQUATION_H
 #define PRESSURECORRECTIONEQUATION_H
@@ -26,6 +25,8 @@ private:
     using Assembler = pressureCorrectionAssembler;
 
 public:
+    static constexpr equationID ID = equationID::pressureCorrection;
+
     pressureCorrectionEquation(realm* realm, flowModel* model);
 
     void checkDomain(const std::shared_ptr<domain> domain) override;
@@ -48,8 +49,71 @@ public:
 
     void printScales() override;
 
+    equationID getID() override
+    {
+        return ID;
+    }
+
 protected:
     void setResidualScales_() override;
+
+    // Pressure-correction-specific override of the generic field corrector.
+    template <int BLOCKSIZE,
+              int FIELD_DIM = 1,
+              int STRIDE = 0,
+              int CLIP = 0,
+              int OFFSET = 0>
+    void correctField_(const domain* domain,
+                       const Vector& correction,
+                       const stk::mesh::EntityRank entityRank,
+                       STKScalarField& stk_dst,
+                       const scalar relaxValue = 1.0,
+                       const scalar lowerBoundValue = 0,
+                       const scalar upperBoundValue = BIG,
+                       const scalar clipFactor = 1.0,
+                       const scalar offset = 0.0)
+    {
+        // 1) base correction: under-relaxes and updates the pressure field
+        equation::correctField_<BLOCKSIZE, FIELD_DIM, STRIDE, CLIP, OFFSET>(
+            domain,
+            correction,
+            entityRank,
+            stk_dst,
+            relaxValue,
+            lowerBoundValue,
+            upperBoundValue,
+            clipFactor,
+            offset);
+
+        // 2) store the full (un-relaxed) pressure correction p'
+        pressureCorrection& pCorr = model_->pCorrRef();
+        STKScalarField& pCorrSTKFieldRef = pCorr.stkFieldRef();
+
+        const mesh& meshObj = domain->meshRef();
+        const stk::mesh::MetaData& metaData = meshObj.metaDataRef();
+        const stk::mesh::BulkData& bulkData = meshObj.bulkDataRef();
+
+        const stk::mesh::Selector selection =
+            metaData.locally_owned_part() &
+            stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+        const stk::mesh::BucketVector& buckets =
+            bulkData.get_buckets(entityRank, selection);
+        for (size_t ib = 0; ib < buckets.size(); ++ib)
+        {
+            const stk::mesh::Bucket& bucket = *buckets[ib];
+            const stk::mesh::Bucket::size_type nEntities = bucket.size();
+            scalar* pCorrVal = stk::mesh::field_data(pCorrSTKFieldRef, bucket);
+            for (stk::mesh::Bucket::size_type i = 0; i < nEntities; ++i)
+            {
+                const auto id = bulkData.local_id(bucket[i]);
+                pCorrVal[i] = correction[id * BLOCKSIZE + STRIDE];
+            }
+        }
+
+        // 3) refresh ghosts, then build grad(p') (gradient relaxation == 1)
+        pCorr.synchronizeGhostedEntities(domain->index());
+        pCorr.updateGradientField(domain->index());
+    }
 
     std::unique_ptr<Assembler> assembler_;
 };

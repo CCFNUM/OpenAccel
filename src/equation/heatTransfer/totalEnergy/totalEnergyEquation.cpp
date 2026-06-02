@@ -2,8 +2,7 @@
 // Created    : Thu Mar 27 2025 10:42:10 (+0100)
 // Author     : Fabian Wermelinger
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "totalEnergyEquation.h"
 
@@ -99,7 +98,8 @@ void totalEnergyEquation::setup()
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
-    linearSystem::setupSolver(this->name(), fieldBroker::meshRef());
+    linearSystem::setupSolver(
+        this->name(), fieldBroker::meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
 }

@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Assembler for the Navier-Stokes momentum equations in segregated
 //              flow
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef NAVIERSTOKESASSEMBLER_H
 #define NAVIERSTOKESASSEMBLER_H
@@ -94,7 +93,7 @@ private:
     // boundary conditions
     void assembleElemTermsBoundarySymmetry_(const domain* domain,
                                             const boundary* boundary,
-                                            Context* ctx);
+                                            Context* ctx) override;
     void assembleElemTermsBoundaryWallNoSlip_(const domain* domain,
                                               const boundary* boundary,
                                               Context* ctx);

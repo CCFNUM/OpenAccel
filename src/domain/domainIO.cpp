@@ -2,8 +2,7 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "domain.h"
@@ -471,7 +470,7 @@ void domain::read_()
                     else
                     {
                         equations_[static_cast<int>(
-                            equationID::segregatedFreeSurface)] = true;
+                            equationID::segregatedFreeSurfaceFlow)] = true;
 
                         // turn off single-phase flow solver in the domain
                         equations_[static_cast<int>(
@@ -1046,13 +1045,6 @@ void domain::read_()
                 domainModelsBlock["reference_pressure"].template as<scalar>();
         }
 
-        if (domainModelsBlock["uniform_body_force"])
-        {
-            uniformBodyForce_ =
-                domainModelsBlock["uniform_body_force"]
-                    .template as<std::array<scalar, SPATIAL_DIM>>();
-        }
-
         // query buoyancy model
         if (domainModelsBlock["buoyancy_model"])
         {
@@ -1214,6 +1206,8 @@ void domain::read_()
     if (domain_conf_["sources"])
     {
         const auto& sourceBlocks = domain_conf_["sources"];
+
+        // get energy sources
         if (sourceBlocks["energy"])
         {
             // read value
@@ -1249,14 +1243,29 @@ void domain::read_()
                     this->name());
             }
         }
-        else if (sourceBlocks["momentum"])
+
+        // get general momentum sources
+        if (sourceBlocks["momentum"])
         {
-            errorMsg("momentum source for domain " + this->name() +
-                     " not implemented");
-        }
-        else
-        {
-            errorMsg("Unrecognised source for domain " + this->name());
+            // make sure the domain is a fluid domain
+            if (type_ != domainType::fluid)
+            {
+                errorMsg("assigning momentum source to non-fluid domain is not "
+                         "allowed");
+            }
+
+            // read value
+            const auto& generalMomentumSourceBlock = sourceBlocks["momentum"];
+            auto sourceValue = generalMomentumSourceBlock["source"]
+                                   .template as<std::vector<scalar>>();
+            generalMomentumSource_.value_ = sourceValue;
+
+            if (generalMomentumSourceBlock["redistribute_in_rhie_chow"])
+            {
+                generalMomentumSource_.redistributeInRhieChow_ =
+                    generalMomentumSourceBlock["redistribute_in_rhie_chow"]
+                        .template as<bool>();
+            }
         }
     }
 }

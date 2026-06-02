@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Templated node field with boundary/initial conditions and
 //              gradient support
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef NODEFIELD_H
 #define NODEFIELD_H
@@ -14,8 +13,8 @@
 #include "controls.h"
 #ifdef HAS_INTERFACE
 #include "dataTransfer.h"
-#include "dgInfo.h"
 #include "interface.h"
+#include "ipInfo.h"
 #endif /* HAS_INTERFACE */
 #include "dataHandler.h"
 #include "nodeSideField.h"

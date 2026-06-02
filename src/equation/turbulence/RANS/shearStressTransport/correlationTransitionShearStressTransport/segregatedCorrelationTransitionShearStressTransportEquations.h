@@ -5,8 +5,7 @@
 //              (Menter 2015). Solves k, omega, and gamma equations. Unlike the
 //              full transition model, ReTheta is not solved but computed
 //              locally using correlations.
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef SEGREGATEDCORRELATIONTRANSITIONSHEARSTRESSTRANSPORTEQUATIONS_H
 #define SEGREGATEDCORRELATIONTRANSITIONSHEARSTRESSTRANSPORTEQUATIONS_H

@@ -2,8 +2,7 @@
 // Created    : Tue Apr 20 2024 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "density.h"
 #include "realm.h"
@@ -25,8 +24,20 @@ density::density(realm* realmPtr,
 {
     realmPtr->registerRestartField(name);
 
-    // set special gradient urf
-    gradURF_ = 0.25;
+    const bool relaxGradients =
+        this->meshRef()
+            .controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.relaxGradients_;
+    if (!relaxGradients)
+    {
+        gradURF_ = 1.0;
+    }
+    else
+    {
+        // set special gradient urf
+        gradURF_ = 0.25;
+    }
 }
 
 } // namespace accel

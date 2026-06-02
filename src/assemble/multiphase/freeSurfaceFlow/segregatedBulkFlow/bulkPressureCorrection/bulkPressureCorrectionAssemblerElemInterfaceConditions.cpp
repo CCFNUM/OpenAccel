@@ -2,16 +2,15 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
 // code
 #include "bulkPressureCorrectionAssembler.h"
-#include "dgInfo.h"
 #include "freeSurfaceFlowModel.h"
 #include "interface.h"
+#include "ipInfo.h"
 #include "mesh.h"
 #include "navierStokesAssembler.h"
 #include "zoneTransformation.h"
@@ -195,43 +194,49 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
 
     scalar densityScale = model_->rhoRef(phaseIndex_).scale();
 
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
-
-    for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
+    // GGI path is not yet validated for the bulk-pressure-correction problem;
+    // preserve the original errorMsg behavior at the top of the function and
+    // run the unified loop for DG below.
+    if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+        nonconformalMethod::generalGridInterface)
     {
-        const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+        errorMsg("Not implemented yet");
+        return;
+    }
 
-        // now loop over all the DgInfo objects on this particular
-        // exposed face
-        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+    // Unified loop over per-IP info.  Storage is owned by the base
+    // interfaceSideInfo; concrete side classes store derived records upcast to
+    // ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is
+    // identical to the original DG implementation.
+    for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
+    {
+        for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
         {
-            dgInfo* dgInfo = faceDgInfoVec[k];
+            ipInfo* ip = faceIpInfoVec[k];
 
             // if gauss point is exposed (non-overlapping), then
             // treat as a wall
-            if (dgInfo->gaussPointExposed_)
+            if (ip->isExposed_)
                 continue;
 
             // extract current/opposing face/element
-            stk::mesh::Entity currentFace = dgInfo->currentFace_;
-            stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-            stk::mesh::Entity currentElement = dgInfo->currentElement_;
-            stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-            const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-            const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+            stk::mesh::Entity currentFace = ip->currentFace_;
+            stk::mesh::Entity opposingFace = ip->opposingFace_;
+            stk::mesh::Entity currentElement = ip->currentElement_;
+            stk::mesh::Entity opposingElement = ip->opposingElement_;
+            const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+            const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
             // master element; face and volume
-            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-            MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-            MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+            MasterElement* meFCCurrent = ip->meFCCurrent_;
+            MasterElement* meFCOpposing = ip->meFCOpposing_;
+            MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+            MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
             // local ip, ordinals, etc
-            const label currentGaussPointId = dgInfo->currentGaussPointId_;
-            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-            opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+            const label currentGaussPointId = ip->currentGaussPointId_;
+            currentIsoParCoords = ip->currentIsoParCoords_;
+            opposingIsoParCoords = ip->opposingIsoParCoords_;
 
             // mapping from ip to nodes for this ordinal
             const label* ipNodeMap =
@@ -699,8 +704,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                            &ws_o_du[0],
                                            &oDuBip[0]);
 
-            // projected nodal gradient: use arithmetic interpolations: zero-out
-            // first
+            // projected nodal gradient: use arithmetic
+            // interpolations: zero-out first
             for (label i = 0; i < SPATIAL_DIM; i++)
             {
                 cGjpBip[i] = 0;
@@ -817,8 +822,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
             // set-up row for matrix
             const label rowR = nn * totalNodes;
 
-            // sensitivities; current face (penalty and advection); use general
-            // shape function for this single ip
+            // sensitivities; current face (penalty and advection);
+            // use general shape function for this single ip
             scalar lhsFacC = penaltyIp * c_amag + (abs_tmDot + tmDot) / 2.0 *
                                                       cPsiBip / cRhoBip * comp;
             meFCCurrent->general_shape_fcn(

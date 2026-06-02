@@ -2,8 +2,7 @@
 // Created    : Sun Jan 26 2025 22:53:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "segregatedFreeSurfaceFlowEquations.h"
 
@@ -16,6 +15,8 @@ segregatedFreeSurfaceFlowEquations::segregatedFreeSurfaceFlowEquations(
 {
     U_eq_ = std::make_unique<bulkNavierStokesEquation>(realm, this);
     pCorr_eq_ = std::make_unique<bulkPressureCorrectionEquation>(realm, this);
+    U_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
+    pCorr_eq_->setFallbackName(canonicalEquationIDName(this->equation::name_));
 
     for (label iPhase = 0; iPhase < nPhases(); iPhase++)
     {
@@ -282,18 +283,17 @@ void segregatedFreeSurfaceFlowEquations::solve()
             }
 
             // velocity Correction Step (Pressure-Velocity Coupling)
-
+            //
             // Adjusts velocity to satisfy the continuity equation at
-            // sub-control volume faces. The term (grad_p_new - grad_p_old) /
-            // lambda reconstructs the "true" pressure increment (p') by
-            // reversing the under-relaxation applied during the pressure
-            // correction. D is the momentum influence coefficient: v_corr = -D
-            // * grad(p')
-
-            // correct velocity field step 1
+            // sub-control volume faces: v_corr = -D * grad(p'), where D is the
+            // momentum influence coefficient (du, or duTilde for SIMPLEC) and
+            // grad(p') is the gradient of the dedicated pressure correction
+            // field. That gradient was built during the pressure correction
+            // step with gradient relaxation forced to 1, so it carries the
+            // full (un-relaxed) increment regardless of how the pressure field
+            // gradient itself is relaxed.
             FOREACH_DOMAIN_RAW({
-                stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
-                stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+                stk::mesh::MetaData& metaData = meshRef().metaDataRef();
 
                 // SIMPLE-Consistent
                 const bool consistent =
@@ -308,103 +308,9 @@ void segregatedFreeSurfaceFlowEquations::solve()
                         : metaData.get_field<scalar>(stk::topology::NODE_RANK,
                                                      flowModel::du_ID);
 
-                const auto& duSTKFieldRef = *metaData.get_field<scalar>(
-                    stk::topology::NODE_RANK, freeSurfaceFlowModel::du_ID);
-
-                const auto& gradPSTKFieldRef =
-                    this->pRef().gradRef().stkFieldRef();
-                auto& USTKFieldRef = this->URef().stkFieldRef();
-
-                // get relaxation factor
-                scalar urf = this->pRef().urf();
-
-                // find the ramp value (explicit relaxation) for compressible
-                // domains
-                if (domain->isMaterialCompressible())
-                {
-                    scalar iter = controlsRef().iter;
-                    label rampIter = 20;
-                    if (iter <= rampIter)
-                    {
-                        urf *= std::max(scalar(iter) / scalar(rampIter), 0.1);
-                    }
-                }
-
-                stk::mesh::Selector selAllNodes =
-                    this->meshRef().metaDataRef().universal_part() &
-                    stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
-                stk::mesh::BucketVector const& nodeBuckets =
-                    this->meshRef().bulkDataRef().get_buckets(
-                        stk::topology::NODE_RANK, selAllNodes);
-                for (stk::mesh::BucketVector::const_iterator ib =
-                         nodeBuckets.begin();
-                     ib != nodeBuckets.end();
-                     ++ib)
-                {
-                    stk::mesh::Bucket& nodeBucket = **ib;
-                    const stk::mesh::Bucket::size_type nNodesPerBucket =
-                        nodeBucket.size();
-
-                    scalar* Ub =
-                        stk::mesh::field_data(USTKFieldRef, nodeBucket);
-                    const scalar* dub =
-                        stk::mesh::field_data(duSTKFieldRef, nodeBucket);
-                    const scalar* dpdxb =
-                        stk::mesh::field_data(gradPSTKFieldRef, nodeBucket);
-
-                    for (stk::mesh::Bucket::size_type iNode = 0;
-                         iNode < nNodesPerBucket;
-                         ++iNode)
-                    {
-                        for (label i = 0; i < SPATIAL_DIM; i++)
-                        {
-                            Ub[SPATIAL_DIM * iNode + i] +=
-                                1.0 / urf * dub[SPATIAL_DIM * iNode + i] *
-                                dpdxb[SPATIAL_DIM * iNode + i];
-                        }
-                    }
-                }
-            });
-
-            // Update pressure gradient
-            FOREACH_DOMAIN(updatePressureGradientField);
-
-            // correct velocity field step 2
-            FOREACH_DOMAIN_RAW({
-                stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
-                stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
-
-                // SIMPLE-Consistent
-                const bool consistent =
-                    controlsRef()
-                        .solverRef()
-                        .solverControl_.expertParameters_.consistent_;
-
-                const auto* duSTKFieldPtr =
-                    consistent
-                        ? metaData.get_field<scalar>(stk::topology::NODE_RANK,
-                                                     flowModel::duTilde_ID)
-                        : metaData.get_field<scalar>(stk::topology::NODE_RANK,
-                                                     flowModel::du_ID);
-
-                const auto& gradPSTKFieldRef =
-                    this->pRef().gradRef().stkFieldRef();
-                auto& USTKFieldRef = this->URef().stkFieldRef();
-
-                // get relaxation factor
-                scalar urf = this->pRef().urf();
-
-                // find the ramp value (explicit relaxation) for compressible
-                // domains
-                if (domain->isMaterialCompressible())
-                {
-                    scalar iter = controlsRef().iter;
-                    label rampIter = 20;
-                    if (iter <= rampIter)
-                    {
-                        urf *= std::max(scalar(iter) / scalar(rampIter), 0.1);
-                    }
-                }
+                const auto& gradPCorrSTKFieldRef =
+                    pCorrRef().gradRef().stkFieldRef();
+                auto& USTKFieldRef = URef().stkFieldRef();
 
                 stk::mesh::Selector selAllNodes =
                     this->meshRef().metaDataRef().universal_part() &
@@ -425,8 +331,8 @@ void segregatedFreeSurfaceFlowEquations::solve()
                         stk::mesh::field_data(USTKFieldRef, nodeBucket);
                     const scalar* dub =
                         stk::mesh::field_data(*duSTKFieldPtr, nodeBucket);
-                    const scalar* dpdxb =
-                        stk::mesh::field_data(gradPSTKFieldRef, nodeBucket);
+                    const scalar* dpCorrdxb =
+                        stk::mesh::field_data(gradPCorrSTKFieldRef, nodeBucket);
 
                     for (stk::mesh::Bucket::size_type iNode = 0;
                          iNode < nNodesPerBucket;
@@ -435,12 +341,16 @@ void segregatedFreeSurfaceFlowEquations::solve()
                         for (label i = 0; i < SPATIAL_DIM; i++)
                         {
                             Ub[SPATIAL_DIM * iNode + i] -=
-                                1.0 / urf * dub[SPATIAL_DIM * iNode + i] *
-                                dpdxb[SPATIAL_DIM * iNode + i];
+                                dub[SPATIAL_DIM * iNode + i] *
+                                dpCorrdxb[SPATIAL_DIM * iNode + i];
                         }
                     }
                 }
             });
+
+            // update pressure gradient for the next momentum solve (now free to
+            // use the default relaxation factor)
+            FOREACH_DOMAIN(updatePressureGradientField);
 
             // update velocity scale: raw
             this->URef().updateScale();
@@ -469,6 +379,7 @@ void segregatedFreeSurfaceFlowEquations::postSolve()
     FOREACH_DOMAIN(updateMachNumberField_);
     FOREACH_DOMAIN(updateTotalPressureField_);
     FOREACH_DOMAIN(updateRelativeVelocityField_);
+    FOREACH_DOMAIN(updateUWallCoeffs);     // laminar
     FOREACH_DOMAIN(updateWallShearStress); // laminar
     FOREACH_DOMAIN(updateMassImbalance_);
 #ifdef HAS_INTERFACE

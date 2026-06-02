@@ -2,8 +2,7 @@
 // Created    : Thu Apr 14 2024 8:36:38 (+0100)
 // Author     : Fabian Wermelinger
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef WITH_THERMAL_TEMPERATURE
 
@@ -23,6 +22,16 @@ void thermalTemperatureAssembler::assembleElemTermsInterior_(
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
+    // NSO active only when advection is present (fluid domain) and enabled
+    const bool NSO =
+        (domain->type() == domainType::fluid) &&
+        mesh.controlsRef().solverRef().solverControl_.expertParameters_.nso_;
+    // 4th-order factor (0.0 = 2nd order, 1.0 = 4th order)
+    const scalar fourthFac =
+        mesh.controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.nsoFourthOrderFac_;
+
     // TODO: Account for BLOCKSIZE in space for LHS/RHS;
     // nodesPerElem*nodesPerElem* and nodesPerElem
     std::vector<scalar> lhs;
@@ -39,6 +48,8 @@ void thermalTemperatureAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_gradT;
     std::vector<scalar> ws_lambdaEff;
     std::vector<scalar> ws_cp;
+    std::vector<scalar> ws_U;
+    std::vector<scalar> ws_rho;
 
     // geometry related to populate
     std::vector<scalar> ws_scs_areav;
@@ -47,18 +58,31 @@ void thermalTemperatureAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_det_j;
     std::vector<scalar> ws_shape_function;
     std::vector<scalar> ws_coordinate_shape_function;
+    std::vector<scalar> ws_gijUpper;
+    std::vector<scalar> ws_gijLower;
+    std::vector<scalar> ws_gij_deriv;
 
     // ip values
     std::vector<scalar> coordIp(SPATIAL_DIM);
 
+    // const-size vectors
+    std::vector<scalar> rhoU(SPATIAL_DIM);
+    std::vector<scalar> dTdx(SPATIAL_DIM);
+
     // pointers
     scalar* p_coordIp = &coordIp[0];
+    scalar* p_rhoU = &rhoU[0];
+    scalar* p_dTdx = &dTdx[0];
 
     // Get transport fields/side fields
     const auto& gradTSTKFieldRef = phi_->gradRef().stkFieldRef();
     const auto& betaTSTKFieldRef = phi_->blendingFactorRef().stkFieldRef();
     const auto& TSTKFieldRef = model_->TRef().stkFieldRef();
     const auto& cpSTKFieldRef = model_->cpRef().stkFieldRef();
+
+    // NSO field pointers
+    const auto* USTKFieldPtr = NSO ? model_->URef().stkFieldPtr() : nullptr;
+    const auto* rhoSTKFieldPtr = NSO ? this->rhoRef().stkFieldPtr() : nullptr;
 
     // Get geometric fields
     const auto& coordinatesRef = *metaData.get_field<scalar>(
@@ -112,12 +136,17 @@ void thermalTemperatureAssembler::assembleElemTermsInterior_(
         ws_gradT.resize(nodesPerElement * SPATIAL_DIM);
         ws_lambdaEff.resize(nodesPerElement);
         ws_cp.resize(nodesPerElement);
+        ws_U.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rho.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
         ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_det_j.resize(numScsIp);
         ws_shape_function.resize(numScsIp * nodesPerElement);
         ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
+        ws_gijUpper.resize(numScsIp * SPATIAL_DIM * SPATIAL_DIM);
+        ws_gijLower.resize(numScsIp * SPATIAL_DIM * SPATIAL_DIM);
+        ws_gij_deriv.resize(numScsIp * nodesPerElement * SPATIAL_DIM);
 
         // pointer to lhs/rhs
         scalar* p_lhs = &lhs[0];
@@ -128,10 +157,14 @@ void thermalTemperatureAssembler::assembleElemTermsInterior_(
         scalar* p_gradT = &ws_gradT[0];
         scalar* p_lambdaEff = &ws_lambdaEff[0];
         scalar* p_cp = &ws_cp[0];
+        scalar* p_U = &ws_U[0];
+        scalar* p_rho = &ws_rho[0];
         scalar* p_scs_areav = &ws_scs_areav[0];
         scalar* p_dndx = &ws_dndx[0];
         scalar* p_shape_function = &ws_shape_function[0];
         scalar* p_coordinate_shape_function = &ws_coordinate_shape_function[0];
+        scalar* p_gijUp = &ws_gijUpper[0];
+        scalar* p_gijLow = &ws_gijLower[0];
 
         // extract shape function
         if (isShifted)
@@ -193,10 +226,23 @@ void thermalTemperatureAssembler::assembleElemTermsInterior_(
                 // gather N-dim fields
                 const scalar* gradT =
                     stk::mesh::field_data(gradTSTKFieldRef, node);
+                const label niNdim = ni * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    p_gradT[ni * SPATIAL_DIM + j] = gradT[j];
-                    p_coordinates[ni * SPATIAL_DIM + j] = coords[j];
+                    p_gradT[niNdim + j] = gradT[j];
+                    p_coordinates[niNdim + j] = coords[j];
+                }
+
+                // NSO fields (velocity, density)
+                if (NSO)
+                {
+                    const scalar* U =
+                        stk::mesh::field_data(*USTKFieldPtr, node);
+                    p_rho[ni] = *stk::mesh::field_data(*rhoSTKFieldPtr, node);
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_U[niNdim + i] = U[i];
+                    }
                 }
             }
 
@@ -223,6 +269,15 @@ void thermalTemperatureAssembler::assembleElemTermsInterior_(
                                &ws_deriv[0],
                                &ws_det_j[0],
                                &scs_error);
+            }
+
+            // compute metric tensors (only when NSO active)
+            if (NSO)
+            {
+                meSCS->gij(&ws_coordinates[0],
+                           &ws_gijUpper[0],
+                           &ws_gijLower[0],
+                           &ws_deriv[0]);
             }
 
             for (label ip = 0; ip < numScsIp; ++ip)
@@ -319,6 +374,120 @@ void thermalTemperatureAssembler::assembleElemTermsInterior_(
                 const scalar alhsfacR = 0.5 * (tmDot - std::abs(tmDot)) * cpIp;
                 p_lhs[rRiR_i] -= alhsfacR;
                 p_lhs[rLiR_i] += alhsfacR;
+
+                //================================
+                // NSO stabilization
+                //================================
+                if (NSO)
+                {
+                    constexpr scalar Cupw = 0.1;
+                    constexpr scalar small = 1.0e-16;
+
+                    const label gijOffset = ip * SPATIAL_DIM * SPATIAL_DIM;
+
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_rhoU[j] = 0.0;
+                        p_dTdx[j] = 0.0;
+                    }
+
+                    scalar dFdxAdv = 0.0;
+                    scalar dFdxCont = 0.0;
+                    scalar TIpNSO = 0.0;
+
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const scalar r = p_shape_function[offSetSF + ic];
+                        const scalar T = p_T[ic];
+                        const scalar rho = p_rho[ic];
+
+                        TIpNSO += r * T;
+
+                        const label offSetDnDx =
+                            SPATIAL_DIM * nodesPerElement * ip +
+                            ic * SPATIAL_DIM;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar dnj = p_dndx[offSetDnDx + j];
+                            const scalar U = p_U[ic * SPATIAL_DIM + j];
+                            p_dTdx[j] += T * dnj;
+                            p_rhoU[j] += r * rho * U;
+                            dFdxAdv += rho * U * T * dnj;
+                            dFdxCont += rho * U * dnj;
+                        }
+                    }
+
+                    // alternative residual (commutation error)
+                    scalar residual = dFdxAdv - TIpNSO * dFdxCont;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        residual -= rhoU[j] * p_dTdx[j];
+                    }
+
+                    // denominator for nu and upwind nu
+                    scalar gUpperMagGradQ = 0.0;
+                    scalar rhoUiGLowerRhoUj = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        for (label k = 0; k < SPATIAL_DIM; ++k)
+                        {
+                            gUpperMagGradQ +=
+                                p_dTdx[j] *
+                                p_gijUp[gijOffset + j * SPATIAL_DIM + k] *
+                                p_dTdx[k];
+                            rhoUiGLowerRhoUj +=
+                                p_rhoU[j] *
+                                p_gijLow[gijOffset + j * SPATIAL_DIM + k] *
+                                p_rhoU[k];
+                        }
+                    }
+
+                    // artificial viscosity
+                    const scalar nuResidual = std::sqrt(
+                        (residual * residual) / (gUpperMagGradQ + small));
+                    const scalar nuFirstOrder = std::sqrt(rhoUiGLowerRhoUj);
+                    const scalar nu = std::min(Cupw * nuFirstOrder, nuResidual);
+
+                    // NSO diffusion-like term:
+                    // -nu * gUpper_ij * (dT/dxj - Gjq_j) * areav_i
+                    scalar gijFac = 0.0;
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const scalar r = p_shape_function[offSetSF + ic];
+                        const scalar T = p_T[ic];
+
+                        const label offSetDnDx =
+                            SPATIAL_DIM * nodesPerElement * ip +
+                            ic * SPATIAL_DIM;
+                        scalar lhsfac = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar axi =
+                                p_scs_areav[ip * SPATIAL_DIM + j];
+                            for (label k = 0; k < SPATIAL_DIM; ++k)
+                            {
+                                const scalar gUp =
+                                    p_gijUp[gijOffset + j * SPATIAL_DIM + k];
+                                const scalar fac =
+                                    gUp * p_dndx[offSetDnDx + k] * axi;
+                                const scalar facGj =
+                                    r * gUp * p_gradT[ic * SPATIAL_DIM + k] *
+                                    axi;
+                                // fourthFac: 0 = 2nd order, 1 = 4th order
+                                gijFac += fac * T - facGj * fourthFac;
+                                lhsfac += -fac;
+                            }
+                        }
+
+                        p_lhs[rowL + ic] += nu * lhsfac;
+                        p_lhs[rowR + ic] -= nu * lhsfac;
+                    }
+
+                    // NSO residual contribution
+                    const scalar residualNSO = -nu * gijFac;
+                    p_rhs[il] -= residualNSO;
+                    p_rhs[ir] += residualNSO;
+                }
 
                 //================================
                 // Diffusion

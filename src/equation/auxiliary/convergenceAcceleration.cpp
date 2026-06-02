@@ -2,8 +2,7 @@
 // Created    : Thu Feb 26 2026
 // Author     : Mhamad Mahdi Alloush
 // Description: Generic convergence acceleration (Aitken, IQN-ILS)
-// Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "convergenceAcceleration.h"
 #include "messager.h"

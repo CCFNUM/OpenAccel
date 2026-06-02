@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Element scalar field for mass flow rate with divergence and
 //              boundary fractions
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef MASSFLOWRATE_H
 #define MASSFLOWRATE_H

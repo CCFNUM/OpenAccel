@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Field defined at nodes on boundary sides with interpolation
 //              support
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef NODESIDEFIELD_H
 #define NODESIDEFIELD_H

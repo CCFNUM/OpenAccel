@@ -2,11 +2,13 @@
 // Created    : Tue Apr 20 2024 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
+#include "controls.h"
+#include "dgInterfaceSideInfo.h"
+#include "ggiInterfaceSideInfo.h"
 #include "interface.h"
 #include "messager.h"
 #include "zone.h"
@@ -58,6 +60,13 @@ void interface::read(const YAML::Node& inputNode)
             inputNode["conformality_check_tolerance"].template as<scalar>();
     }
 
+    // penalty factor is by default 1, a smaller value may produce smoother
+    // coefficients
+    if (inputNode["penalty_factor"])
+    {
+        penaltyFactor_ = inputNode["penalty_factor"].template as<scalar>();
+    }
+
     // force non-conformal treatment for conformal interface: this enables DG
     // even if conformal, but it is always true for a fluid-solid interface
     if (type_ == interfaceType::fluid_solid)
@@ -88,13 +97,6 @@ void interface::read(const YAML::Node& inputNode)
     {
         overlapTolerance_ =
             inputNode["overlap_check_tolerance"].template as<scalar>();
-    }
-
-    // penalty factor is by default 1, a smaller value may produce smoother
-    // coefficients
-    if (inputNode["penalty_factor"])
-    {
-        penaltyFactor_ = inputNode["penalty_factor"].template as<scalar>();
     }
 
     std::string masterZoneName, slaveZoneName;
@@ -149,50 +151,6 @@ void interface::read(const YAML::Node& inputNode)
 
     pairZoneIndices_ = std::make_pair(masterZoneIndex, slaveZoneIndex);
 
-    // Parameters for interface sides
-
-    // search-related parameters
-    scalar expandBoxPercentage = 0.0;
-    scalar searchTolerance = 0.01;
-    bool activateDynamicSearchAlgorithm = false;
-    bool useShifted = false;
-    bool clipIsoParametricCoords = false;
-    std::string searchMethodName = "stk_kdtree";
-
-    if (inputNode["expand_box_percentage"])
-    {
-        expandBoxPercentage =
-            inputNode["expand_box_percentage"].template as<scalar>();
-    }
-
-    if (inputNode["clip_isoparametric_coordinates"])
-    {
-        clipIsoParametricCoords =
-            inputNode["clip_isoparametric_coordinates"].template as<bool>();
-    }
-
-    if (inputNode["search_method"])
-    {
-        searchMethodName =
-            inputNode["search_method"].template as<std::string>();
-    }
-
-    if (inputNode["search_tolerance"])
-    {
-        searchTolerance = inputNode["search_tolerance"].template as<scalar>();
-    }
-
-    if (inputNode["activate_dynamic_search_algorithm"])
-    {
-        activateDynamicSearchAlgorithm =
-            inputNode["activate_dynamic_search_algorithm"].template as<bool>();
-    }
-
-    if (inputNode["gauss_lobatto_quadrature"])
-    {
-        useShifted = inputNode["gauss_lobatto_quadrature"].template as<bool>();
-    }
-
     // Find pair parts
     stk::mesh::PartVector masterParts, slaveParts;
     for (const auto& locationName : masterRegionNameList)
@@ -204,35 +162,144 @@ void interface::read(const YAML::Node& inputNode)
         slaveParts.push_back(meshRef().metaDataRef().get_part(locationName));
     }
 
-    // Master side
-    masterInfoPtr_ =
-        std::make_unique<interfaceSideInfo>(this,
-                                            true,
-                                            masterParts,
-                                            slaveParts,
-                                            option_,
-                                            expandBoxPercentage / 100.0,
-                                            searchMethodName,
-                                            clipIsoParametricCoords,
-                                            searchTolerance,
-                                            activateDynamicSearchAlgorithm,
-                                            useShifted,
-                                            name_ + "_master_side");
+    switch (nonconformalMethod_)
+    {
+        case nonconformalMethod::discontinuousGalerkin:
+            {
+                // Parameters for interface sides
 
-    // Slave side
-    slaveInfoPtr_ =
-        std::make_unique<interfaceSideInfo>(this,
-                                            false,
-                                            slaveParts,
-                                            masterParts,
-                                            option_,
-                                            expandBoxPercentage / 100.0,
-                                            searchMethodName,
-                                            clipIsoParametricCoords,
-                                            searchTolerance,
-                                            activateDynamicSearchAlgorithm,
-                                            useShifted,
-                                            name_ + "_slave_side");
+                // search-related parameters
+                scalar expandBoxPercentage = 0.0;
+                scalar searchTolerance = 0.01;
+                bool activateDynamicSearchAlgorithm = false;
+                bool useShifted = false;
+                bool clipIsoParametricCoords = false;
+                std::string searchMethodName = "stk_kdtree";
+
+                if (inputNode["expand_box_percentage"])
+                {
+                    expandBoxPercentage = inputNode["expand_box_percentage"]
+                                              .template as<scalar>();
+                }
+
+                if (inputNode["clip_isoparametric_coordinates"])
+                {
+                    clipIsoParametricCoords =
+                        inputNode["clip_isoparametric_coordinates"]
+                            .template as<bool>();
+                }
+
+                if (inputNode["search_method"])
+                {
+                    searchMethodName =
+                        inputNode["search_method"].template as<std::string>();
+                }
+
+                if (inputNode["search_tolerance"])
+                {
+                    searchTolerance =
+                        inputNode["search_tolerance"].template as<scalar>();
+                }
+
+                if (inputNode["activate_dynamic_search_algorithm"])
+                {
+                    activateDynamicSearchAlgorithm =
+                        inputNode["activate_dynamic_search_algorithm"]
+                            .template as<bool>();
+                }
+
+                if (inputNode["gauss_lobatto_quadrature"])
+                {
+                    useShifted = inputNode["gauss_lobatto_quadrature"]
+                                     .template as<bool>();
+                }
+
+                // DG (default)
+                masterInfoPtr_ = std::make_unique<dgInterfaceSideInfo>(
+                    this,
+                    true,
+                    masterParts,
+                    slaveParts,
+                    option_,
+                    expandBoxPercentage / 100.0,
+                    searchMethodName,
+                    clipIsoParametricCoords,
+                    searchTolerance,
+                    activateDynamicSearchAlgorithm,
+                    useShifted,
+                    name_ + "_master_side");
+
+                slaveInfoPtr_ = std::make_unique<dgInterfaceSideInfo>(
+                    this,
+                    false,
+                    slaveParts,
+                    masterParts,
+                    option_,
+                    expandBoxPercentage / 100.0,
+                    searchMethodName,
+                    clipIsoParametricCoords,
+                    searchTolerance,
+                    activateDynamicSearchAlgorithm,
+                    useShifted,
+                    name_ + "_slave_side");
+            }
+            break;
+
+        case nonconformalMethod::generalGridInterface:
+            {
+                // Parameters for interface
+
+                label bitmapRes = 128;
+                scalar discernFrac = 0.01;
+                bool ggiVerbose = false;
+                bool ggiWriteDiagFile = false;
+
+                if (inputNode["ggi_bitmap_resolution"])
+                {
+                    bitmapRes =
+                        inputNode["ggi_bitmap_resolution"].template as<label>();
+                }
+                if (inputNode["ggi_discernible_fraction"])
+                {
+                    discernFrac = inputNode["ggi_discernible_fraction"]
+                                      .template as<scalar>();
+                }
+                if (inputNode["ggi_verbose"])
+                {
+                    ggiVerbose = inputNode["ggi_verbose"].template as<bool>();
+                }
+                if (inputNode["ggi_write_diagnosis_file"])
+                {
+                    ggiWriteDiagFile = inputNode["ggi_write_diagnosis_file"]
+                                           .template as<bool>();
+                }
+
+                masterInfoPtr_ = std::make_unique<ggiInterfaceSideInfo>(
+                    this,
+                    true,
+                    masterParts,
+                    slaveParts,
+                    option_,
+                    bitmapRes,
+                    discernFrac,
+                    ggiVerbose,
+                    ggiWriteDiagFile,
+                    name_ + "_master_side");
+
+                slaveInfoPtr_ = std::make_unique<ggiInterfaceSideInfo>(
+                    this,
+                    false,
+                    slaveParts,
+                    masterParts,
+                    option_,
+                    bitmapRes,
+                    discernFrac,
+                    ggiVerbose,
+                    ggiWriteDiagFile,
+                    name_ + "_slave_side");
+            }
+            break;
+    }
 }
 
 } // namespace accel

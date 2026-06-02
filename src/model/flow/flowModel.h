@@ -3,8 +3,7 @@
 // Author     : Fabian Wermelinger
 // Description: Abstract base model for Navier-Stokes equations. Implements
 //              common model code.
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef FLOWMODEL_H
 #define FLOWMODEL_H
@@ -32,6 +31,7 @@ public:
     using fieldBroker::muEffRef;
     using fieldBroker::muRef;
     using fieldBroker::p0Ref;
+    using fieldBroker::pCorrRef;
     using fieldBroker::pRef;
     using fieldBroker::psiRef;
     using fieldBroker::TRef;
@@ -87,6 +87,8 @@ public:
     updateEffectiveDynamicViscosity(const std::shared_ptr<domain> domain);
 
     void updateWallShearStress(const std::shared_ptr<domain> domain);
+
+    void updateUWallCoeffs(const std::shared_ptr<domain> domain);
 
     void resetCourantNumber();
 

@@ -2,8 +2,7 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "bulkPressureCorrectionAssembler.h"
@@ -2039,6 +2038,7 @@ void bulkPressureCorrectionAssembler::
     std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
+    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -2050,6 +2050,7 @@ void bulkPressureCorrectionAssembler::
     scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
+    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -2350,20 +2351,20 @@ void bulkPressureCorrectionAssembler::
                 }
                 else
                 {
-                    scalar uhat[SPATIAL_DIM];
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        uhat[d] = B_el[d] / mag;
+                        p_uhat[d] = B_el[d] / mag;
 
                     scalar h = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += uhat[d] * p_FOrig_elem[d];
+                        h += p_uhat[d] * p_FOrig_elem[d];
                     h = std::max(h, 0.0);
 
                     for (label ni = 1; ni < nodesPerElement; ++ni)
                     {
                         scalar dk = 0.0;
                         for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                            dk +=
+                                p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
                         dk = std::max(dk, 0.0);
                         if (h > 0.0)
                             h = static_cast<scalar>(ni + 1) * dk * h /
@@ -2373,7 +2374,7 @@ void bulkPressureCorrectionAssembler::
                     }
 
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * uhat[d];
+                        B_el[d] = h * p_uhat[d];
                 }
             }
 
@@ -3293,6 +3294,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
+    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -3304,6 +3306,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
+    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -3600,20 +3603,20 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                 }
                 else
                 {
-                    scalar uhat[SPATIAL_DIM];
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        uhat[d] = B_el[d] / mag;
+                        p_uhat[d] = B_el[d] / mag;
 
                     scalar h = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += uhat[d] * p_FOrig_elem[d];
+                        h += p_uhat[d] * p_FOrig_elem[d];
                     h = std::max(h, 0.0);
 
                     for (label ni = 1; ni < nodesPerElement; ++ni)
                     {
                         scalar dk = 0.0;
                         for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                            dk +=
+                                p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
                         dk = std::max(dk, 0.0);
                         if (h > 0.0)
                             h = static_cast<scalar>(ni + 1) * dk * h /
@@ -3623,7 +3626,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                     }
 
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * uhat[d];
+                        B_el[d] = h * p_uhat[d];
                 }
             }
 
@@ -3939,6 +3942,7 @@ void bulkPressureCorrectionAssembler::
     std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
+    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -3950,6 +3954,7 @@ void bulkPressureCorrectionAssembler::
     scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
+    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -4250,20 +4255,20 @@ void bulkPressureCorrectionAssembler::
                 }
                 else
                 {
-                    scalar uhat[SPATIAL_DIM];
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        uhat[d] = B_el[d] / mag;
+                        p_uhat[d] = B_el[d] / mag;
 
                     scalar h = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += uhat[d] * p_FOrig_elem[d];
+                        h += p_uhat[d] * p_FOrig_elem[d];
                     h = std::max(h, 0.0);
 
                     for (label ni = 1; ni < nodesPerElement; ++ni)
                     {
                         scalar dk = 0.0;
                         for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk += uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
+                            dk +=
+                                p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
                         dk = std::max(dk, 0.0);
                         if (h > 0.0)
                             h = static_cast<scalar>(ni + 1) * dk * h /
@@ -4273,7 +4278,7 @@ void bulkPressureCorrectionAssembler::
                     }
 
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * uhat[d];
+                        B_el[d] = h * p_uhat[d];
                 }
             }
 

@@ -2,15 +2,14 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
 // code
-#include "dgInfo.h"
 #include "flowModel.h"
 #include "interface.h"
+#include "ipInfo.h"
 #include "mesh.h"
 #include "navierStokesAssembler.h"
 
@@ -127,7 +126,7 @@ void navierStokesAssembler::assembleElemTermsInterfaceSide_(
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
     const auto& muEffSTKFieldRef = model_->muEffRef().stkFieldRef();
     const auto* nodalSideUSTKFieldPtr =
-        interfaceSideInfoPtr->hasNonoverlap_ && !slipNonOverlap
+        interfaceSideInfoPtr->hasNonoverlap() && !slipNonOverlap
             ? model_->URef().nodeSideFieldRef().stkFieldPtr()
             : nullptr;
 
@@ -143,1022 +142,517 @@ void navierStokesAssembler::assembleElemTermsInterfaceSide_(
     // rotation matrix (in case of rotational periodicity)
     const utils::matrix& rotMat = interfaceSideInfoPtr->rotationMatrix_;
 
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
+    // extract vector of interface IP info
 
-    for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
+    const auto ggiMethod =
+        field_broker_->meshRef()
+            .controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.ggiAssemblyMethod_;
+    const bool useGgiNonPenalty =
+        interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+            nonconformalMethod::generalGridInterface &&
+        ggiMethod != ggiAssemblyMethod::penaltyMortar;
+    const scalar multiplier = useGgiNonPenalty ? 1.0 : 0.5;
+
+    const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
+
+    for (label iSide = 0; iSide < static_cast<label>(ipInfoVec.size()); iSide++)
     {
-        const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+        const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-        // now loop over all the DgInfo objects on this particular
-        // exposed face
-        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+        for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
         {
-            dgInfo* dgInfo = faceDgInfoVec[k];
+            const ipInfo* ip = faceIpInfoVec[k];
+
+            if (ip->isExposed_)
+                continue;
 
             // extract current/opposing face/element
-            stk::mesh::Entity currentFace = dgInfo->currentFace_;
-            stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-            stk::mesh::Entity currentElement = dgInfo->currentElement_;
-            stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-            const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-            const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+            stk::mesh::Entity currentFace = ip->currentFace_;
+            stk::mesh::Entity opposingFace = ip->opposingFace_;
+            stk::mesh::Entity currentElement = ip->currentElement_;
+            stk::mesh::Entity opposingElement = ip->opposingElement_;
+            const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+            const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
             // master element; face and volume
-            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-            MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-            MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+            MasterElement* meFCCurrent = ip->meFCCurrent_;
+            MasterElement* meFCOpposing = ip->meFCOpposing_;
+            MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+            MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
-            // local ip, ordinals, etc
-            const label currentGaussPointId = dgInfo->currentGaussPointId_;
-            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-            opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+            // local ip
+            const label currentGaussPointId = ip->currentGaussPointId_;
+            const label opposingGaussPointId = ip->opposingGaussPointId_;
 
-            // if gauss point is exposed (non-overlapping), then
-            // treat as a wall. Currently the interface is assumed not moving.
-            // So the non-overlap portition will not account for any movement
-            if (dgInfo->gaussPointExposed_)
+            currentIsoParCoords = ip->currentIsoParCoords_;
+            opposingIsoParCoords = ip->opposingIsoParCoords_;
+
+            // area fraction for this CS connection
+            const scalar fcs = ip->areaFraction_;
+
+            // mapping from ip to nodes for this ordinal
+            const label* ipNodeMap =
+                meSCSCurrent->ipNodeMap(currentFaceOrdinal);
+
+            // extract some master element info
+            const label currentNodesPerSide = meFCCurrent->nodesPerElement_;
+            const label opposingNodesPerSide = meFCOpposing->nodesPerElement_;
+            const label currentNodesPerElement = meSCSCurrent->nodesPerElement_;
+            const label opposingNodesPerElement =
+                meSCSOpposing->nodesPerElement_;
+
+            // resize; matrix related
+            const label totalNodes =
+                currentNodesPerElement + opposingNodesPerElement;
+            const label lhsSize =
+                totalNodes * SPATIAL_DIM * totalNodes * SPATIAL_DIM;
+            const label rhsSize = totalNodes * SPATIAL_DIM;
+            lhs.resize(lhsSize);
+            rhs.resize(rhsSize);
+            scratchIds.resize(rhsSize);
+            scratchVals.resize(rhsSize);
+            connectedNodes.resize(totalNodes);
+
+            // algorithm related; element
+            ws_c_elem_velocity.resize(currentNodesPerElement * SPATIAL_DIM);
+            ws_o_elem_velocity.resize(opposingNodesPerElement * SPATIAL_DIM);
+            ws_c_elem_coordinates.resize(currentNodesPerElement * SPATIAL_DIM);
+            ws_o_elem_coordinates.resize(opposingNodesPerElement * SPATIAL_DIM);
+            ws_c_dndx.resize(SPATIAL_DIM * currentNodesPerElement);
+            ws_o_dndx.resize(SPATIAL_DIM * opposingNodesPerElement);
+            ws_c_det_j.resize(1);
+            ws_o_det_j.resize(1);
+
+            // algorithm related; face
+            ws_c_face_velocity.resize(currentNodesPerSide * SPATIAL_DIM);
+            ws_o_face_velocity.resize(opposingNodesPerSide * SPATIAL_DIM);
+            ws_c_muEff.resize(currentNodesPerSide);
+            ws_o_muEff.resize(opposingNodesPerSide);
+            ws_c_general_shape_function.resize(currentNodesPerSide);
+            ws_o_general_shape_function.resize(opposingNodesPerSide);
+
+            // pointers
+            scalar* p_lhs = &lhs[0];
+            scalar* p_rhs = &rhs[0];
+
+            scalar* p_c_face_velocity = &ws_c_face_velocity[0];
+            scalar* p_o_face_velocity = &ws_o_face_velocity[0];
+            scalar* p_c_elem_velocity = &ws_c_elem_velocity[0];
+            scalar* p_o_elem_velocity = &ws_o_elem_velocity[0];
+            scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
+            scalar* p_o_elem_coordinates = &ws_o_elem_coordinates[0];
+            scalar* p_c_muEff = &ws_c_muEff[0];
+            scalar* p_o_muEff = &ws_o_muEff[0];
+
+            // me pointers
+            scalar* p_c_general_shape_function =
+                &ws_c_general_shape_function[0];
+            scalar* p_o_general_shape_function =
+                &ws_o_general_shape_function[0];
+            scalar* p_c_dndx = &ws_c_dndx[0];
+            scalar* p_o_dndx = &ws_o_dndx[0];
+
+            // populate current face_node_ordinals
+            const label* c_face_node_ordinals =
+                meSCSCurrent->side_node_ordinals(currentFaceOrdinal);
+
+            // gather current face data
+            stk::mesh::Entity const* current_face_node_rels =
+                bulkData.begin_nodes(currentFace);
+            const label current_num_face_nodes =
+                bulkData.num_nodes(currentFace);
+            for (label ni = 0; ni < current_num_face_nodes; ++ni)
             {
-                if (slipNonOverlap)
+                stk::mesh::Entity node = current_face_node_rels[ni];
+
+                p_c_muEff[ni] = *stk::mesh::field_data(muEffSTKFieldRef, node);
+
+                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
-                    // mapping from ip to nodes for this ordinal
-                    const label* ipNodeMap =
-                        meSCSCurrent->ipNodeMap(currentFaceOrdinal);
-
-                    // extract nearset node
-                    const label nearestNode = ipNodeMap[currentGaussPointId];
-
-                    // extract some master element info
-                    const label currentNodesPerSide =
-                        meFCCurrent->nodesPerElement_;
-                    const label currentNodesPerElement =
-                        meSCSCurrent->nodesPerElement_;
-
-                    // resize some things; matrix related
-                    const label lhsSize = currentNodesPerElement * SPATIAL_DIM *
-                                          currentNodesPerElement * SPATIAL_DIM;
-                    const label rhsSize = currentNodesPerElement * SPATIAL_DIM;
-                    lhs.resize(lhsSize);
-                    rhs.resize(rhsSize);
-                    scratchIds.resize(rhsSize);
-                    scratchVals.resize(rhsSize);
-                    connectedNodes.resize(currentNodesPerElement);
-
-                    // algorithm related; element; dndx will be at a
-                    // single gauss point...
-                    ws_c_elem_velocity.resize(currentNodesPerElement *
-                                              SPATIAL_DIM);
-                    ws_c_elem_coordinates.resize(currentNodesPerElement *
-                                                 SPATIAL_DIM);
-
-                    ws_c_dndx.resize(SPATIAL_DIM * currentNodesPerElement);
-                    ws_c_det_j.resize(1);
-
-                    // algorithm related; face
-                    ws_c_muEff.resize(currentNodesPerSide);
-                    ws_c_general_shape_function.resize(currentNodesPerSide);
-
-                    // pointers
-                    scalar* p_lhs = &lhs[0];
-                    scalar* p_rhs = &rhs[0];
-
-                    scalar* p_c_elem_velocity = &ws_c_elem_velocity[0];
-                    scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
-                    scalar* p_c_muEff = &ws_c_muEff[0];
-
-                    // me pointers
-                    scalar* p_c_general_shape_function =
-                        &ws_c_general_shape_function[0];
-                    scalar* p_c_dndx = &ws_c_dndx[0];
-
-                    // populate current face_node_ordinals
-                    const label* c_face_node_ordinals =
-                        meSCSCurrent->side_node_ordinals(currentFaceOrdinal);
-
-                    // gather current face data
-                    stk::mesh::Entity const* current_face_node_rels =
-                        bulkData.begin_nodes(currentFace);
-                    const label current_num_face_nodes =
-                        bulkData.num_nodes(currentFace);
-                    for (label ni = 0; ni < current_num_face_nodes; ++ni)
-                    {
-                        stk::mesh::Entity node = current_face_node_rels[ni];
-
-                        // gather; scalar
-                        p_c_muEff[ni] =
-                            *stk::mesh::field_data(muEffSTKFieldRef, node);
-                    }
-
-                    // gather current element data; sneak in first of
-                    // connected nodes
-                    stk::mesh::Entity const* current_elem_node_rels =
-                        bulkData.begin_nodes(currentElement);
-                    const label current_num_elem_nodes =
-                        bulkData.num_nodes(currentElement);
-                    for (label ni = 0; ni < current_num_elem_nodes; ++ni)
-                    {
-                        stk::mesh::Entity node = current_elem_node_rels[ni];
-
-                        // set connected nodes
-                        connectedNodes[ni] = node;
-
-                        // gather; vector
-                        const scalar* U =
-                            stk::mesh::field_data(USTKFieldRef, node);
-                        const scalar* coords =
-                            stk::mesh::field_data(coordsSTKFieldRef, node);
-                        const label niNdim = ni * SPATIAL_DIM;
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_c_elem_velocity[niNdim + i] = U[i];
-                            p_c_elem_coordinates[niNdim + i] = coords[i];
-                        }
-                    }
-
-                    // pointer to face data
-                    const scalar* c_areaVec = stk::mesh::field_data(
-                        exposedAreaVecSTKFieldRef, currentFace);
-
-                    scalar c_amag = 0.0;
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        const scalar c_axj =
-                            c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
-                        c_amag += c_axj * c_axj;
-                    }
-                    c_amag = std::sqrt(c_amag);
-
-                    // now compute normal
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_cNx[i] =
-                            c_areaVec[currentGaussPointId * SPATIAL_DIM + i] /
-                            c_amag;
-                    }
-
-                    // project from side to element; method deals with
-                    // the -1:1 isInElement range to the proper
-                    // underlying CVFEM range
-                    meSCSCurrent->sidePcoords_to_elemPcoords(
-                        currentFaceOrdinal,
-                        1,
-                        &currentIsoParCoords[0],
-                        &currentElementIsoParCoords[0]);
-
-                    // compute dndx
-                    scalar scs_error = 0.0;
-                    meSCSCurrent->general_face_grad_op(
-                        currentFaceOrdinal,
-                        &currentElementIsoParCoords[0],
-                        &p_c_elem_coordinates[0],
-                        &p_c_dndx[0],
-                        &ws_c_det_j[0],
-                        &scs_error);
-
-                    // interpolate face data; current only ...
-                    scalar currentMuEffBip = 0.0;
-                    meFCCurrent->interpolatePoint(sizeOfScalarField,
-                                                  &currentIsoParCoords[0],
-                                                  &ws_c_muEff[0],
-                                                  &currentMuEffBip);
-
-                    // zero lhs/rhs
-                    for (label p = 0; p < lhsSize; ++p)
-                    {
-                        p_lhs[p] = 0.0;
-                    }
-                    for (label p = 0; p < rhsSize; ++p)
-                    {
-                        p_rhs[p] = 0.0;
-                    }
-
-                    // zero tangential stress
-                    for (label ic = 0; ic < currentNodesPerElement; ++ic)
-                    {
-                        const label offSetDnDx =
-                            ic * SPATIAL_DIM; // single intg. point
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            const scalar axj =
-                                c_areaVec[currentGaussPointId * SPATIAL_DIM +
-                                          j];
-                            const scalar dndxj = p_c_dndx[offSetDnDx + j];
-                            const scalar uxj =
-                                p_c_elem_velocity[ic * SPATIAL_DIM + j];
-                            const scalar divUstress = 2.0 / 3.0 *
-                                                      currentMuEffBip * dndxj *
-                                                      uxj * axj * comp;
-                            for (label i = 0; i < SPATIAL_DIM; ++i)
-                            {
-                                /* matrix entries */
-                                label indexR = nearestNode * SPATIAL_DIM + i;
-                                label rowR = indexR * currentNodesPerElement *
-                                             SPATIAL_DIM;
-                                const scalar dndxi = p_c_dndx[offSetDnDx + i];
-                                const scalar uxi =
-                                    p_c_elem_velocity[ic * SPATIAL_DIM + i];
-                                const scalar nxi = p_cNx[i];
-                                const scalar nxinxi = nxi * nxi;
-
-                                /* -mu*dui/dxj*Aj*ni*ni; sneak in divU
-                                 * (explicit): */
-                                scalar lhsfac =
-                                    -currentMuEffBip * dndxj * axj * nxinxi;
-                                p_lhs[rowR + ic * SPATIAL_DIM + i] += lhsfac;
-                                p_rhs[indexR] -=
-                                    lhsfac * uxi + divUstress * nxinxi;
-
-                                /* -mu*duj/dxi*Aj*ni*ni */
-                                lhsfac =
-                                    -currentMuEffBip * dndxi * axj * nxinxi;
-                                p_lhs[rowR + ic * SPATIAL_DIM + j] += lhsfac;
-                                p_rhs[indexR] -= lhsfac * uxj;
-
-                                /* now we need the +nx*ny*Fy + nx*nz*Fz part */
-                                for (label l = 0; l < SPATIAL_DIM; ++l)
-                                {
-                                    if (i != l)
-                                    {
-                                        const scalar nxinxl = nxi * p_cNx[l];
-                                        const scalar uxl =
-                                            p_c_elem_velocity[ic * SPATIAL_DIM +
-                                                              l];
-                                        const scalar dndxl =
-                                            p_c_dndx[offSetDnDx + l];
-
-                                        /* -ni*nl*mu*dul/dxj*Aj; sneak in divU
-                                         * (explicit):
-                                         */
-                                        lhsfac = -currentMuEffBip * dndxj *
-                                                 axj * nxinxl;
-                                        p_lhs[rowR + ic * SPATIAL_DIM + l] +=
-                                            lhsfac;
-                                        p_rhs[indexR] -=
-                                            lhsfac * uxl + divUstress * nxinxl;
-
-                                        /* -ni*nl*mu*duj/dxl*Aj */
-                                        lhsfac = -currentMuEffBip * dndxl *
-                                                 axj * nxinxl;
-                                        p_lhs[rowR + ic * SPATIAL_DIM + j] +=
-                                            lhsfac;
-                                        p_rhs[indexR] -= lhsfac * uxj;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    const label offSet = i * current_num_face_nodes + ni;
+                    p_c_face_velocity[offSet] = U[i];
                 }
-                else
+            }
+
+            // populate opposing face_node_ordinals
+            const label* o_face_node_ordinals =
+                meSCSOpposing->side_node_ordinals(opposingFaceOrdinal);
+
+            // gather opposing face data
+            stk::mesh::Entity const* opposing_face_node_rels =
+                bulkData.begin_nodes(opposingFace);
+            const label opposing_num_face_nodes =
+                bulkData.num_nodes(opposingFace);
+            for (label ni = 0; ni < opposing_num_face_nodes; ++ni)
+            {
+                stk::mesh::Entity node = opposing_face_node_rels[ni];
+
+                p_o_muEff[ni] = *stk::mesh::field_data(muEffSTKFieldRef, node);
+
+                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
-                    // mapping from ip to nodes for this ordinal
-                    const label* ipNodeMap =
-                        meSCSCurrent->ipNodeMap(currentFaceOrdinal);
+                    const label offSet = i * opposing_num_face_nodes + ni;
+                    p_o_face_velocity[offSet] = U[i];
+                }
+            }
 
-                    // extract nearset node
-                    const label nearestNode = ipNodeMap[currentGaussPointId];
+            // gather current element data
+            stk::mesh::Entity const* current_elem_node_rels =
+                bulkData.begin_nodes(currentElement);
+            const label current_num_elem_nodes =
+                bulkData.num_nodes(currentElement);
+            for (label ni = 0; ni < current_num_elem_nodes; ++ni)
+            {
+                stk::mesh::Entity node = current_elem_node_rels[ni];
 
-                    // extract some master element info
-                    const label currentNodesPerSide =
-                        meFCCurrent->nodesPerElement_;
-                    const label currentNodesPerElement =
-                        meSCSCurrent->nodesPerElement_;
+                connectedNodes[ni] = node;
 
-                    // resize some things; matrix related
-                    const label lhsSize = currentNodesPerElement * SPATIAL_DIM *
-                                          currentNodesPerElement * SPATIAL_DIM;
-                    const label rhsSize = currentNodesPerElement * SPATIAL_DIM;
-                    lhs.resize(lhsSize);
-                    rhs.resize(rhsSize);
-                    scratchIds.resize(rhsSize);
-                    scratchVals.resize(rhsSize);
-                    connectedNodes.resize(currentNodesPerElement);
+                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, node);
+                const label niNdim = ni * SPATIAL_DIM;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    p_c_elem_velocity[niNdim + i] = U[i];
+                    p_c_elem_coordinates[niNdim + i] = coords[i];
+                }
+            }
 
-                    // algorithm related; element; dndx will be at a
-                    // single gauss point...
-                    ws_c_elem_velocity.resize(currentNodesPerElement *
-                                              SPATIAL_DIM);
-                    ws_c_elem_coordinates.resize(currentNodesPerElement *
-                                                 SPATIAL_DIM);
-                    ws_bcMultiplier.resize(currentNodesPerElement);
-                    ws_c_dndx.resize(SPATIAL_DIM * currentNodesPerElement);
-                    ws_c_det_j.resize(1);
+            // gather opposing element data
+            stk::mesh::Entity const* opposing_elem_node_rels =
+                bulkData.begin_nodes(opposingElement);
+            const label opposing_num_elem_nodes =
+                bulkData.num_nodes(opposingElement);
+            for (label ni = 0; ni < opposing_num_elem_nodes; ++ni)
+            {
+                stk::mesh::Entity node = opposing_elem_node_rels[ni];
 
-                    // algorithm related; face
-                    ws_c_muEff.resize(currentNodesPerSide);
-                    ws_c_general_shape_function.resize(currentNodesPerSide);
+                connectedNodes[ni + current_num_elem_nodes] = node;
 
-                    // pointers
-                    scalar* p_lhs = &lhs[0];
-                    scalar* p_rhs = &rhs[0];
+                const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, node);
+                const label niNdim = ni * SPATIAL_DIM;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    p_o_elem_velocity[niNdim + i] = U[i];
+                    p_o_elem_coordinates[niNdim + i] = coords[i];
+                }
+            }
 
-                    scalar* p_c_elem_velocity = &ws_c_elem_velocity[0];
-                    scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
-                    scalar* p_c_muEff = &ws_c_muEff[0];
-                    scalar* p_bcMultiplier = &ws_bcMultiplier[0];
+            // apply transformations
+            interfaceSideInfoPtr->rotateVectorListCompact<SPATIAL_DIM>(
+                ws_o_face_velocity, opposing_num_face_nodes);
+            interfaceSideInfoPtr->rotateVectorList<SPATIAL_DIM>(
+                ws_o_elem_velocity, opposing_num_elem_nodes);
+            interfaceSideInfoPtr->transformCoordinateList(
+                ws_o_elem_coordinates, opposing_num_elem_nodes);
 
-                    // me pointers
-                    scalar* p_c_general_shape_function =
-                        &ws_c_general_shape_function[0];
-                    scalar* p_c_dndx = &ws_c_dndx[0];
+            // pointer to face data
+            const scalar* c_areaVec =
+                stk::mesh::field_data(exposedAreaVecSTKFieldRef, currentFace);
+            const scalar* ncmDot =
+                stk::mesh::field_data(mDotSideSTKFieldRef, currentFace);
 
-                    // gather current element data; sneak in first of
-                    // connected nodes
-                    stk::mesh::Entity const* current_elem_node_rels =
-                        bulkData.begin_nodes(currentElement);
-                    const label current_num_elem_nodes =
-                        bulkData.num_nodes(currentElement);
-                    for (label ni = 0; ni < current_num_elem_nodes; ++ni)
-                    {
-                        stk::mesh::Entity node = current_elem_node_rels[ni];
+            scalar c_amag = 0.0;
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                const scalar c_axj =
+                    c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
+                c_amag += c_axj * c_axj;
+            }
+            c_amag = std::sqrt(c_amag);
 
-                        // set connected nodes
-                        connectedNodes[ni] = node;
+            // compute normal
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                p_cNx[i] =
+                    c_areaVec[currentGaussPointId * SPATIAL_DIM + i] / c_amag;
+            }
 
-                        p_bcMultiplier[ni] = 1.0;
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                p_oNx[i] = -p_cNx[i];
+            }
 
-                        // gather; vector
-                        const scalar* U =
-                            stk::mesh::field_data(USTKFieldRef, node);
-                        const scalar* coords =
-                            stk::mesh::field_data(coordsSTKFieldRef, node);
-                        const label niNdim = ni * SPATIAL_DIM;
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_c_elem_velocity[niNdim + i] = U[i];
-                            p_c_elem_coordinates[niNdim + i] = coords[i];
-                        }
-                    }
+            // project from side to element
+            meSCSCurrent->sidePcoords_to_elemPcoords(
+                currentFaceOrdinal,
+                1,
+                &currentIsoParCoords[0],
+                &currentElementIsoParCoords[0]);
+            meSCSOpposing->sidePcoords_to_elemPcoords(
+                opposingFaceOrdinal,
+                1,
+                &opposingIsoParCoords[0],
+                &opposingElementIsoParCoordsTrans[0]);
 
-                    // populate current face_node_ordinals
-                    const label* c_face_node_ordinals =
-                        meSCSCurrent->side_node_ordinals(currentFaceOrdinal);
+            // compute dndx
+            scalar scs_error = 0.0;
+            meSCSCurrent->general_face_grad_op(currentFaceOrdinal,
+                                               &currentElementIsoParCoords[0],
+                                               &p_c_elem_coordinates[0],
+                                               &p_c_dndx[0],
+                                               &ws_c_det_j[0],
+                                               &scs_error);
+            meSCSOpposing->general_face_grad_op(
+                opposingFaceOrdinal,
+                &opposingElementIsoParCoordsTrans[0],
+                &p_o_elem_coordinates[0],
+                &p_o_dndx[0],
+                &ws_o_det_j[0],
+                &scs_error);
 
-                    // gather current face data
-                    stk::mesh::Entity const* current_face_node_rels =
-                        bulkData.begin_nodes(currentFace);
-                    const label current_num_face_nodes =
-                        bulkData.num_nodes(currentFace);
-                    for (label ni = 0; ni < current_num_face_nodes; ++ni)
-                    {
-                        const label icnn = c_face_node_ordinals[ni];
+            // current inverse length scale
+            scalar currentInverseLength = 0.0;
+            for (label ic = 0; ic < current_num_face_nodes; ++ic)
+            {
+                const label faceNodeNumber = c_face_node_ordinals[ic];
+                const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar nxj = p_cNx[j];
+                    const scalar dndxj = p_c_dndx[offSetDnDx + j];
+                    currentInverseLength += dndxj * nxj;
+                }
+            }
 
-                        stk::mesh::Entity node = current_face_node_rels[ni];
+            // opposing inverse length scale
+            scalar opposingInverseLength = 0.0;
+            for (label ic = 0; ic < opposing_num_face_nodes; ++ic)
+            {
+                const label faceNodeNumber = o_face_node_ordinals[ic];
+                const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar nxj = p_oNx[j];
+                    const scalar dndxj = p_o_dndx[offSetDnDx + j];
+                    opposingInverseLength += dndxj * nxj;
+                }
+            }
 
-                        // gather; scalar
-                        p_c_muEff[ni] =
-                            *stk::mesh::field_data(muEffSTKFieldRef, node);
+            // interpolate face data
+            meFCCurrent->interpolatePoint(sizeOfVectorField,
+                                          &currentIsoParCoords[0],
+                                          &ws_c_face_velocity[0],
+                                          &currentUBip[0]);
 
-                        p_bcMultiplier[icnn] = 0.0;
+            meFCOpposing->interpolatePoint(sizeOfVectorField,
+                                           &opposingIsoParCoords[0],
+                                           &ws_o_face_velocity[0],
+                                           &opposingUBip[0]);
 
-                        // gather; vector
-                        const scalar* U =
-                            stk::mesh::field_data(*nodalSideUSTKFieldPtr, node);
-                        const label niNdim = icnn * SPATIAL_DIM;
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_c_elem_velocity[niNdim + i] = U[i];
-                        }
-                    }
+            scalar currentMuEffBip = 0.0;
+            meFCCurrent->interpolatePoint(sizeOfScalarField,
+                                          &currentIsoParCoords[0],
+                                          &ws_c_muEff[0],
+                                          &currentMuEffBip);
 
-                    // pointer to face data
-                    const scalar* c_areaVec = stk::mesh::field_data(
-                        exposedAreaVecSTKFieldRef, currentFace);
+            scalar opposingMuEffBip = 0.0;
+            meFCOpposing->interpolatePoint(sizeOfScalarField,
+                                           &opposingIsoParCoords[0],
+                                           &ws_o_muEff[0],
+                                           &opposingMuEffBip);
 
-                    scalar c_amag = 0.0;
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        const scalar c_axj =
-                            c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
-                        c_amag += c_axj * c_axj;
-                    }
-                    c_amag = std::sqrt(c_amag);
+            // zero-out diffusion fluxes
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+            {
+                currentDiffFluxBip[j] = 0;
+                opposingDiffFluxBip[j] = 0;
+            }
 
-                    // now compute normal
+            // compute viscous stress tensor; current
+            for (label ic = 0; ic < currentNodesPerElement; ++ic)
+            {
+                const label offSetDnDx = ic * SPATIAL_DIM;
+
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar nxj = p_cNx[j];
+                    const scalar dndxj = p_c_dndx[offSetDnDx + j];
+                    const scalar uxj = p_c_elem_velocity[ic * SPATIAL_DIM + j];
+
+                    const scalar divUstress =
+                        2.0 / 3.0 * currentMuEffBip * dndxj * uxj * nxj * comp;
+
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        p_cNx[i] =
-                            c_areaVec[currentGaussPointId * SPATIAL_DIM + i] /
-                            c_amag;
-                    }
+                        const scalar dndxi = p_c_dndx[offSetDnDx + i];
+                        const scalar uxi =
+                            p_c_elem_velocity[ic * SPATIAL_DIM + i];
 
-                    // project from side to element; method deals with
-                    // the -1:1 isInElement range to the proper
-                    // underlying CVFEM range
-                    meSCSCurrent->sidePcoords_to_elemPcoords(
-                        currentFaceOrdinal,
-                        1,
-                        &currentIsoParCoords[0],
-                        &currentElementIsoParCoords[0]);
+                        currentDiffFluxBip[i] +=
+                            -currentMuEffBip * dndxj * nxj * uxi + divUstress;
 
-                    // compute dndx
-                    scalar scs_error = 0.0;
-                    meSCSCurrent->general_face_grad_op(
-                        currentFaceOrdinal,
-                        &currentElementIsoParCoords[0],
-                        &p_c_elem_coordinates[0],
-                        &p_c_dndx[0],
-                        &ws_c_det_j[0],
-                        &scs_error);
-
-                    // interpolate face data; current only ...
-                    scalar currentMuEffBip = 0.0;
-                    meFCCurrent->interpolatePoint(sizeOfScalarField,
-                                                  &currentIsoParCoords[0],
-                                                  &ws_c_muEff[0],
-                                                  &currentMuEffBip);
-
-                    // zero lhs/rhs
-                    for (label p = 0; p < lhsSize; ++p)
-                    {
-                        p_lhs[p] = 0.0;
-                    }
-                    for (label p = 0; p < rhsSize; ++p)
-                    {
-                        p_rhs[p] = 0.0;
-                    }
-
-                    // stress: zero normal stress
-                    for (label ic = 0; ic < currentNodesPerElement; ++ic)
-                    {
-                        const label offSetDnDx =
-                            ic * SPATIAL_DIM; // single intg. point
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            const scalar axj =
-                                c_areaVec[currentGaussPointId * SPATIAL_DIM +
-                                          j];
-                            const scalar dndxj = p_c_dndx[offSetDnDx + j];
-                            const scalar uxj =
-                                p_c_elem_velocity[ic * SPATIAL_DIM + j];
-                            for (label i = 0; i < SPATIAL_DIM; ++i)
-                            {
-                                /* matrix entries */
-                                label indexR = nearestNode * SPATIAL_DIM + i;
-                                label rowR = indexR * currentNodesPerElement *
-                                             SPATIAL_DIM;
-                                const scalar dndxi = p_c_dndx[offSetDnDx + i];
-                                const scalar uxi =
-                                    p_c_elem_velocity[ic * SPATIAL_DIM + i];
-                                const scalar nxi = p_cNx[i];
-                                const scalar om_nxinxi = 1.0 - nxi * nxi;
-
-                                /* -mu*dui/dxj*Aj(1.0-nini); sneak in divU
-                                 * (explicit) */
-                                scalar lhsfac =
-                                    -currentMuEffBip * dndxj * axj * om_nxinxi;
-                                p_lhs[rowR + ic * SPATIAL_DIM + i] +=
-                                    lhsfac * p_bcMultiplier[ic];
-                                p_rhs[indexR] -= lhsfac * uxi;
-
-                                /* -mu*duj/dxi*Aj(1.0-nini) */
-                                lhsfac =
-                                    -currentMuEffBip * dndxi * axj * om_nxinxi;
-                                p_lhs[rowR + ic * SPATIAL_DIM + j] +=
-                                    lhsfac * p_bcMultiplier[ic];
-                                p_rhs[indexR] -= lhsfac * uxj;
-
-                                /* now we need the -nx*ny*Fy - nx*nz*Fz part */
-                                for (label l = 0; l < SPATIAL_DIM; ++l)
-                                {
-                                    if (i != l)
-                                    {
-                                        const scalar nxinxl = nxi * p_cNx[l];
-                                        const scalar uxl =
-                                            p_c_elem_velocity[ic * SPATIAL_DIM +
-                                                              l];
-                                        const scalar dndxl =
-                                            p_c_dndx[offSetDnDx + l];
-
-                                        /* +ni*nl*mu*dul/dxj*Aj; sneak in divU
-                                         * (explicit):
-                                         */
-                                        lhsfac = currentMuEffBip * dndxj * axj *
-                                                 nxinxl;
-                                        p_lhs[rowR + ic * SPATIAL_DIM + l] +=
-                                            lhsfac * p_bcMultiplier[ic];
-                                        p_rhs[indexR] -= lhsfac * uxl;
-
-                                        /* +ni*nl*mu*duj/dxl*Aj */
-                                        lhsfac = currentMuEffBip * dndxl * axj *
-                                                 nxinxl;
-                                        p_lhs[rowR + ic * SPATIAL_DIM + j] +=
-                                            lhsfac * p_bcMultiplier[ic];
-                                        p_rhs[indexR] -= lhsfac * uxj;
-                                    }
-                                }
-                            }
-                        }
+                        currentDiffFluxBip[i] +=
+                            -currentMuEffBip * dndxi * nxj * uxj;
                     }
                 }
             }
-            else
+
+            // compute viscous stress tensor; opposing
+            for (label ic = 0; ic < opposingNodesPerElement; ++ic)
             {
-                // mapping from ip to nodes for this ordinal
-                const label* ipNodeMap =
-                    meSCSCurrent->ipNodeMap(currentFaceOrdinal);
+                const label offSetDnDx = ic * SPATIAL_DIM;
 
-                // extract some master element info
-                const label currentNodesPerSide = meFCCurrent->nodesPerElement_;
-                const label opposingNodesPerSide =
-                    meFCOpposing->nodesPerElement_;
-                const label currentNodesPerElement =
-                    meSCSCurrent->nodesPerElement_;
-                const label opposingNodesPerElement =
-                    meSCSOpposing->nodesPerElement_;
-
-                // resize some things; matrix related
-                const label totalNodes =
-                    currentNodesPerElement + opposingNodesPerElement;
-                const label lhsSize =
-                    totalNodes * SPATIAL_DIM * totalNodes * SPATIAL_DIM;
-                const label rhsSize = totalNodes * SPATIAL_DIM;
-                lhs.resize(lhsSize);
-                rhs.resize(rhsSize);
-                scratchIds.resize(rhsSize);
-                scratchVals.resize(rhsSize);
-                connectedNodes.resize(totalNodes);
-
-                // algorithm related; element; dndx will be at a
-                // single gauss point...
-                ws_c_elem_velocity.resize(currentNodesPerElement * SPATIAL_DIM);
-                ws_o_elem_velocity.resize(opposingNodesPerElement *
-                                          SPATIAL_DIM);
-                ws_c_elem_coordinates.resize(currentNodesPerElement *
-                                             SPATIAL_DIM);
-                ws_o_elem_coordinates.resize(opposingNodesPerElement *
-                                             SPATIAL_DIM);
-                ws_c_dndx.resize(SPATIAL_DIM * currentNodesPerElement);
-                ws_o_dndx.resize(SPATIAL_DIM * opposingNodesPerElement);
-                ws_c_det_j.resize(1);
-                ws_o_det_j.resize(1);
-
-                // algorithm related; face
-                ws_c_face_velocity.resize(currentNodesPerSide * SPATIAL_DIM);
-                ws_o_face_velocity.resize(opposingNodesPerSide * SPATIAL_DIM);
-                ws_c_muEff.resize(currentNodesPerSide);
-                ws_o_muEff.resize(opposingNodesPerSide);
-                ws_c_general_shape_function.resize(currentNodesPerSide);
-                ws_o_general_shape_function.resize(opposingNodesPerSide);
-
-                // pointers
-                scalar* p_lhs = &lhs[0];
-                scalar* p_rhs = &rhs[0];
-
-                scalar* p_c_face_velocity = &ws_c_face_velocity[0];
-                scalar* p_o_face_velocity = &ws_o_face_velocity[0];
-                scalar* p_c_elem_velocity = &ws_c_elem_velocity[0];
-                scalar* p_o_elem_velocity = &ws_o_elem_velocity[0];
-                scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
-                scalar* p_o_elem_coordinates = &ws_o_elem_coordinates[0];
-                scalar* p_c_muEff = &ws_c_muEff[0];
-                scalar* p_o_muEff = &ws_o_muEff[0];
-
-                // me pointers
-                scalar* p_c_general_shape_function =
-                    &ws_c_general_shape_function[0];
-                scalar* p_o_general_shape_function =
-                    &ws_o_general_shape_function[0];
-                scalar* p_c_dndx = &ws_c_dndx[0];
-                scalar* p_o_dndx = &ws_o_dndx[0];
-
-                // populate current face_node_ordinals
-                const label* c_face_node_ordinals =
-                    meSCSCurrent->side_node_ordinals(currentFaceOrdinal);
-
-                // gather current face data
-                stk::mesh::Entity const* current_face_node_rels =
-                    bulkData.begin_nodes(currentFace);
-                const label current_num_face_nodes =
-                    bulkData.num_nodes(currentFace);
-                for (label ni = 0; ni < current_num_face_nodes; ++ni)
-                {
-                    stk::mesh::Entity node = current_face_node_rels[ni];
-
-                    // gather; scalar
-                    p_c_muEff[ni] =
-                        *stk::mesh::field_data(muEffSTKFieldRef, node);
-
-                    // gather; vector
-                    const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        const label offSet = i * current_num_face_nodes + ni;
-                        p_c_face_velocity[offSet] = U[i];
-                    }
-                }
-
-                // populate opposing face_node_ordinals
-                const label* o_face_node_ordinals =
-                    meSCSOpposing->side_node_ordinals(opposingFaceOrdinal);
-
-                // gather opposing face data
-                stk::mesh::Entity const* opposing_face_node_rels =
-                    bulkData.begin_nodes(opposingFace);
-                const label opposing_num_face_nodes =
-                    bulkData.num_nodes(opposingFace);
-                for (label ni = 0; ni < opposing_num_face_nodes; ++ni)
-                {
-                    stk::mesh::Entity node = opposing_face_node_rels[ni];
-
-                    // gather; scalar
-                    p_o_muEff[ni] =
-                        *stk::mesh::field_data(muEffSTKFieldRef, node);
-
-                    // gather; vector
-                    const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        const label offSet = i * opposing_num_face_nodes + ni;
-                        p_o_face_velocity[offSet] = U[i];
-                    }
-                }
-
-                // gather current element data; sneak in first of
-                // connected nodes
-                stk::mesh::Entity const* current_elem_node_rels =
-                    bulkData.begin_nodes(currentElement);
-                const label current_num_elem_nodes =
-                    bulkData.num_nodes(currentElement);
-                for (label ni = 0; ni < current_num_elem_nodes; ++ni)
-                {
-                    stk::mesh::Entity node = current_elem_node_rels[ni];
-
-                    // set connected nodes
-                    connectedNodes[ni] = node;
-
-                    // gather; vector
-                    const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
-                    const scalar* coords =
-                        stk::mesh::field_data(coordsSTKFieldRef, node);
-                    const label niNdim = ni * SPATIAL_DIM;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_c_elem_velocity[niNdim + i] = U[i];
-                        p_c_elem_coordinates[niNdim + i] = coords[i];
-                    }
-                }
-
-                // gather opposing element data; sneak in second
-                // connected nodes
-                stk::mesh::Entity const* opposing_elem_node_rels =
-                    bulkData.begin_nodes(opposingElement);
-                const label opposing_num_elem_nodes =
-                    bulkData.num_nodes(opposingElement);
-                for (label ni = 0; ni < opposing_num_elem_nodes; ++ni)
-                {
-                    stk::mesh::Entity node = opposing_elem_node_rels[ni];
-
-                    // set connected nodes
-                    connectedNodes[ni + current_num_elem_nodes] = node;
-
-                    // gather; vector
-                    const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
-                    const scalar* coords =
-                        stk::mesh::field_data(coordsSTKFieldRef, node);
-                    const label niNdim = ni * SPATIAL_DIM;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_o_elem_velocity[niNdim + i] = U[i];
-                        p_o_elem_coordinates[niNdim + i] = coords[i];
-                    }
-                }
-
-                // apply transformations
-                interfaceSideInfoPtr->rotateVectorListCompact<SPATIAL_DIM>(
-                    ws_o_face_velocity, opposing_num_face_nodes);
-                interfaceSideInfoPtr->rotateVectorList<SPATIAL_DIM>(
-                    ws_o_elem_velocity, opposing_num_elem_nodes);
-                interfaceSideInfoPtr->transformCoordinateList(
-                    ws_o_elem_coordinates, opposing_num_elem_nodes);
-
-                // pointer to face data
-                const scalar* c_areaVec = stk::mesh::field_data(
-                    exposedAreaVecSTKFieldRef, currentFace);
-                const scalar* ncmDot =
-                    stk::mesh::field_data(mDotSideSTKFieldRef, currentFace);
-
-                scalar c_amag = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    const scalar c_axj =
-                        c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
-                    c_amag += c_axj * c_axj;
-                }
-                c_amag = std::sqrt(c_amag);
+                    const scalar nxj = p_oNx[j];
+                    const scalar dndxj = p_o_dndx[offSetDnDx + j];
+                    const scalar uxj = p_o_elem_velocity[ic * SPATIAL_DIM + j];
 
-                // now compute normal
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    p_cNx[i] =
-                        c_areaVec[currentGaussPointId * SPATIAL_DIM + i] /
-                        c_amag;
-                }
+                    const scalar divUstress =
+                        2.0 / 3.0 * opposingMuEffBip * dndxj * uxj * nxj * comp;
 
-                // compute opposing normal: in theory it is assumed
-                // that the current and opposing sub-control surfaces
-                // are sufficiently planar
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    p_oNx[i] = -p_cNx[i];
-                }
-
-                // project from side to element; method deals with
-                // the -1:1 isInElement range to the proper
-                // underlying CVFEM range
-                meSCSCurrent->sidePcoords_to_elemPcoords(
-                    currentFaceOrdinal,
-                    1,
-                    &currentIsoParCoords[0],
-                    &currentElementIsoParCoords[0]);
-                meSCSOpposing->sidePcoords_to_elemPcoords(
-                    opposingFaceOrdinal,
-                    1,
-                    &opposingIsoParCoords[0],
-                    &opposingElementIsoParCoordsTrans[0]);
-
-                // compute dndx
-                scalar scs_error = 0.0;
-                meSCSCurrent->general_face_grad_op(
-                    currentFaceOrdinal,
-                    &currentElementIsoParCoords[0],
-                    &p_c_elem_coordinates[0],
-                    &p_c_dndx[0],
-                    &ws_c_det_j[0],
-                    &scs_error);
-                meSCSOpposing->general_face_grad_op(
-                    opposingFaceOrdinal,
-                    &opposingElementIsoParCoordsTrans[0],
-                    &p_o_elem_coordinates[0],
-                    &p_o_dndx[0],
-                    &ws_o_det_j[0],
-                    &scs_error);
-
-                // current inverse length scale; can loop over face
-                // nodes to avoid "nodesOnFace" array
-                scalar currentInverseLength = 0.0;
-                for (label ic = 0; ic < current_num_face_nodes; ++ic)
-                {
-                    const label faceNodeNumber = c_face_node_ordinals[ic];
-                    const label offSetDnDx =
-                        faceNodeNumber * SPATIAL_DIM; // single intg. point
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        const scalar nxj = p_cNx[j];
-                        const scalar dndxj = p_c_dndx[offSetDnDx + j];
-                        currentInverseLength += dndxj * nxj;
+                        const scalar dndxi = p_o_dndx[offSetDnDx + i];
+                        const scalar uxi =
+                            p_o_elem_velocity[ic * SPATIAL_DIM + i];
+
+                        opposingDiffFluxBip[i] +=
+                            -opposingMuEffBip * dndxj * nxj * uxi + divUstress;
+
+                        opposingDiffFluxBip[i] +=
+                            -opposingMuEffBip * dndxi * nxj * uxj;
                     }
                 }
+            }
 
-                // opposing inverse length scale; can loop over face
-                // nodes to avoid "nodesOnFace" array
-                scalar opposingInverseLength = 0.0;
-                for (label ic = 0; ic < opposing_num_face_nodes; ++ic)
+            // zero lhs/rhs
+            for (label p = 0; p < lhsSize; ++p)
+            {
+                p_lhs[p] = 0.0;
+            }
+            for (label p = 0; p < rhsSize; ++p)
+            {
+                p_rhs[p] = 0.0;
+            }
+
+            // extract nearest node
+            const label nn = ipNodeMap[currentGaussPointId];
+
+            // compute general shape functions
+            meFCCurrent->general_shape_fcn(
+                1, &currentIsoParCoords[0], &ws_c_general_shape_function[0]);
+            meFCOpposing->general_shape_fcn(
+                1, &opposingIsoParCoords[0], &ws_o_general_shape_function[0]);
+
+            // mDot weighted by area fraction
+            const scalar tmDot = ncmDot[currentGaussPointId] * fcs;
+            const scalar abs_tmDot = std::abs(tmDot);
+
+            // compute penalty (active for penaltyMortar)
+            const scalar penaltyIp = penaltyFactor * 0.5 *
+                                     (currentMuEffBip * currentInverseLength +
+                                      opposingMuEffBip * opposingInverseLength);
+            const scalar penaltyMultiplier = 2.0 * (1.0 - multiplier);
+
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                // diffusive flux
+                const scalar ncDiffFlux =
+                    currentDiffFluxBip[i] * multiplier -
+                    opposingDiffFluxBip[i] * (1.0 - multiplier);
+
+                // non conformal advection
+                const scalar ncAdv =
+                    tmDot * (currentUBip[i] + opposingUBip[i]) / 2.0 +
+                    abs_tmDot * (currentUBip[i] - opposingUBip[i]) / 2.0;
+
+                // assemble residual
+                const label indexR = nn * SPATIAL_DIM + i;
+                p_rhs[indexR] -=
+                    ((ncDiffFlux + penaltyMultiplier * penaltyIp *
+                                       (currentUBip[i] - opposingUBip[i])) *
+                         fcs * c_amag +
+                     ncAdv);
+
+                // set-up row for matrix
+                const label rowR = indexR * totalNodes * SPATIAL_DIM;
+
+                // sensitivities; current face (penalty and
+                // advection)
+                const scalar lhsFacC =
+                    penaltyMultiplier * penaltyIp * fcs * c_amag +
+                    (abs_tmDot + tmDot) / 2.0;
+                for (label ic = 0; ic < currentNodesPerSide; ++ic)
                 {
-                    const label faceNodeNumber = o_face_node_ordinals[ic];
-                    const label offSetDnDx =
-                        faceNodeNumber * SPATIAL_DIM; // single intg. point
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        const scalar nxj = p_oNx[j];
-                        const scalar dndxj = p_o_dndx[offSetDnDx + j];
-                        opposingInverseLength += dndxj * nxj;
-                    }
+                    const label icNdim = c_face_node_ordinals[ic] * SPATIAL_DIM;
+                    const scalar r = p_c_general_shape_function[ic];
+                    p_lhs[rowR + icNdim + i] += r * lhsFacC;
                 }
 
-                // interpolate face data; current and opposing...
-                meFCCurrent->interpolatePoint(sizeOfVectorField,
-                                              &currentIsoParCoords[0],
-                                              &ws_c_face_velocity[0],
-                                              &currentUBip[0]);
-
-                meFCOpposing->interpolatePoint(sizeOfVectorField,
-                                               &opposingIsoParCoords[0],
-                                               &ws_o_face_velocity[0],
-                                               &opposingUBip[0]);
-
-                scalar currentMuEffBip = 0.0;
-                meFCCurrent->interpolatePoint(sizeOfScalarField,
-                                              &currentIsoParCoords[0],
-                                              &ws_c_muEff[0],
-                                              &currentMuEffBip);
-
-                scalar opposingMuEffBip = 0.0;
-                meFCOpposing->interpolatePoint(sizeOfScalarField,
-                                               &opposingIsoParCoords[0],
-                                               &ws_o_muEff[0],
-                                               &opposingMuEffBip);
-
-                // zero-out diffusion fluxes
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    currentDiffFluxBip[j] = 0;
-                    opposingDiffFluxBip[j] = 0;
-                }
-
-                // compute viscous stress tensor; current
+                // sensitivities; current element
+                // (diffusion)
                 for (label ic = 0; ic < currentNodesPerElement; ++ic)
                 {
-                    const label offSetDnDx =
-                        ic * SPATIAL_DIM; // single intg. point
-
+                    const label offSetDnDx = ic * SPATIAL_DIM;
+                    const label icNdim = ic * SPATIAL_DIM;
+                    const scalar dndxi = p_c_dndx[offSetDnDx + i];
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         const scalar nxj = p_cNx[j];
                         const scalar dndxj = p_c_dndx[offSetDnDx + j];
-                        const scalar uxj =
-                            p_c_elem_velocity[ic * SPATIAL_DIM + j];
 
-                        const scalar divUstress = 2.0 / 3.0 * currentMuEffBip *
-                                                  dndxj * uxj * nxj * comp;
+                        // -mu*dui/dxj*nj*dS (divU neglected)
+                        p_lhs[rowR + icNdim + i] += -currentMuEffBip * dndxj *
+                                                    nxj * fcs * c_amag *
+                                                    multiplier;
 
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            const scalar dndxi = p_c_dndx[offSetDnDx + i];
-                            const scalar uxi =
-                                p_c_elem_velocity[ic * SPATIAL_DIM + i];
-
-                            // -mu*dui/dxj*Aj with divU
-                            currentDiffFluxBip[i] +=
-                                -currentMuEffBip * dndxj * nxj * uxi +
-                                divUstress;
-
-                            // -mu*duj/dxi*Aj
-                            currentDiffFluxBip[i] +=
-                                -currentMuEffBip * dndxi * nxj * uxj;
-                        }
+                        // -mu*duj/dxi*nj*dS
+                        p_lhs[rowR + icNdim + j] += -currentMuEffBip * dndxi *
+                                                    nxj * fcs * c_amag *
+                                                    multiplier;
                     }
                 }
 
-                // compute viscous stress tensor; opposing
-                for (label ic = 0; ic < opposingNodesPerElement; ++ic)
+                // sensitivities; opposing face (penalty and
+                // advection)
+                const scalar lhsFacO =
+                    penaltyMultiplier * penaltyIp * fcs * c_amag +
+                    (abs_tmDot - tmDot) / 2.0;
+                for (label ic = 0; ic < opposingNodesPerSide; ++ic)
                 {
-                    const label offSetDnDx =
-                        ic * SPATIAL_DIM; // single intg. point
-
+                    const label icNdim =
+                        (o_face_node_ordinals[ic] + currentNodesPerElement) *
+                        SPATIAL_DIM;
+                    const scalar r = p_o_general_shape_function[ic];
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
-                        const scalar nxj = p_oNx[j];
-                        const scalar dndxj = p_o_dndx[offSetDnDx + j];
-                        const scalar uxj =
-                            p_o_elem_velocity[ic * SPATIAL_DIM + j];
-
-                        const scalar divUstress = 2.0 / 3.0 * opposingMuEffBip *
-                                                  dndxj * uxj * nxj * comp;
-
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            const scalar dndxi = p_o_dndx[offSetDnDx + i];
-                            const scalar uxi =
-                                p_o_elem_velocity[ic * SPATIAL_DIM + i];
-
-                            // -mu*dui/dxj*Aj with divU
-                            opposingDiffFluxBip[i] +=
-                                -opposingMuEffBip * dndxj * nxj * uxi +
-                                divUstress;
-
-                            // -mu*duj/dxi*Aj
-                            opposingDiffFluxBip[i] +=
-                                -opposingMuEffBip * dndxi * nxj * uxj;
-                        }
+                        p_lhs[rowR + icNdim + j] -= r * lhsFacO * rotMat(i, j);
                     }
                 }
 
-                // zero lhs/rhs
-                for (label p = 0; p < lhsSize; ++p)
+                // sensitivities; opposing element
+                // (diffusion)
+                for (label ic = 0; ic < opposingNodesPerElement; ++ic)
                 {
-                    p_lhs[p] = 0.0;
-                }
-                for (label p = 0; p < rhsSize; ++p)
-                {
-                    p_rhs[p] = 0.0;
-                }
-
-                // extract nearset node
-                const label nn = ipNodeMap[currentGaussPointId];
-
-                // compute general shape function at current and
-                // opposing integration points
-                meFCCurrent->general_shape_fcn(1,
-                                               &currentIsoParCoords[0],
-                                               &ws_c_general_shape_function[0]);
-                meFCOpposing->general_shape_fcn(
-                    1,
-                    &opposingIsoParCoords[0],
-                    &ws_o_general_shape_function[0]);
-
-                // save mDot
-                const scalar tmDot = ncmDot[currentGaussPointId];
-                const scalar abs_tmDot = std::abs(tmDot);
-
-                // compute penalty
-                const scalar penaltyIp =
-                    penaltyFactor * 0.5 *
-                    (currentMuEffBip * currentInverseLength +
-                     opposingMuEffBip * opposingInverseLength);
-
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    // non conformal diffusive flux
-                    const scalar ncDiffFlux =
-                        (currentDiffFluxBip[i] - opposingDiffFluxBip[i]) / 2.0;
-
-                    // non conformal advection
-                    const scalar ncAdv =
-                        tmDot * (currentUBip[i] + opposingUBip[i]) / 2.0 +
-                        abs_tmDot * (currentUBip[i] - opposingUBip[i]) / 2.0;
-
-                    // assemble residual; form proper rhs index for
-                    // current face assembly
-                    const label indexR = nn * SPATIAL_DIM + i;
-                    p_rhs[indexR] -=
-                        ((ncDiffFlux +
-                          penaltyIp * (currentUBip[i] - opposingUBip[i])) *
-                             c_amag +
-                         ncAdv);
-
-                    // set-up row for matrix
-                    const label rowR = indexR * totalNodes * SPATIAL_DIM;
-
-                    // sensitivities; current face (penalty and
-                    // advection); use general shape function for
-                    // this single ip
-                    const scalar lhsFacC =
-                        penaltyIp * c_amag + (abs_tmDot + tmDot) / 2.0;
-                    for (label ic = 0; ic < currentNodesPerSide; ++ic)
+                    const label offSetDnDx = ic * SPATIAL_DIM;
+                    const label icNdim =
+                        (ic + currentNodesPerElement) * SPATIAL_DIM;
+                    const scalar dndxi = p_o_dndx[offSetDnDx + i];
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
-                        const label icNdim =
-                            c_face_node_ordinals[ic] * SPATIAL_DIM;
-                        const scalar r = p_c_general_shape_function[ic];
-                        p_lhs[rowR + icNdim + i] += r * lhsFacC;
-                    }
-
-                    // sensitivities; current element (diffusion)
-                    for (label ic = 0; ic < currentNodesPerElement; ++ic)
-                    {
-                        const label offSetDnDx =
-                            ic * SPATIAL_DIM; // single intg. point
-                        const label icNdim = ic * SPATIAL_DIM;
-                        const scalar dndxi = p_c_dndx[offSetDnDx + i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label l = 0; l < SPATIAL_DIM; ++l)
                         {
-                            const scalar nxj = p_cNx[j];
-                            const scalar dndxj = p_c_dndx[offSetDnDx + j];
+                            const scalar nxl = p_oNx[l];
+                            const scalar dndxl = p_o_dndx[offSetDnDx + l];
 
-                            // -mu*dui/dxj*nj*dS (divU neglected)
-                            p_lhs[rowR + icNdim + i] +=
-                                -currentMuEffBip * dndxj * nxj * c_amag / 2.0;
+                            // -mu*dui/dxj*nj*dS (divU
+                            // neglected)
+                            p_lhs[rowR + icNdim + j] -=
+                                -opposingMuEffBip * dndxl * nxl * fcs * c_amag *
+                                (1.0 - multiplier) * rotMat(i, j);
 
                             // -mu*duj/dxi*nj*dS
-                            p_lhs[rowR + icNdim + j] +=
-                                -currentMuEffBip * dndxi * nxj * c_amag / 2.0;
-                        }
-                    }
-
-                    // sensitivities; opposing face (penalty and
-                    // advection); use general shape function for
-                    // this single ip
-                    const scalar lhsFacO =
-                        penaltyIp * c_amag + (abs_tmDot - tmDot) / 2.0;
-                    for (label ic = 0; ic < opposingNodesPerSide; ++ic)
-                    {
-                        const label icNdim = (o_face_node_ordinals[ic] +
-                                              currentNodesPerElement) *
-                                             SPATIAL_DIM;
-                        const scalar r = p_o_general_shape_function[ic];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
                             p_lhs[rowR + icNdim + j] -=
-                                r * lhsFacO * rotMat(i, j);
-                        }
-                    }
-
-                    // sensitivities; opposing element (diffusion)
-                    for (label ic = 0; ic < opposingNodesPerElement; ++ic)
-                    {
-                        const label offSetDnDx =
-                            ic * SPATIAL_DIM; // single intg. point
-                        const label icNdim =
-                            (ic + currentNodesPerElement) * SPATIAL_DIM;
-                        const scalar dndxi = p_o_dndx[offSetDnDx + i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            for (label l = 0; l < SPATIAL_DIM; ++l)
-                            {
-                                const scalar nxl = p_oNx[l];
-                                const scalar dndxl = p_o_dndx[offSetDnDx + l];
-
-                                // -mu*dui/dxj*nj*dS (divU neglected)
-                                p_lhs[rowR + icNdim + j] -=
-                                    -opposingMuEffBip * dndxl * nxl * c_amag /
-                                    2.0 * rotMat(i, j);
-
-                                // -mu*duj/dxi*nj*dS
-                                p_lhs[rowR + icNdim + j] -=
-                                    -opposingMuEffBip * dndxi * nxl * c_amag /
-                                    2.0 * rotMat(l, j);
-                            }
+                                -opposingMuEffBip * dndxi * nxl * fcs * c_amag *
+                                (1.0 - multiplier) * rotMat(l, j);
                         }
                     }
                 }

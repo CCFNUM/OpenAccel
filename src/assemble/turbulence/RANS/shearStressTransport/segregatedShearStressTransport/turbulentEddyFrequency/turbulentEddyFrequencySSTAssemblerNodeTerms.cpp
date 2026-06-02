@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "turbulentEddyFrequencySSTAssembler.h"
 
@@ -49,6 +48,8 @@ void turbulentEddyFrequencySSTAssembler::assembleNodeTermsFusedSteady_(
     const STKScalarField* divSTKFieldPtr =
         model_->mDotRef().divRef().stkFieldPtr();
     const STKScalarField* muSTKFieldPtr = model_->muRef().stkFieldPtr();
+    const STKScalarField* mutSTKFieldPtr = model_->mutRef().stkFieldPtr();
+    const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
     const STKScalarField* gradUSTKFieldPtr =
         model_->URef().gradRef().stkFieldPtr();
 
@@ -58,7 +59,6 @@ void turbulentEddyFrequencySSTAssembler::assembleNodeTermsFusedSteady_(
     const STKScalarField* yMinSTKFieldPtr = model_->yMinRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     scalar a1 = model_->aOne();
     scalar Cmu = model_->Cmu();
@@ -113,6 +113,8 @@ void turbulentEddyFrequencySSTAssembler::assembleNodeTermsFusedSteady_(
             scalar omega = *stk::mesh::field_data(*omegaSTKFieldPtr, node);
             scalar rho = *stk::mesh::field_data(*rhoSTKFieldPtr, node);
             scalar mu = *stk::mesh::field_data(*muSTKFieldPtr, node);
+            scalar mut = *stk::mesh::field_data(*mutSTKFieldPtr, node);
+            scalar Pk = *stk::mesh::field_data(*PkSTKFieldPtr, node);
             scalar vol = *stk::mesh::field_data(*volSTKFieldPtr, node);
             scalar div = *stk::mesh::field_data(*divSTKFieldPtr, node);
             scalar fOneBlend =
@@ -134,57 +136,8 @@ void turbulentEddyFrequencySSTAssembler::assembleNodeTermsFusedSteady_(
             }
             rhs[0] -= -div * omega;
 
-            scalar PkByMut = 0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                const label offSet = SPATIAL_DIM * i;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    PkByMut += gradU[offSet + j] *
-                               (gradU[offSet + j] + gradU[SPATIAL_DIM * j + i]);
-                }
-            }
-
-            // ensure non-negative production
-            PkByMut = std::max(PkByMut, 0.0);
-
-            // Add dilation production
-            scalar divergence = 0.0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                divergence += gradU[SPATIAL_DIM * i + i];
-            }
-            scalar dilation_production = -2.0 / 3.0 * divergence * divergence;
-            PkByMut += dilation_production * comp;
-
-            // compute strain rate magnitude; pull pointer within the loop to
-            // make it managable
-            scalar sijMag = 0.0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    const scalar rateOfStrain =
-                        0.5 * (gradU[SPATIAL_DIM * i + j] +
-                               gradU[SPATIAL_DIM * j + i]);
-                    sijMag += rateOfStrain * rateOfStrain;
-                }
-            }
-            sijMag = std::sqrt(2.0 * sijMag);
-
-            // FIXME: arg2 should use tke.prevIter and tef.prevIter
-            scalar arg2 = std::min(
-                std::max(2 * sqrt(kPre) / (Cmu * omega * y + SMALL),
-                         500 * mu / (std::pow(y, 2.0) * rho * omega + SMALL)),
-                scalar(100));
-
-            scalar F2_old = tanh(pow(arg2, 2.0));
-
-            // Production limited
-            PkByMut =
-                std::min(PkByMut,
-                         ((tkeProdLimitRatio * betaStar) / a1) * omega *
-                             std::max(a1 * omega, F2_old * sqrt(2.0) * sijMag));
+            // compute scaled Pk
+            const scalar PkByMut = Pk / mut;
 
             // production/dissipation
             scalar crossDiff = 0.0;
@@ -262,6 +215,8 @@ void turbulentEddyFrequencySSTAssembler::
     const STKScalarField* divSTKFieldPtr =
         model_->mDotRef().divRef().stkFieldPtr();
     const STKScalarField* muSTKFieldPtr = model_->muRef().stkFieldPtr();
+    const STKScalarField* mutSTKFieldPtr = model_->mutRef().stkFieldPtr();
+    const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
     const STKScalarField* gradUSTKFieldPtr =
         model_->URef().gradRef().stkFieldPtr();
 
@@ -271,7 +226,6 @@ void turbulentEddyFrequencySSTAssembler::
     const STKScalarField* yMinSTKFieldPtr = model_->yMinRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     scalar a1 = model_->aOne();
     scalar Cmu = model_->Cmu();
@@ -333,6 +287,8 @@ void turbulentEddyFrequencySSTAssembler::
             scalar rho = *stk::mesh::field_data(*rhoSTKFieldPtr, node);
             scalar rhoOld = *stk::mesh::field_data(*rhoSTKFieldPtrOld, node);
             scalar mu = *stk::mesh::field_data(*muSTKFieldPtr, node);
+            scalar mut = *stk::mesh::field_data(*mutSTKFieldPtr, node);
+            scalar Pk = *stk::mesh::field_data(*PkSTKFieldPtr, node);
             scalar vol = *stk::mesh::field_data(*volSTKFieldPtr, node);
             scalar div = *stk::mesh::field_data(*divSTKFieldPtr, node);
             scalar fOneBlend =
@@ -351,64 +307,8 @@ void turbulentEddyFrequencySSTAssembler::
             }
             rhs[0] -= -div * omega;
 
-            scalar PkByMut = 0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                const label offSet = SPATIAL_DIM * i;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    PkByMut += gradU[offSet + j] *
-                               (gradU[offSet + j] + gradU[SPATIAL_DIM * j + i]);
-                }
-            }
-
-            // ensure non-negative production
-            PkByMut = std::max(PkByMut, 0.0);
-
-            // Add dilation production
-            scalar divergence = 0.0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                divergence += gradU[SPATIAL_DIM * i + i];
-            }
-            scalar dilation_production = -2.0 / 3.0 * divergence * divergence;
-            PkByMut += dilation_production * comp;
-
-            // transient
-            scalar lhsfac = c[0] * rho * vol / dt;
-            scalar lhsfacOld = c[1] * rhoOld * vol / dt;
-
-            lhs[0] += lhsfac;
-            rhs[0] -= (lhsfac * omega + lhsfacOld * omegaOld);
-
-            // compute strain rate magnitude; pull pointer within the loop to
-            // make it managable
-            scalar sijMag = 0.0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    const scalar rateOfStrain =
-                        0.5 * (gradU[SPATIAL_DIM * i + j] +
-                               gradU[SPATIAL_DIM * j + i]);
-                    sijMag += rateOfStrain * rateOfStrain;
-                }
-            }
-            sijMag = std::sqrt(2.0 * sijMag);
-
-            // FIXME: arg2 should use tke.prevIter and tef.prevIter
-            scalar arg2 = std::min(
-                std::max(2 * sqrt(kPre) / (Cmu * omega * y + SMALL),
-                         500 * mu / (std::pow(y, 2.0) * rho * omega + SMALL)),
-                scalar(100));
-
-            scalar F2_old = tanh(pow(arg2, 2.0));
-
-            // Production limited
-            PkByMut =
-                std::min(PkByMut,
-                         ((tkeProdLimitRatio * betaStar) / a1) * omega *
-                             std::max(a1 * omega, F2_old * sqrt(2.0) * sijMag));
+            // compute scaled Pk
+            const scalar PkByMut = Pk / mut;
 
             // production/dissipation
             scalar crossDiff = 0.0;
@@ -497,6 +397,8 @@ void turbulentEddyFrequencySSTAssembler::
     const STKScalarField* divSTKFieldPtr =
         model_->mDotRef().divRef().stkFieldPtr();
     const STKScalarField* muSTKFieldPtr = model_->muRef().stkFieldPtr();
+    const STKScalarField* mutSTKFieldPtr = model_->mutRef().stkFieldPtr();
+    const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
     const STKScalarField* gradUSTKFieldPtr =
         model_->URef().gradRef().stkFieldPtr();
 
@@ -506,7 +408,6 @@ void turbulentEddyFrequencySSTAssembler::
     const STKScalarField* yMinSTKFieldPtr = model_->yMinRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     scalar a1 = model_->aOne();
     scalar Cmu = model_->Cmu();
@@ -572,6 +473,8 @@ void turbulentEddyFrequencySSTAssembler::
             scalar rhoOldOld =
                 *stk::mesh::field_data(*rhoSTKFieldPtrOldOld, node);
             scalar mu = *stk::mesh::field_data(*muSTKFieldPtr, node);
+            scalar mut = *stk::mesh::field_data(*mutSTKFieldPtr, node);
+            scalar Pk = *stk::mesh::field_data(*PkSTKFieldPtr, node);
             scalar vol = *stk::mesh::field_data(*volSTKFieldPtr, node);
             scalar div = *stk::mesh::field_data(*divSTKFieldPtr, node);
             scalar fOneBlend =
@@ -590,66 +493,8 @@ void turbulentEddyFrequencySSTAssembler::
             }
             rhs[0] -= -div * omega;
 
-            scalar PkByMut = 0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                const label offSet = SPATIAL_DIM * i;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    PkByMut += gradU[offSet + j] *
-                               (gradU[offSet + j] + gradU[SPATIAL_DIM * j + i]);
-                }
-            }
-
-            // ensure non-negative production
-            PkByMut = std::max(PkByMut, 0.0);
-
-            // Add dilation production
-            scalar divergence = 0.0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                divergence += gradU[SPATIAL_DIM * i + i];
-            }
-            scalar dilation_production = -2.0 / 3.0 * divergence * divergence;
-            PkByMut += dilation_production * comp;
-
-            // transient
-            scalar lhsfac = c[0] * rho * vol / dt;
-            scalar lhsfacOld = c[1] * rhoOld * vol / dt;
-            scalar lhsfacOldOld = c[2] * rhoOldOld * vol / dt;
-
-            lhs[0] += lhsfac;
-            rhs[0] -= (lhsfac * omega + lhsfacOld * omegaOld +
-                       lhsfacOldOld * omegaOldOld);
-
-            // compute strain rate magnitude; pull pointer within the loop to
-            // make it managable
-            scalar sijMag = 0.0;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    const scalar rateOfStrain =
-                        0.5 * (gradU[SPATIAL_DIM * i + j] +
-                               gradU[SPATIAL_DIM * j + i]);
-                    sijMag += rateOfStrain * rateOfStrain;
-                }
-            }
-            sijMag = std::sqrt(2.0 * sijMag);
-
-            // FIXME: arg2 should use tke.prevIter and tef.prevIter
-            scalar arg2 = std::min(
-                std::max(2 * sqrt(kPre) / (Cmu * omega * y + SMALL),
-                         500 * mu / (std::pow(y, 2.0) * rho * omega + SMALL)),
-                scalar(100));
-
-            scalar F2_old = tanh(pow(arg2, 2.0));
-
-            // Production limited
-            PkByMut =
-                std::min(PkByMut,
-                         ((tkeProdLimitRatio * betaStar) / a1) * omega *
-                             std::max(a1 * omega, F2_old * sqrt(2.0) * sijMag));
+            // compute scaled Pk
+            const scalar PkByMut = Pk / mut;
 
             // production/dissipation
             scalar crossDiff = 0.0;

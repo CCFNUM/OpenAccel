@@ -2,8 +2,7 @@
 // Created    : Sun Jan 26 2025 22:53:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Segregated equation system for multiphase free-surface flow
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef SEGREGATEDFREESURFACEFLOWEQUATIONS_H
 #define SEGREGATEDFREESURFACEFLOWEQUATIONS_H
@@ -22,7 +21,7 @@ class segregatedFreeSurfaceFlowEquations : public equation,
                                            public freeSurfaceFlowModel
 {
 public:
-    static constexpr equationID ID = equationID::segregatedFreeSurface;
+    static constexpr equationID ID = equationID::segregatedFreeSurfaceFlow;
 
     segregatedFreeSurfaceFlowEquations(realm* realm);
 

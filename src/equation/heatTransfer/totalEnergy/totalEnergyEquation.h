@@ -2,8 +2,7 @@
 // Created    : Thu Mar 27 2025 10:42:10 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Total energy conservation equation for heat transfer
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TOTALENERGYEQUATION_H
 #define TOTALENERGYEQUATION_H

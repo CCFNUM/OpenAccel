@@ -2,8 +2,7 @@
 // Created    : Thu Dec 04 2025 08:42:10 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "solidDisplacementEquation.h"
 
@@ -74,7 +73,8 @@ void solidDisplacementEquation::setup()
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
-    linearSystem::setupSolver(this->name(), fieldBroker::meshRef());
+    linearSystem::setupSolver(
+        this->name(), fieldBroker::meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
 }

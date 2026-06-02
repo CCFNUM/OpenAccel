@@ -2,8 +2,7 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "types.h"
@@ -25,36 +24,78 @@ std::unordered_map<size_t, stk::io::FieldOutputType> fieldType{
 const std::string pTraits<label>::typeName = "label";
 const std::string pTraits<scalar>::typeName = "scalar";
 
-// equation identifiers
+// equation string identifiers: to specify linear solvers in the YAML file for a
+// specific equation, these string identifiers must be used.
 std::unordered_map<std::string, equationID> equationIDMap{
-    {"segregated_navier_stokes", equationID::segregatedFlow},
+    {"coupled_navier_stokes", equationID::coupledNavierStokes},
+    {"displacement_diffusion", equationID::displacementDiffusion},
+    {"pressure_correction", equationID::pressureCorrection},
+    {"segregated_correlation_transition_shear_stress_transport",
+     equationID::segregatedCorrelationTransitionShearStressTransport},
+    {"segregated_flow", equationID::segregatedFlow},
+    {"segregated_free_surface_flow", equationID::segregatedFreeSurfaceFlow},
+    {"segregated_k_epsilon", equationID::segregatedKEpsilon},
     {"segregated_shear_stress_transport",
      equationID::segregatedShearStressTransport},
     {"segregated_transition_shear_stress_transport",
      equationID::segregatedTransitionShearStressTransport},
-    {"segregated_correlation_transition_shear_stress_transport",
-     equationID::segregatedCorrelationTransitionShearStressTransport},
-    {"segregated_k_epsilon", equationID::segregatedKEpsilon},
-    {"segregated_free_surface", equationID::segregatedFreeSurface},
+    {"solid_displacement", equationID::solidDisplacement},
     {"thermal_energy", equationID::thermalEnergy},
     {"total_energy", equationID::totalEnergy},
-    {"displacement_diffusion", equationID::displacementDiffusion},
+    {"transition_onset_reynolds_number",
+     equationID::transitionOnsetReynoldsNumber},
+    {"turbulent_dissipation_rate", equationID::turbulentDissipationRate},
+    {"turbulent_eddy_frequency", equationID::turbulentEddyFrequency},
+    {"turbulent_intermittency", equationID::turbulentIntermittency},
+    {"turbulent_intermittency_correlation",
+     equationID::turbulentIntermittencyCorrelation},
+    {"turbulent_kinetic_energy", equationID::turbulentKineticEnergy},
     {"volume_fraction", equationID::volumeFraction},
-    {"solid_displacement", equationID::solidDisplacement},
-    {"wallScaleDiffusion", equationID::wallScaleDiffusion},
+    {"wall_scale_diffusion", equationID::wallScaleDiffusion},
 };
+
+bool isValidEquationIDName(std::string s)
+{
+    s = canonicalEquationIDName(s);
+    const auto it = equationIDMap.find(s);
+    if (it == equationIDMap.end())
+    {
+        return false;
+    }
+    return true;
+}
+
+std::string canonicalEquationIDName(std::string s)
+{
+    ::accel::tolower(s);
+    std::replace(s.begin(), s.end(), '-', '_');
+    std::replace(s.begin(), s.end(), ' ', '_');
+
+    // some equations (e.g. volume_fraction) append " - <number>" suffixes,
+    // strip them from s in canonical form:
+    {
+        const size_t pos = s.find("___");
+        if (pos != std::string::npos)
+        {
+            s = s.substr(0, pos);
+        }
+    }
+
+    return s;
+}
 
 equationID convertEquationIDFromString(std::string s)
 {
-    ::accel::tolower(s);
-    std::replace(s.begin(), s.end(), '-', '_'); // replace hyphen with
-    // underscore
-    const auto it = equationIDMap.find(s); // check that `s` exists
-    if (it == equationIDMap.end())
+    s = canonicalEquationIDName(s);
+    if (isValidEquationIDName(s))
+    {
+        return equationIDMap[s];
+    }
+    else
     {
         errorMsg("No equation ID found for `" + s + "`");
+        return equationID::UNDEFINED;
     }
-    return equationIDMap[s];
 }
 
 // Heat transfer option
@@ -696,6 +737,42 @@ std::string toString(interfaceType type)
     }
     errorMsg("interface type not available");
     return "";
+}
+
+// Non-conformal method
+
+std::unordered_map<std::string, nonconformalMethod> nonconformalMethodMap{
+    {"discontinuous_galerkin", nonconformalMethod::discontinuousGalerkin},
+    {"general_grid_interface", nonconformalMethod::generalGridInterface}};
+
+nonconformalMethod convertNonconformalMethodFromString(std::string s)
+{
+    ::accel::tolower(s);
+    std::replace(s.begin(), s.end(), '-', '_');
+    const auto it = nonconformalMethodMap.find(s);
+    if (it == nonconformalMethodMap.end())
+    {
+        errorMsg("Invalid nonconformal method: `" + s + "`");
+    }
+    return it->second;
+}
+
+// GGI assembly method
+
+std::unordered_map<std::string, ggiAssemblyMethod> ggiAssemblyMethodMap{
+    {"penalty_mortar", ggiAssemblyMethod::penaltyMortar},
+    {"constrained_mortar", ggiAssemblyMethod::constrainedMortar}};
+
+ggiAssemblyMethod convertGgiAssemblyMethodFromString(std::string s)
+{
+    ::accel::tolower(s);
+    std::replace(s.begin(), s.end(), '-', '_');
+    const auto it = ggiAssemblyMethodMap.find(s);
+    if (it == ggiAssemblyMethodMap.end())
+    {
+        errorMsg("Invalid GGI assembly method: `" + s + "`");
+    }
+    return it->second;
 }
 #endif /* HAS_INTERFACE */
 

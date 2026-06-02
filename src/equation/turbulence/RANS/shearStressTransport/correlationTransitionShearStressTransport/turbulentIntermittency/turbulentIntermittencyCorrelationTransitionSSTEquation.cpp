@@ -1,9 +1,9 @@
 // File       : turbulentIntermittencyCorrelationTransitionSSTEquation.cpp
 // Created    : Sun Dec 29 2024
 // Author     : Adam Fares
-// Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Description: Gamma equation for correlation-based transition SST (Menter
+//              2015)
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "turbulentIntermittencyCorrelationTransitionSSTEquation.h"
 #include "realm.h"
@@ -15,7 +15,7 @@ turbulentIntermittencyCorrelationTransitionSSTEquation::
     turbulentIntermittencyCorrelationTransitionSSTEquation(
         realm* realm,
         correlationTransitionShearStressTransportModel* model)
-    : equation("Turbulent Intermittency (Correlation)", true),
+    : equation("Turbulent Intermittency Correlation", true),
       linearSystem(realm->simulationRef()), model_(model),
       assembler_(std::make_unique<Assembler>(model))
 {
@@ -93,7 +93,8 @@ void turbulentIntermittencyCorrelationTransitionSSTEquation::setup()
     });
 
     // linear solver
-    linearSystem::setupSolver(this->name(), model_->meshRef());
+    linearSystem::setupSolver(
+        this->name(), model_->meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
 }

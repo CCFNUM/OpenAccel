@@ -3,8 +3,7 @@
 // Author     : Achraf Nagihi
 // Description: Node scalar transport field for turbulent dissipation rate
 //              (epsilon)
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TURBULENTDISSIPATIONRATE_H
 #define TURBULENTDISSIPATIONRATE_H

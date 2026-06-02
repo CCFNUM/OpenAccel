@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Model providing wall scale field access for diffusion-based wall
 //              distance
-// Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef WALLSCALEDIFFUSIONMODEL_H
 #define WALLSCALEDIFFUSIONMODEL_H

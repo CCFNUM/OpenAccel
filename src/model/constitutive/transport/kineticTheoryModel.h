@@ -2,8 +2,7 @@
 // Created    : Tue Jun 17 2025 17:05:11 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Kinetic theory model for gas viscosity and thermal conductivity
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef KINETICTHEORYMODEL_H
 #define KINETICTHEORYMODEL_H

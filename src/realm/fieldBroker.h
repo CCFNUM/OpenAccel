@@ -3,8 +3,7 @@
 // Author     : Fabian Wermelinger
 // Description: Field broker is the interface between a realm and the fields
 //              owned by the realm
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef FIELDBROKER_H
 #define FIELDBROKER_H
@@ -110,6 +109,8 @@ public:
     virtual void setupVelocity(const std::shared_ptr<domain> domain);
 
     virtual void setupPressure(const std::shared_ptr<domain> domain);
+
+    virtual void setupPressureCorrection(const std::shared_ptr<domain> domain);
 
     virtual void setupTemperature(const std::shared_ptr<domain> domain);
 
@@ -454,6 +455,9 @@ public:
 
     virtual void
     updatePressureGradientField(const std::shared_ptr<domain> domain);
+
+    virtual void
+    updatePressureCorrectionGradientField(const std::shared_ptr<domain> domain);
 
     virtual void
     updateTemperatureGradientField(const std::shared_ptr<domain> domain);
@@ -876,6 +880,10 @@ protected:
     pressure& pRef();
 
     const pressure& pRef() const;
+
+    pressureCorrection& pCorrRef();
+
+    const pressureCorrection& pCorrRef() const;
 
     simpleScalarField& p0Ref();
 

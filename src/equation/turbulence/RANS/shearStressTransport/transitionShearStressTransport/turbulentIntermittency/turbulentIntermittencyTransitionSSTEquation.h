@@ -2,8 +2,7 @@
 // Created    : Tue Jan 14 2025
 // Author     : Adam Fares
 // Description: Turbulent intermittency equation for the transition SST model
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TURBULENTINTERMITTENCYTRANSITIONSSTEQUATION_H
 #define TURBULENTINTERMITTENCYTRANSITIONSSTEQUATION_H
@@ -27,6 +26,8 @@ private:
     using Assembler = turbulentIntermittencyTransitionSSTAssembler;
 
 public:
+    static constexpr equationID ID = equationID::turbulentIntermittency;
+
     turbulentIntermittencyTransitionSSTEquation(
         realm* realm,
         transitionShearStressTransportModel* model);
@@ -48,6 +49,11 @@ public:
     void preTimeStep() override;
 
     void printScales() override;
+
+    equationID getID() override
+    {
+        return ID;
+    }
 
 protected:
     void setResidualScales_() override;

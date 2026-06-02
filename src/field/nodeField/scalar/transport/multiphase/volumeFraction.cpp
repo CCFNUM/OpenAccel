@@ -2,11 +2,13 @@
 // Created    : Sun Jan 26 2025 22:09:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "volumeFraction.h"
 #include "controls.h"
+#ifdef HAS_INTERFACE
+#include "ipInfo.h"
+#endif
 #include "realm.h"
 
 namespace accel
@@ -348,45 +350,23 @@ void volumeFraction::updateBlendingFactorField(label iZone)
             std::vector<scalar> ws_c_gradPhi;
             std::vector<scalar> ws_c_coordinates;
 
-            // Master
+            const auto updateInterfaceBlending =
+                [&](const interfaceSideInfo& sideInfo)
             {
-                const auto& masterInterface = interf->masterInfoRef();
-
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    masterInterface.dgInfoVec_;
-
-                for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
-                     iSide++)
+                for (const auto& faceIpInfoVec : sideInfo.ipInfoVec())
                 {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
-
-                    for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
-                         ++k)
+                    for (const ipInfo* ip : faceIpInfoVec)
                     {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
-
-                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                        stk::mesh::Entity currentElement =
-                            dgInfo->currentElement_;
-                        const label currentFaceOrdinal =
-                            dgInfo->currentFaceOrdinal_;
-
-                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
+                        stk::mesh::Entity currentFace = ip->currentFace_;
+                        MasterElement* meFCCurrent = ip->meFCCurrent_;
 
                         const label currentGaussPointId =
-                            dgInfo->currentGaussPointId_;
-                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                            ip->currentGaussPointId_;
+                        currentIsoParCoords = ip->currentIsoParCoords_;
 
                         const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
-
                         const label currentNodesPerSide =
                             meFCCurrent->nodesPerElement_;
-                        const label currentNodesPerElement =
-                            meSCSCurrent->nodesPerElement_;
 
                         ws_c_phi.resize(currentNodesPerSide);
                         ws_c_min.resize(currentNodesPerSide);
@@ -460,14 +440,7 @@ void volumeFraction::updateBlendingFactorField(label iZone)
                             rgrad += p_c_gradPhi[nn * SPATIAL_DIM + j] * dxj[j];
                         }
 
-                        if (rgrad > 0)
-                        {
-                            rgrad = rgrad + SMALL;
-                        }
-                        else
-                        {
-                            rgrad = rgrad - SMALL;
-                        }
+                        rgrad += (rgrad > 0) ? SMALL : -SMALL;
 
                         // one-sided Barth-Jespersen bound
                         scalar y =
@@ -485,146 +458,10 @@ void volumeFraction::updateBlendingFactorField(label iZone)
                         }
                     }
                 }
-            }
+            };
 
-            // Slave
-            {
-                const auto& slaveInterface = interf->slaveInfoRef();
-
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    slaveInterface.dgInfoVec_;
-
-                for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
-                     iSide++)
-                {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
-
-                    for (label k = 0;
-                         k < static_cast<label>(faceDgInfoVec.size());
-                         ++k)
-                    {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
-
-                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                        stk::mesh::Entity currentElement =
-                            dgInfo->currentElement_;
-                        const label currentFaceOrdinal =
-                            dgInfo->currentFaceOrdinal_;
-
-                        MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                        MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-
-                        const label currentGaussPointId =
-                            dgInfo->currentGaussPointId_;
-                        currentIsoParCoords = dgInfo->currentIsoParCoords_;
-
-                        const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
-
-                        const label currentNodesPerSide =
-                            meFCCurrent->nodesPerElement_;
-                        const label currentNodesPerElement =
-                            meSCSCurrent->nodesPerElement_;
-
-                        ws_c_phi.resize(currentNodesPerSide);
-                        ws_c_min.resize(currentNodesPerSide);
-                        ws_c_max.resize(currentNodesPerSide);
-                        ws_c_gradPhi.resize(currentNodesPerSide * SPATIAL_DIM);
-                        ws_c_coordinates.resize(currentNodesPerSide *
-                                                SPATIAL_DIM);
-
-                        scalar* p_c_phi = &ws_c_phi[0];
-                        scalar* p_c_min = &ws_c_min[0];
-                        scalar* p_c_max = &ws_c_max[0];
-                        scalar* p_c_gradPhi = &ws_c_gradPhi[0];
-                        scalar* p_c_coordinates = &ws_c_coordinates[0];
-
-                        stk::mesh::Entity const* current_face_node_rels =
-                            bulkData.begin_nodes(currentFace);
-                        const label current_num_face_nodes =
-                            bulkData.num_nodes(currentFace);
-                        for (label ni = 0; ni < current_num_face_nodes; ++ni)
-                        {
-                            stk::mesh::Entity node = current_face_node_rels[ni];
-
-                            const scalar* phi =
-                                stk::mesh::field_data(*phiSTKFieldPtr, node);
-                            const scalar* min = stk::mesh::field_data(
-                                *minValueSTKFieldPtr, node);
-                            const scalar* max = stk::mesh::field_data(
-                                *maxValueSTKFieldPtr, node);
-                            const scalar* gradPhi = stk::mesh::field_data(
-                                *gradPhiSTKFieldPtr, node);
-
-                            p_c_phi[ni] = phi[0];
-                            p_c_min[ni] = min[0];
-                            p_c_max[ni] = max[0];
-
-                            for (label j = 0; j < SPATIAL_DIM; ++j)
-                            {
-                                p_c_gradPhi[j * current_num_face_nodes + ni] =
-                                    gradPhi[j];
-                            }
-
-                            const scalar* coords =
-                                stk::mesh::field_data(*coordsSTKFieldPtr, node);
-                            for (label i = 0; i < SPATIAL_DIM; ++i)
-                            {
-                                p_c_coordinates[i * current_num_face_nodes +
-                                                ni] = coords[i];
-                            }
-                        }
-
-                        meFCCurrent->interpolatePoint(SPATIAL_DIM,
-                                                      &currentIsoParCoords[0],
-                                                      &ws_c_coordinates[0],
-                                                      &currentCoordsBip[0]);
-
-                        const label nn = faceIpNodeMap[currentGaussPointId];
-                        stk::mesh::Entity node = current_face_node_rels[nn];
-
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            dxj[j] = currentCoordsBip[j] -
-                                     p_c_coordinates[nn * SPATIAL_DIM + j];
-                        }
-
-                        scalar* beta = stk::mesh::field_data(
-                            *blendingFactorSTKFieldPtr, node);
-
-                        scalar rgrad = 0;
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            rgrad += p_c_gradPhi[nn * SPATIAL_DIM + j] * dxj[j];
-                        }
-
-                        if (rgrad > 0)
-                        {
-                            rgrad = rgrad + SMALL;
-                        }
-                        else
-                        {
-                            rgrad = rgrad - SMALL;
-                        }
-
-                        // one-sided Barth-Jespersen bound
-                        scalar y =
-                            std::max((p_c_max[nn] - p_c_phi[nn]) / rgrad,
-                                     (p_c_min[nn] - p_c_phi[nn]) / rgrad);
-
-                        if (blendingFactorMax_ < 2.0 - SMALL)
-                        {
-                            y = ((y * y + 2.0 * y) / (y * y + y + 2.0));
-                        }
-
-                        if ((rgrad > 100 * SMALL) || (rgrad < -100 * SMALL))
-                        {
-                            beta[0] = std::min(beta[0], y);
-                        }
-                    }
-                }
-            }
+            updateInterfaceBlending(interf->masterInfoRef());
+            updateInterfaceBlending(interf->slaveInfoRef());
         }
         else
         {
@@ -646,37 +483,19 @@ void volumeFraction::updateBlendingFactorField(label iZone)
             const auto* interfaceSideInfoPtr =
                 interf->interfaceSideInfoPtr(iZone);
 
-            const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                interfaceSideInfoPtr->dgInfoVec_;
-
-            for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-                 iSide++)
+            for (const auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
             {
-                const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-                for (label k = 0; k < static_cast<label>(faceDgInfoVec.size());
-                     ++k)
+                for (const ipInfo* ip : faceIpInfoVec)
                 {
-                    dgInfo* dgInfo = faceDgInfoVec[k];
+                    stk::mesh::Entity currentFace = ip->currentFace_;
+                    MasterElement* meFCCurrent = ip->meFCCurrent_;
 
-                    stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                    stk::mesh::Entity currentElement = dgInfo->currentElement_;
-                    const label currentFaceOrdinal =
-                        dgInfo->currentFaceOrdinal_;
-
-                    MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                    MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-
-                    const label currentGaussPointId =
-                        dgInfo->currentGaussPointId_;
-                    currentIsoParCoords = dgInfo->currentIsoParCoords_;
+                    const label currentGaussPointId = ip->currentGaussPointId_;
+                    currentIsoParCoords = ip->currentIsoParCoords_;
 
                     const label* faceIpNodeMap = meFCCurrent->ipNodeMap();
-
                     const label currentNodesPerSide =
                         meFCCurrent->nodesPerElement_;
-                    const label currentNodesPerElement =
-                        meSCSCurrent->nodesPerElement_;
 
                     ws_c_phi.resize(currentNodesPerSide);
                     ws_c_min.resize(currentNodesPerSide);
@@ -749,14 +568,7 @@ void volumeFraction::updateBlendingFactorField(label iZone)
                         rgrad += p_c_gradPhi[nn * SPATIAL_DIM + j] * dxj[j];
                     }
 
-                    if (rgrad > 0)
-                    {
-                        rgrad = rgrad + SMALL;
-                    }
-                    else
-                    {
-                        rgrad = rgrad - SMALL;
-                    }
+                    rgrad += (rgrad > 0) ? SMALL : -SMALL;
 
                     // one-sided Barth-Jespersen bound
                     scalar y = std::max((p_c_max[nn] - p_c_phi[nn]) / rgrad,

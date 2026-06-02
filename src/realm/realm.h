@@ -3,8 +3,7 @@
 // Author     :
 // Description: Declares the central realm class that owns mesh, fields, and
 //              model registration for a simulation.
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef REALM_H
 #define REALM_H
@@ -19,6 +18,7 @@
 #include "heatFlowRate.h"
 #include "massFlowRate.h"
 #include "pressure.h"
+#include "pressureCorrection.h"
 #include "smRealm.h"
 #include "specificEnthalpy.h"
 #include "specificHeatCapacity.h"
@@ -63,6 +63,8 @@ private:
     std::vector<std::unique_ptr<massFlowRate>> mDotVector_; // for every phase
 
     std::unique_ptr<pressure> p_;
+
+    std::unique_ptr<pressureCorrection> pCorr_;
 
     std::unique_ptr<simpleScalarField> p0_;
 
@@ -149,6 +151,8 @@ public:
     static constexpr char mDot_ID[] = "mass_flow_rate";
 
     static constexpr char p_ID[] = "pressure";
+
+    static constexpr char pCorr_ID[] = "pressure_correction";
 
     static constexpr char mu_ID[] = "dynamic_viscosity";
 

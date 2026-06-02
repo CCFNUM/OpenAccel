@@ -2,8 +2,7 @@
 // Created    : Tue Jun 11 2024 15:06:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "domain.h"
@@ -296,18 +295,6 @@ void simulation::createDomains_()
                              " have different free surface model options");
                 }
 
-#ifdef HAS_MHD
-                if ((dm1.electromagnetics_.enabled_ &&
-                     !dm2.electromagnetics_.enabled_) ||
-                    (!dm1.electromagnetics_.enabled_ &&
-                     dm2.electromagnetics_.enabled_))
-                {
-                    errorMsg("Domains connected through interface " +
-                             iface.name() +
-                             " have different electromagnetics statuses");
-                }
-#endif /* HAS_MHD */
-
                 if (dm1.buoyancy_.option_ != dm2.buoyancy_.option_)
                 {
                     errorMsg("Domains connected through interface " +
@@ -322,18 +309,6 @@ void simulation::createDomains_()
                              iface.name() +
                              " have different heat transfer options");
                 }
-
-#ifdef HAS_MHD
-                if ((dm1.electromagnetics_.enabled_ &&
-                     !dm2.electromagnetics_.enabled_) ||
-                    (!dm1.electromagnetics_.enabled_ &&
-                     dm2.electromagnetics_.enabled_))
-                {
-                    errorMsg("Domains connected through interface " +
-                             iface.name() +
-                             " have different electromagnetics statuses");
-                }
-#endif /* HAS_MHD */
             }
             else
             {
@@ -343,18 +318,6 @@ void simulation::createDomains_()
                              iface.name() +
                              " have different heat transfer options");
                 }
-
-#ifdef HAS_MHD
-                if ((dm1.electromagnetics_.enabled_ &&
-                     !dm2.electromagnetics_.enabled_) ||
-                    (!dm1.electromagnetics_.enabled_ &&
-                     dm2.electromagnetics_.enabled_))
-                {
-                    errorMsg("Domains connected through interface " +
-                             iface.name() +
-                             " have different electromagnetics statuses");
-                }
-#endif /* HAS_MHD */
             }
         }
     }
@@ -381,7 +344,7 @@ void simulation::createEquations_()
         const equationID id = equation->getID();
 
         // equations in queue must have a valid ID
-        assert(id != equationID::noID);
+        assert(id != equationID::UNDEFINED);
         for (auto domain : domainVector_)
         {
             if (domain->hasEquation(id))
@@ -523,9 +486,9 @@ void simulation::collectEquations_()
         }
 
         // segregated free surface flow equations
-        if (domain->hasEquation(equationID::segregatedFreeSurface))
+        if (domain->hasEquation(equationID::segregatedFreeSurfaceFlow))
         {
-            if (!findEquation_(equationID::segregatedFreeSurface))
+            if (!findEquation_(equationID::segregatedFreeSurfaceFlow))
             {
                 equationVector_.push_back(
                     std::make_unique<segregatedFreeSurfaceFlowEquations>(

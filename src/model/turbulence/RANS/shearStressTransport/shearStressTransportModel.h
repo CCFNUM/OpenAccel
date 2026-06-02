@@ -2,8 +2,7 @@
 // Created    : Fri Mar 15 2024 15:06:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Menter SST k-omega turbulence model coefficients and blending
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef SHEARSTRESSTRANSPORTMODEL_H
 #define SHEARSTRESSTRANSPORTMODEL_H

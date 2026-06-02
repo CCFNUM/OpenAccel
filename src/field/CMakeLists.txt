@@ -2,8 +2,7 @@
 # Created    : Thu Oct 16 2025 08:17:36 (+0200)
 # Author     : Fabian Wermelinger
 # Description: CMake build definitions
-# Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-# SPDX-License-Identifier: BSD-3-Clause
+# Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -24,6 +23,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/nodeField/scalar/property/turbulence/turbulentThermalConductivity.cpp
     ${DIR}/nodeField/scalar/property/turbulence/turbulentViscosity.cpp
     ${DIR}/nodeField/scalar/transport/flow/pressure.cpp
+    ${DIR}/nodeField/scalar/transport/flow/pressureCorrection.cpp
     ${DIR}/nodeField/scalar/transport/heatTransfer/specificEnthalpy.cpp
     ${DIR}/nodeField/scalar/transport/heatTransfer/specificTotalEnthalpy.cpp
     ${DIR}/nodeField/scalar/transport/heatTransfer/temperature.cpp

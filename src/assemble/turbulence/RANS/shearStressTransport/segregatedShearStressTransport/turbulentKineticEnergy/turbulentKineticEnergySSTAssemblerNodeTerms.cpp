@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "turbulentKineticEnergySSTAssembler.h"
 
@@ -46,7 +45,6 @@ void turbulentKineticEnergySSTAssembler::assembleNodeTermsFusedSteady_(
     const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -110,12 +108,6 @@ void turbulentKineticEnergySSTAssembler::assembleNodeTermsFusedSteady_(
             // production/dissipation
             scalar Dk = betaStar * rho * omega * k;
 
-            // limit production
-            if (Pk > tkeProdLimitRatio * Dk)
-            {
-                Pk = tkeProdLimitRatio * Dk;
-            }
-
             rhs[0] += (Pk - Dk) * vol;
             lhs[0] += betaStar * rho * omega * vol;
 
@@ -167,7 +159,6 @@ void turbulentKineticEnergySSTAssembler::
     const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     const STKScalarField* divUmSTKFieldPtr =
         meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
@@ -240,12 +231,6 @@ void turbulentKineticEnergySSTAssembler::
             // production/dissipation
             scalar Dk = betaStar * rho * omega * k;
 
-            // limit production
-            if (Pk > tkeProdLimitRatio * Dk)
-            {
-                Pk = tkeProdLimitRatio * Dk;
-            }
-
             rhs[0] += (Pk - Dk) * vol;
             lhs[0] += betaStar * rho * omega * vol;
 
@@ -308,7 +293,6 @@ void turbulentKineticEnergySSTAssembler::
     const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-    scalar tkeProdLimitRatio = model_->tkeProdLimitRatio();
 
     const STKScalarField* divUmSTKFieldPtr =
         meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
@@ -384,12 +368,6 @@ void turbulentKineticEnergySSTAssembler::
 
             // production/dissipation
             scalar Dk = betaStar * rho * omega * k;
-
-            // limit production
-            if (Pk > tkeProdLimitRatio * Dk)
-            {
-                Pk = tkeProdLimitRatio * Dk;
-            }
 
             rhs[0] += (Pk - Dk) * vol;
             lhs[0] += betaStar * rho * omega * vol;

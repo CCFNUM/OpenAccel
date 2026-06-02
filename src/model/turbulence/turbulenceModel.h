@@ -2,8 +2,7 @@
 // Created    : Fri Mar 15 2024 15:06:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Base turbulence model with wall function parameters
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TURBULENCEMODEL_H
 #define TURBULENCEMODEL_H
@@ -28,6 +27,12 @@ private:
     scalar kappa_ = 0.41;
 
     scalar B_ = 5.2;
+
+protected:
+    // near-wall distance factor:
+    // omega-based models is 1
+    // epsilon-based models is 0.25
+    scalar NWDFactor_ = 1.0;
 
 public:
     // Constructors

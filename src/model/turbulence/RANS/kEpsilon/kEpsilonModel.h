@@ -3,8 +3,7 @@
 // Author     : Achraf Nagihi
 // Description: Standard k-epsilon turbulence model coefficients and wall
 //              functions
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef KEPSILONMODEL_H
 #define KEPSILONMODEL_H
@@ -64,9 +63,6 @@ protected:
 
     virtual void updateTurbulentDynamicViscosity(
         const std::shared_ptr<domain> domain) override;
-
-    virtual void
-    clipMinDistToWall(const std::shared_ptr<domain> domain) override;
 };
 
 } /* namespace accel */

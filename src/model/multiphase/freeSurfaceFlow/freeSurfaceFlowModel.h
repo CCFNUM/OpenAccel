@@ -2,8 +2,7 @@
 // Created    : Sun Jan 26 2025 22:06:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: VOF-based free surface flow model with FCT and surface tension
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef FREESURFACEFLOWMODEL_H
 #define FREESURFACEFLOWMODEL_H

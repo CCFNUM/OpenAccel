@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Interface data-transfer utilities for exchanging field values
 //              between regions.
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef DATATRANSFER_H
 #define DATATRANSFER_H

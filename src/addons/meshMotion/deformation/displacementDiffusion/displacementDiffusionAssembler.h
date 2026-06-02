@@ -2,8 +2,7 @@
 // Created    : Tue Nov 26 2024
 // Author     : Mhamad Mahdi Alloush
 // Description: Assembly of the displacement diffusion linear system
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef DISPLACEMENTDIFFUSIONASSEMBLER_H
 #define DISPLACEMENTDIFFUSIONASSEMBLER_H

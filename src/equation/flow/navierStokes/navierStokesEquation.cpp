@@ -2,12 +2,10 @@
 // Created    : Wed Mar 13 2024 13:41:00 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Coupled momentum equation implementation details
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "navierStokesEquation.h"
 #include "realm.h"
-#include "turbulenceModel.h"
 
 namespace accel
 {
@@ -78,7 +76,8 @@ void navierStokesEquation::setup()
     assembler_->setup(&model_->URef(), null, domainVector_, nullptr);
 
     // setup linear solver
-    linearSystem::setupSolver(this->name(), model_->meshRef());
+    linearSystem::setupSolver(
+        this->name(), model_->meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
 }
@@ -210,9 +209,6 @@ void navierStokesEquation::solve()
         }
 
         // post correction
-
-        // necessary to have a momentum-satisfying mass flux
-        FOREACH_DOMAIN(model_->updateMassFlowRate);
 
         // velocity gradient must be only updated after corrector step ...
 

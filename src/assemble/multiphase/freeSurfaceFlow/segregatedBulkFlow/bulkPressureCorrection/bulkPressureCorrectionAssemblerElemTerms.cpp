@@ -2,8 +2,7 @@
 // Created    : Wed Feb 05 2025 01:09:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "bulkPressureCorrectionAssembler.h"
@@ -88,6 +87,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
     std::vector<scalar> B_el(SPATIAL_DIM);
+    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to everyone...
     scalar* p_coordIp = &coordIp[0];
@@ -99,6 +99,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     scalar* p_duRhsIp = &duRhsIp[0];
     scalar* p_FIp = &FIp[0];
     scalar* p_FOrigIp = &FOrigIp[0];
+    scalar* p_uhat = &uhat[0];
 
     // Get transport fields/side fields
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
@@ -401,21 +402,20 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 }
                 else
                 {
-                    scalar uhat[SPATIAL_DIM];
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        uhat[d] = B_el[d] / mag;
+                        p_uhat[d] = B_el[d] / mag;
 
                     // Step 3: recursive harmonic of scalar projections
                     scalar h = 0.0;
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += uhat[d] * p_FOrig[d];
+                        h += p_uhat[d] * p_FOrig[d];
                     h = std::max(h, 0.0);
 
                     for (label ni = 1; ni < nodesPerElement; ++ni)
                     {
                         scalar dk = 0.0;
                         for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk += uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
+                            dk += p_uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
                         dk = std::max(dk, 0.0);
                         if (h > 0.0)
                             h = static_cast<scalar>(ni + 1) * dk * h /
@@ -426,7 +426,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
 
                     // Step 4: result vector
                     for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * uhat[d];
+                        B_el[d] = h * p_uhat[d];
                 }
             }
 

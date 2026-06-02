@@ -3,8 +3,7 @@
 // Author     : Adam Fares
 // Description: Gamma equation for correlation-based transition SST (Menter
 //              2015)
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TURBULENTINTERMITTENCYCORRELATIONTRANSITIONSSTEQUATION_H
 #define TURBULENTINTERMITTENCYCORRELATIONTRANSITIONSSTEQUATION_H
@@ -29,6 +28,9 @@ private:
     using Assembler = turbulentIntermittencyCorrelationTransitionSSTAssembler;
 
 public:
+    static constexpr equationID ID =
+        equationID::turbulentIntermittencyCorrelation;
+
     turbulentIntermittencyCorrelationTransitionSSTEquation(
         realm* realm,
         correlationTransitionShearStressTransportModel* model);
@@ -50,6 +52,11 @@ public:
     void preTimeStep() override;
 
     void printScales() override;
+
+    equationID getID() override
+    {
+        return ID;
+    }
 
 protected:
     void setResidualScales_() override;

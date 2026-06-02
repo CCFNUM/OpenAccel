@@ -2,8 +2,7 @@
 // Created    : Thu Mar 14 2024 12:50:04 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Equation class for solving the wall scale diffusion problem
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef WALLSCALEDIFFUSIONEQUATION_H
 #define WALLSCALEDIFFUSIONEQUATION_H

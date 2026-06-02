@@ -2,8 +2,7 @@
 // Created    : Fri Jan 26 2024 09:35:23 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Abstract base for a linear system of equation(s)
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef LINEARSYSTEM_H
 #define LINEARSYSTEM_H
@@ -74,9 +73,12 @@ public:
         return !(lsolver_ == nullptr);
     }
 
-    ::linearSolver::GraphLayout setupSolver(const std::string system_name);
+    ::linearSolver::GraphLayout
+    setupSolver(const std::string system_name,
+                const std::string fallback_name = "");
     std::shared_ptr<Context> setupSolver(const std::string system_name,
-                                         mesh& mesh);
+                                         mesh& mesh,
+                                         const std::string fallback_name = "");
     void setEquationName(const std::vector<std::string>& name);
 
     simulation& simulationRef()
@@ -99,6 +101,12 @@ public:
     {
         assert(this->lsolver_);
         return lsolver_->getContext();
+    }
+
+    void setConvergenceTolerance(const double tol)
+    {
+        assert(tol > 0.0);
+        convergence_tolerance_ = tol;
     }
 
     void solve()
@@ -143,8 +151,7 @@ private:
     std::string canonicalSystemName_() const
     {
         std::string name = this->system_name_;
-        std::replace(name.begin(), name.end(), ' ', '_');
-        return name;
+        return canonicalEquationIDName(name);
     }
 
     void writeLinearSystem_() const;
@@ -160,7 +167,8 @@ private:
 
 template <size_t N>
 ::linearSolver::GraphLayout
-linearSystem<N>::setupSolver(const std::string system_name)
+linearSystem<N>::setupSolver(const std::string system_name,
+                             const std::string fallback_name)
 {
     const YAML::Node sim_root = sim_.getYAMLSimulationNode();
 
@@ -208,44 +216,38 @@ linearSystem<N>::setupSolver(const std::string system_name)
         convergence_tolerance_ =
             convergenceCriteria["residual_target"].template as<double>();
 
-        // not used yet BODGEEEEE
+        // NOTE [faw 2026-04-13]: not yet used
         residual_type_ = convertResidualTypeFromString(
             convergenceCriteria["residual_type"].template as<std::string>());
     }
 
     // setup linear solver (required)
     std::string solver_name;
-    std::string solver_type;
     YAML::Node solver;
 
     // check for linear solver settings in solver control
-    std::string equationName = canonicalSystemName_();
-
-    // Truncate the equationName to before the padded dash
-    {
-        // Find the position of " - "
-        size_t pos = equationName.find(" - ");
-
-        if (pos != std::string::npos)
-        {
-            equationName = equationName.substr(0, pos);
-        }
-    }
-
-    std::replace(equationName.begin(), equationName.end(), '-', '_');
-    ::accel::tolower(equationName);
+    const std::string equationName = canonicalSystemName_();
+    const std::string fallbackEquationName =
+        canonicalEquationIDName(fallback_name);
 
     const auto& solverControl = sim_.getYAMLSolverControlNode();
 
-    auto setSolver = [&solver_name, &solverControl, &solver_lookup, &solver](
-                         const std::string& key)
+    YAML::Node linear_solver_settings;
+    if (solverControl["advanced_options"] &&
+        solverControl["advanced_options"]["linear_solver_settings"])
     {
-        if (solverControl["advanced_options"]["linear_solver_settings"][key]
-                         ["lookup"])
+        linear_solver_settings =
+            solverControl["advanced_options"]["linear_solver_settings"];
+    }
+
+    auto setSolver =
+        [&solver_name, &linear_solver_settings, &solver_lookup, &solver](
+            const std::string& key)
+    {
+        if (linear_solver_settings[key]["lookup"])
         {
-            solver_name = solverControl["advanced_options"]
-                                       ["linear_solver_settings"][key]["lookup"]
-                                           .template as<std::string>(); // case
+            solver_name = linear_solver_settings[key]["lookup"]
+                              .template as<std::string>(); // case
             // sensitive
             if (!solver_lookup[solver_name])
             {
@@ -257,38 +259,62 @@ linearSystem<N>::setupSolver(const std::string system_name)
         }
         else
         {
-            solver.reset(
-                YAML::Clone(solverControl["advanced_options"]
-                                         ["linear_solver_settings"][key]));
+            solver.reset(YAML::Clone(linear_solver_settings[key]));
         }
     };
 
-    if (solverControl["advanced_options"] &&
-        solverControl["advanced_options"]["linear_solver_settings"] &&
-        solverControl["advanced_options"]["linear_solver_settings"]
-                     [equationName])
+    // check that user defined equations are valid
+    if (linear_solver_settings)
+    {
+        for (YAML::const_iterator it = linear_solver_settings.begin();
+             it != linear_solver_settings.end();
+             ++it)
+        {
+            {
+                const std::string key = it->first.template as<std::string>();
+                if (key == "default")
+                {
+                    continue;
+                }
+
+                if (!isValidEquationIDName(key))
+                {
+                    std::ostringstream o;
+                    o << "linearSystem: solver defined for invalid equation '" +
+                             key + "'\n";
+                    o << "Valid canonical equation names:\n";
+                    std::vector<std::string> valid;
+                    valid.reserve(accel::equationIDMap.size());
+                    for (const auto& [eq, _] : accel::equationIDMap)
+                        valid.push_back(eq);
+                    std::sort(valid.begin(), valid.end());
+                    for (const auto& eq : valid)
+                        o << '\t' << eq << '\n';
+                    errorMsg(o.str());
+                }
+            }
+        }
+    }
+
+    if (linear_solver_settings[equationName])
     {
         setSolver(equationName);
-
-        // copy equation name to solver name (for print out purposes)
         solver_name = equationName;
-        solver_type = equationName;
     }
-    else if (solverControl["advanced_options"] &&
-             solverControl["advanced_options"]["linear_solver_settings"] &&
-             solverControl["advanced_options"]["linear_solver_settings"]
-                          ["default"])
+    else if (linear_solver_settings[fallbackEquationName])
+    {
+        setSolver(fallbackEquationName);
+        solver_name = fallbackEquationName;
+    }
+    else if (linear_solver_settings["default"])
     {
         setSolver("default");
-
-        // copy equation name to solver name (for print out purposes)
         solver_name = equationName;
-        solver_type = "default";
     }
     else
     {
-        errorMsg("linearSystem: no `solver` defined for equation '" +
-                 equationName + "'");
+        errorMsg("linearSystem: no solver specified for equation '" +
+                 equationName + "' and no fallback or default solver exists.");
     }
 
     if (solver["write_system"])
@@ -377,11 +403,13 @@ linearSystem<N>::setupSolver(const std::string system_name)
 
 template <size_t N>
 std::shared_ptr<typename linearSystem<N>::Context>
-linearSystem<N>::setupSolver(const std::string system_name, mesh& mesh)
+linearSystem<N>::setupSolver(const std::string system_name,
+                             mesh& mesh,
+                             const std::string fallback_name)
 {
     // instantiate solver and set system_name
     std::shared_ptr<typename linearSystem<N>::Context> ctx;
-    switch (this->setupSolver(system_name) &
+    switch (this->setupSolver(system_name, fallback_name) &
             (::linearSolver::GraphLayout::ColumnIndexOrder__Local |
              ::linearSolver::GraphLayout::ColumnIndexOrder__Global))
     {
@@ -537,7 +565,7 @@ void linearSystem<N>::convergenceReport_()
     auto& cout = ctx->cout();
     // clang-format off
     cout << '\n';
-    cout << "Physics:        " << ctx->getSystemName() << '\n';
+    cout << "Equation name:  " << ctx->getSystemName() << '\n';
     cout << "Solver context: " << ctx->getFamily() << '\n';
     cout << "Iterations:     " << cdata.n_iterations << "/" << ctx->maxIterations() << '\n';
     cout << std::fixed << std::scientific;

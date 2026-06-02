@@ -1,9 +1,8 @@
 // File       : interfaceSideInfo.h
 // Created    : Fri Aug 25 2023 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
-// Description: Operations at an interface side (single side of a pair)
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Description: Abstract base class for a single interface side
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef INTERFACESIDEINFO_H
 #define INTERFACESIDEINFO_H
@@ -17,10 +16,9 @@
 namespace accel
 {
 
-class mesh;
-class dgInfo;
 class interface;
 class zone;
+class ipInfo;
 
 typedef stk::search::IdentProc<uint64_t, int> theKey;
 typedef stk::search::Point<scalar> Point;
@@ -34,141 +32,57 @@ typedef std::vector<std::pair<Sphere, SearchId>> SphereIdVector;
 class interfaceSideInfo
 {
 public:
-    // constructor and destructor
     interfaceSideInfo(interface* interfPtr,
                       bool isMasterSide,
-                      const stk::mesh::PartVector currentPartVec,
-                      const stk::mesh::PartVector opposingPartVec,
+                      stk::mesh::PartVector currentPartVec,
+                      stk::mesh::PartVector opposingPartVec,
                       interfaceModelOption option,
-                      const scalar expandBoxPercentage,
-                      const std::string& searchMethodName,
-                      const bool clipIsoParametricCoords,
-                      const scalar searchTolerance,
-                      const bool dynamicSearchTolAlg,
-                      const bool useShifted,
-                      const std::string debugName);
+                      std::string name);
 
-    ~interfaceSideInfo();
+    virtual ~interfaceSideInfo();
 
-    // delete dg info
-    void deleteDgInfo();
+    // Core lifecycle methods (differ between DG and GGI)
+    virtual void setup() = 0;
+    virtual void initialize() = 0;
+    virtual void update() = 0;
+    virtual void completeSearch() = 0;
+    virtual void determineElemsToGhost() = 0;
+    virtual void provideDiagnosis() = 0;
+    virtual size_t errorCheck() = 0;
 
-    void setup();
-
-    // perform initialization such as dgInfoVec creation and search point/boxes
-    void initialize();
-
-    // perform another search due to mesh motion
-    void update();
-
-    // reset all search containers
-    void reset();
-
-    // perform the 'new'
-    void constructDgInfo();
-
-    void constructBoundingPoints();
-
-    void constructBoundingBoxes();
-
-    void determineElemsToGhost();
-
-    void completeSearch();
-
-    // For conformal interfaces, determine the opposing gauss point id
-    // for each dgInfo by matching opposingIsoParCoords_ to the
-    // integration point parametric locations of the opposing face
-    void determineOpposingGaussPointIds();
-
-    void provideDiagnosis();
-
-    void dumpSearchResults();
-
-    void dumpFaceToFaceResults();
-
-    size_t errorCheck();
-
-    void transformCoordinateList(std::vector<scalar>& coordsList,
-                                 label npts) const;
-
-    // rotate a vector list where the storage is, i.e. xyzxyzxyz
-    template <size_t N>
-    void rotateVectorList(std::vector<scalar>& vectorList, label nvecs) const
+    // Common accessors — concrete (non-virtual) implementations because both
+    // DG and GGI use identical bodies that read base-class state.
+    bool isMasterSide() const
     {
+        return isMasterSide_;
     }
 
-    // rotate a vector list where the storage is, i.e. xxxyyyzzz
-    template <size_t N>
-    void rotateVectorListCompact(std::vector<scalar>& vectorList,
-                                 label nvecs) const
+    bool hasNonoverlap() const
     {
+        return hasNonoverlap_;
     }
-
-    // rotate a vector
-    template <size_t N>
-    void rotateVector(std::vector<scalar>& vector) const
-    {
-    }
-
-    // reverse rotate a vector list where the storage is, i.e. xyzxyzxyz
-    template <size_t N>
-    void reverseRotateVectorList(std::vector<scalar>& vectorList,
-                                 label nvecs) const
-    {
-    }
-
-    // reverse rotate a vector list where the storage is, i.e. xxxyyyzzz
-    template <size_t N>
-    void reverseRotateVectorListCompact(std::vector<scalar>& vectorList,
-                                        label nvecs) const
-    {
-    }
-
-    // reverse rotate a vector
-    template <size_t N>
-    void reverseRotateVector(std::vector<scalar>& vector) const
-    {
-    }
-
-    /* vector of DgInfo */
-    std::vector<std::vector<dgInfo*>> dgInfoVec_;
-
-    // monarch subject parts; subject part can be subsetted while monarch is
-    // not..
-    const stk::mesh::PartVector currentPartVec_;
-
-    const stk::mesh::PartVector opposingPartVec_;
-
-    // When current and opposing parts do not fully overlap
-    bool hasNonoverlap_ = false;
-
-    // Transformation data for periodicity
-
-    utils::matrix rotationMatrix_;
-
-    utils::vector translationVector_;
-
-    // Access
 
     std::string name() const
     {
         return name_;
-    };
+    }
 
-    bool isMasterSide() const
+    const interface* interfPtr() const
     {
-        return isMasterSide_;
-    };
-
-    const interface* interfPtr() const;
+        return interfPtr_;
+    }
 
     const zone* zonePtr() const;
 
-    dataHandler& dataHandlerRef();
+    dataHandler& dataHandlerRef()
+    {
+        return *dataHandler_;
+    }
 
-    const dataHandler& dataHandlerRef() const;
-
-    // Setters and Getters
+    const dataHandler& dataHandlerRef() const
+    {
+        return *dataHandler_;
+    }
 
     void setDomainType(domainType type)
     {
@@ -178,58 +92,109 @@ public:
     domainType parentDomainType() const
     {
         return parentDomainType_;
-    };
+    }
 
-private:
+    const stk::mesh::PartVector& currentPartVec() const
+    {
+        return currentPartVec_;
+    }
+
+    const stk::mesh::PartVector& opposingPartVec() const
+    {
+        return opposingPartVec_;
+    }
+
+    // Unified per-IP info storage (DG: dgInfo*, GGI: ggiInfo*).  Outer
+    // index = current face index; inner = IP / connection index.  Owned by
+    // this base class — populated by derived classes during initialize() /
+    // update() and freed by the base destructor (via clearIpInfo_()).
+    const std::vector<std::vector<ipInfo*>>& ipInfoVec() const
+    {
+        return ipInfoVec_;
+    }
+
+    // For conformal interfaces only: match opposing gauss point ids.
+    // GGI does not need this; DG overrides with its full implementation.
+    virtual void determineOpposingGaussPointIds()
+    {
+    }
+
+    // Part vectors — populated by the base constructor and accessed
+    // directly by the assembly layer (historically as public data members).
+    stk::mesh::PartVector currentPartVec_;
+    stk::mesh::PartVector opposingPartVec_;
+
+    // Coordinate transformation for periodic interfaces.
+    // Default implementations do nothing (GGI with generalConnection),
+    // specialisations are provided for periodic DG cases via the
+    // concrete dgInterfaceSideInfo class.  External callers that use
+    // rotation/translation must downcast to dgInterfaceSideInfo when
+    // GGI is not relevant, or rely on the concrete type known at the
+    // call site.  The transformation data below is common to both
+    // methods so it lives here.
+    utils::matrix rotationMatrix_;
+    utils::vector translationVector_;
+
+    void transformCoordinateList(std::vector<scalar>& coordsList,
+                                 label npts) const;
+
+    template <size_t N>
+    void rotateVectorList(std::vector<scalar>& vectorList, label nvecs) const
+    {
+    }
+
+    template <size_t N>
+    void rotateVectorListCompact(std::vector<scalar>& vectorList,
+                                 label nvecs) const
+    {
+    }
+
+    template <size_t N>
+    void rotateVector(std::vector<scalar>& vector) const
+    {
+    }
+
+    template <size_t N>
+    void reverseRotateVectorList(std::vector<scalar>& vectorList,
+                                 label nvecs) const
+    {
+    }
+
+    template <size_t N>
+    void reverseRotateVectorListCompact(std::vector<scalar>& vectorList,
+                                        label nvecs) const
+    {
+    }
+
+    template <size_t N>
+    void reverseRotateVector(std::vector<scalar>& vector) const
+    {
+    }
+
+protected:
+    // Frees and clears ipInfoVec_.  Called by ~interfaceSideInfo() and may
+    // also be invoked by derived classes from their reset()/update() paths.
+    void clearIpInfo_();
+
+    // Polymorphic per-IP info storage.  Populated by derived classes with
+    // either dgInfo* (from dgInterfaceSideInfo) or ggiInfo* (from
+    // ggiInterfaceSideInfo).  Ownership lives here.
+    std::vector<std::vector<ipInfo*>> ipInfoVec_;
+
+    // Members shared between DG and GGI (formerly duplicated in each
+    // child).  Derived classes access these directly.
     interface* interfPtr_;
-
-    const std::string name_;
-
+    std::string name_;
     bool isMasterSide_;
-
+    bool hasNonoverlap_ = false;
     domainType parentDomainType_ = domainType::fluid;
-
-    /* expand search box */
-    scalar expandBoxPercentage_;
-
-    const stk::search::SearchMethod searchMethod_;
-
-    /* clip isoparametric coordinates if they are out of bounds */
-    const bool clipIsoParametricCoords_;
-
-    /* allow for some finite search tolereance for bounding box */
-    const scalar searchTolerance_ = 1e-3;
-
-    /* allow for dynamic search tolerance algorithm where search tolerance is
-     * used as point radius from isInElem */
-    const bool dynamicSearchTolAlg_ = false;
-
-    bool useShifted_ = true;
-
-    // other possible data handling
-    std::unique_ptr<dataHandler> dataHandler_ = nullptr;
-
-    /* bounding box data types for stk_search */
-    std::vector<boundingSphere> boundingSphereVec_;
-
-    std::vector<boundingElementBox> boundingFaceElementBoxVec_;
-
-    /* save off product of search */
-    std::vector<std::pair<theKey, theKey>> searchKeyPair_;
-
     interfaceModelOption interfaceModelOption_;
 
-    // Methods
-
-    void deleteRangePointsFound_(
-        std::vector<boundingSphere>& boundingSphereVec,
-        const std::vector<std::pair<theKey, theKey>>& searchKeyPair) const;
-
-    void repeatSearchIfNeeded_(
-        const std::vector<boundingSphere>& boundingSphereVec,
-        std::vector<std::pair<theKey, theKey>>& searchKeyPair) const;
-
-    void doSearch_();
+    std::unique_ptr<dataHandler> dataHandler_;
+    std::vector<boundingSphere> boundingSphereVec_;
+    std::vector<boundingElementBox> boundingFaceElementBoxVec_;
+    std::vector<std::pair<theKey, theKey>> searchKeyPair_;
+    stk::search::SearchMethod searchMethod_ = stk::search::KDTREE;
 };
 
 // Specializations
@@ -245,7 +210,7 @@ void interfaceSideInfo::rotateVectorListCompact<1>(
     std::vector<scalar>& vectorList,
     label nvecs) const;
 
-// rotate a vector list where the storage is, i.e. xxxyyyzzz
+// rotate a vector
 template <>
 void interfaceSideInfo::rotateVector<1>(std::vector<scalar>& vector) const;
 

@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2025 13:38:51 (+0100)
 // Author     : ACHRAF NAGIHI
 // Description: Turbulent dissipation rate equation for the k-epsilon model
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef TURBULENTDISSIPATIONRATEEQUATION_H
 #define TURBULENTDISSIPATIONRATEEQUATION_H
@@ -26,6 +25,8 @@ private:
     using Assembler = turbulentDissipationRateAssembler;
 
 public:
+    static constexpr equationID ID = equationID::turbulentDissipationRate;
+
     turbulentDissipationRateEquation(realm* realm, kEpsilonModel* model);
 
     void checkDomain(const std::shared_ptr<domain> domain) override;
@@ -43,6 +44,11 @@ public:
     void solve() override;
 
     void preTimeStep() override;
+
+    equationID getID() override
+    {
+        return ID;
+    }
 
 protected:
     void setResidualScales_() override;

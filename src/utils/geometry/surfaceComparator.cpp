@@ -2,8 +2,7 @@
 // Created    : Tue Sep 16 2025 14:15:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "surfaceComparator.h"
@@ -655,6 +654,7 @@ void surfaceComparator::calcCentroid_(const stk::mesh::PartVector& surfaceParts,
 {
     vector lcentroid(vector::Zero());
     scalar area = 0.0;
+    std::vector<scalar> sideCentroid(SPATIAL_DIM);
 
     stk::mesh::BucketVector const& sideBuckets = bulkData_.get_buckets(
         metaData_.side_rank(),
@@ -708,7 +708,8 @@ void surfaceComparator::calcCentroid_(const stk::mesh::PartVector& surfaceParts,
             meFC->determinant(
                 1, &ws_coordinates[0], &ws_scs_areav[0], &scs_error);
 
-            scalar sideCentroid[SPATIAL_DIM] = {0};
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+                sideCentroid[j] = 0.0;
             scalar sideAreaMag = 0.0;
 
             // loop over boundary ips

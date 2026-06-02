@@ -2,8 +2,7 @@
 // Created    : Fri Mar 14 2025 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "pointInPolyhedron.h"
@@ -75,6 +74,7 @@ void pointInPolyhedron::filterConvexPolyhedronHalfSpace_(
     std::vector<scalar> ws_coords;
     std::vector<scalar> ws_edge1(SPATIAL_DIM), ws_edge2(SPATIAL_DIM),
         ws_normal(SPATIAL_DIM), ws_nn(SPATIAL_DIM);
+    std::vector<scalar> scaledPointCoords(SPATIAL_DIM);
 
     // define some common selectors; select owned nodes
     stk::mesh::Selector selSides =
@@ -84,7 +84,6 @@ void pointInPolyhedron::filterConvexPolyhedronHalfSpace_(
     {
         const scalar* pointCoords = &scatter[3 * iPoint];
 
-        scalar scaledPointCoords[SPATIAL_DIM];
         for (label i = 0; i < SPATIAL_DIM; i++)
         {
             scaledPointCoords[i] = (pointCoords[i] + shift_[i]) * scale_;
@@ -199,6 +198,8 @@ void pointInPolyhedron::filterConcavePolyhedronRayCasting_(
 {
     // define some common selectors; select sides
     std::vector<scalar> ws_coords;
+    std::vector<scalar> scaledPointCoords(SPATIAL_DIM);
+    std::vector<scalar> dir(SPATIAL_DIM);
 
     // define some common selectors; select owned nodes
     stk::mesh::Selector selSides =
@@ -208,13 +209,10 @@ void pointInPolyhedron::filterConcavePolyhedronRayCasting_(
     {
         const scalar* pointCoords = &scatter[3 * iPoint];
 
-        scalar scaledPointCoords[SPATIAL_DIM];
         for (label i = 0; i < SPATIAL_DIM; i++)
         {
             scaledPointCoords[i] = (pointCoords[i] + shift_[i]) * scale_;
         }
-
-        scalar dir[SPATIAL_DIM] = {0, 0, 0};
 
         label numIntersections = 0;
 
@@ -277,12 +275,12 @@ void pointInPolyhedron::filterConcavePolyhedronRayCasting_(
                     dir[1] = referencePoint_[1] - scaledPointCoords[1];
                     dir[2] = referencePoint_[2] - scaledPointCoords[2];
 
-                    normalize(dir);
+                    normalize(&dir[0]);
 
                     // check if test point intersects the side
                     bool intersects =
-                        lineTriangleIntersection(scaledPointCoords,
-                                                 dir,
+                        lineTriangleIntersection(&scaledPointCoords[0],
+                                                 &dir[0],
                                                  &ws_coords[0],
                                                  &ws_coords[3],
                                                  &ws_coords[6]);
@@ -324,15 +322,16 @@ void pointInPolyhedron::filterConcavePolyhedronRayCasting_(
                     dir[1] = referencePoint_[1] - scaledPointCoords[1];
                     dir[2] = referencePoint_[2] - scaledPointCoords[2];
 
-                    normalize(dir);
+                    normalize(&dir[0]);
 
                     // check if test point intersects the side
-                    bool intersects = lineQuadIntersection(scaledPointCoords,
-                                                           dir,
-                                                           &ws_coords[0],
-                                                           &ws_coords[3],
-                                                           &ws_coords[6],
-                                                           &ws_coords[9]);
+                    bool intersects =
+                        lineQuadIntersection(&scaledPointCoords[0],
+                                             &dir[0],
+                                             &ws_coords[0],
+                                             &ws_coords[3],
+                                             &ws_coords[6],
+                                             &ws_coords[9]);
 
                     if (intersects)
                     {

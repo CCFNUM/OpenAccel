@@ -2,8 +2,7 @@
 // Created    : Thu Mar 14 2024 12:50:04 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "wallScaleDiffusionEquation.h"
 #include "realm.h"
@@ -68,7 +67,8 @@ void wallScaleDiffusionEquation::setup()
     assembler_->setup(&this->yScaleRef(), diffusion, domainVector_, 1.0);
 
     // linear solver
-    linearSystem::setupSolver(this->name(), this->meshRef());
+    linearSystem::setupSolver(
+        this->name(), this->meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
 }
@@ -119,6 +119,8 @@ void wallScaleDiffusionEquation::solve()
     }
 
     // solve linear system
+    // enforce tolerance for this equation
+    linearSystem::setConvergenceTolerance(1.0e-9);
     linearSystem::solve();
 
     // correction

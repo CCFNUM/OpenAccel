@@ -2,8 +2,7 @@
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
 #include "flowModel.h"
@@ -980,8 +979,6 @@ void pressureCorrectionAssembler::
     // Get fields
     const auto& rhoSTKFieldRef = model_->rhoRef().stkFieldRef();
     const auto& sideUSTKFieldRef = model_->URef().sideFieldRef().stkFieldRef();
-    const auto& mDotSideSTKFieldRef =
-        model_->mDotRef().sideFieldRef().stkFieldRef();
     const auto& reversalFlowFlagSTKFieldRef =
         model_->URef().reversalFlagRef().stkFieldRef();
 
@@ -1193,9 +1190,6 @@ void pressureCorrectionAssembler::
             // loop over boundary ips
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const scalar tmDot =
-                    (stk::mesh::field_data(mDotSideSTKFieldRef, side))[ip];
-
                 if (rfflag[ip] == 0)
                 {
                     const label nearestNode = ipNodeMap[ip];
@@ -1244,24 +1238,6 @@ void pressureCorrectionAssembler::
                         mDot += (rhoBip * UbcVec[ip * SPATIAL_DIM + j]) * axj;
                     }
 
-                    //================================
-                    // Compressibility contribution at inlet
-                    // Newton-Raphson: ∂(ρU_bc)/∂p = U_bc * ∂ρ/∂p = U_bc * ψ
-                    // LHS coefficient = mDot / ρ_bip * ψ_bip
-                    // where ρ_bip and ψ_bip are interpolated to boundary ip
-                    //================================
-                    label rowR = nearestNode * nodesPerElement;
-                    for (label ic = 0; ic < nodesPerSide; ++ic)
-                    {
-                        const label inn = faceNodeOrdinals[ic];
-
-                        const scalar r_vel =
-                            p_velocity_face_shape_function[offSetSF_face + ic];
-
-                        p_lhs[rowR + inn] +=
-                            tmDot * r_vel * psiBip / rhoBip * comp;
-                    }
-
                     // transform mDot to relative frame
 
                     // 1.) frame motion
@@ -1280,6 +1256,24 @@ void pressureCorrectionAssembler::
                     {
                         mDot -=
                             rhoBip * p_umBip[i] * areaVec[ip * SPATIAL_DIM + i];
+                    }
+
+                    //================================
+                    // Compressibility sensitivities at inlet
+                    // Newton-Raphson: ∂(ρU_bc)/∂p = U_bc * ∂ρ/∂p = U_bc * ψ
+                    // LHS coefficient = mDot / ρ_bip * ψ_bip
+                    // where ρ_bip and ψ_bip are interpolated to boundary ip
+                    //================================
+                    label rowR = nearestNode * nodesPerElement;
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        const label inn = faceNodeOrdinals[ic];
+
+                        const scalar r_vel =
+                            p_velocity_face_shape_function[offSetSF_face + ic];
+
+                        p_lhs[rowR + inn] +=
+                            mDot * r_vel * psiBip / rhoBip * comp;
                     }
 
 #ifndef NDEBUG
@@ -2670,8 +2664,6 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOutletOutflow_(
     const auto& rhoSTKFieldRef = model_->rhoRef().stkFieldRef();
     const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
-    const auto& mDotSideSTKFieldRef =
-        model_->mDotRef().sideFieldRef().stkFieldRef();
     const auto& reversalFlowFlagSTKFieldRef =
         model_->URef().reversalFlagRef().stkFieldRef();
 
@@ -2895,9 +2887,6 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOutletOutflow_(
             // loop over boundary ips
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const scalar tmDot =
-                    (stk::mesh::field_data(mDotSideSTKFieldRef, side))[ip];
-
                 if (rfflag[ip] == 0)
                 {
                     const label nearestNode = ipNodeMap[ip];
@@ -2954,24 +2943,6 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOutletOutflow_(
                         mDot += rhoBip * p_uBip[j] * axj;
                     }
 
-                    //================================
-                    // Compressibility contribution at open boundary
-                    // Newton-Raphson: ∂(ρU)/∂p = U * ∂ρ/∂p = U * ψ
-                    // LHS coefficient = mDot / ρ_bip * ψ_bip
-                    // where U is extrapolated from interior, ρ_bip and ψ_bip
-                    // are interpolated to boundary ip
-                    //================================
-                    for (label ic = 0; ic < nodesPerSide; ++ic)
-                    {
-                        const label inn = faceNodeOrdinals[ic];
-
-                        const scalar r_vel =
-                            p_velocity_face_shape_function[offSetSF_face + ic];
-
-                        p_lhs[rowR + inn] +=
-                            tmDot * r_vel * psiBip / rhoBip * comp;
-                    }
-
                     // transform mDot to relative frame
 
                     // 1.) frame motion
@@ -2990,6 +2961,24 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOutletOutflow_(
                     {
                         mDot -=
                             rhoBip * p_umBip[i] * areaVec[ip * SPATIAL_DIM + i];
+                    }
+
+                    //================================
+                    // Compressibility sensitivities at open boundary
+                    // Newton-Raphson: ∂(ρU)/∂p = U * ∂ρ/∂p = U * ψ
+                    // LHS coefficient = mDot / ρ_bip * ψ_bip
+                    // where U is extrapolated from interior, ρ_bip and ψ_bip
+                    // are interpolated to boundary ip
+                    //================================
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        const label inn = faceNodeOrdinals[ic];
+
+                        const scalar r_vel =
+                            p_velocity_face_shape_function[offSetSF_face + ic];
+
+                        p_lhs[rowR + inn] +=
+                            mDot * r_vel * psiBip / rhoBip * comp;
                     }
 
 #ifndef NDEBUG

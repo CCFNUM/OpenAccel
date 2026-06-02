@@ -2,8 +2,7 @@
 // Created    : Thu Mar 14 2024 12:50:04 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Pressure correction (continuity) equation implementation details
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "pressureCorrectionEquation.h"
 #include "realm.h"
@@ -48,11 +47,15 @@ void pressureCorrectionEquation::setup()
     // setup pressure
     FOREACH_DOMAIN(model_->setupPressure);
 
+    // setup the dedicated pressure correction field
+    FOREACH_DOMAIN(model_->setupPressureCorrection);
+
     // setup assembler
     assembler_->setup(&model_->pRef(), null, domainVector_, nullptr);
 
     // linear solver
-    linearSystem::setupSolver(this->name(), model_->meshRef());
+    linearSystem::setupSolver(
+        this->name(), model_->meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
 }

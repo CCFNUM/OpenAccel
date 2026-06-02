@@ -2,8 +2,7 @@
 // Created    : Tue Apr 20 2024 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: Manipulation of an interface
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef INTERFACE_H
 #define INTERFACE_H
@@ -25,6 +24,9 @@ protected:
     std::string name_;
 
     interfaceModelOption option_;
+
+    nonconformalMethod nonconformalMethod_ =
+        nonconformalMethod::discontinuousGalerkin; // default
 
     interfaceType type_{interfaceType::fluid_fluid}; // default interface type
 
@@ -145,6 +147,11 @@ public:
     interfaceModelOption option() const
     {
         return option_;
+    };
+
+    nonconformalMethod ncMethod() const
+    {
+        return nonconformalMethod_;
     };
 
     bool isFluidSolidType() const

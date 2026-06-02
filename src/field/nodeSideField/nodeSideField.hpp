@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Template and inline implementations for node-side field
 //              containers.
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 namespace accel
 {

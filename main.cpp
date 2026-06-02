@@ -1,7 +1,8 @@
 // File       : main.cpp
-// Created    : Fri Aug 25 2023 12:55:24 (+0100)
-// Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Created    : Thu Mar 26 2026 10:17:26 (+0100)
+// Author     : Fabian Wermelinger
+// Description: Main application entry
+// Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include <Kokkos_Core.hpp>
 #include <csignal>

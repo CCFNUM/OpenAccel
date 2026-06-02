@@ -6,8 +6,7 @@
 //              equations can be solved by defining them explicitly in the YAML
 //              config file of the run. This class is just a wrapper for that
 //              since the two equations should be solved together.
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef SEGREGATEDFLOWEQUATIONS_H
 #define SEGREGATEDFLOWEQUATIONS_H

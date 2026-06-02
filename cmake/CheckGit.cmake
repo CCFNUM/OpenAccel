@@ -86,7 +86,8 @@ endfunction()
 
 function(CheckGitSetup)
     if (NOT DEFINED GIT_REPO_BUILD)
-        if (IS_DIRECTORY ${PROJECT_SOURCE_DIR}/.git)
+        # check if this is a git repository or a git worktree
+        if (IS_DIRECTORY ${PROJECT_SOURCE_DIR}/.git OR EXISTS ${PROJECT_SOURCE_DIR}/.git)
             set(GIT_REPO_BUILD TRUE)
         else()
             set(GIT_REPO_BUILD FALSE)

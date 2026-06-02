@@ -2,13 +2,12 @@
 // Created    : Thu Apr 02 2025 15:40:38 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef HAS_INTERFACE
 
-#include "dgInfo.h"
 #include "interface.h"
+#include "ipInfo.h"
 #include "simulation.h"
 #include "totalEnergyAssembler.h"
 
@@ -21,16 +20,11 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
     Context* ctx)
 {
     bool htcTreatment = false;
-    bool hybridTreatment = false;
     if (interfaceSideInfoPtr->interfPtr()->isFluidSolidType())
     {
         if (domain->type() == domainType::fluid)
         {
-            if (domain->turbulence_.transitional_)
-            {
-                hybridTreatment = true;
-            }
-            else if (domain->turbulence_.option_ != turbulenceOption::laminar)
+            if (domain->turbulence_.option_ != turbulenceOption::laminar)
             {
                 htcTreatment = true;
             }
@@ -45,14 +39,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 if (model_->realmRef()
                         .simulationRef()
                         .domainVector()[slaveZoneIndex]
-                        ->turbulence_.transitional_)
-                {
-                    hybridTreatment = true;
-                }
-                else if (model_->realmRef()
-                             .simulationRef()
-                             .domainVector()[slaveZoneIndex]
-                             ->turbulence_.option_ != turbulenceOption::laminar)
+                        ->turbulence_.option_ != turbulenceOption::laminar)
                 {
                     htcTreatment = true;
                 }
@@ -64,14 +51,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 if (model_->realmRef()
                         .simulationRef()
                         .domainVector()[masterZoneIndex]
-                        ->turbulence_.transitional_)
-                {
-                    hybridTreatment = true;
-                }
-                else if (model_->realmRef()
-                             .simulationRef()
-                             .domainVector()[masterZoneIndex]
-                             ->turbulence_.option_ != turbulenceOption::laminar)
+                        ->turbulence_.option_ != turbulenceOption::laminar)
                 {
                     htcTreatment = true;
                 }
@@ -79,16 +59,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
         }
     }
 
-    if (hybridTreatment)
-    {
-#if 0
-        assembleElemTermsInterfaceSideHybrid_(
-            domain, interfaceSideInfoPtr, ctx);
-#else
-        assembleElemTermsInterfaceSideHTC_(domain, interfaceSideInfoPtr, ctx);
-#endif
-    }
-    else if (htcTreatment)
+    if (htcTreatment)
     {
         assembleElemTermsInterfaceSideHTC_(domain, interfaceSideInfoPtr, ctx);
     }
@@ -181,42 +152,51 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
         const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
             metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-        // extract vector of dgInfo
-        const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-            interfaceSideInfoPtr->dgInfoVec_;
+        // extract vector of interface IP info
 
-        for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
+        const auto ggiMethod =
+            field_broker_->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.ggiAssemblyMethod_;
+        const bool useGgiNonPenalty =
+            interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+                nonconformalMethod::generalGridInterface &&
+            ggiMethod != ggiAssemblyMethod::penaltyMortar;
+        const scalar multiplier = useGgiNonPenalty ? 1.0 : 0.5;
+
+        const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
+
+        for (label iSide = 0; iSide < static_cast<label>(ipInfoVec.size());
              iSide++)
         {
-            const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+            const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-            // now loop over all the DgInfo objects on this
-            // particular exposed face
-            for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+            for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
-                dgInfo* dgInfo = faceDgInfoVec[k];
+                const ipInfo* ip = faceIpInfoVec[k];
 
-                if (dgInfo->gaussPointExposed_)
+                if (ip->isExposed_)
                     continue;
 
                 // extract current/opposing face/element
-                stk::mesh::Entity currentFace = dgInfo->currentFace_;
-                stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-                stk::mesh::Entity currentElement = dgInfo->currentElement_;
-                stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-                const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-                const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+                stk::mesh::Entity currentFace = ip->currentFace_;
+                stk::mesh::Entity opposingFace = ip->opposingFace_;
+                stk::mesh::Entity currentElement = ip->currentElement_;
+                stk::mesh::Entity opposingElement = ip->opposingElement_;
+                const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+                const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
                 // master element; face and volume
-                MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-                MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-                MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-                MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+                MasterElement* meFCCurrent = ip->meFCCurrent_;
+                MasterElement* meFCOpposing = ip->meFCOpposing_;
+                MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+                MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
                 // local ip, ordinals, etc
-                const label currentGaussPointId = dgInfo->currentGaussPointId_;
-                currentIsoParCoords = dgInfo->currentIsoParCoords_;
-                opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+                const label currentGaussPointId = ip->currentGaussPointId_;
+                currentIsoParCoords = ip->currentIsoParCoords_;
+                opposingIsoParCoords = ip->opposingIsoParCoords_;
 
                 // mapping from ip to nodes for this ordinal
                 const label* ipNodeMap =
@@ -337,8 +317,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                             divU += dudx[i * SPATIAL_DIM + i];
                         }
 
-                        // calculate viscous work: VW_i = Σⱼ τ_ji U_j
-                        // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3 δ_ji ∇·U)
+                        // calculate viscous work: VW_i = Σⱼ τ_ji
+                        // U_j where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j
+                        // - 2/3 δ_ji ∇·U)
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
                             p_c_vw[ni * SPATIAL_DIM + i] =
@@ -401,8 +382,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                             divU += dudx[i * SPATIAL_DIM + i];
                         }
 
-                        // calculate viscous work: VW_i = Σⱼ τ_ji U_j
-                        // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3 δ_ji ∇·U)
+                        // calculate viscous work: VW_i = Σⱼ τ_ji
+                        // U_j where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j
+                        // - 2/3 δ_ji ∇·U)
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
                             p_o_vw[ni * SPATIAL_DIM + i] =
@@ -482,10 +464,6 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 }
 
                 // apply transformations
-                interfaceSideInfoPtr->rotateVectorListCompact<1>(
-                    ws_o_face_h0, opposing_num_face_nodes);
-                interfaceSideInfoPtr->rotateVectorList<1>(
-                    ws_o_elem_h0, opposing_num_elem_nodes);
                 interfaceSideInfoPtr->transformCoordinateList(
                     ws_o_elem_coordinates, opposing_num_elem_nodes);
 
@@ -494,6 +472,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     stk::mesh::field_data(qDotSideSTKFieldRef, currentFace);
                 const scalar* c_areaVec = stk::mesh::field_data(
                     exposedAreaVecSTKFieldRef, currentFace);
+
+                // contact surface area fraction
+                const scalar fcs = ip->areaFraction_;
 
                 scalar c_amag = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -504,7 +485,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 }
                 c_amag = std::sqrt(c_amag);
 
-                // now compute normal
+                // compute normal from parent scs area vector
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     p_cNx[i] =
@@ -513,8 +494,8 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 }
 
                 // compute opposing normal: in theory it is assumed
-                // that the current and opposing sub-control surfaces
-                // are sufficiently planar
+                // that the current and opposing sub-control surfaces are
+                // sufficiently planar
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     p_oNx[i] = -p_cNx[i];
@@ -686,7 +667,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     p_rhs[p] = 0.0;
                 }
 
-                // extract nearset node
+                // extract nearest node
                 const label nn = ipNodeMap[currentGaussPointId];
 
                 // compute general shape function at current and
@@ -708,16 +689,18 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                 const scalar abs_tmDot = std::abs(tmDot);
 
-                // compute penalty
+                // compute penalty (active for penaltyMortar)
                 const scalar penaltyIp =
                     penaltyFactor *
                     (currentLambdaEffBip * currentInverseLength +
                      opposingLambdaEffBip * opposingInverseLength) /
                     2.0;
+                const scalar penaltyMultiplier = 2.0 * (1.0 - multiplier);
 
                 // non conformal diffusive flux
                 const scalar ncDiffFlux =
-                    (currentDiffFluxBip - opposingDiffFluxBip) / 2.0;
+                    currentDiffFluxBip * multiplier -
+                    opposingDiffFluxBip * (1.0 - multiplier);
 
                 // non conformal advection
                 const scalar ncAdv =
@@ -728,15 +711,17 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // current face assembly
                 const label indexR = nn;
                 p_rhs[indexR] -=
-                    ((ncDiffFlux + penaltyIp * (currentTBip - opposingTBip)) *
-                         c_amag +
-                     ncAdv);
+                    ((ncDiffFlux + penaltyIp * penaltyMultiplier *
+                                       (currentTBip - opposingTBip)) *
+                         fcs * c_amag +
+                     fcs * ncAdv);
 
                 // fill the nc-heat flow rate
                 qDot[currentGaussPointId] =
-                    ((ncDiffFlux + penaltyIp * (currentTBip - opposingTBip)) *
-                         c_amag +
-                     ncAdv);
+                    ((ncDiffFlux + penaltyIp * penaltyMultiplier *
+                                       (currentTBip - opposingTBip)) *
+                         fcs * c_amag +
+                     fcs * ncAdv);
 
                 // set-up row for matrix
                 const label rowR = indexR * totalNodes;
@@ -744,8 +729,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // sensitivities; current face (penalty and
                 // advection); use general shape function for
                 // this single ip
-                const scalar lhsFacC = penaltyIp / currentCpBip * c_amag +
-                                       (abs_tmDot + tmDot) / 2.0;
+                const scalar lhsFacC = penaltyMultiplier * penaltyIp /
+                                           currentCpBip * fcs * c_amag +
+                                       fcs * (abs_tmDot + tmDot) / 2.0;
                 for (label ic = 0; ic < currentNodesPerFace; ++ic)
                 {
                     const label icNdim = c_face_node_ordinals[ic];
@@ -766,16 +752,16 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                         // -Gamma*dphi/dxj*nj*dS
                         p_lhs[rowR + icNdim] += -currentLambdaEffBip * dndxj *
-                                                nxj * c_amag / 2.0 /
-                                                currentCpBip;
+                                                nxj * fcs * c_amag *
+                                                multiplier / currentCpBip;
                     }
                 }
 
                 // sensitivities; opposing face (penalty and
-                // advection); use general shape function for
-                // this single ip
-                const scalar lhsFacO = penaltyIp / opposingCpBip * c_amag +
-                                       (abs_tmDot - tmDot) / 2.0;
+                // advection)
+                const scalar lhsFacO = penaltyMultiplier * penaltyIp /
+                                           opposingCpBip * fcs * c_amag +
+                                       fcs * (abs_tmDot - tmDot) / 2.0;
                 for (label ic = 0; ic < opposingNodesPerFace; ++ic)
                 {
                     const label icNdim =
@@ -796,9 +782,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                         const scalar dndxl = p_o_dndx[offSetDnDx + l];
 
                         // -Gamma*dphi/dxj*nj*dS
-                        p_lhs[rowR + icNdim] -= -opposingLambdaEffBip * dndxl *
-                                                nxl * c_amag / 2.0 /
-                                                opposingCpBip;
+                        p_lhs[rowR + icNdim] -=
+                            -opposingLambdaEffBip * dndxl * nxl * fcs * c_amag *
+                            (1.0 - multiplier) / opposingCpBip;
                     }
                 }
 
@@ -813,581 +799,6 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 Base::applyCoeff_(
                     A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
             }
-        }
-    }
-}
-
-void totalEnergyAssembler::assembleElemTermsInterfaceSideHybrid_(
-    const domain* domain,
-    const interfaceSideInfo* interfaceSideInfoPtr,
-    Context* ctx)
-{
-    const auto& mesh = field_broker_->meshRef();
-
-    Matrix& A = ctx->getAMatrix();
-    Vector& b = ctx->getBVector();
-
-    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-
-    const bool includeAdv = domain->type() == domainType::fluid;
-    const bool includeViscousWork =
-        domain->heatTransfer_.includeViscousWork_ && includeAdv;
-
-    scalar penaltyFactor = interfaceSideInfoPtr->interfPtr()->penaltyFactor();
-
-    // space for LHS/RHS; nodesPerElem*nodesPerElem and nodesPerElem
-    std::vector<scalar> lhs;
-    std::vector<scalar> rhs;
-    std::vector<label> scratchIds;
-    std::vector<scalar> scratchVals;
-    std::vector<stk::mesh::Entity> connectedNodes;
-
-    // ip values; both boundary and opposing surface
-    std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
-    std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
-    std::vector<scalar> cNx(SPATIAL_DIM);
-    std::vector<scalar> oNx(SPATIAL_DIM);
-    std::vector<scalar> cvwBip(SPATIAL_DIM);
-    std::vector<scalar> ovwBip(SPATIAL_DIM);
-
-    // mapping for -1:1 -> -0.5:0.5 volume element
-    std::vector<scalar> currentElementIsoParCoords(SPATIAL_DIM);
-    std::vector<scalar> opposingElementIsoParCoordsTrans(SPATIAL_DIM);
-
-    // pointers to fixed values
-    scalar* p_cNx = &cNx[0];
-    scalar* p_oNx = &oNx[0];
-
-    // nodal fields to gather
-    std::vector<scalar> ws_c_face_h0;
-    std::vector<scalar> ws_o_face_h0;
-    std::vector<scalar> ws_c_elem_h0;
-    std::vector<scalar> ws_o_elem_h0;
-    std::vector<scalar> ws_c_face_T;
-    std::vector<scalar> ws_o_face_T;
-    std::vector<scalar> ws_c_vw;
-    std::vector<scalar> ws_o_vw;
-    std::vector<scalar> ws_c_elem_T;
-    std::vector<scalar> ws_o_elem_T;
-    std::vector<scalar> ws_c_elem_coordinates;
-    std::vector<scalar> ws_o_elem_coordinates;
-    std::vector<scalar> ws_c_lambdaEff;
-    std::vector<scalar> ws_o_lambdaEff;
-    std::vector<scalar> ws_c_cp;
-    std::vector<scalar> ws_o_cp;
-    std::vector<scalar> ws_c_gamma;
-    std::vector<scalar> ws_o_gamma;
-
-    // master element data
-    std::vector<scalar> ws_c_dndx;
-    std::vector<scalar> ws_o_dndx;
-    std::vector<scalar> ws_c_det_j;
-    std::vector<scalar> ws_o_det_j;
-    std::vector<scalar> ws_c_general_shape_function;
-    std::vector<scalar> ws_o_general_shape_function;
-
-    // Get transport fields/side fields
-    const auto& h0STKFieldRef = phi_->stkFieldRef();
-    const auto& TSTKFieldRef = model_->TRef().stkFieldRef();
-    const auto& cpSTKFieldRef = model_->cpRef().stkFieldRef();
-    const auto& gammaSTKFieldRef = model_->gammaRef().stkFieldRef();
-    const auto* TWallCoeffsSTKFieldPtr = model_->TWallCoeffsRef().stkFieldPtr();
-    auto& qDotSideSTKFieldRef = model_->qDotRef().sideFieldRef().stkFieldRef();
-    const auto* USTKFieldPtr =
-        includeViscousWork ? model_->URef().stkFieldPtr() : nullptr;
-    const auto* gradUSTKFieldPtr =
-        includeViscousWork ? model_->URef().gradRef().stkFieldPtr() : nullptr;
-    const auto* muEffSTKFieldPtr =
-        includeViscousWork ? model_->muEffRef().stkFieldPtr() : nullptr;
-
-    // Get geometric fields
-    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
-        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
-    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
-        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
-
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
-
-    for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
-    {
-        const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-        // now loop over all the DgInfo objects on this
-        // particular exposed face
-        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
-        {
-            dgInfo* dgInfo = faceDgInfoVec[k];
-
-            if (dgInfo->gaussPointExposed_)
-                continue;
-
-            // extract current/opposing face/element
-            stk::mesh::Entity currentFace = dgInfo->currentFace_;
-            stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-            stk::mesh::Entity currentElement = dgInfo->currentElement_;
-            stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-            const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-            const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
-
-            // master element; face and volume
-            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-            MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-            MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
-
-            // local ip, ordinals, etc
-            const label currentGaussPointId = dgInfo->currentGaussPointId_;
-            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-            opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
-
-            // mapping from ip to nodes for this ordinal
-            const label* ipNodeMap =
-                meSCSCurrent->ipNodeMap(currentFaceOrdinal);
-
-            // extract some master element info
-            const label currentNodesPerFace = meFCCurrent->nodesPerElement_;
-            const label opposingNodesPerFace = meFCOpposing->nodesPerElement_;
-            const label currentNodesPerElement = meSCSCurrent->nodesPerElement_;
-            const label opposingNodesPerElement =
-                meSCSOpposing->nodesPerElement_;
-
-            // resize some things; matrix related
-            const label totalNodes =
-                currentNodesPerElement + opposingNodesPerElement;
-            const label lhsSize = totalNodes * totalNodes;
-            const label rhsSize = totalNodes;
-            lhs.resize(lhsSize);
-            rhs.resize(rhsSize);
-            scratchIds.resize(rhsSize);
-            scratchVals.resize(rhsSize);
-            connectedNodes.resize(totalNodes);
-
-            // algorithm related; element; dndx will be at a single gauss point
-            ws_c_elem_h0.resize(currentNodesPerElement);
-            ws_o_elem_h0.resize(opposingNodesPerElement);
-            ws_c_elem_T.resize(currentNodesPerElement);
-            ws_o_elem_T.resize(opposingNodesPerElement);
-            ws_c_elem_coordinates.resize(currentNodesPerElement * SPATIAL_DIM);
-            ws_o_elem_coordinates.resize(opposingNodesPerElement * SPATIAL_DIM);
-            ws_c_dndx.resize(SPATIAL_DIM * currentNodesPerElement);
-            ws_o_dndx.resize(SPATIAL_DIM * opposingNodesPerElement);
-            ws_c_det_j.resize(1);
-            ws_o_det_j.resize(1);
-
-            // algorithm related; face
-            ws_c_face_h0.resize(currentNodesPerFace);
-            ws_o_face_h0.resize(opposingNodesPerFace);
-            ws_c_face_T.resize(currentNodesPerFace);
-            ws_o_face_T.resize(opposingNodesPerFace);
-            ws_c_vw.resize(currentNodesPerFace * SPATIAL_DIM);
-            ws_o_vw.resize(opposingNodesPerFace * SPATIAL_DIM);
-            ws_c_lambdaEff.resize(currentNodesPerFace);
-            ws_o_lambdaEff.resize(opposingNodesPerFace);
-            ws_c_cp.resize(currentNodesPerFace);
-            ws_o_cp.resize(opposingNodesPerFace);
-            ws_c_gamma.resize(currentNodesPerFace);
-            ws_o_gamma.resize(opposingNodesPerFace);
-            ws_c_general_shape_function.resize(currentNodesPerFace);
-            ws_o_general_shape_function.resize(opposingNodesPerFace);
-
-            // pointers
-            scalar* p_lhs = &lhs[0];
-            scalar* p_rhs = &rhs[0];
-            scalar* p_c_face_h0 = &ws_c_face_h0[0];
-            scalar* p_o_face_h0 = &ws_o_face_h0[0];
-            scalar* p_c_elem_h0 = &ws_c_elem_h0[0];
-            scalar* p_o_elem_h0 = &ws_o_elem_h0[0];
-            scalar* p_c_face_T = &ws_c_face_T[0];
-            scalar* p_o_face_T = &ws_o_face_T[0];
-            scalar* p_c_vw = &ws_c_vw[0];
-            scalar* p_o_vw = &ws_o_vw[0];
-            scalar* p_c_elem_T = &ws_c_elem_T[0];
-            scalar* p_o_elem_T = &ws_o_elem_T[0];
-            scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
-            scalar* p_o_elem_coordinates = &ws_o_elem_coordinates[0];
-            scalar* p_c_lambdaEff = &ws_c_lambdaEff[0];
-            scalar* p_o_lambdaEff = &ws_o_lambdaEff[0];
-            scalar* p_c_cp = &ws_c_cp[0];
-            scalar* p_o_cp = &ws_o_cp[0];
-            scalar* p_c_gamma = &ws_c_gamma[0];
-            scalar* p_o_gamma = &ws_o_gamma[0];
-            scalar* p_c_general_shape_function =
-                &ws_c_general_shape_function[0];
-            scalar* p_o_general_shape_function =
-                &ws_o_general_shape_function[0];
-            scalar* p_c_dndx = &ws_c_dndx[0];
-            scalar* p_o_dndx = &ws_o_dndx[0];
-
-            // populate current face_node_ordinals
-            const label* c_face_node_ordinals =
-                meSCSCurrent->side_node_ordinals(currentFaceOrdinal);
-
-            // gather current face data
-            stk::mesh::Entity const* current_face_node_rels =
-                bulkData.begin_nodes(currentFace);
-            const label current_num_face_nodes =
-                bulkData.num_nodes(currentFace);
-            for (label ni = 0; ni < current_num_face_nodes; ++ni)
-            {
-                stk::mesh::Entity node = current_face_node_rels[ni];
-                p_c_face_h0[ni] = *stk::mesh::field_data(h0STKFieldRef, node);
-                p_c_face_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
-                p_c_lambdaEff[ni] =
-                    *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
-                p_c_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
-                p_c_gamma[ni] = *stk::mesh::field_data(gammaSTKFieldRef, node);
-
-                if (includeViscousWork)
-                {
-                    const scalar muEff =
-                        *stk::mesh::field_data(*muEffSTKFieldPtr, node);
-                    const scalar* U =
-                        stk::mesh::field_data(*USTKFieldPtr, node);
-                    const scalar* dudx =
-                        stk::mesh::field_data(*gradUSTKFieldPtr, node);
-                    scalar divU = 0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_c_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * U[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                            p_c_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                U[j];
-                    }
-                }
-                else
-                {
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                        p_c_vw[ni * SPATIAL_DIM + i] = 0;
-                }
-            }
-
-            // populate opposing face_node_ordinals
-            const label* o_face_node_ordinals =
-                meSCSOpposing->side_node_ordinals(opposingFaceOrdinal);
-
-            // gather opposing face data
-            stk::mesh::Entity const* opposing_face_node_rels =
-                bulkData.begin_nodes(opposingFace);
-            const label opposing_num_face_nodes =
-                bulkData.num_nodes(opposingFace);
-            for (label ni = 0; ni < opposing_num_face_nodes; ++ni)
-            {
-                stk::mesh::Entity node = opposing_face_node_rels[ni];
-                p_o_face_h0[ni] = *stk::mesh::field_data(h0STKFieldRef, node);
-                p_o_face_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
-                p_o_lambdaEff[ni] =
-                    *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
-                p_o_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
-                p_o_gamma[ni] = *stk::mesh::field_data(gammaSTKFieldRef, node);
-
-                if (includeViscousWork)
-                {
-                    const scalar muEff =
-                        *stk::mesh::field_data(*muEffSTKFieldPtr, node);
-                    const scalar* U =
-                        stk::mesh::field_data(*USTKFieldPtr, node);
-                    const scalar* dudx =
-                        stk::mesh::field_data(*gradUSTKFieldPtr, node);
-                    scalar divU = 0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_o_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * U[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                            p_o_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                U[j];
-                    }
-                }
-                else
-                {
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                        p_o_vw[ni * SPATIAL_DIM + i] = 0;
-                }
-            }
-
-            // gather current element data
-            stk::mesh::Entity const* current_elem_node_rels =
-                bulkData.begin_nodes(currentElement);
-            const label current_num_elem_nodes =
-                bulkData.num_nodes(currentElement);
-            for (label ni = 0; ni < current_num_elem_nodes; ++ni)
-            {
-                stk::mesh::Entity node = current_elem_node_rels[ni];
-                connectedNodes[ni] = node;
-                p_c_elem_h0[ni] = *stk::mesh::field_data(h0STKFieldRef, node);
-                p_c_elem_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
-                const scalar* coords =
-                    stk::mesh::field_data(coordsSTKFieldRef, node);
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                    p_c_elem_coordinates[ni * SPATIAL_DIM + i] = coords[i];
-            }
-
-            // gather opposing element data
-            stk::mesh::Entity const* opposing_elem_node_rels =
-                bulkData.begin_nodes(opposingElement);
-            const label opposing_num_elem_nodes =
-                bulkData.num_nodes(opposingElement);
-            for (label ni = 0; ni < opposing_num_elem_nodes; ++ni)
-            {
-                stk::mesh::Entity node = opposing_elem_node_rels[ni];
-                connectedNodes[ni + current_num_elem_nodes] = node;
-                p_o_elem_h0[ni] = *stk::mesh::field_data(h0STKFieldRef, node);
-                p_o_elem_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
-                const scalar* coords =
-                    stk::mesh::field_data(coordsSTKFieldRef, node);
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                    p_o_elem_coordinates[ni * SPATIAL_DIM + i] = coords[i];
-            }
-
-            // apply transformations
-            interfaceSideInfoPtr->rotateVectorListCompact<1>(
-                ws_o_face_h0, opposing_num_face_nodes);
-            interfaceSideInfoPtr->rotateVectorList<1>(ws_o_elem_h0,
-                                                      opposing_num_elem_nodes);
-            interfaceSideInfoPtr->transformCoordinateList(
-                ws_o_elem_coordinates, opposing_num_elem_nodes);
-
-            // pointer to face data
-            scalar* qDot =
-                stk::mesh::field_data(qDotSideSTKFieldRef, currentFace);
-            const scalar* c_TWallCoeff =
-                stk::mesh::field_data(*TWallCoeffsSTKFieldPtr, currentFace);
-            const scalar* c_areaVec =
-                stk::mesh::field_data(exposedAreaVecSTKFieldRef, currentFace);
-
-            scalar c_amag = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
-                const scalar c_axj =
-                    c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
-                c_amag += c_axj * c_axj;
-            }
-            c_amag = std::sqrt(c_amag);
-
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-                p_cNx[i] =
-                    c_areaVec[currentGaussPointId * SPATIAL_DIM + i] / c_amag;
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-                p_oNx[i] = -p_cNx[i];
-
-            meSCSCurrent->sidePcoords_to_elemPcoords(
-                currentFaceOrdinal,
-                1,
-                &currentIsoParCoords[0],
-                &currentElementIsoParCoords[0]);
-            meSCSOpposing->sidePcoords_to_elemPcoords(
-                opposingFaceOrdinal,
-                1,
-                &opposingIsoParCoords[0],
-                &opposingElementIsoParCoordsTrans[0]);
-
-            scalar scs_error = 0.0;
-            meSCSCurrent->general_face_grad_op(currentFaceOrdinal,
-                                               &currentElementIsoParCoords[0],
-                                               &p_c_elem_coordinates[0],
-                                               &p_c_dndx[0],
-                                               &ws_c_det_j[0],
-                                               &scs_error);
-            meSCSOpposing->general_face_grad_op(
-                opposingFaceOrdinal,
-                &opposingElementIsoParCoordsTrans[0],
-                &p_o_elem_coordinates[0],
-                &p_o_dndx[0],
-                &ws_o_det_j[0],
-                &scs_error);
-
-            scalar currentInverseLength = 0.0;
-            for (label ic = 0; ic < current_num_face_nodes; ++ic)
-            {
-                const label faceNodeNumber = c_face_node_ordinals[ic];
-                const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                    currentInverseLength += p_c_dndx[offSetDnDx + j] * p_cNx[j];
-            }
-
-            scalar opposingInverseLength = 0.0;
-            for (label ic = 0; ic < opposing_num_face_nodes; ++ic)
-            {
-                const label faceNodeNumber = o_face_node_ordinals[ic];
-                const label offSetDnDx = faceNodeNumber * SPATIAL_DIM;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                    opposingInverseLength +=
-                        p_o_dndx[offSetDnDx + j] * p_oNx[j];
-            }
-
-            scalar currentH0Bip, opposingH0Bip, currentTBip, opposingTBip,
-                currentLambdaEffBip, opposingLambdaEffBip, currentCpBip,
-                opposingCpBip, currentGammaBip, opposingGammaBip;
-            meFCCurrent->interpolatePoint(
-                1, &currentIsoParCoords[0], &ws_c_face_h0[0], &currentH0Bip);
-            meFCOpposing->interpolatePoint(
-                1, &opposingIsoParCoords[0], &ws_o_face_h0[0], &opposingH0Bip);
-            meFCCurrent->interpolatePoint(
-                1, &currentIsoParCoords[0], &ws_c_face_T[0], &currentTBip);
-            meFCOpposing->interpolatePoint(
-                1, &opposingIsoParCoords[0], &ws_o_face_T[0], &opposingTBip);
-            meFCCurrent->interpolatePoint(1,
-                                          &currentIsoParCoords[0],
-                                          &ws_c_lambdaEff[0],
-                                          &currentLambdaEffBip);
-            meFCOpposing->interpolatePoint(1,
-                                           &opposingIsoParCoords[0],
-                                           &ws_o_lambdaEff[0],
-                                           &opposingLambdaEffBip);
-            meFCCurrent->interpolatePoint(
-                1, &currentIsoParCoords[0], &ws_c_cp[0], &currentCpBip);
-            meFCOpposing->interpolatePoint(
-                1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
-            meFCCurrent->interpolatePoint(
-                1, &currentIsoParCoords[0], &ws_c_gamma[0], &currentGammaBip);
-            meFCOpposing->interpolatePoint(
-                1, &opposingIsoParCoords[0], &ws_o_gamma[0], &opposingGammaBip);
-
-            scalar currentDiffFluxBip = 0;
-            for (label ic = 0; ic < currentNodesPerElement; ++ic)
-            {
-                const label offSetDnDx = ic * SPATIAL_DIM;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                    currentDiffFluxBip += -currentLambdaEffBip *
-                                          p_c_dndx[offSetDnDx + j] * p_cNx[j] *
-                                          p_c_elem_T[ic];
-            }
-
-            scalar opposingDiffFluxBip = 0;
-            for (label ic = 0; ic < opposingNodesPerElement; ++ic)
-            {
-                const label offSetDnDx = ic * SPATIAL_DIM;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                    opposingDiffFluxBip += -opposingLambdaEffBip *
-                                           p_o_dndx[offSetDnDx + j] * p_oNx[j] *
-                                           p_o_elem_T[ic];
-            }
-
-            meFCCurrent->interpolatePoint(
-                SPATIAL_DIM, &currentIsoParCoords[0], &ws_c_vw[0], &cvwBip[0]);
-            meFCOpposing->interpolatePoint(
-                SPATIAL_DIM, &opposingIsoParCoords[0], &ws_o_vw[0], &ovwBip[0]);
-
-            for (label p = 0; p < lhsSize; ++p)
-                p_lhs[p] = 0.0;
-            for (label p = 0; p < rhsSize; ++p)
-                p_rhs[p] = 0.0;
-
-            const label nn = ipNodeMap[currentGaussPointId];
-            meFCCurrent->general_shape_fcn(
-                1, &currentIsoParCoords[0], &ws_c_general_shape_function[0]);
-            meFCOpposing->general_shape_fcn(
-                1, &opposingIsoParCoords[0], &ws_o_general_shape_function[0]);
-
-            const scalar penaltyIp =
-                penaltyFactor *
-                (currentLambdaEffBip * currentInverseLength +
-                 opposingLambdaEffBip * opposingInverseLength) /
-                2.0;
-
-            // Laminar (DG) contribution
-            const scalar ncDiffFlux_laminar =
-                (currentDiffFluxBip - opposingDiffFluxBip) / 2.0;
-            const scalar res_laminar =
-                (ncDiffFlux_laminar +
-                 penaltyIp * (currentTBip - opposingTBip)) *
-                c_amag;
-
-            // Turbulent (HTC) contribution
-            const scalar res_turbulent = -c_TWallCoeff[currentGaussPointId] *
-                                         c_amag * (opposingTBip - currentTBip);
-
-            const scalar gamma = (currentGammaBip + opposingGammaBip) / 2.0;
-            const scalar blendedRes =
-                gamma * res_turbulent + (1.0 - gamma) * res_laminar;
-
-            const label indexR = nn;
-            p_rhs[indexR] -= blendedRes;
-            qDot[currentGaussPointId] = blendedRes;
-
-            const label rowR = indexR * totalNodes;
-
-            // Jacobian contribution from laminar part
-            const scalar lhsFacC_laminar = penaltyIp / currentCpBip * c_amag;
-            for (label ic = 0; ic < currentNodesPerFace; ++ic)
-            {
-                const label icNdim = c_face_node_ordinals[ic];
-                p_lhs[rowR + icNdim] += (1.0 - gamma) *
-                                        p_c_general_shape_function[ic] *
-                                        lhsFacC_laminar;
-            }
-            for (label ic = 0; ic < currentNodesPerElement; ++ic)
-            {
-                const label offSetDnDx = ic * SPATIAL_DIM;
-                const label icNdim = ic;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                    p_lhs[rowR + icNdim] +=
-                        (1.0 - gamma) *
-                        (-currentLambdaEffBip * p_c_dndx[offSetDnDx + j] *
-                         p_cNx[j] * c_amag / 2.0 / currentCpBip);
-            }
-            const scalar lhsFacO_laminar = penaltyIp / opposingCpBip * c_amag;
-            for (label ic = 0; ic < opposingNodesPerFace; ++ic)
-            {
-                const label icNdim =
-                    o_face_node_ordinals[ic] + currentNodesPerElement;
-                p_lhs[rowR + icNdim] -= (1.0 - gamma) *
-                                        p_o_general_shape_function[ic] *
-                                        lhsFacO_laminar;
-            }
-            for (label ic = 0; ic < opposingNodesPerElement; ++ic)
-            {
-                const label offSetDnDx = ic * SPATIAL_DIM;
-                const label icNdim = ic + currentNodesPerElement;
-                for (label l = 0; l < SPATIAL_DIM; ++l)
-                    p_lhs[rowR + icNdim] -=
-                        (1.0 - gamma) *
-                        (-opposingLambdaEffBip * p_o_dndx[offSetDnDx + l] *
-                         p_oNx[l] * c_amag / 2.0 / opposingCpBip);
-            }
-
-            // Jacobian contribution from turbulent part
-            const scalar lhsFacC_turbulent =
-                c_TWallCoeff[currentGaussPointId] * c_amag / currentCpBip;
-            for (label ic = 0; ic < currentNodesPerFace; ++ic)
-            {
-                const label icNdim = c_face_node_ordinals[ic];
-                p_lhs[rowR + icNdim] +=
-                    gamma * p_c_general_shape_function[ic] * lhsFacC_turbulent;
-            }
-            const scalar lhsFacO_turbulent =
-                c_TWallCoeff[currentGaussPointId] * c_amag / opposingCpBip;
-            for (label ic = 0; ic < opposingNodesPerFace; ++ic)
-            {
-                const label icNdim =
-                    o_face_node_ordinals[ic] + currentNodesPerElement;
-                p_lhs[rowR + icNdim] -=
-                    gamma * p_o_general_shape_function[ic] * lhsFacO_turbulent;
-            }
-
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
-                const scalar c_axj =
-                    c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
-                p_rhs[indexR] += (cvwBip[j] + ovwBip[j]) / 2.0 * c_axj;
-            }
-
-            Base::applyCoeff_(
-                A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
     }
 }
@@ -1455,41 +866,47 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-    // extract vector of dgInfo
-    const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-        interfaceSideInfoPtr->dgInfoVec_;
-
-    for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size()); iSide++)
+    // GGI path is not yet validated for the total-energy HTC problem;
+    // preserve the original errorMsg behavior at the top of the function and
+    // run the unified loop for DG below.
+    if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
+        nonconformalMethod::generalGridInterface)
     {
-        const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
+        errorMsg("Not implemented yet");
+        return;
+    }
 
-        // now loop over all the DgInfo objects on this
-        // particular exposed face
-        for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
+    // Unified loop over per-IP info.  Storage is owned by the base
+    // interfaceSideInfo; concrete side classes store derived records upcast to
+    // ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is
+    // identical to the original DG implementation.
+    for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
+    {
+        for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
         {
-            dgInfo* dgInfo = faceDgInfoVec[k];
+            ipInfo* ip = faceIpInfoVec[k];
 
-            if (dgInfo->gaussPointExposed_)
+            if (ip->isExposed_)
                 continue;
 
             // extract current/opposing face/element
-            stk::mesh::Entity currentFace = dgInfo->currentFace_;
-            stk::mesh::Entity opposingFace = dgInfo->opposingFace_;
-            stk::mesh::Entity currentElement = dgInfo->currentElement_;
-            stk::mesh::Entity opposingElement = dgInfo->opposingElement_;
-            const label currentFaceOrdinal = dgInfo->currentFaceOrdinal_;
-            const label opposingFaceOrdinal = dgInfo->opposingFaceOrdinal_;
+            stk::mesh::Entity currentFace = ip->currentFace_;
+            stk::mesh::Entity opposingFace = ip->opposingFace_;
+            stk::mesh::Entity currentElement = ip->currentElement_;
+            stk::mesh::Entity opposingElement = ip->opposingElement_;
+            const label currentFaceOrdinal = ip->currentFaceOrdinal_;
+            const label opposingFaceOrdinal = ip->opposingFaceOrdinal_;
 
             // master element; face and volume
-            MasterElement* meFCCurrent = dgInfo->meFCCurrent_;
-            MasterElement* meSCSCurrent = dgInfo->meSCSCurrent_;
-            MasterElement* meFCOpposing = dgInfo->meFCOpposing_;
-            MasterElement* meSCSOpposing = dgInfo->meSCSOpposing_;
+            MasterElement* meFCCurrent = ip->meFCCurrent_;
+            MasterElement* meSCSCurrent = ip->meSCSCurrent_;
+            MasterElement* meFCOpposing = ip->meFCOpposing_;
+            MasterElement* meSCSOpposing = ip->meSCSOpposing_;
 
             // local ip, ordinals, etc
-            const label currentGaussPointId = dgInfo->currentGaussPointId_;
-            currentIsoParCoords = dgInfo->currentIsoParCoords_;
-            opposingIsoParCoords = dgInfo->opposingIsoParCoords_;
+            const label currentGaussPointId = ip->currentGaussPointId_;
+            currentIsoParCoords = ip->currentIsoParCoords_;
+            opposingIsoParCoords = ip->opposingIsoParCoords_;
 
             // mapping from ip to nodes for this ordinal
             const label* ipNodeMap =
@@ -1574,7 +991,8 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
                     }
 
                     // calculate viscous work: VW_i = Σⱼ τ_ji U_j
-                    // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3 δ_ji ∇·U)
+                    // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3
+                    // δ_ji ∇·U)
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
                         p_c_vw[ni * SPATIAL_DIM + i] =
@@ -1629,7 +1047,8 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
                     }
 
                     // calculate viscous work: VW_i = Σⱼ τ_ji U_j
-                    // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3 δ_ji ∇·U)
+                    // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3
+                    // δ_ji ∇·U)
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
                         p_o_vw[ni * SPATIAL_DIM + i] =

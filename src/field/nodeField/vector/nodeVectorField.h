@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Base class for vector-valued node fields with gradient
 //              correction
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef NODEVECTORFIELD_H
 #define NODEVECTORFIELD_H

@@ -3,8 +3,7 @@
 // Author     : Mhamad Mahdi Alloush
 // Description: Computes and manages wall distance fields using wall scale
 //              methods
-// Copyright (c) 2026 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef WALLDISTANCE_H
 #define WALLDISTANCE_H

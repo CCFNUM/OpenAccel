@@ -2,8 +2,7 @@
 // Created    : Thu Feb 01 2024 16:41:11 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Heat transfer base class implementation details
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "heatTransferModel.h"
 #include "domain.h"
@@ -28,11 +27,21 @@ heatTransferModel::heatTransferModel(realm* realm) : model(realm)
     hRef();
     h0Ref();
     T0Ref();
-    TWallCoeffsRef();
     qDotRef();
     URef();    // always required (for solid will be 0)
     pRef();    // always required (for solid will be 0)
     mDotRef(); // always required (for solid will be 0)
+
+    // instantiate thermal wall coefficient field
+    for (const auto& domain : realm->simulationRef().domainVector())
+    {
+        if (domain->type() == domainType::fluid &&
+            domain->turbulence_.option_ != turbulenceOption::laminar)
+        {
+            TWallCoeffsRef();
+            break;
+        }
+    }
 
     // instantiate compressible fields
     for (const auto& domain : realm->simulationRef().domainVector())
@@ -2727,6 +2736,51 @@ void heatTransferModel::updateInterfaceHeatImbalance_(
     std::vector<HeatBoundaryData> interfaceDataVector;
 
     bool noInterfaces = true;
+    const auto accumulateInterfaceHeat =
+        [&](const interfaceSideInfo& sideInfo, HeatBoundaryData& interfaceData)
+    {
+        for (const auto& faceIpInfoVec : sideInfo.ipInfoVec())
+        {
+            for (const ipInfo* ip : faceIpInfoVec)
+            {
+                if (bulkData.parallel_owner_rank(ip->currentElement_) !=
+                    messager::myProcNo())
+                    continue;
+
+                if (ip->isExposed_)
+                    continue;
+
+                const scalar* c_areaVec = stk::mesh::field_data(
+                    exposedAreaVecSTKFieldRef, ip->currentFace_);
+                const scalar* ncqDot = stk::mesh::field_data(
+                    qDotSideSTKFieldRef, ip->currentFace_);
+
+                scalar c_amag = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar c_axj =
+                        c_areaVec[ip->currentGaussPointId_ * SPATIAL_DIM + j];
+                    c_amag += c_axj * c_axj;
+                }
+                c_amag = std::sqrt(c_amag) * ip->areaFraction_;
+
+                const scalar heat_flow =
+                    ncqDot[ip->currentGaussPointId_] * ip->areaFraction_;
+                if (heat_flow < 0.0)
+                {
+                    interfaceData.in += heat_flow;
+                    interfaceData.in_area += c_amag;
+                }
+                else
+                {
+                    interfaceData.out += heat_flow;
+                    interfaceData.out_area += c_amag;
+                }
+                interfaceData.total_area += c_amag;
+            }
+        }
+    };
+
     for (const interface* interf : domain->zonePtr()->interfacesRef())
     {
         noInterfaces = false;
@@ -2759,74 +2813,7 @@ void heatTransferModel::updateInterfaceHeatImbalance_(
                     continue;
                 }
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    interfaceSideInfoPtr->dgInfoVec_;
-
-                for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
-                     iSide++)
-                {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
-
-                    // now loop over all the DgInfo objects on this
-                    // particular exposed face
-                    for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
-                    {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
-
-                        // consider only owned sides
-                        if (bulkData.parallel_owner_rank(
-                                dgInfo->currentElement_) !=
-                            messager::myProcNo())
-                            continue;
-
-                        // if gauss point is exposed (non-overlapping),
-                        // then treat as a wall
-                        if (dgInfo->gaussPointExposed_)
-                        {
-                            continue;
-                        }
-
-                        // extract current/opposing face/element
-                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
-
-                        // local ip, ordinals, etc
-                        const label currentGaussPointId =
-                            dgInfo->currentGaussPointId_;
-
-                        // pointer to face data
-                        const scalar* c_areaVec = stk::mesh::field_data(
-                            exposedAreaVecSTKFieldRef, currentFace);
-                        const scalar* ncqDot = stk::mesh::field_data(
-                            qDotSideSTKFieldRef, currentFace);
-
-                        // area associated to ip
-                        scalar c_amag = 0.0;
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            const scalar c_axj =
-                                c_areaVec[currentGaussPointId * SPATIAL_DIM +
-                                          j];
-                            c_amag += c_axj * c_axj;
-                        }
-                        c_amag = std::sqrt(c_amag);
-
-                        const scalar heat_flow = ncqDot[currentGaussPointId];
-                        if (heat_flow < 0.0) // heat-in
-                        {
-                            interfaceData.in += heat_flow;
-                            interfaceData.in_area += c_amag;
-                        }
-                        else // heat-out
-                        {
-                            interfaceData.out += heat_flow;
-                            interfaceData.out_area += c_amag;
-                        }
-                        interfaceData.total_area += c_amag;
-                    }
-                }
+                accumulateInterfaceHeat(*interfaceSideInfoPtr, interfaceData);
             }
 
             // Slave
@@ -2856,74 +2843,7 @@ void heatTransferModel::updateInterfaceHeatImbalance_(
                     continue;
                 }
 
-                // extract vector of dgInfo
-                const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                    interfaceSideInfoPtr->dgInfoVec_;
-
-                for (label iSide = 0;
-                     iSide < static_cast<label>(dgInfoVec.size());
-                     iSide++)
-                {
-                    const std::vector<dgInfo*>& faceDgInfoVec =
-                        dgInfoVec[iSide];
-
-                    // now loop over all the DgInfo objects on this
-                    // particular exposed face
-                    for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
-                    {
-                        dgInfo* dgInfo = faceDgInfoVec[k];
-
-                        // consider only owned sides
-                        if (bulkData.parallel_owner_rank(
-                                dgInfo->currentElement_) !=
-                            messager::myProcNo())
-                            continue;
-
-                        // if gauss point is exposed (non-overlapping),
-                        // then treat as a wall
-                        if (dgInfo->gaussPointExposed_)
-                        {
-                            continue;
-                        }
-
-                        // extract current/opposing face/element
-                        stk::mesh::Entity currentFace = dgInfo->currentFace_;
-
-                        // local ip, ordinals, etc
-                        const label currentGaussPointId =
-                            dgInfo->currentGaussPointId_;
-
-                        // pointer to face data
-                        const scalar* c_areaVec = stk::mesh::field_data(
-                            exposedAreaVecSTKFieldRef, currentFace);
-                        const scalar* ncqDot = stk::mesh::field_data(
-                            qDotSideSTKFieldRef, currentFace);
-
-                        // area associated to ip
-                        scalar c_amag = 0.0;
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            const scalar c_axj =
-                                c_areaVec[currentGaussPointId * SPATIAL_DIM +
-                                          j];
-                            c_amag += c_axj * c_axj;
-                        }
-                        c_amag = std::sqrt(c_amag);
-
-                        const scalar heat_flow = ncqDot[currentGaussPointId];
-                        if (heat_flow < 0.0) // heat-in
-                        {
-                            interfaceData.in += heat_flow;
-                            interfaceData.in_area += c_amag;
-                        }
-                        else // heat-out
-                        {
-                            interfaceData.out += heat_flow;
-                            interfaceData.out_area += c_amag;
-                        }
-                        interfaceData.total_area += c_amag;
-                    }
-                }
+                accumulateInterfaceHeat(*interfaceSideInfoPtr, interfaceData);
             }
         }
         else
@@ -2954,71 +2874,7 @@ void heatTransferModel::updateInterfaceHeatImbalance_(
                 continue;
             }
 
-            // extract vector of dgInfo
-            const std::vector<std::vector<dgInfo*>>& dgInfoVec =
-                interfaceSideInfoPtr->dgInfoVec_;
-
-            for (label iSide = 0; iSide < static_cast<label>(dgInfoVec.size());
-                 iSide++)
-            {
-                const std::vector<dgInfo*>& faceDgInfoVec = dgInfoVec[iSide];
-
-                // now loop over all the DgInfo objects on this
-                // particular exposed face
-                for (size_t k = 0; k < faceDgInfoVec.size(); ++k)
-                {
-                    dgInfo* dgInfo = faceDgInfoVec[k];
-
-                    // consider only owned sides
-                    if (bulkData.parallel_owner_rank(dgInfo->currentElement_) !=
-                        messager::myProcNo())
-                        continue;
-
-                    // if gauss point is exposed (non-overlapping),
-                    // then treat as a wall
-                    if (dgInfo->gaussPointExposed_)
-                    {
-                        continue;
-                    }
-
-                    // extract current/opposing face/element
-                    stk::mesh::Entity currentFace = dgInfo->currentFace_;
-
-                    // local ip, ordinals, etc
-                    const label currentGaussPointId =
-                        dgInfo->currentGaussPointId_;
-
-                    // pointer to face data
-                    const scalar* c_areaVec = stk::mesh::field_data(
-                        exposedAreaVecSTKFieldRef, currentFace);
-                    const scalar* ncqDot =
-                        stk::mesh::field_data(qDotSideSTKFieldRef, currentFace);
-
-                    // area associated to ip
-                    scalar c_amag = 0.0;
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        const scalar c_axj =
-                            c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
-                        c_amag += c_axj * c_axj;
-                    }
-                    c_amag = std::sqrt(c_amag);
-
-                    const scalar heat_flow = ncqDot[currentGaussPointId];
-
-                    if (heat_flow < 0.0) // heat-in
-                    {
-                        interfaceData.in += heat_flow;
-                        interfaceData.in_area += c_amag;
-                    }
-                    else // heat-out
-                    {
-                        interfaceData.out += heat_flow;
-                        interfaceData.out_area += c_amag;
-                    }
-                    interfaceData.total_area += c_amag;
-                }
-            }
+            accumulateInterfaceHeat(*interfaceSideInfoPtr, interfaceData);
         }
     }
 

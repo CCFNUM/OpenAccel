@@ -2,8 +2,7 @@
 // Created    : Tue Nov 26 2024
 // Author     : Mhamad Mahdi Alloush
 // Description:
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "displacementDiffusionEquation.h"
 #include "initialConditions.h"
@@ -287,7 +286,8 @@ void displacementDiffusionEquation::setup()
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
-    linearSystem::setupSolver(this->name(), fieldBroker::meshRef());
+    linearSystem::setupSolver(
+        this->name(), fieldBroker::meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
 }

@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2024 08:42:10 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Thermal energy equation implementation details
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef WITH_THERMAL_TEMPERATURE
 

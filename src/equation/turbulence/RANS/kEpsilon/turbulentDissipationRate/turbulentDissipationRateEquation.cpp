@@ -2,8 +2,7 @@
 // Created    : Thu Feb 22 2025 13:38:51 (+0100)
 // Author     : ACHRAF NAGIHI
 // Description:
-// Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "turbulentDissipationRateEquation.h"
 #include "kEpsilonModel.h"
@@ -50,7 +49,8 @@ void turbulentDissipationRateEquation::setup()
     using BucketVector = typename Assembler::BucketVector;
 
     // linear solver
-    linearSystem::setupSolver(this->name(), model_->meshRef());
+    linearSystem::setupSolver(
+        this->name(), model_->meshRef(), this->fallbackName());
 
     assembler_->setup(&model_->epsilonRef(),
                       advectionDiffusion,

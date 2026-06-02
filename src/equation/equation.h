@@ -2,8 +2,7 @@
 // Created    : Fri Jan 26 2024 09:07:47 (+0100)
 // Author     : Fabian Wermelinger
 // Description: Abstract base class for a physics equation
-// Copyright (c) 2024 CCFNUM, Lucerne University of Applied Sciences and Arts.
-// SPDX-License-Identifier: BSD-3-Clause
+// Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef EQUATION_H
 #define EQUATION_H
@@ -75,6 +74,20 @@ public:
     equation(const std::string name, bool sub = false, label subIters = 1)
         : name_(name), sub_(sub), subIters_(subIters), isInitialized_(false)
     {
+        if (!isValidEquationIDName(name_))
+        {
+            std::ostringstream o;
+            o << "equation: invalid equation name '" + name_ + "'\n";
+            o << "Valid canonical equation names:\n";
+            std::vector<std::string> valid;
+            valid.reserve(accel::equationIDMap.size());
+            for (const auto& [eq, _] : accel::equationIDMap)
+                valid.push_back(eq);
+            std::sort(valid.begin(), valid.end());
+            for (const auto& eq : valid)
+                o << '\t' << eq << '\n';
+            errorMsg(o.str());
+        }
     }
 
     equation() = delete;
@@ -87,6 +100,16 @@ public:
     const std::string& name() const
     {
         return name_;
+    }
+
+    const std::string& fallbackName() const
+    {
+        return fallbackName_;
+    }
+
+    void setFallbackName(const std::string& fallback)
+    {
+        fallbackName_ = fallback;
     }
 
     bool isCreated() const
@@ -164,11 +187,12 @@ public:
     // unique equation identifier
     virtual equationID getID()
     {
-        return equationID::noID;
+        return equationID::UNDEFINED;
     }
 
 protected:
     const std::string name_;
+    std::string fallbackName_;
 
     bool isCreated_;
 
@@ -262,15 +286,17 @@ protected:
                     {
                         if (newVal > upperBoundValue)
                         {
-                            newVal = fieldVal[i * FIELD_DIM + k] +
-                                     clipFactor * (upperBoundValue -
-                                                   fieldVal[i * FIELD_DIM + k]);
+                            newVal = upperBoundValue +
+                                     (scalar(1) - clipFactor) *
+                                         (fieldVal[i * FIELD_DIM + k] -
+                                          upperBoundValue);
                         }
                         else if (newVal < lowerBoundValue)
                         {
-                            newVal = fieldVal[i * FIELD_DIM + k] +
-                                     clipFactor * (lowerBoundValue -
-                                                   fieldVal[i * FIELD_DIM + k]);
+                            newVal = lowerBoundValue +
+                                     (scalar(1) - clipFactor) *
+                                         (fieldVal[i * FIELD_DIM + k] -
+                                          lowerBoundValue);
                         }
                     }
 
