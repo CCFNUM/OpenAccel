@@ -2,9 +2,10 @@
 # File       : format_code
 # Created    : Thu Nov 16 2023 09:22:20 (+0100)
 # Author     : Fabian Wermelinger
-# Description: Project wide code formatting tool (requires clang-format)
-# Copyright (c) 2023 CCFNUM, Lucerne University of Applied Sciences and Arts.
-# SPDX-License-Identifier: BSD-3-Clause
+# Description: Project wide code formatting tool (supposed to be executed from
+#              this directory). Requires
+#              https://clang.llvm.org/docs/ClangFormat.html
+# Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 SOURCE='\.\./\.\./src/.*\.(c|cpp|C|h|hpp|H)'
 EXCLUDE='../../src/solver/*'

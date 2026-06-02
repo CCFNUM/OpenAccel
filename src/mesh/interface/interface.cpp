@@ -87,6 +87,16 @@ void interface::initialize()
             slaveInfoPtr_->determineOpposingGaussPointIds();
         }
     }
+    else if (messager::parallel())
+    {
+        // conformal in parallel: ghost opposing nodes+elements so split pairs
+        // are visible for the graph union and the cross-rank fold
+        populateConformalElemsToGhost_();
+        initializeGhostings_();
+        // both pair sides are now ghosted -> re-resolve the (previously stale)
+        // entity handles from the stable id record
+        rebuildMatchingPairsFromIds_();
+    }
 }
 
 void interface::update()
@@ -117,6 +127,12 @@ void interface::update()
             masterInfoPtr_->determineOpposingGaussPointIds();
             slaveInfoPtr_->determineOpposingGaussPointIds();
         }
+    }
+    else if (messager::parallel())
+    {
+        populateConformalElemsToGhost_();
+        updateGhostings_();
+        rebuildMatchingPairsFromIds_();
     }
 }
 
@@ -257,12 +273,11 @@ void interface::updateGhostings_()
 
 void interface::determineGeometricRelations_()
 {
-    utils::vector translationVector;
-    utils::matrix rotationMatrix;
+    utils::vector translationVector = utils::vector::Zero();
+    utils::matrix rotationMatrix = utils::matrix::Identity();
 
-#if SPATIAL_DIM == 3
-    // create a surface comparator object to determine translation
-    // vector and/or rotation matrix
+    // comparator to determine translation vector and/or rotation matrix
+    // (dimension generic; available in both 2D and 3D)
     auto cmp = utils::surfaceComparator(masterInfoPtr_->currentPartVec_,
                                         slaveInfoPtr_->currentPartVec_);
 
@@ -335,34 +350,6 @@ void interface::determineGeometricRelations_()
             }
             break;
     }
-#else
-    // 2D: surfaceComparator not available
-    rotationMatrix = utils::matrix::Identity();
-
-    switch (option_)
-    {
-        case interfaceModelOption::rotationalPeriodicity:
-            errorMsg("Rotational periodicity interface not yet supported in "
-                     "2D");
-            break;
-
-        case interfaceModelOption::translationalPeriodicity:
-            errorMsg("Translational periodicity interface not yet supported in "
-                     "2D (surfaceComparator is 3D only)");
-            break;
-
-        case interfaceModelOption::generalConnection:
-            {
-                if (messager::master())
-                {
-                    std::cout << std::endl
-                              << this->name() << " => General Connection"
-                              << std::endl;
-                }
-            }
-            break;
-    }
-#endif
 
     // copy translation vector and rotation matrix to master and slave sides
     this->masterInfoRef().translationVector_ = translationVector;
@@ -370,7 +357,6 @@ void interface::determineGeometricRelations_()
     this->slaveInfoRef().translationVector_ = -translationVector;
     this->slaveInfoRef().rotationMatrix_ = rotationMatrix.transpose();
 
-#if SPATIAL_DIM == 3
 #if 0
     // check if master and slave are totally overlapping
     isOverlap_ =
@@ -388,6 +374,61 @@ void interface::determineGeometricRelations_()
                                          translationVector,
                                          rotationMatrix);
 
+    // keep the stable id+owner record; handles go stale once the search
+    // ghosting is destroyed and are re-resolved after persistent ghosting
+    conformalPairIds_.clear();
+    for (const auto& mp : cmp.matchedPairs())
+        conformalPairIds_.push_back({mp.id1, mp.id2, mp.owner1, mp.owner2});
+
+    // replicate the full pair list on every rank: a third rank owning an
+    // element incident to a pair node must ghost it to the partner's owner
+    if (messager::parallel())
+    {
+        const int nProcs = messager::nProcs();
+        const int sendCount = static_cast<int>(conformalPairIds_.size()) * 4;
+        std::vector<int> counts(nProcs), displs(nProcs);
+        MPI_Allgather(&sendCount,
+                      1,
+                      MPI_INT,
+                      counts.data(),
+                      1,
+                      MPI_INT,
+                      messager::comm());
+        int total = 0;
+        for (int r = 0; r < nProcs; ++r)
+        {
+            displs[r] = total;
+            total += counts[r];
+        }
+        std::vector<unsigned long long> sendBuf(sendCount), recvBuf(total);
+        for (size_t i = 0; i < conformalPairIds_.size(); ++i)
+        {
+            sendBuf[4 * i + 0] = conformalPairIds_[i].id1;
+            sendBuf[4 * i + 1] = conformalPairIds_[i].id2;
+            sendBuf[4 * i + 2] =
+                static_cast<unsigned long long>(conformalPairIds_[i].owner1);
+            sendBuf[4 * i + 3] =
+                static_cast<unsigned long long>(conformalPairIds_[i].owner2);
+        }
+        MPI_Allgatherv(sendBuf.data(),
+                       sendCount,
+                       MPI_UNSIGNED_LONG_LONG,
+                       recvBuf.data(),
+                       counts.data(),
+                       displs.data(),
+                       MPI_UNSIGNED_LONG_LONG,
+                       messager::comm());
+        conformalPairIds_.clear();
+        std::set<std::pair<stk::mesh::EntityId, stk::mesh::EntityId>> seen;
+        for (int i = 0; i < total / 4; ++i)
+            if (seen.insert({recvBuf[4 * i + 0], recvBuf[4 * i + 1]}).second)
+                conformalPairIds_.push_back(
+                    {recvBuf[4 * i + 0],
+                     recvBuf[4 * i + 1],
+                     static_cast<int>(recvBuf[4 * i + 2]),
+                     static_cast<int>(recvBuf[4 * i + 3])});
+    }
+
     if (messager::master() && isConformal_)
     {
         if (isForceNonconformalTreatment_)
@@ -398,21 +439,15 @@ void interface::determineGeometricRelations_()
                    "processed for this interface"
                 << std::endl;
         }
-        else
+        else if (messager::master())
         {
-            if (messager::parallel())
-            {
-                errorMsg(
-                    "conformal treatment is not enabled for parallel runs.");
-            }
-            else
-            {
-                std::cout << "\t* conformal configuration detected"
-                          << std::endl;
-            }
+            std::cout << "\t* conformal configuration detected" << std::endl;
         }
     }
-#endif
+    else if (messager::master())
+    {
+        std::cout << "\t* non-conformal configuration detected" << std::endl;
+    }
 }
 
 void interface::populateConformalRowToRowMapping_()
@@ -445,12 +480,17 @@ void interface::populateConformalRowToRowMapping_()
 
         // data for stencil 1 (of node 1)
         const auto& node1 = nodePair.first;
+
+        // the mapper is keyed on row 1; only its owner (which folds row 2 into
+        // it) can build it. Leave it empty on other ranks for split pairs.
+        if (bulkData.parallel_owner_rank(node1) != messager::myProcNo())
+        {
+            iPair++;
+            continue;
+        }
+
         const label& lid1 = bulkData.local_id(node1);
         const auto cols = localOrderGraphPtr->rowLocalIndices(lid1);
-
-        // data for stencil 2 (of node 2)
-        const auto& node2 = nodePair.second;
-        const label& lid2 = bulkData.local_id(node2);
 
         // set size of the local mapper
         conformalRowToRowMap_[iPair].resize(cols.size(), -1);
@@ -509,6 +549,64 @@ void interface::populateConformalRowToRowMapping_()
 
         // increment the pair counter
         iPair++;
+    }
+}
+
+void interface::populateConformalElemsToGhost_()
+{
+    const stk::mesh::BulkData& bulkData = meshPtr_->bulkDataRef();
+    const stk::mesh::MetaData& metaData = meshPtr_->metaDataRef();
+    const label myProc = messager::myProcNo();
+
+    // pair node id -> partner node owner(s); conformalPairIds_ is replicated
+    // on every rank so this is computable locally
+    std::map<stk::mesh::EntityId, std::vector<int>> partnerOwners;
+    for (const auto& p : conformalPairIds_)
+    {
+        if (p.owner1 == p.owner2)
+            continue; // co-owned: local path handles it, no ghosting
+        partnerOwners[p.id1].push_back(p.owner2);
+        partnerOwners[p.id2].push_back(p.owner1);
+    }
+    if (partnerOwners.empty())
+        return;
+
+    // ghost each owned element incident to a pair node to the partner's owner
+    // (routing by element owner also covers third-rank elements)
+    const stk::mesh::BucketVector& elemBuckets = bulkData.get_buckets(
+        stk::topology::ELEM_RANK, metaData.locally_owned_part());
+    for (const stk::mesh::Bucket* b : elemBuckets)
+        for (const stk::mesh::Entity elem : *b)
+        {
+            const stk::mesh::Entity* nodes = bulkData.begin_nodes(elem);
+            const unsigned nn = bulkData.num_nodes(elem);
+            std::set<int> targets;
+            for (unsigned i = 0; i < nn; ++i)
+            {
+                auto it = partnerOwners.find(bulkData.identifier(nodes[i]));
+                if (it == partnerOwners.end())
+                    continue;
+                for (int o : it->second)
+                    if (o != myProc)
+                        targets.insert(o);
+            }
+            for (int t : targets)
+                elemsToGhost_.push_back(stk::mesh::EntityProc(elem, t));
+        }
+}
+
+void interface::rebuildMatchingPairsFromIds_()
+{
+    const stk::mesh::BulkData& bulkData = meshPtr_->bulkDataRef();
+    matchingNodePairVector_.clear();
+    for (const auto& p : conformalPairIds_)
+    {
+        const stk::mesh::Entity n1 =
+            bulkData.get_entity(stk::topology::NODE_RANK, p.id1);
+        const stk::mesh::Entity n2 =
+            bulkData.get_entity(stk::topology::NODE_RANK, p.id2);
+        if (bulkData.is_valid(n1) && bulkData.is_valid(n2))
+            matchingNodePairVector_.push_back(std::make_pair(n1, n2));
     }
 }
 

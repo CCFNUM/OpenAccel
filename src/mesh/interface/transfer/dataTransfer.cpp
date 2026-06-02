@@ -43,6 +43,27 @@ void conformalDataTransfer::update()
         noRotation_ ? utils::matrix::Identity()
                     : interfacePtr_->masterInfoPtr()->rotationMatrix_;
 
+    // split pairs: refresh the opposing custom-ghost values over the interface
+    // ghosting before/after the combine (else stale reads / lost ghost writes)
+    stk::mesh::Ghosting* const ifGhosting = interfacePtr_->interfaceGhosting_;
+    auto communicateOverInterface = [&](bool includeVolume)
+    {
+        if (ifGhosting == nullptr)
+            return;
+        std::vector<const stk::mesh::FieldBase*> commFields;
+        for (const auto& fp : fieldPairNames_)
+        {
+            commFields.push_back(
+                meta_.get_field<scalar>(stk::topology::NODE_RANK, fp.first));
+            commFields.push_back(
+                meta_.get_field<scalar>(stk::topology::NODE_RANK, fp.second));
+        }
+        if (includeVolume && dualNodalVolumeSTKFieldPtr)
+            commFields.push_back(dualNodalVolumeSTKFieldPtr);
+        stk::mesh::communicate_field_data(*ifGhosting, commFields);
+    };
+    communicateOverInterface(true);
+
     for (auto fieldPairName : fieldPairNames_)
     {
         stk::mesh::Field<scalar>* fieldPtr1 = meta_.get_field<scalar>(
@@ -880,6 +901,9 @@ void conformalDataTransfer::update()
             }
         }
     }
+
+    // refresh ghost copies with the combined results for downstream use
+    communicateOverInterface(false);
 }
 
 // Non-conformal data transfer

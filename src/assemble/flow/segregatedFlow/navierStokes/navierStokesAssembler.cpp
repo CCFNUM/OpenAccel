@@ -7,8 +7,8 @@
 #include "navierStokesAssembler.h"
 #include "flowModel.h"
 #ifdef HAS_INTERFACE
+#include "dataTransfer.h"
 #include "interface.h"
-#include "ipInfo.h"
 #endif
 
 namespace accel
@@ -232,6 +232,33 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
             stk::mesh::communicate_field_data(bulkData, {duTildeSTKFieldPtr});
         }
     }
+
+#ifdef HAS_INTERFACE
+    // conformal interface: give master and slave the effective (vol1+vol2)
+    // volume in their D coefficients, mirroring the coupled assembler
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (!interf->isConformalTreatment() ||
+            !interf->isMasterZone(domain->index()))
+            continue;
+
+        std::vector<std::pair<std::string, std::string>> fields = {
+            {flowModel::du_ID, flowModel::du_ID}};
+        if (consistent)
+        {
+            fields.push_back({flowModel::duTilde_ID, flowModel::duTilde_ID});
+        }
+
+        conformalDataTransfer transfer(const_cast<interface*>(interf),
+                                       std::string(flowModel::du_ID) +
+                                           "_xfer_" + interf->name(),
+                                       fields,
+                                       dataTransferType::customized);
+        transfer.setup();
+        transfer.initialize();
+        transfer.update();
+    }
+#endif /* HAS_INTERFACE */
 }
 
 void navierStokesAssembler::postAssemble_(const domain* domain, Context* ctx)

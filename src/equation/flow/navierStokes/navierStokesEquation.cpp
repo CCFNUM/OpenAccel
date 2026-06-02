@@ -70,6 +70,7 @@ void navierStokesEquation::setup()
     FOREACH_DOMAIN(model_->setupDensity);
     FOREACH_DOMAIN(model_->setupVelocity);
     FOREACH_DOMAIN(model_->setupMassFlowRate);
+    FOREACH_DOMAIN(model_->setupMomentumFlowRate);
     FOREACH_DOMAIN(model_->setupDynamicViscosity);
 
     // setup assembler
@@ -247,5 +248,26 @@ void navierStokesEquation::printScales()
                   << std::endl;
     }
 }
+
+#ifdef HAS_INTERFACE
+void navierStokesEquation::accumulateInterfacePDot_(
+    const domain* domain,
+    ::linearSolver::coefficients<SPATIAL_DIM>* coeffs)
+{
+    if (!model_->controlsRef()
+             .solverRef()
+             .solverControl_.expertParameters_.printMomentumInterfaceImbalance_)
+        return;
+
+    if (model_->pDotRef().sideFieldPtr() == nullptr)
+        return;
+
+    const auto& interfaces = domain->zonePtr()->interfacesRef();
+    if (interfaces.empty())
+        return;
+
+    // not implemented yet
+}
+#endif /* HAS_INTERFACE */
 
 } /* namespace accel */

@@ -112,8 +112,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     const auto& gradPSTKFieldRef = model_->pRef().gradRef().stkFieldRef();
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
 
-    const auto& mDotSTKFieldRef = model_->mDotRef(phaseIndex_).stkFieldRef();
-
     const auto* psiSTKFieldPtr =
         compressible ? model_->psiRef(phaseIndex_).stkFieldPtr() : nullptr;
 
@@ -257,9 +255,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
              iElement < nElementsPerBucket;
              ++iElement)
         {
-            // get elem
-            stk::mesh::Entity elem = elementBucket[iElement];
-
             // zero lhs/rhs
             for (label p = 0; p < lhsSize; ++p)
             {
@@ -456,10 +451,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 const label il = lrscv[2 * ip];
                 const label ir = lrscv[2 * ip + 1];
 
-                // save off mDot
-                const scalar tmDot =
-                    (stk::mesh::field_data(mDotSTKFieldRef, elem))[ip];
-
                 // corresponding matrix rows
                 label rowL = il * nodesPerElement;
                 label rowR = ir * nodesPerElement;
@@ -495,7 +486,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                         p_velocity_shape_function[offSetSF + ic];
                     const scalar r_coord =
                         p_coordinate_shape_function[offSetSF + ic];
-                    const scalar w_scv = ws_scv_weight[ic];
 
                     alphaIp += r_vel * p_alpha[ic];
 
@@ -529,8 +519,47 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                                   (std::abs(gL) + std::abs(gR) + SMALL);
                 }
 
+                // assemble UDot
+                // UDot =  U·S -    D*(∇p - Gp)·S +    D*(F_orig - F)·S
+                //        ╰───╯   ╰──────────────╯   ╰─────────────────╯
+                //      divergence   pressure RC       body force stab
+                //
+                scalar UDot = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    // divergence: U·S
+                    UDot += p_uIp[j] * p_scs_areav[ip * SPATIAL_DIM + j];
+
+                    // pressure Rhie-Chow: -D*(∇p - Gp)·S
+                    UDot -= p_duRhsIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
+                            p_scs_areav[ip * SPATIAL_DIM + j];
+
+                    // body force stabilization: +D*(F_orig - F)·S
+                    UDot += p_duRhsIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
+                            p_scs_areav[ip * SPATIAL_DIM + j];
+                }
+
+                // transform UDot to relative frame
+
+                // 1.) frame motion
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; j++)
+                    {
+                        UDot -= p_mat[i * SPATIAL_DIM + j] *
+                                (p_coordIp[j] - p_ori[j]) *
+                                p_scs_areav[ip * SPATIAL_DIM + i];
+                    }
+                }
+
+                // 2.) mesh motion
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    UDot -= p_umIp[i] * p_scs_areav[ip * SPATIAL_DIM + i];
+                }
+
                 scalar dcorr = 0;
-                if (tmDot > 0)
+                if (UDot > 0)
                 {
                     // deferred correction
                     for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -554,7 +583,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 }
 
                 scalar rhoUpwind, psiUpwind;
-                if (tmDot > 0)
+                if (UDot > 0)
                 {
                     rhoUpwind = p_rho[il];
                     psiUpwind = p_psi[il];
@@ -567,8 +596,11 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
 
                 scalar rhoHR = rhoUpwind + dcorr;
 
+                // calculate mDot
+                scalar mDot = rhoHR * UDot;
+
                 //================================
-                // rhie-chow: -rhoip*Dip*(Gpn-Gp_p).Sip
+                // rhie-chow sensititvities: -ρ*D*(∇p - Gp)·S
                 //================================
                 for (label ic = 0; ic < nodesPerElement; ++ic)
                 {
@@ -589,7 +621,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 }
 
                 //================================
-                // Advection: compressibility
+                // Advection sensititvities due to compressibility:
                 // Newton-Raphson linearization: ρ*U = ρ(old)*U(new) +
                 // ρ(new)*U(old) - ρ(old)*U(old)
                 //   where ρ(new) = ψ p(new) and ψ = ∂ρ/∂p
@@ -603,57 +635,16 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
 
                 // upwind advection left node: will be 0 for incompressible flow
                 const scalar alhsfacL =
-                    0.5 * (tmDot + std::abs(tmDot)) * psiUpwind / rhoHR * comp;
+                    0.5 * (mDot + std::abs(mDot)) * psiUpwind / rhoHR * comp;
                 p_lhs[rLiL_i] += alhsfacL * alphaIp / densityScale;
                 p_lhs[rRiL_i] -= alhsfacL * alphaIp / densityScale;
 
                 // upwind advection right node: will be 0 for incompressible
                 // flow
                 const scalar alhsfacR =
-                    0.5 * (tmDot - std::abs(tmDot)) * psiUpwind / rhoHR * comp;
+                    0.5 * (mDot - std::abs(mDot)) * psiUpwind / rhoHR * comp;
                 p_lhs[rRiR_i] -= alhsfacR * alphaIp / densityScale;
                 p_lhs[rLiR_i] += alhsfacR * alphaIp / densityScale;
-
-                // assemble mDot
-                // mDot = ρ*U·S - ρ*D*(∇p - Gp)·S + ρ*D*(F_orig - F)·S
-                //        ╰───╯   ╰──────────────╯   ╰─────────────────╯
-                //      divergence   pressure RC       body force stab
-                //
-                scalar mDot = 0.0;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    // divergence: ρ*U·S
-                    mDot +=
-                        rhoHR * p_uIp[j] * p_scs_areav[ip * SPATIAL_DIM + j];
-
-                    // pressure Rhie-Chow: -ρ*D*(∇p - Gp)·S
-                    mDot -= rhoHR * p_duRhsIp[j] * (p_dpdxIp[j] - p_GpdxIp[j]) *
-                            p_scs_areav[ip * SPATIAL_DIM + j];
-
-                    // body force stabilization: +ρ*D*(F_orig - F)·S
-                    mDot += rhoHR * p_duRhsIp[j] * (p_FOrigIp[j] - p_FIp[j]) *
-                            p_scs_areav[ip * SPATIAL_DIM + j];
-                }
-
-                // transform mDot to relative frame
-
-                // 1.) frame motion
-                for (label i = 0; i < SPATIAL_DIM; i++)
-                {
-                    for (label j = 0; j < SPATIAL_DIM; j++)
-                    {
-                        mDot -= rhoHR * p_mat[i * SPATIAL_DIM + j] *
-                                (p_coordIp[j] - p_ori[j]) *
-                                p_scs_areav[ip * SPATIAL_DIM + i];
-                    }
-                }
-
-                // 2.) mesh motion
-                for (label i = 0; i < SPATIAL_DIM; i++)
-                {
-                    mDot -=
-                        rhoHR * p_umIp[i] * p_scs_areav[ip * SPATIAL_DIM + i];
-                }
 
 #ifndef NDEBUG
                 // SCL check: accumulate grid flux to nodes

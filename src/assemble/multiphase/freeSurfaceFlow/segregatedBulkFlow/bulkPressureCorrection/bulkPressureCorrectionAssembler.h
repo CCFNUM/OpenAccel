@@ -88,7 +88,7 @@ private:
     // boundary conditions
     void assembleElemTermsBoundarySymmetry_(const domain* domain,
                                             const boundary* boundary,
-                                            Context* ctx);
+                                            Context* ctx) override;
     void assembleElemTermsBoundaryWallNoSlip_(const domain* domain,
                                               const boundary* boundary,
                                               Context* ctx);

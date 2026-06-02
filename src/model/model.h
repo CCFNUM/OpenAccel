@@ -25,14 +25,29 @@ protected:
         return mesh::coordinates_ID;
     }
 
+    virtual std::string getCoordinatesID_(const domain* /*domain*/) const
+    {
+        return mesh::coordinates_ID;
+    }
+
     virtual std::string
     getDualNodalVolumeID_(const std::shared_ptr<domain> /*domain*/) const
     {
         return mesh::dual_nodal_volume_ID;
     }
 
+    virtual std::string getDualNodalVolumeID_(const domain* /*domain*/) const
+    {
+        return mesh::dual_nodal_volume_ID;
+    }
+
     virtual std::string
     getExposedAreaVectorID_(const std::shared_ptr<domain> /*domain*/) const
+    {
+        return mesh::exposed_area_vector_ID;
+    }
+
+    virtual std::string getExposedAreaVectorID_(const domain* /*domain*/) const
     {
         return mesh::exposed_area_vector_ID;
     }

@@ -77,6 +77,12 @@ void segregatedFlowEquations::postInitialize()
 
 void segregatedFlowEquations::solve()
 {
+    // frozen flow ... do not assemble/solve for flow equations
+    if (controlsRef().solverRef().solverControl_.expertParameters_.freezeFlow_)
+    {
+        return;
+    }
+
     // predictor step: solve momentum
     {
         U_eq_->preSolve();
@@ -225,6 +231,7 @@ void segregatedFlowEquations::postSolve()
     FOREACH_DOMAIN(updateMassImbalance_);
 #ifdef HAS_INTERFACE
     FOREACH_DOMAIN(updateInterfaceMassImbalance_);
+    FOREACH_DOMAIN(updateInterfaceMomentumImbalance_);
 #endif /* HAS_INTERFACE */
 
     this->reportFlowData_();

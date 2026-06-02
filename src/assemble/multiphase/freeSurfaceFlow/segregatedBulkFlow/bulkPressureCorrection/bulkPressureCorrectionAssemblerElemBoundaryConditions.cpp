@@ -1001,8 +1001,6 @@ void bulkPressureCorrectionAssembler::
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
     const auto& alphaSTKFieldRef = model_->alphaRef(phaseIndex_).stkFieldRef();
     const auto& sideUSTKFieldRef = model_->URef().sideFieldRef().stkFieldRef();
-    const auto& mDotSideSTKFieldRef =
-        model_->mDotRef(phaseIndex_).sideFieldRef().stkFieldRef();
     const auto& reversalFlowFlagSTKFieldRef =
         model_->URef().reversalFlagRef().stkFieldRef();
 
@@ -1219,9 +1217,6 @@ void bulkPressureCorrectionAssembler::
             // loop over boundary ips
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const scalar tmDot =
-                    (stk::mesh::field_data(mDotSideSTKFieldRef, side))[ip];
-
                 if (rfflag[ip] == 0)
                 {
                     const label nearestNode = ipNodeMap[ip];
@@ -1273,7 +1268,7 @@ void bulkPressureCorrectionAssembler::
                     }
 
                     //================================
-                    // Compressibility contribution at inlet
+                    // Compressibility sensitivities at inlet
                     // Newton-Raphson: ∂(ρU_bc)/∂p = U_bc * ∂ρ/∂p = U_bc * ψ
                     // LHS coefficient = mDot / ρ_bip * ψ_bip
                     // where ρ_bip and ψ_bip are interpolated to boundary ip
@@ -1286,7 +1281,7 @@ void bulkPressureCorrectionAssembler::
                         const scalar r_vel =
                             p_velocity_face_shape_function[offSetSF_face + ic];
 
-                        p_lhs[rowR + inn] += tmDot * r_vel * psiBip / rhoBip *
+                        p_lhs[rowR + inn] += mDot * r_vel * psiBip / rhoBip *
                                              comp * alphaBip / densityScale;
                     }
 
@@ -2159,7 +2154,6 @@ void bulkPressureCorrectionAssembler::
         MasterElement* meSCV =
             MasterElementRepo::get_volume_master_element(theElemTopo);
         const label numScvIp = meSCV->numIntPoints_;
-        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
@@ -3413,7 +3407,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         MasterElement* meSCV =
             MasterElementRepo::get_volume_master_element(theElemTopo);
         const label numScvIp = meSCV->numIntPoints_;
-        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
@@ -4063,7 +4056,6 @@ void bulkPressureCorrectionAssembler::
         MasterElement* meSCV =
             MasterElementRepo::get_volume_master_element(theElemTopo);
         const label numScvIp = meSCV->numIntPoints_;
-        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(

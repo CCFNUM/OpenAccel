@@ -13,11 +13,12 @@
 namespace accel
 {
 
-#if SPATIAL_DIM == 3
-
 namespace utils
 {
 
+// Geometric relation between two surfaces. Separation vector, separation
+// angle, overlap and conformality are all available in 2D and 3D. The
+// 3D-only helpers below back the moment-based separation-angle estimate.
 class surfaceComparator
 {
 private:
@@ -30,6 +31,12 @@ private:
     stk::mesh::PartVector surface1Parts_;
 
     stk::mesh::PartVector surface2Parts_;
+
+    // area-weighted centroid of a surface (dimension generic)
+    void calcCentroid_(const stk::mesh::PartVector& surfaceParts,
+                       vector& centroid);
+
+#if SPATIAL_DIM == 3
 
     // Separation angle
 
@@ -61,10 +68,9 @@ private:
 
     void allreduceComplexSum_(std::vector<std::complex<scalar>>& v);
 
-    void calcCentroid_(const stk::mesh::PartVector& surfaceParts,
-                       vector& centroid);
+#endif /* SPATIAL_DIM == 3 */
 
-    // Conformality
+    // Overlap / conformality (dimension generic)
 
     typedef stk::search::IdentProc<stk::mesh::EntityKey, int> theEntityKey;
     typedef stk::search::Point<double> Point;
@@ -79,11 +85,25 @@ private:
     std::vector<std::pair<stk::mesh::Entity, stk::mesh::Entity>>
         nodePairCommunicator_;
 
+    // collect the boundary nodes of a surface: in 3D these are the nodes on
+    // edges shared by a single face; in 2D they are the endpoint nodes of the
+    // edge-chain (nodes belonging to a single side).
+    void getBoundaryNodes_(const stk::mesh::PartVector& surfaceParts,
+                           std::set<stk::mesh::Entity>& boundaryNodes);
+
     void addRangeNodesToSharersOfDomainNodes_(
         const searchKeyVector& searchKeyPair,
         std::vector<stk::mesh::EntityProc>& sendNodes);
 
 public:
+    // stable matched-pair record (global id + owner); ghosted-side handles go
+    // stale once checkConformality's search ghosting is destroyed
+    struct matchedPair
+    {
+        stk::mesh::EntityId id1, id2; // surface1 (master), surface2 (slave)
+        int owner1, owner2;
+    };
+
     surfaceComparator(stk::mesh::PartVector surface1Parts,
                       stk::mesh::PartVector surface2Parts);
 
@@ -99,14 +119,22 @@ public:
         matrix rotMat = matrix::Identity(),
         bool allowPartialOverlap = false);
 
+    // matched pairs as stable ids+owners (populated by checkConformality)
+    const std::vector<matchedPair>& matchedPairs() const
+    {
+        return matchedPairs_;
+    }
+
+private:
+    std::vector<matchedPair> matchedPairs_;
+
+public:
     vector determineSeparationVector();
 
     scalar determineSeparationAngle(vector rotationAxis, vector axisLocation);
 };
 
 } // namespace utils
-
-#endif /* SPATIAL_DIM == 3 */
 
 } // namespace accel
 

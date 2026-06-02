@@ -17,7 +17,7 @@ target_include_directories(main_obj SYSTEM PUBLIC
 
 # GGI polygon clipping backends
 if(WITH_INTERFACE)
-    if(USE_CLIPPER2)
+    if(WITH_CLIPPER2)
         set(CLIPPER2_UTILS OFF CACHE BOOL "" FORCE)
         set(CLIPPER2_EXAMPLES OFF CACHE BOOL "" FORCE)
         set(CLIPPER2_TESTS OFF CACHE BOOL "" FORCE)

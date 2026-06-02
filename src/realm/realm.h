@@ -17,6 +17,7 @@
 #include "dynamicViscosity.h"
 #include "heatFlowRate.h"
 #include "massFlowRate.h"
+#include "momentumFlowRate.h"
 #include "pressure.h"
 #include "pressureCorrection.h"
 #include "smRealm.h"
@@ -117,6 +118,8 @@ private:
 
     std::unique_ptr<heatFlowRate> qDot_;
 
+    std::unique_ptr<momentumFlowRate> pDot_;
+
     std::unique_ptr<turbRealm> tRealm_;
 
     std::unique_ptr<nodeScalarField> yScale_;
@@ -177,6 +180,8 @@ public:
     static constexpr char rhs_smooth_ID[] = "smoothed_rhs";
 
     static constexpr char qDot_ID[] = "heat_flow_rate";
+
+    static constexpr char pDot_ID[] = "momentum_flow_rate";
 
     // other field identifiers
 

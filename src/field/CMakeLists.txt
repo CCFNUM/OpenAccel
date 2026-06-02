@@ -11,6 +11,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/elementField/scalar/elementScalarField.cpp
     ${DIR}/elementField/scalar/heatFlowRate/heatFlowRate.cpp
     ${DIR}/elementField/scalar/massFlowRate/massFlowRate.cpp
+    ${DIR}/elementField/vector/momentumFlowRate/momentumFlowRate.cpp
     ############################################################################
     ${DIR}/nodeField/scalar/nodeScalarField.cpp
     ${DIR}/nodeField/scalar/property/flow/density.cpp
@@ -53,6 +54,7 @@ target_include_directories(main_obj PUBLIC
     ${DIR}/elementField/scalar
     ${DIR}/elementField/scalar/heatFlowRate
     ${DIR}/elementField/scalar/massFlowRate
+    ${DIR}/elementField/vector/momentumFlowRate
     ############################################################################
     ${DIR}/nodeField
     ${DIR}/nodeField/scalar

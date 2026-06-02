@@ -426,8 +426,9 @@ public:
                 }
                 else
                 {
-                    // hard-coded condition: not necessary for this equation
-                    const bool scaledConstraints = false;
+                    // scale slave row by row-1 diagonal (mirrors coupled) so
+                    // computeDUCoefficients reads the merged diag, not a bare 1
+                    const bool scaledConstraints = true;
 
                     if constexpr (N == 1)
                     {
@@ -447,17 +448,26 @@ public:
                         {
                             // get required local data for the matching pair
 
-                            // data for stencil 1 (of node 1)
+                            // data for stencils of node 1 and node 2
                             const auto& node1 = nodePair.first;
-                            const label& lid1 = bulkData.local_id(node1);
+                            const auto& node2 = nodePair.second;
+                            const label lid1 = bulkData.local_id(node1);
+                            const label lid2 = bulkData.local_id(node2);
+
+                            // split pair (a row is off-rank): done by the
+                            // cross-rank hook, not the local path
+                            if (lid1 >= static_cast<label>(A.nRows()) ||
+                                lid2 >= static_cast<label>(A.nRows()))
+                            {
+                                iPair++;
+                                continue;
+                            }
+
                             auto vals1 = A.rowVals(lid1);
                             const label diagOffset1 = diagOffsets[lid1];
                             const scalar phi1 =
                                 *stk::mesh::field_data(phiSTKFieldRef, node1);
 
-                            // data for stencil 2 (of node 2)
-                            const auto& node2 = nodePair.second;
-                            const label& lid2 = bulkData.local_id(node2);
                             auto vals2 = A.rowVals(lid2);
                             const label diagOffset2 = diagOffsets[lid2];
                             const scalar phi2 =
@@ -541,17 +551,26 @@ public:
                         {
                             // get required local data for the matching pair
 
-                            // data for stencil 1 (of node 1)
+                            // data for stencils of node 1 and node 2
                             const auto& node1 = nodePair.first;
-                            const label& lid1 = bulkData.local_id(node1);
+                            const auto& node2 = nodePair.second;
+                            const label lid1 = bulkData.local_id(node1);
+                            const label lid2 = bulkData.local_id(node2);
+
+                            // split pair (a row is off-rank): done by the
+                            // cross-rank hook, not the local path
+                            if (lid1 >= static_cast<label>(A.nRows()) ||
+                                lid2 >= static_cast<label>(A.nRows()))
+                            {
+                                iPair++;
+                                continue;
+                            }
+
                             auto vals1 = A.rowVals(lid1);
                             const label diagOffset1 = diagOffsets[lid1];
                             const scalar* phi1 =
                                 stk::mesh::field_data(phiSTKFieldRef, node1);
 
-                            // data for stencil 2 (of node 2)
-                            const auto& node2 = nodePair.second;
-                            const label& lid2 = bulkData.local_id(node2);
                             auto vals2 = A.rowVals(lid2);
                             const label diagOffset2 = diagOffsets[lid2];
                             const scalar* phi2 =
@@ -783,11 +802,56 @@ public:
                                  "for scalar "
                                  "and vectorial transport equations");
                     }
+
+                    // cross-rank fold for split pairs; no-op in base,
+                    // overridden in the flow assemblers (developed in .cpp)
+                    applyConstraintsCrossRank_(interf, domain, ctx);
                 }
             }
         }
 #endif /* HAS_INTERFACE */
     }
+
+#ifdef HAS_INTERFACE
+    // Cross-rank conformal fold for split pairs: rotation T for vectors,
+    // identity for scalars.
+    virtual void applyConstraintsCrossRank_(const interface* interf,
+                                            const domain* domain,
+                                            Context* ctx)
+    {
+        if (!messager::parallel())
+            return;
+
+        std::array<scalar, N * N> T{};
+        if constexpr (N == 1)
+        {
+            T[0] = 1.0;
+        }
+        else
+        {
+            const utils::matrix& R =
+                interf->interfaceSideInfoPtr(domain->index())->rotationMatrix_;
+            for (label i = 0; i < static_cast<label>(N); ++i)
+                for (label j = 0; j < static_cast<label>(N); ++j)
+                    T[i * N + j] = R(i, j);
+        }
+
+        const auto& field = phi_->stkFieldRef();
+        auto gather = [&](stk::mesh::Entity n, scalar* out)
+        {
+            const scalar* v = stk::mesh::field_data(field, n);
+            for (label i = 0; i < static_cast<label>(N); ++i)
+                out[i] = v[i];
+        };
+
+        this->applyCrossRankFold(*ctx,
+                                 interf->matchingNodePairVector(),
+                                 T,
+                                 0,
+                                 static_cast<int>(N),
+                                 gather);
+    }
+#endif /* HAS_INTERFACE */
 
 protected:
     FieldType* phi_;

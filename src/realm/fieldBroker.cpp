@@ -3395,6 +3395,39 @@ void fieldBroker::setupHeatFlowRate(const std::shared_ptr<domain> domain)
     }
 }
 
+void fieldBroker::setupMomentumFlowRate(const std::shared_ptr<domain> domain)
+{
+    if (this->pDotRef().isZoneUnset(domain->index()))
+    {
+        this->pDotRef().setZone(domain->index());
+
+#ifdef HAS_INTERFACE
+        // register momentum flux side field for interfaces
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isInternal())
+            {
+                this->pDotRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), true);
+                this->pDotRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), false);
+            }
+            else
+            {
+                this->pDotRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), interf->isMasterZone(domain->index()));
+            }
+        }
+#endif /* HAS_INTERFACE */
+
+        for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+             iBoundary++)
+        {
+            this->pDotRef().registerSideField(domain->index(), iBoundary);
+        }
+    }
+}
+
 void fieldBroker::initializeVelocity(const std::shared_ptr<domain> domain)
 {
     if (realmPtr_->U_)
@@ -5233,6 +5266,24 @@ const heatFlowRate& fieldBroker::qDotRef() const
 {
     RETURN_REF_ALLOC(
         realmPtr_->qDot_, heatFlowRate, realmPtr_, realm::qDot_ID, n_states);
+}
+
+momentumFlowRate& fieldBroker::pDotRef()
+{
+    RETURN_REF_ALLOC(realmPtr_->pDot_,
+                     momentumFlowRate,
+                     realmPtr_,
+                     realm::pDot_ID,
+                     n_states);
+}
+
+const momentumFlowRate& fieldBroker::pDotRef() const
+{
+    RETURN_REF_ALLOC(realmPtr_->pDot_,
+                     momentumFlowRate,
+                     realmPtr_,
+                     realm::pDot_ID,
+                     n_states);
 }
 
 turbulentViscosity& fieldBroker::mutRef()

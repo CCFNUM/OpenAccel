@@ -4,22 +4,25 @@
 # Author     : Mhamad Mahdi Alloush
 # Description: Reformat source file headers and run clang-format with
 #              temporary guards to protect headers from reformatting.
-# Copyright (c) 2025 CCFNUM, Lucerne University of Applied Sciences and Arts.
-# SPDX-License-Identifier: BSD-3-Clause
+# Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 """Reformat source file headers in src/ and run clang-format.
 
 Workflow:
 1. Fix headers: each key-value on its own line, Description wrapped at 80 chars
 2. Add temporary clang-format off/on guards around headers
-3. Run format_code (clang-format) — guards protect the headers
+3. Run clang-format — guards protect the headers
 4. Strip the temporary guards
 
+By default, only files changed according to git are processed.
+
 Usage:
-    smart_format [--check] [--verbose] [SRC_DIR]
+    smart_format [--check] [--verbose] [--all] [SRC_DIR]
 
     --check     Report files that need header changes without modifying
-    --verbose   Print every file processed, not just changed ones
+    --verbose   Print per-file details during processing
+    --very-verbose  Print phase-level progress and per-file details
+    --all       Process all source files, not just git-changed ones
     SRC_DIR     Source directory (default: ../../src relative to this script)
 """
 
@@ -32,16 +35,8 @@ MAX_LINE = 80
 EXTENSIONS = {'.c', '.cpp', '.C', '.h', '.hpp', '.H'}
 EXCLUDE_DIRS = {'solver'}
 KEYS = ['File', 'Created', 'Author', 'Description']
-# Match both copyright formats:
-#   Copyright YYYY CCFNUM HSLU T&A. All Rights Reserved.
-#   Copyright (c) YYYY CCFNUM, Lucerne University of Applied Sciences and Arts.
 COPYRIGHT_RE = re.compile(
-    r'Copyright\s+'
-    r'(?:'
-    r'\d{4}\s+CCFNUM\s+HSLU\s+T&A\.\s+All\s+Rights\s+Reserved\.'
-    r'|'
-    r'\(c\)\s+\d{4}\s+CCFNUM,\s+Lucerne\s+University\s+of\s+Applied\s+Sciences\s+and\s+Arts\.'
-    r')'
+    r'Copyright\s+\d{4}\s+CCFNUM\s+HSLU\s+T&A\.\s+All\s+Rights\s+Reserved\.'
 )
 GUARD_OFF = '// clang-format off'
 GUARD_ON = '// clang-format on'
@@ -118,8 +113,8 @@ def parse_entries(header_lines):
             positions.append((key, abs_start, abs_vstart))
             search_from = abs_vstart
 
-    # Copyright marker — matches both "Copyright YYYY" and "Copyright (c) YYYY"
-    m = re.search(r'\bCopyright\s+(?:\(c\)\s+)?\d{4}', text[search_from:])
+    # Copyright marker (no colon, just "Copyright YYYY")
+    m = re.search(r'\bCopyright\s+\d{4}', text[search_from:])
     if m:
         abs_start = search_from + m.start()
         positions.append(('_copyright', abs_start, abs_start))
@@ -226,54 +221,54 @@ def _is_header_file(lines):
     return bool(re.search(r'^//.*\bFile\b', first_few, re.MULTILINE))
 
 
-def format_header(filepath):
-    """Format header and add temporary guards.  Returns True if file changed."""
-    with open(filepath, 'r') as f:
-        content = f.read()
+def format_header_content(content):
+    """Format header and add temporary guards in memory.
 
+    Returns (new_content, changed) where changed indicates whether the
+    header was reformatted (ignoring the guards themselves).
+    """
     lines = content.splitlines()
     if not _is_header_file(lines):
-        return False
+        return content, False
 
     header_lines, rest_start = collect_header(lines)
     if not header_lines:
-        return False
+        return content, False
 
     entries = parse_entries(header_lines)
     if not entries:
-        return False
+        return content, False
 
-    new_header = rebuild_header(entries, with_guards=True)
-    new_lines = new_header + lines[rest_start:]
-    new_content = '\n'.join(new_lines)
+    # Check if header changed (without guards, for reporting)
+    plain_header = rebuild_header(entries, with_guards=False)
+    plain_lines = plain_header + lines[rest_start:]
+    plain_content = '\n'.join(plain_lines)
     if content.endswith('\n'):
-        new_content += '\n'
+        plain_content += '\n'
+    header_changed = (plain_content != content)
 
-    if new_content == content:
-        return False
+    # Build guarded version for clang-format
+    guarded_header = rebuild_header(entries, with_guards=True)
+    guarded_lines = guarded_header + lines[rest_start:]
+    guarded_content = '\n'.join(guarded_lines)
+    if content.endswith('\n'):
+        guarded_content += '\n'
 
-    with open(filepath, 'w') as f:
-        f.write(new_content)
-    return True
+    return guarded_content, header_changed
 
 
-def strip_guards(filepath):
-    """Remove the clang-format off/on guards around the header."""
-    with open(filepath, 'r') as f:
-        content = f.read()
-
+def strip_guards_content(content):
+    """Remove clang-format off/on guards around the header in memory."""
     lines = content.splitlines()
     if not lines:
-        return False
+        return content
 
     new_lines = []
     i = 0
 
-    # Strip leading guard
     if lines[i].strip() == GUARD_OFF:
         i += 1
 
-    # Copy header comment lines, stripping the trailing guard
     while i < len(lines):
         s = lines[i].strip()
         if s == GUARD_ON:
@@ -282,19 +277,12 @@ def strip_guards(filepath):
         new_lines.append(lines[i])
         i += 1
 
-    # Copy the rest unchanged
     new_lines.extend(lines[i:])
 
     new_content = '\n'.join(new_lines)
     if content.endswith('\n'):
         new_content += '\n'
-
-    if new_content == content:
-        return False
-
-    with open(filepath, 'w') as f:
-        f.write(new_content)
-    return True
+    return new_content
 
 
 def find_source_files(src_dir):
@@ -311,6 +299,57 @@ def find_source_files(src_dir):
     return result
 
 
+def find_changed_source_files(src_dir):
+    """Return sorted list of git-changed source files under src_dir, excluding EXCLUDE_DIRS."""
+    src_dir_abs = os.path.abspath(src_dir)
+
+    # Find git repo root
+    try:
+        repo_root = subprocess.check_output(
+            ['git', 'rev-parse', '--show-toplevel'],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except subprocess.CalledProcessError:
+        print('Warning: not a git repository, falling back to all files')
+        return find_source_files(src_dir)
+
+    # Get changed files (staged + unstaged vs HEAD)
+    try:
+        output = subprocess.check_output(
+            ['git', 'diff', '--name-only', 'HEAD'],
+            cwd=repo_root, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except subprocess.CalledProcessError:
+        # HEAD may not exist (fresh repo); try staged only
+        output = subprocess.check_output(
+            ['git', 'diff', '--cached', '--name-only'],
+            cwd=repo_root, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+
+    if not output:
+        return []
+
+    result = []
+    for relpath in output.splitlines():
+        filepath = os.path.normpath(os.path.join(repo_root, relpath))
+        # Must be under src_dir
+        if not filepath.startswith(src_dir_abs + os.sep):
+            continue
+        # Must have a recognised extension
+        ext = os.path.splitext(filepath)[1]
+        if ext not in EXTENSIONS:
+            continue
+        # Must not be in an excluded directory
+        rel_to_src = os.path.relpath(filepath, src_dir_abs)
+        top_dir = rel_to_src.split(os.sep)[0]
+        if top_dir in EXCLUDE_DIRS:
+            continue
+        if os.path.isfile(filepath):
+            result.append(filepath)
+
+    return sorted(result)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -318,7 +357,9 @@ def find_source_files(src_dir):
 def main():
     args = sys.argv[1:]
     check   = '--check' in args
-    verbose = '--verbose' in args
+    very_verbose = '--very-verbose' in args
+    verbose = '--verbose' in args or very_verbose
+    all_flag = '--all' in args
     positional = [a for a in args if not a.startswith('--')]
 
     if positional:
@@ -327,7 +368,14 @@ def main():
         script_dir = os.path.dirname(os.path.abspath(__file__))
         src_dir = os.path.normpath(os.path.join(script_dir, '..', '..', 'src'))
 
-    all_files = find_source_files(src_dir)
+    if all_flag:
+        all_files = find_source_files(src_dir)
+    else:
+        all_files = find_changed_source_files(src_dir)
+
+    if not all_files:
+        print('No files to process.')
+        return
 
     # --check: just report which headers need fixing (no clang-format run)
     if check:
@@ -362,43 +410,46 @@ def main():
             sys.exit(1)
         return
 
-    # --- Phase 1: Format headers + add temporary guards ---
-    print('Phase 1: Formatting headers (adding temporary clang-format guards)...')
+    # --- Process each file: header + clang-format + strip guards in memory ---
+    # Only writes to disk if the final result differs from the original.
     header_count = 0
+    cf_count = 0
+    cf_skipped = 0
     for filepath in all_files:
-        if format_header(filepath):
+        with open(filepath, 'r') as f:
+            original = f.read()
+
+        # Step 1: format header + add temporary guards (in memory)
+        guarded, header_changed = format_header_content(original)
+        if header_changed:
             header_count += 1
-            if verbose:
-                rel = os.path.relpath(filepath, src_dir)
-                print(f'  Formatted: {rel}')
-    print(f'  {header_count} headers formatted')
 
-    # --- Phase 2: Run clang-format via format_code ---
-    print('Phase 2: Running clang-format (headers protected by guards)...')
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    format_code = os.path.join(script_dir, 'format_code')
-    result = subprocess.run(
-        ['bash', format_code],
-        cwd=script_dir,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f'  format_code failed (exit {result.returncode}):')
-        if result.stderr:
-            print(result.stderr)
-        sys.exit(result.returncode)
-    print('  Done')
+        # Step 2: run clang-format (via stdin to avoid writing guarded content)
+        result = subprocess.run(
+            ['clang-format', '-style=file', '--assume-filename=' + filepath],
+            input=guarded, capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print(f'clang-format failed on {filepath} (exit {result.returncode}):')
+            if result.stderr:
+                print(result.stderr)
+            sys.exit(result.returncode)
 
-    # --- Phase 3: Strip temporary guards ---
-    print('Phase 3: Removing temporary clang-format guards...')
-    strip_count = 0
-    for filepath in all_files:
-        if strip_guards(filepath):
-            strip_count += 1
-    print(f'  Stripped guards from {strip_count} files')
+        # Step 3: strip temporary guards (in memory)
+        final = strip_guards_content(result.stdout)
 
-    print(f'\nDone. {header_count} headers formatted, {len(all_files)} files clang-formatted.')
+        # Only write if something actually changed
+        if final != original:
+            with open(filepath, 'w') as f:
+                f.write(final)
+            cf_count += 1
+            rel = os.path.relpath(filepath, src_dir)
+            print(f'  Formatted: {rel}')
+        else:
+            cf_skipped += 1
+
+    scope = 'git-changed' if not all_flag else 'all'
+    print(f'Done. {cf_count} files formatted, {scope} {cf_skipped} already correct.')
 
 
 if __name__ == '__main__':

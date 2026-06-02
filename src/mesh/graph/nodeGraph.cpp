@@ -6,10 +6,6 @@
 
 #include "nodeGraph.h"
 #ifdef HAS_INTERFACE
-#include "dgInfo.h"
-#include "dgInterfaceSideInfo.h"
-#include "ggiInfo.h"
-#include "ggiInterfaceSideInfo.h"
 #include "interface.h"
 #include "interfaceSideInfo.h"
 #include "ipInfo.h"
@@ -58,7 +54,6 @@ void nodeGraph::buildGraph_()
             elementBucket.topology());
 
         // extract master element specifics
-        const label nodesPerElement = meSCS->nodesPerElement_;
         const label numScsIp = meSCS->numIntPoints_;
         const label* lrscv = meSCS->adjacentNodes();
 
@@ -143,37 +138,82 @@ void nodeGraph::buildGraph_()
                 // loop over matching node pairs
                 const auto& nodePairs = interf.matchingNodePairVector();
 
+                // add src's element-neighbour columns to an owned row; mirror
+                // the base-loop stencil (reduced edge-pairs vs full) for
+                // symmetry
+                const bool reducedStencil =
+                    (this->getLayout() & GraphLayout::Stencil__Reduced);
+                auto addElemNbrs = [&](stk::mesh::Entity src, ulabel destRow)
+                {
+                    const stk::mesh::Entity* elems =
+                        bulkData.begin_elements(src);
+                    const unsigned ne = bulkData.num_elements(src);
+                    for (unsigned e = 0; e < ne; ++e)
+                    {
+                        const stk::mesh::Entity elem = elems[e];
+                        const stk::mesh::Entity* en =
+                            bulkData.begin_nodes(elem);
+                        const unsigned nn = bulkData.num_nodes(elem);
+                        if (!reducedStencil)
+                        {
+                            for (unsigned k = 0; k < nn; ++k)
+                                crsRowStencil[destRow].insert(en[k]);
+                            continue;
+                        }
+                        // reduced: connect src only to its SCS-edge partners
+                        MasterElement* meSCS =
+                            MasterElementRepo::get_surface_master_element(
+                                bulkData.bucket(elem).topology());
+                        const label numScsIp = meSCS->numIntPoints_;
+                        const label* lrscv = meSCS->adjacentNodes();
+                        for (label ip = 0; ip < numScsIp; ++ip)
+                        {
+                            const stk::mesh::Entity nodeL = en[lrscv[2 * ip]];
+                            const stk::mesh::Entity nodeR =
+                                en[lrscv[2 * ip + 1]];
+                            if (nodeL == src || nodeR == src)
+                            {
+                                crsRowStencil[destRow].insert(nodeL);
+                                crsRowStencil[destRow].insert(nodeR);
+                            }
+                        }
+                    }
+                };
+
+                const ulabel nOwned = static_cast<ulabel>(n_owned_nodes_);
                 for (const auto& nodePair : nodePairs)
                 {
-                    // data for stencil 1 (of node 1)
                     const auto& node1 = nodePair.first;
-                    const label& lid1 = bulkData.local_id(node1);
-
-                    // data for stencil 2 (of node 2)
                     const auto& node2 = nodePair.second;
-                    const label& lid2 = bulkData.local_id(node2);
+                    const ulabel lid1 = bulkData.local_id(node1);
+                    const ulabel lid2 = bulkData.local_id(node2);
 
-                    // add stencil of node 2 to that of node 1
-                    for (const auto& node : crsRowStencil[lid2])
+                    // union each node's stencil into the other's owned row;
+                    // co-owned uses prebuilt stencils, split rebuilds from
+                    // elems
+                    if (lid1 < nOwned)
                     {
-                        crsRowStencil[lid1].insert(node);
+                        if (lid2 < nOwned)
+                            for (const auto& n : crsRowStencil[lid2])
+                                crsRowStencil[lid1].insert(n);
+                        else
+                            addElemNbrs(node2, lid1);
                     }
-
-                    // add stencil of node 1 to that of node 2
-                    for (const auto& node : crsRowStencil[lid1])
+                    if (lid2 < nOwned)
                     {
-                        crsRowStencil[lid2].insert(node);
+                        if (lid1 < nOwned)
+                            for (const auto& n : crsRowStencil[lid1])
+                                crsRowStencil[lid2].insert(n);
+                        else
+                            addElemNbrs(node1, lid2);
                     }
-
-                    // diagnostics
-                    assert(crsRowStencil[lid1] == crsRowStencil[lid2]);
                 }
             }
             else
             {
                 // Note: In case of a reduced stencil, the node on the current
                 // side will always be implicitly connected to all nodes on the
-                // opposing side
+                // current and opposing sides
 
                 const auto addInterfaceStencil =
                     [&](const interfaceSideInfo& sideInfo)
@@ -185,30 +225,41 @@ void nodeGraph::buildGraph_()
                             if (ip->isExposed_)
                                 continue;
 
-                            const label* faceIpNodeMap =
-                                ip->meFCCurrent_->ipNodeMap();
-                            stk::mesh::Entity const* current_face_node_rels =
-                                bulkData.begin_nodes(ip->currentFace_);
-                            const label nn =
-                                faceIpNodeMap[ip->currentGaussPointId_];
-                            stk::mesh::Entity node = current_face_node_rels[nn];
-
-                            stk::mesh::EntityId nearestID =
-                                bulkData.local_id(node);
-
-                            if (nearestID >=
-                                static_cast<ulabel>(n_owned_nodes_))
-                                continue;
+                            stk::mesh::Entity const* current_elem_node_rels =
+                                bulkData.begin_nodes(ip->currentElement_);
+                            const label current_num_elem_nodes =
+                                bulkData.num_nodes(ip->currentElement_);
 
                             stk::mesh::Entity const* opposing_elem_node_rels =
                                 bulkData.begin_nodes(ip->opposingElement_);
                             const label opposing_num_elem_nodes =
                                 bulkData.num_nodes(ip->opposingElement_);
-                            for (label ni = 0; ni < opposing_num_elem_nodes;
-                                 ++ni)
+
+                            for (label nc = 0; nc < current_num_elem_nodes;
+                                 ++nc)
                             {
-                                crsRowStencil[nearestID].insert(
-                                    opposing_elem_node_rels[ni]);
+                                stk::mesh::EntityId rowLid = bulkData.local_id(
+                                    current_elem_node_rels[nc]);
+                                if (rowLid >=
+                                    static_cast<ulabel>(n_owned_nodes_))
+                                    continue;
+
+                                // Cross-side coupling (every current x
+                                // opposing pair).
+                                for (label no = 0; no < opposing_num_elem_nodes;
+                                     ++no)
+                                {
+                                    crsRowStencil[rowLid].insert(
+                                        opposing_elem_node_rels[no]);
+                                }
+                                // Same-side intra-element coupling.
+                                for (label nc2 = 0;
+                                     nc2 < current_num_elem_nodes;
+                                     ++nc2)
+                                {
+                                    crsRowStencil[rowLid].insert(
+                                        current_elem_node_rels[nc2]);
+                                }
                             }
                         }
                     }
