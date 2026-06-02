@@ -72,6 +72,16 @@ protected:
     std::vector<std::pair<stk::mesh::Entity, stk::mesh::Entity>>
         matchingNodePairVector_;
 
+    // stable id+owner record of matched pairs; survives ghosting churn, used to
+    // owner-route ghosting and re-resolve the entity pairs
+    struct conformalPairId
+    {
+        stk::mesh::EntityId id1, id2;
+        int owner1, owner2;
+    };
+
+    std::vector<conformalPairId> conformalPairIds_;
+
     mutable std::vector<std::vector<label>> conformalRowToRowMap_;
 
     void initializeGhostings_();
@@ -81,6 +91,14 @@ protected:
     void determineGeometricRelations_();
 
     void populateConformalRowToRowMapping_();
+
+    // ghost each conformal pair's opposing node + its supporting elements to
+    // the other side's rank, so split pairs are visible for graph/mapping
+    void populateConformalElemsToGhost_();
+
+    // re-resolve matchingNodePairVector_ entity handles from conformalPairIds_
+    // (call after the persistent ghosting makes both sides visible)
+    void rebuildMatchingPairsFromIds_();
 
 public:
     // Constructors

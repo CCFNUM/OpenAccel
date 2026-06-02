@@ -32,6 +32,7 @@ public:
     using fieldBroker::muRef;
     using fieldBroker::p0Ref;
     using fieldBroker::pCorrRef;
+    using fieldBroker::pDotRef;
     using fieldBroker::pRef;
     using fieldBroker::psiRef;
     using fieldBroker::TRef;
@@ -259,6 +260,9 @@ protected:
 
     void updateInterfaceMassImbalance_(const std::shared_ptr<domain> domain);
 
+    void
+    updateInterfaceMomentumImbalance_(const std::shared_ptr<domain> domain);
+
 private:
     // flow data for reporting
     struct FlowData
@@ -269,15 +273,15 @@ private:
     FlowData flowData_;
 
     // boundary patch data for reporting
-    MPI_Datatype MPIFlowBoundaryData;
-    MPI_Op MPIFlowBoundaryData_SUM;
+    MPI_Datatype MPIMassBoundaryData;
+    MPI_Op MPIMassBoundaryData_SUM;
 
-    struct FlowBoundaryData
+    struct MassBoundaryData
     {
-        scalar inflow = 0.0;
-        scalar outflow = 0.0;
-        scalar inflow_area = 0.0;
-        scalar outflow_area = 0.0;
+        scalar in = 0.0;
+        scalar out = 0.0;
+        scalar in_area = 0.0;
+        scalar out_area = 0.0;
         scalar total_area = 0.0;
 
         unsigned long int blocked_ip_count = 0;
@@ -287,16 +291,16 @@ private:
         char type[32] = "NA";
     };
 
-    static void sumFlowBoundaryData_(void* a, void* b, int* n, MPI_Datatype*)
+    static void sumMassBoundaryData_(void* a, void* b, int* n, MPI_Datatype*)
     {
-        const FlowBoundaryData* a_ = static_cast<const FlowBoundaryData*>(a);
-        FlowBoundaryData* b_ = static_cast<FlowBoundaryData*>(b);
+        const MassBoundaryData* a_ = static_cast<const MassBoundaryData*>(a);
+        MassBoundaryData* b_ = static_cast<MassBoundaryData*>(b);
         for (int i = 0; i < *n; i++)
         {
-            b_[i].inflow += a_[i].inflow;
-            b_[i].outflow += a_[i].outflow;
-            b_[i].inflow_area += a_[i].inflow_area;
-            b_[i].outflow_area += a_[i].outflow_area;
+            b_[i].in += a_[i].in;
+            b_[i].out += a_[i].out;
+            b_[i].in_area += a_[i].in_area;
+            b_[i].out_area += a_[i].out_area;
             b_[i].total_area += a_[i].total_area;
 
             b_[i].blocked_ip_count += a_[i].blocked_ip_count;
@@ -310,8 +314,52 @@ private:
         }
     }
 
-    std::vector<FlowBoundaryData> flowBoundaryDataVector_;
-    std::vector<FlowBoundaryData> flowInterfaceDataVector_;
+    std::vector<MassBoundaryData> flowBoundaryDataVector_;
+    std::vector<MassBoundaryData> flowInterfaceDataVector_;
+
+    // momentum interface imbalance reporting (vector analogue of FlowBoundary-
+    // Data; in/out binned per component from the pDot side field)
+    MPI_Datatype MPIMomentumBoundaryData;
+    MPI_Op MPIMomentumBoundaryData_SUM;
+
+    struct MomentumBoundaryData
+    {
+        scalar in[SPATIAL_DIM] = {0.0};
+        scalar out[SPATIAL_DIM] = {0.0};
+        scalar in_area = 0.0;
+        scalar out_area = 0.0;
+        scalar total_area = 0.0;
+
+        char name[32] = "NA";
+        char type[32] = "NA";
+    };
+
+    static void
+    sumMomentumBoundaryData_(void* a, void* b, int* n, MPI_Datatype*)
+    {
+        const MomentumBoundaryData* a_ =
+            static_cast<const MomentumBoundaryData*>(a);
+        MomentumBoundaryData* b_ = static_cast<MomentumBoundaryData*>(b);
+        for (int i = 0; i < *n; i++)
+        {
+            for (label k = 0; k < SPATIAL_DIM; k++)
+            {
+                b_[i].in[k] += a_[i].in[k];
+                b_[i].out[k] += a_[i].out[k];
+            }
+            b_[i].in_area += a_[i].in_area;
+            b_[i].out_area += a_[i].out_area;
+            b_[i].total_area += a_[i].total_area;
+
+            for (label j = 0; j < 32; j++)
+            {
+                b_[i].name[j] = a_[i].name[j];
+                b_[i].type[j] = a_[i].type[j];
+            }
+        }
+    }
+
+    std::vector<MomentumBoundaryData> momentumInterfaceDataVector_;
 
     void updateMassFlowRateBoundaryFieldInletSpecifiedVelocity_(
         const std::shared_ptr<domain> domain,

@@ -16,9 +16,6 @@
 #include "thermoModel.h"
 #include "version.h"
 #include "zoneTransformation.h"
-#ifdef HAS_INTERFACE
-#include "ipInfo.h"
-#endif
 
 namespace accel
 {
@@ -52,36 +49,74 @@ flowModel::flowModel(realm* realm)
         }
     }
 
-    constexpr label count = 9; // number of fields in BoundaryData struct
-    label block_length[count] = {1, 1, 1, 1, 1, 1, 1, 32, 32};
-    MPI_Aint block_disp[count] = {offsetof(FlowBoundaryData, inflow),
-                                  offsetof(FlowBoundaryData, outflow),
-                                  offsetof(FlowBoundaryData, inflow_area),
-                                  offsetof(FlowBoundaryData, outflow_area),
-                                  offsetof(FlowBoundaryData, total_area),
-                                  offsetof(FlowBoundaryData, blocked_ip_count),
-                                  offsetof(FlowBoundaryData, total_ip_count),
-                                  offsetof(FlowBoundaryData, name),
-                                  offsetof(FlowBoundaryData, type)};
-    MPI_Datatype block_type[count] = {MPI_DOUBLE,
-                                      MPI_DOUBLE,
-                                      MPI_DOUBLE,
-                                      MPI_DOUBLE,
-                                      MPI_DOUBLE,
-                                      MPI_UNSIGNED_LONG,
-                                      MPI_UNSIGNED_LONG,
-                                      MPI_CHAR,
-                                      MPI_CHAR};
-    MPI_Datatype TempType;
-    MPI_Type_create_struct(
-        count, block_length, block_disp, block_type, &TempType);
+    // custom MPI type/op for the mass imbalance
+    {
+        constexpr label count = 9; // number of fields in BoundaryData struct
+        label block_length[count] = {1, 1, 1, 1, 1, 1, 1, 32, 32};
+        MPI_Aint block_disp[count] = {
+            offsetof(MassBoundaryData, in),
+            offsetof(MassBoundaryData, out),
+            offsetof(MassBoundaryData, in_area),
+            offsetof(MassBoundaryData, out_area),
+            offsetof(MassBoundaryData, total_area),
+            offsetof(MassBoundaryData, blocked_ip_count),
+            offsetof(MassBoundaryData, total_ip_count),
+            offsetof(MassBoundaryData, name),
+            offsetof(MassBoundaryData, type)};
+        MPI_Datatype block_type[count] = {MPI_DOUBLE,
+                                          MPI_DOUBLE,
+                                          MPI_DOUBLE,
+                                          MPI_DOUBLE,
+                                          MPI_DOUBLE,
+                                          MPI_UNSIGNED_LONG,
+                                          MPI_UNSIGNED_LONG,
+                                          MPI_CHAR,
+                                          MPI_CHAR};
+        MPI_Datatype TempType;
+        MPI_Type_create_struct(
+            count, block_length, block_disp, block_type, &TempType);
 
-    MPI_Aint lb, extent;
-    MPI_Type_get_extent(TempType, &lb, &extent);
-    MPI_Type_create_resized(TempType, lb, extent, &MPIFlowBoundaryData);
-    MPI_Type_commit(&MPIFlowBoundaryData);
+        MPI_Aint lb, extent;
+        MPI_Type_get_extent(TempType, &lb, &extent);
+        MPI_Type_create_resized(TempType, lb, extent, &MPIMassBoundaryData);
+        MPI_Type_commit(&MPIMassBoundaryData);
 
-    MPI_Op_create(flowModel::sumFlowBoundaryData_, 1, &MPIFlowBoundaryData_SUM);
+        MPI_Op_create(
+            flowModel::sumMassBoundaryData_, 1, &MPIMassBoundaryData_SUM);
+    }
+
+    // custom MPI type/op for the momentum imbalance (vector)
+    {
+        constexpr label count = 7; // in[], out[], 3 areas, name, type
+        label block_length[count] = {SPATIAL_DIM, SPATIAL_DIM, 1, 1, 1, 32, 32};
+        MPI_Aint block_disp[count] = {
+            offsetof(MomentumBoundaryData, in),
+            offsetof(MomentumBoundaryData, out),
+            offsetof(MomentumBoundaryData, in_area),
+            offsetof(MomentumBoundaryData, out_area),
+            offsetof(MomentumBoundaryData, total_area),
+            offsetof(MomentumBoundaryData, name),
+            offsetof(MomentumBoundaryData, type)};
+        MPI_Datatype block_type[count] = {MPI_DOUBLE,
+                                          MPI_DOUBLE,
+                                          MPI_DOUBLE,
+                                          MPI_DOUBLE,
+                                          MPI_DOUBLE,
+                                          MPI_CHAR,
+                                          MPI_CHAR};
+        MPI_Datatype TempType;
+        MPI_Type_create_struct(
+            count, block_length, block_disp, block_type, &TempType);
+
+        MPI_Aint lb, extent;
+        MPI_Type_get_extent(TempType, &lb, &extent);
+        MPI_Type_create_resized(TempType, lb, extent, &MPIMomentumBoundaryData);
+        MPI_Type_commit(&MPIMomentumBoundaryData);
+
+        MPI_Op_create(flowModel::sumMomentumBoundaryData_,
+                      1,
+                      &MPIMomentumBoundaryData_SUM);
+    }
 
     // mass balance history
     const fs::path fname =
@@ -102,8 +137,10 @@ flowModel::flowModel(realm* realm)
 
 flowModel::~flowModel()
 {
-    MPI_Type_free(&MPIFlowBoundaryData);
-    MPI_Op_free(&MPIFlowBoundaryData_SUM);
+    MPI_Type_free(&MPIMassBoundaryData);
+    MPI_Op_free(&MPIMassBoundaryData_SUM);
+    MPI_Type_free(&MPIMomentumBoundaryData);
+    MPI_Op_free(&MPIMomentumBoundaryData_SUM);
 }
 
 void flowModel::updatePressureScale()
@@ -2188,33 +2225,30 @@ void flowModel::reportFlowData_()
     // Mass imbalance for boundaries
     if (mDotRef().sideFieldPtr() != nullptr)
     {
-        scalar inflow = 0.0;
-        scalar outflow = 0.0;
+        scalar in = 0.0;
+        scalar out = 0.0;
         if (messager::master())
         {
-            for (const FlowBoundaryData& boundary : flowBoundaryDataVector_)
+            for (const MassBoundaryData& boundary : flowBoundaryDataVector_)
             {
-                inflow += boundary.inflow;
-                outflow += boundary.outflow;
+                in += boundary.in;
+                out += boundary.out;
             }
 
-            std::cout << "Mass inflow: " << std::scientific
-                      << std::setprecision(3) << std::setw(10) << std::right
-                      << inflow << '\n';
-            std::cout << "Mass outflow: " << std::scientific
-                      << std::setprecision(3) << std::setw(10) << std::right
-                      << outflow << '\n';
+            std::cout << "Mass in: " << std::scientific << std::setprecision(3)
+                      << std::setw(10) << std::right << in << '\n';
+            std::cout << "Mass out: " << std::scientific << std::setprecision(3)
+                      << std::setw(10) << std::right << out << '\n';
             std::cout << "Mass imbalance: " << std::scientific
                       << std::setprecision(3) << std::setw(10) << std::right
-                      << (inflow + outflow) / (inflow + ::accel::SMALL) * 100
-                      << " %\n";
+                      << (in + out) / (in + ::accel::SMALL) * 100 << " %\n";
 
             bool has_header = false;
             for (size_t i = 0; i < flowBoundaryDataVector_.size(); i++)
             {
-                const FlowBoundaryData& boundary = flowBoundaryDataVector_[i];
+                const MassBoundaryData& boundary = flowBoundaryDataVector_[i];
                 const bool bidirectional_flow =
-                    (boundary.inflow != 0.0 && boundary.outflow != 0.0);
+                    (boundary.in != 0.0 && boundary.out != 0.0);
                 bool report_on_boundary = true;
 
 #ifndef NDEBUG
@@ -2248,7 +2282,7 @@ void flowModel::reportFlowData_()
 
                         const scalar blocked_area =
                             boundary.total_area -
-                            (boundary.inflow_area + boundary.outflow_area);
+                            (boundary.in_area + boundary.out_area);
                         assert(blocked_area > 0.0);
 
                         const scalar ip_percent =
@@ -2269,14 +2303,14 @@ void flowModel::reportFlowData_()
                     // bidirectional boundary flow
                     if (bidirectional_flow)
                     {
-                        const scalar inflow_percent =
-                            boundary.inflow_area / boundary.total_area * 100.0;
-                        const scalar outflow_percent =
-                            boundary.outflow_area / boundary.total_area * 100.0;
-                        std::cout << "inflow at " << std::fixed
-                                  << std::setprecision(2) << inflow_percent
-                                  << "% of area; outflow at " << std::fixed
-                                  << std::setprecision(2) << outflow_percent
+                        const scalar in_percent =
+                            boundary.in_area / boundary.total_area * 100.0;
+                        const scalar out_percent =
+                            boundary.out_area / boundary.total_area * 100.0;
+                        std::cout << "in at " << std::fixed
+                                  << std::setprecision(2) << in_percent
+                                  << "% of area; out at " << std::fixed
+                                  << std::setprecision(2) << out_percent
                                   << "% of area\n";
                     }
                     std::cout << std::setfill(' ');
@@ -2309,15 +2343,15 @@ void flowModel::reportFlowData_()
                 fout << COMMENT << "Mass flow balance:\n";
                 fout << COMMENT << "global_iter" << '\t' << "iter" << '\t'
                      << "sim_time[s]";
-                for (const FlowBoundaryData& boundaryData :
+                for (const MassBoundaryData& boundaryData :
                      flowBoundaryDataVector_)
                 {
                     fout << '\t' << boundaryData.name;
                 }
                 // total system
                 fout << '\t' << "system_balance";
-                fout << '\t' << "total_inflow";
-                fout << '\t' << "total_outflow";
+                fout << '\t' << "total_in";
+                fout << '\t' << "total_out";
                 fout << '\n';
             }
 
@@ -2327,16 +2361,16 @@ void flowModel::reportFlowData_()
                 fout << '\t' << inner_iter;
                 fout << '\t' << std::scientific
                      << realmRef().simulationRef().getSimulationTime();
-                for (const FlowBoundaryData& boundaryData :
+                for (const MassBoundaryData& boundaryData :
                      flowBoundaryDataVector_)
                 {
                     // patch balance
                     fout << '\t' << std::scientific
-                         << boundaryData.inflow + boundaryData.outflow;
+                         << boundaryData.in + boundaryData.out;
                 }
-                fout << '\t' << std::scientific << inflow + outflow;
-                fout << '\t' << std::scientific << inflow;
-                fout << '\t' << std::scientific << outflow;
+                fout << '\t' << std::scientific << in + out;
+                fout << '\t' << std::scientific << in;
+                fout << '\t' << std::scientific << out;
                 fout << std::endl; // flush
             }
         }
@@ -2349,46 +2383,93 @@ void flowModel::reportFlowData_()
     // Mass imbalance for interfaces
     if (this->meshRef().hasInterfaces())
     {
-        scalar inflow = 0.0;
-        scalar outflow = 0.0;
-        if (messager::master())
+        // momentum imbalance (expert-parameter gated)
+        if (controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_
+                .printMomentumInterfaceImbalance_)
         {
-            bool noFluidFluidInterfaces = true;
-            for (const FlowBoundaryData& interfaceData :
-                 flowInterfaceDataVector_)
+            scalar in[SPATIAL_DIM] = {0.0};
+            scalar out[SPATIAL_DIM] = {0.0};
+            if (messager::master())
             {
-                if (std::string(interfaceData.type) ==
-                        toString(interfaceType::fluid_solid) ||
-                    std::string(interfaceData.type) ==
-                        toString(interfaceType::solid_solid))
-                    continue;
+                for (const MomentumBoundaryData& interfaceData :
+                     momentumInterfaceDataVector_)
+                {
+                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                    {
+                        in[k] += interfaceData.in[k];
+                        out[k] += interfaceData.out[k];
+                    }
+                }
 
-                inflow += interfaceData.inflow;
-                outflow += interfaceData.outflow;
-
-                // set true
-                noFluidFluidInterfaces = false;
-            }
-
-            if (!noFluidFluidInterfaces)
-            {
+                static const char* const comp[3] = {"x", "y", "z"};
                 std::cout << std::endl;
-                std::cout << "Interface Mass inflow:    " << std::scientific
-                          << std::setprecision(3) << std::setw(10) << std::right
-                          << inflow << '\n';
-                std::cout << "Interface Mass outflow:   " << std::scientific
-                          << std::setprecision(3) << std::setw(10) << std::right
-                          << outflow << '\n';
-                std::cout << "Interface Mass imbalance: " << std::scientific
-                          << std::setprecision(3) << std::setw(10) << std::right
-                          << (inflow + outflow) / (inflow + ::accel::SMALL) *
-                                 100
-                          << " %\n";
+                for (label k = 0; k < SPATIAL_DIM; ++k)
+                {
+                    std::cout << "Interface Momentum[" << comp[k]
+                              << "] in:    " << std::scientific
+                              << std::setprecision(3) << std::setw(10)
+                              << std::right << in[k] << '\n';
+                    std::cout << "Interface Momentum[" << comp[k]
+                              << "] out:   " << std::scientific
+                              << std::setprecision(3) << std::setw(10)
+                              << std::right << out[k] << '\n';
+                    std::cout
+                        << "Interface Momentum[" << comp[k]
+                        << "] imbalance: " << std::scientific
+                        << std::setprecision(3) << std::setw(10) << std::right
+                        << (in[k] + out[k]) / (in[k] + ::accel::SMALL) * 100
+                        << " %\n";
+                }
             }
+
+            // destroy interface data vector
+            momentumInterfaceDataVector_.clear();
         }
 
-        // destroy interface data vector
-        flowInterfaceDataVector_.clear();
+        // mass-imbalance
+        {
+            scalar in = 0.0;
+            scalar out = 0.0;
+            if (messager::master())
+            {
+                bool noFluidFluidInterfaces = true;
+                for (const MassBoundaryData& interfaceData :
+                     flowInterfaceDataVector_)
+                {
+                    if (std::string(interfaceData.type) ==
+                            toString(interfaceType::fluid_solid) ||
+                        std::string(interfaceData.type) ==
+                            toString(interfaceType::solid_solid))
+                        continue;
+
+                    in += interfaceData.in;
+                    out += interfaceData.out;
+
+                    // set true
+                    noFluidFluidInterfaces = false;
+                }
+
+                if (!noFluidFluidInterfaces)
+                {
+                    std::cout << std::endl;
+                    std::cout << "Interface Mass in:    " << std::scientific
+                              << std::setprecision(3) << std::setw(10)
+                              << std::right << in << '\n';
+                    std::cout << "Interface Mass out:   " << std::scientific
+                              << std::setprecision(3) << std::setw(10)
+                              << std::right << out << '\n';
+                    std::cout
+                        << "Interface Mass imbalance: " << std::scientific
+                        << std::setprecision(3) << std::setw(10) << std::right
+                        << (in + out) / (in + ::accel::SMALL) * 100 << " %\n";
+                }
+            }
+
+            // destroy interface data vector
+            flowInterfaceDataVector_.clear();
+        }
     }
 #endif /* HAS_INTERFACE */
 }
@@ -2448,15 +2529,15 @@ void flowModel::updateMassImbalance_(const std::shared_ptr<domain> domain)
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-    std::vector<FlowBoundaryData> boundaryDataVector;
+    std::vector<MassBoundaryData> boundaryDataVector;
 
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
          iBoundary++)
     {
         const auto& boundaryRef = domain->zonePtr()->boundaryRef(iBoundary);
 
-        boundaryDataVector.push_back(FlowBoundaryData());
-        FlowBoundaryData& boundaryData = boundaryDataVector.back();
+        boundaryDataVector.push_back(MassBoundaryData());
+        MassBoundaryData& boundaryData = boundaryDataVector.back();
 
         // set primary traits
         std::string name = boundaryRef.name();
@@ -2529,18 +2610,18 @@ void flowModel::updateMassImbalance_(const std::shared_ptr<domain> domain)
                                 { // manually blocked flow
                                     ++boundaryData.blocked_ip_count;
                                 }
-                                else if (mass_flow < 0.0) // inflow
+                                else if (mass_flow < 0.0) // in
                                 {
                                     assert(0 == rfflag[bip]);
-                                    boundaryData.inflow += mass_flow;
-                                    boundaryData.inflow_area += amag;
+                                    boundaryData.in += mass_flow;
+                                    boundaryData.in_area += amag;
                                 }
-                                else // outflow (including naturally
+                                else // out (including naturally
                                 // blocked flow)
                                 {
                                     assert(0 == rfflag[bip]);
-                                    boundaryData.outflow += mass_flow;
-                                    boundaryData.outflow_area += amag;
+                                    boundaryData.out += mass_flow;
+                                    boundaryData.out_area += amag;
                                 }
                                 boundaryData.total_area += amag;
                             }
@@ -2555,14 +2636,14 @@ void flowModel::updateMassImbalance_(const std::shared_ptr<domain> domain)
         }
     }
 
-    std::vector<FlowBoundaryData> globalBoundaryDataVector(
+    std::vector<MassBoundaryData> globalBoundaryDataVector(
         boundaryDataVector.size());
 
     MPI_Reduce(boundaryDataVector.data(),
                globalBoundaryDataVector.data(),
                boundaryDataVector.size(),
-               MPIFlowBoundaryData,
-               MPIFlowBoundaryData_SUM,
+               MPIMassBoundaryData,
+               MPIMassBoundaryData_SUM,
                0,
                messager::comm());
 
@@ -2587,10 +2668,10 @@ void flowModel::updateInterfaceMassImbalance_(
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-    std::vector<FlowBoundaryData> interfaceDataVector;
+    std::vector<MassBoundaryData> interfaceDataVector;
 
     const auto accumulateInterfaceMass =
-        [&](const interfaceSideInfo& sideInfo, FlowBoundaryData& interfaceData)
+        [&](const interfaceSideInfo& sideInfo, MassBoundaryData& interfaceData)
     {
         for (const auto& faceIpInfoVec : sideInfo.ipInfoVec())
         {
@@ -2621,13 +2702,13 @@ void flowModel::updateInterfaceMassImbalance_(
                     ncmDot[ip->currentGaussPointId_] * ip->areaFraction_;
                 if (mass_flow < 0.0)
                 {
-                    interfaceData.inflow += mass_flow;
-                    interfaceData.inflow_area += c_amag;
+                    interfaceData.in += mass_flow;
+                    interfaceData.in_area += c_amag;
                 }
                 else
                 {
-                    interfaceData.outflow += mass_flow;
-                    interfaceData.outflow_area += c_amag;
+                    interfaceData.out += mass_flow;
+                    interfaceData.out_area += c_amag;
                 }
                 interfaceData.total_area += c_amag;
             }
@@ -2649,8 +2730,8 @@ void flowModel::updateInterfaceMassImbalance_(
                 // get interface side that is sitting in this domain
                 const auto* interfaceSideInfoPtr = interf->masterInfoPtr();
 
-                interfaceDataVector.push_back(FlowBoundaryData());
-                FlowBoundaryData& interfaceData = interfaceDataVector.back();
+                interfaceDataVector.push_back(MassBoundaryData());
+                MassBoundaryData& interfaceData = interfaceDataVector.back();
 
                 // set primary traits
                 std::strncpy(interfaceData.name,
@@ -2679,8 +2760,8 @@ void flowModel::updateInterfaceMassImbalance_(
                 // get interface side that is sitting in this domain
                 const auto* interfaceSideInfoPtr = interf->slaveInfoPtr();
 
-                interfaceDataVector.push_back(FlowBoundaryData());
-                FlowBoundaryData& interfaceData = interfaceDataVector.back();
+                interfaceDataVector.push_back(MassBoundaryData());
+                MassBoundaryData& interfaceData = interfaceDataVector.back();
 
                 // set primary traits
                 std::strncpy(interfaceData.name,
@@ -2710,8 +2791,8 @@ void flowModel::updateInterfaceMassImbalance_(
             const auto* interfaceSideInfoPtr =
                 interf->interfaceSideInfoPtr(domain->index());
 
-            interfaceDataVector.push_back(FlowBoundaryData());
-            FlowBoundaryData& interfaceData = interfaceDataVector.back();
+            interfaceDataVector.push_back(MassBoundaryData());
+            MassBoundaryData& interfaceData = interfaceDataVector.back();
 
             // set primary traits
             std::strncpy(interfaceData.name,
@@ -2738,20 +2819,153 @@ void flowModel::updateInterfaceMassImbalance_(
 
     if (!noInterfaces)
     {
-        std::vector<FlowBoundaryData> globalInterfaceDataVector(
+        std::vector<MassBoundaryData> globalInterfaceDataVector(
             interfaceDataVector.size());
 
         MPI_Reduce(interfaceDataVector.data(),
                    globalInterfaceDataVector.data(),
                    interfaceDataVector.size(),
-                   MPIFlowBoundaryData,
-                   MPIFlowBoundaryData_SUM,
+                   MPIMassBoundaryData,
+                   MPIMassBoundaryData_SUM,
                    0,
                    messager::comm());
 
         flowInterfaceDataVector_.insert(flowInterfaceDataVector_.end(),
                                         globalInterfaceDataVector.begin(),
                                         globalInterfaceDataVector.end());
+    }
+}
+
+void flowModel::updateInterfaceMomentumImbalance_(
+    const std::shared_ptr<domain> domain)
+{
+    if (!controlsRef()
+             .solverRef()
+             .solverControl_.expertParameters_.printMomentumInterfaceImbalance_)
+        return;
+
+    if (pDotRef().sideFieldPtr() == nullptr)
+        return;
+
+    const auto& mesh = meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    const auto& pDotSideSTKFieldRef = pDotRef().sideFieldRef().stkFieldRef();
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    std::vector<MomentumBoundaryData> interfaceDataVector;
+
+    const auto accumulateInterfaceMomentum =
+        [&](const interfaceSideInfo& sideInfo,
+            MomentumBoundaryData& interfaceData)
+    {
+        for (const auto& faceIpInfoVec : sideInfo.ipInfoVec())
+        {
+            for (const ipInfo* ip : faceIpInfoVec)
+            {
+                if (bulkData.parallel_owner_rank(ip->currentElement_) !=
+                    messager::myProcNo())
+                    continue;
+
+                if (ip->isExposed_)
+                    continue;
+
+                const scalar* c_areaVec = stk::mesh::field_data(
+                    exposedAreaVecSTKFieldRef, ip->currentFace_);
+                const scalar* ncpDot = stk::mesh::field_data(
+                    pDotSideSTKFieldRef, ip->currentFace_);
+
+                scalar c_amag = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar c_axj =
+                        c_areaVec[ip->currentGaussPointId_ * SPATIAL_DIM + j];
+                    c_amag += c_axj * c_axj;
+                }
+                c_amag = std::sqrt(c_amag) * ip->areaFraction_;
+
+                // bin each momentum component by its own sign
+                for (label k = 0; k < SPATIAL_DIM; ++k)
+                {
+                    const scalar mom_flow =
+                        ncpDot[ip->currentGaussPointId_ * SPATIAL_DIM + k] *
+                        ip->areaFraction_;
+                    if (mom_flow < 0.0)
+                        interfaceData.in[k] += mom_flow;
+                    else
+                        interfaceData.out[k] += mom_flow;
+                }
+                interfaceData.total_area += c_amag;
+            }
+        }
+    };
+
+    bool noInterfaces = true;
+    for (const interface* interf : domain->zonePtr()->interfacesRef())
+    {
+        // skip if fluid-solid interface (no advective/viscous momentum
+        // coupling)
+        if (interf->isFluidSolidType())
+            continue;
+
+        noInterfaces = false;
+
+        const auto processSide =
+            [&](const interfaceSideInfo* interfaceSideInfoPtr)
+        {
+            interfaceDataVector.push_back(MomentumBoundaryData());
+            MomentumBoundaryData& interfaceData = interfaceDataVector.back();
+
+            std::strncpy(interfaceData.name,
+                         interfaceSideInfoPtr->name().c_str(),
+                         sizeof(interfaceData.name));
+            interfaceData.name[sizeof(interfaceData.name) - 1] = '\0';
+
+            auto type = interf->type();
+            std::strncpy(interfaceData.type,
+                         toString(type).c_str(),
+                         sizeof(interfaceData.type));
+            interfaceData.type[sizeof(interfaceData.type) - 1] = '\0';
+
+            // consider only if pDot is defined on the side
+            if (!this->pDotRef().sideFieldRef().definedOn(
+                    interfaceSideInfoPtr->currentPartVec_))
+            {
+                return;
+            }
+
+            accumulateInterfaceMomentum(*interfaceSideInfoPtr, interfaceData);
+        };
+
+        if (interf->isInternal())
+        {
+            processSide(interf->masterInfoPtr());
+            processSide(interf->slaveInfoPtr());
+        }
+        else
+        {
+            processSide(interf->interfaceSideInfoPtr(domain->index()));
+        }
+    }
+
+    if (!noInterfaces)
+    {
+        std::vector<MomentumBoundaryData> globalInterfaceDataVector(
+            interfaceDataVector.size());
+
+        MPI_Reduce(interfaceDataVector.data(),
+                   globalInterfaceDataVector.data(),
+                   interfaceDataVector.size(),
+                   MPIMomentumBoundaryData,
+                   MPIMomentumBoundaryData_SUM,
+                   0,
+                   messager::comm());
+
+        momentumInterfaceDataVector_.insert(momentumInterfaceDataVector_.end(),
+                                            globalInterfaceDataVector.begin(),
+                                            globalInterfaceDataVector.end());
     }
 }
 #endif /* HAS_INTERFACE */

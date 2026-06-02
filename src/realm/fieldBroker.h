@@ -161,6 +161,8 @@ public:
 
     virtual void setupHeatFlowRate(const std::shared_ptr<domain> domain);
 
+    virtual void setupMomentumFlowRate(const std::shared_ptr<domain> domain);
+
     virtual void setupYoungModulus(const std::shared_ptr<domain> domain);
 
     virtual void setupPoissonRatio(const std::shared_ptr<domain> domain);
@@ -940,6 +942,10 @@ protected:
     heatFlowRate& qDotRef();
 
     const heatFlowRate& qDotRef() const;
+
+    momentumFlowRate& pDotRef();
+
+    const momentumFlowRate& pDotRef() const;
 
     youngModulus& ERef();
 

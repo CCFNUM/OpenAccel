@@ -1013,7 +1013,7 @@ void simulation::printSolverHeader()
     if (messager::master())
     {
         std::ostringstream h, d, v;
-        h << "OpenAccel " << SPATIAL_DIM << "D";
+        h << "Accel " << SPATIAL_DIM << "D";
         d << "Parallel fluid flow CFD package based on CVFEM";
         v << "v" << accel::PROJECT_VERSION;
         std::cout << "╔" << printHorizontalBar()         << "╗" << std::endl;

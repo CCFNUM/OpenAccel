@@ -11,8 +11,6 @@
 namespace accel
 {
 
-#if SPATIAL_DIM == 3
-
 namespace utils
 {
 
@@ -27,78 +25,120 @@ surfaceComparator::surfaceComparator(stk::mesh::PartVector surface1Parts,
 {
 }
 
+void surfaceComparator::getBoundaryNodes_(
+    const stk::mesh::PartVector& surfaceParts,
+    std::set<stk::mesh::Entity>& boundaryNodes)
+{
+    stk::mesh::BucketVector const& sideBuckets = bulkData_.get_buckets(
+        metaData_.side_rank(),
+        metaData_.locally_owned_part() & stk::mesh::selectUnion(surfaceParts));
+
+#if SPATIAL_DIM == 2
+
+    // In 2D a "surface" is a chain of edge sides (LINE_2); its boundary is the
+    // two endpoints of the chain. Count how many sides each node belongs to;
+    // an endpoint is touched by exactly one side, an interior node by two.
+    std::map<stk::mesh::EntityId, int> nodeCount;
+
+    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& sideBucket = **ib;
+        const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
+
+        for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSidesPerBucket;
+             ++iSide)
+        {
+            stk::mesh::Entity side = sideBucket[iSide];
+            const stk::mesh::Entity* nodes = bulkData_.begin_nodes(side);
+            const unsigned numNodes = bulkData_.num_nodes(side);
+
+            for (unsigned i = 0; i < numNodes; ++i)
+            {
+                nodeCount[bulkData_.identifier(nodes[i])]++;
+            }
+        }
+    }
+
+    // Boundary (endpoint) nodes appear in only one side
+    for (const auto& nodePair : nodeCount)
+    {
+        if (nodePair.second == 1)
+        {
+            stk::mesh::Entity node =
+                bulkData_.get_entity(stk::topology::NODE_RANK, nodePair.first);
+            if (bulkData_.is_valid(node))
+                boundaryNodes.insert(node);
+        }
+    }
+
+#else
+
+    // In 3D a "surface" is a patch of face sides; its boundary is the set of
+    // edges shared by a single face. Count edge occurrences (as ordered node
+    // pairs); a boundary edge appears only once.
+    std::map<std::pair<stk::mesh::EntityId, stk::mesh::EntityId>, int>
+        edgeCount;
+
+    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& sideBucket = **ib;
+        const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
+
+        for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSidesPerBucket;
+             ++iSide)
+        {
+            stk::mesh::Entity side = sideBucket[iSide];
+            const stk::mesh::Entity* nodes = bulkData_.begin_nodes(side);
+            const unsigned numNodes = bulkData_.num_nodes(side);
+
+            for (unsigned i = 0; i < numNodes; ++i)
+            {
+                unsigned next = (i + 1) % numNodes;
+                stk::mesh::EntityId id1 = bulkData_.identifier(nodes[i]);
+                stk::mesh::EntityId id2 = bulkData_.identifier(nodes[next]);
+
+                // Create ordered pair for edge
+                auto edge = (id1 < id2) ? std::make_pair(id1, id2)
+                                        : std::make_pair(id2, id1);
+                edgeCount[edge]++;
+            }
+        }
+    }
+
+    // Boundary edges appear only once
+    for (const auto& edgePair : edgeCount)
+    {
+        if (edgePair.second == 1)
+        {
+            stk::mesh::Entity node1 = bulkData_.get_entity(
+                stk::topology::NODE_RANK, edgePair.first.first);
+            stk::mesh::Entity node2 = bulkData_.get_entity(
+                stk::topology::NODE_RANK, edgePair.first.second);
+
+            if (bulkData_.is_valid(node1))
+                boundaryNodes.insert(node1);
+            if (bulkData_.is_valid(node2))
+                boundaryNodes.insert(node2);
+        }
+    }
+
+#endif /* SPATIAL_DIM == 2 */
+}
+
 bool surfaceComparator::checkOverlap(scalar overlapCheckSearchTolerance,
                                      vector sepVec,
                                      matrix rotMat)
 {
-    // Get boundary/edge nodes for both surfaces
-    auto getBoundaryNodes = [&](const stk::mesh::PartVector& surfaceParts,
-                                std::set<stk::mesh::Entity>& boundaryNodes)
-    {
-        // Map to track edge usage count
-        std::map<std::pair<stk::mesh::EntityId, stk::mesh::EntityId>, int>
-            edgeCount;
-
-        stk::mesh::BucketVector const& sideBuckets =
-            bulkData_.get_buckets(metaData_.side_rank(),
-                                  metaData_.locally_owned_part() &
-                                      stk::mesh::selectUnion(surfaceParts));
-
-        // Count edge occurrences across all sides
-        for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
-             ib != sideBuckets.end();
-             ++ib)
-        {
-            stk::mesh::Bucket& sideBucket = **ib;
-            const stk::mesh::Bucket::size_type nSidesPerBucket =
-                sideBucket.size();
-
-            for (stk::mesh::Bucket::size_type iSide = 0;
-                 iSide < nSidesPerBucket;
-                 ++iSide)
-            {
-                stk::mesh::Entity side = sideBucket[iSide];
-                const stk::mesh::Entity* nodes = bulkData_.begin_nodes(side);
-                const unsigned numNodes = bulkData_.num_nodes(side);
-
-                for (unsigned i = 0; i < numNodes; ++i)
-                {
-                    unsigned next = (i + 1) % numNodes;
-                    stk::mesh::EntityId id1 = bulkData_.identifier(nodes[i]);
-                    stk::mesh::EntityId id2 = bulkData_.identifier(nodes[next]);
-
-                    // Create ordered pair for edge
-                    auto edge = (id1 < id2) ? std::make_pair(id1, id2)
-                                            : std::make_pair(id2, id1);
-                    edgeCount[edge]++;
-                }
-            }
-        }
-
-        // Boundary edges appear only once
-        for (const auto& edgePair : edgeCount)
-        {
-            if (edgePair.second == 1)
-            {
-                stk::mesh::Entity node1 = bulkData_.get_entity(
-                    stk::topology::NODE_RANK, edgePair.first.first);
-                stk::mesh::Entity node2 = bulkData_.get_entity(
-                    stk::topology::NODE_RANK, edgePair.first.second);
-
-                if (bulkData_.is_valid(node1))
-                    boundaryNodes.insert(node1);
-                if (bulkData_.is_valid(node2))
-                    boundaryNodes.insert(node2);
-            }
-        }
-    };
-
     // Get boundary nodes for both surfaces
     std::set<stk::mesh::Entity> surface1BoundaryNodes;
     std::set<stk::mesh::Entity> surface2BoundaryNodes;
 
-    getBoundaryNodes(surface1Parts_, surface1BoundaryNodes);
-    getBoundaryNodes(surface2Parts_, surface2BoundaryNodes);
+    getBoundaryNodes_(surface1Parts_, surface1BoundaryNodes);
+    getBoundaryNodes_(surface2Parts_, surface2BoundaryNodes);
 
     // Create bounding spheres for boundary nodes
     std::vector<sphereBoundingBox> sphereBoundingBoxSurface1Vec;
@@ -417,6 +457,7 @@ bool surfaceComparator::checkConformality(
     }
 
     // now populate pair vector
+    matchedPairs_.clear();
     for (size_t i = 0, size = searchKeyPair.size(); i < size; ++i)
     {
         stk::mesh::Entity domainNode =
@@ -428,6 +469,13 @@ bool surfaceComparator::checkConformality(
         std::pair<stk::mesh::Entity, stk::mesh::Entity> theFirstPair =
             std::make_pair(rangeNode, domainNode);
         matchingNodePairVector.push_back(theFirstPair);
+
+        // stable record (ids + owners) — survives ghosting destruction; the
+        // entity handles above go stale for the ghosted side
+        matchedPairs_.push_back({bulkData_.identifier(rangeNode),
+                                 bulkData_.identifier(domainNode),
+                                 bulkData_.parallel_owner_rank(rangeNode),
+                                 bulkData_.parallel_owner_rank(domainNode)});
     }
 
     // Count unique matched nodes on both surfaces using EntityKey sets.
@@ -511,6 +559,8 @@ vector surfaceComparator::determineSeparationVector()
     return centroid_1 - centroid_2;
 }
 
+#if SPATIAL_DIM == 3
+
 scalar surfaceComparator::determineSeparationAngle(vector rotationAxis,
                                                    vector axisLocation)
 {
@@ -565,6 +615,50 @@ scalar surfaceComparator::determineSeparationAngle(vector rotationAxis,
     throw std::runtime_error(
         "estimate_angle_with_axis_point: ill-conditioned (moments near zero).");
 }
+
+#else /* SPATIAL_DIM == 2 */
+
+scalar surfaceComparator::determineSeparationAngle(vector rotationAxis,
+                                                   vector axisLocation)
+{
+    // 2D rotation is in-plane about axisLocation; rotationAxis is unused.
+    (void)rotationAxis;
+
+    // angle = phase(slave centroid) - phase(master centroid) about the axis
+    // point, matching the 3D sign convention.
+    vector centroid_1(vector::Zero()); // master (surface1)
+    vector centroid_2(vector::Zero()); // slave  (surface2)
+
+    calcCentroid_(surface1Parts_, centroid_1);
+    calcCentroid_(surface2Parts_, centroid_2);
+
+    const vector r1 = centroid_1 - axisLocation;
+    const vector r2 = centroid_2 - axisLocation;
+
+    if (r1.norm() < SMALL || r2.norm() < SMALL)
+    {
+        throw std::runtime_error(
+            "determineSeparationAngle (2D): a surface centroid coincides with "
+            "the rotation axis location; cannot determine separation angle.");
+    }
+
+    const scalar phiMaster = std::atan2(r1[1], r1[0]);
+    const scalar phiSlave = std::atan2(r2[1], r2[0]);
+
+    scalar ang = phiSlave - phiMaster;
+
+    // wrap to (-pi, pi]
+    while (ang <= -M_PI)
+        ang += 2.0 * M_PI;
+    while (ang > M_PI)
+        ang -= 2.0 * M_PI;
+
+    return ang;
+}
+
+#endif /* SPATIAL_DIM == 3 */
+
+#if SPATIAL_DIM == 3
 
 void surfaceComparator::readNodeXYZ_(stk::mesh::Entity node, vector& out)
 {
@@ -648,6 +742,8 @@ void surfaceComparator::allreduceComplexSum_(
     for (label i = 0; i < N; ++i)
         v[i] = std::complex<scalar>(recv[2 * i], recv[2 * i + 1]);
 }
+
+#endif /* SPATIAL_DIM == 3 */
 
 void surfaceComparator::calcCentroid_(const stk::mesh::PartVector& surfaceParts,
                                       vector& centroid)
@@ -842,7 +938,5 @@ void surfaceComparator::addRangeNodesToSharersOfDomainNodes_(
 }
 
 } // namespace utils
-
-#endif /* SPATIAL_DIM = 3 */
 
 } // namespace accel

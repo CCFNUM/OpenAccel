@@ -14,7 +14,7 @@ option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
 option(WITH_FASTMATH "Use fast math optimization" OFF)
 option(WITH_FSI "Build with Utopia FSI support" OFF)
 option(WITH_INTERFACE "Enable interface support" ON)
-option(WITH_CLIPPER2 "Use Clipper2 for GGI area fractions (default: RastClipper)" OFF)
+option(WITH_CLIPPER2 "Use Clipper2 for GGI area fractions (RastClipper is buggy)" ON)
 option(WITH_MHD "Build with MHD support" OFF)
 option(WITH_OVERSET "Build with overset mesh support" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
@@ -192,6 +192,13 @@ endif()
 # linear solver library
 add_compile_definitions(NO_LINSOLVE_CONF)
 add_subdirectory(src/solver)
+if(WITH_AMGSOLVER)
+    get_filename_component(libAMG_PATH src/solver/libamg REALPATH)
+    if(NOT EXISTS ${libAMG_PATH})
+        message(FATAL_ERROR "WITH_AMGSOLVER set but library source does not exist")
+    endif()
+    message("-- Compiling sources with AMGSolver")
+endif()
 
 # Enable Fortran language support (if not already done)
 enable_language(Fortran)
@@ -266,3 +273,12 @@ endif()
 
 add_executable(${exec} main.cpp)
 target_link_libraries(${exec} PRIVATE main_obj)
+
+# debugging utilities
+if(WITH_DEBUG_LIB)
+    add_library(debug OBJECT
+        debug/debug.cpp
+    )
+    target_compile_options(debug PRIVATE -O0 -g -UNDEBUG) # always build this object library in debug mode
+    target_link_libraries(debug PRIVATE main_obj)
+endif()

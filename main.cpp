@@ -48,8 +48,8 @@ int main(int argc, char* argv[])
 
     int provided;
     MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
-    if (provided < MPI_THREAD_FUNNELED) 
-	{
+    if (provided < MPI_THREAD_FUNNELED)
+    {
         accel::errorMsg("Provided MPI thread-level support is not sufficient");
     }
 #ifdef HAS_PETSC

@@ -1,8 +1,8 @@
 // File       : ipInfo.h
 // Created    : 2026
 // Author     : Mhamad Mahdi Alloush
-// Description: Common base class for per-integration-point info shared by
-//              DG (Discontinuous Galerkin) and GGI (General Grid Interface)
+// Description: Common base class for per-integration-point info shared by DG
+//              (Discontinuous Galerkin) and GGI (General Grid Interface)
 //              non-conformal interface methods.
 // Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 

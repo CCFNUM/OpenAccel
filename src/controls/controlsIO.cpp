@@ -1044,6 +1044,20 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["disable_physics"].template as<bool>();
             }
 
+            if (expertParameters["freeze_flow"])
+            {
+                solver_.solverControl_.expertParameters_.freezeFlow_ =
+                    expertParameters["freeze_flow"].template as<bool>();
+            }
+
+            if (expertParameters["print_momentum_interface_imbalance"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .printMomentumInterfaceImbalance_ =
+                    expertParameters["print_momentum_interface_imbalance"]
+                        .template as<bool>();
+            }
+
             if (expertParameters["nonlinear_stabilisation"])
             {
                 solver_.solverControl_.expertParameters_.nso_ =

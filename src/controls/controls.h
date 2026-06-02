@@ -228,6 +228,7 @@ struct solverDictionary
         {
             bool coupledPressureVelocity_ = true;
             bool disableMomentumPredictor_ = false;
+            bool printMomentumInterfaceImbalance_ = false;
             bool coupledVolumeFraction_ = false;
             bool consistent_ = false;
             bool limitGradients_ = false;
@@ -245,6 +246,7 @@ struct solverDictionary
             bool bandwidthReduction_ = true;
             bool forceWallDistanceCalculation_ = false;
             bool disablePhysics_ = false;
+            bool freezeFlow_ = false;
             bool nso_ = false;
             scalar nsoFourthOrderFac_ = 1.0;
 #ifdef HAS_INTERFACE
