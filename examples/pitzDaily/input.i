@@ -9,54 +9,51 @@ simulation:
         analysis_type:
             option: steady_state
         domains:
-          - name: default_domain
-            location: [fluid]
-            materials: [fluid_1]
-            type: fluid
-            domain_models:
-                reference_pressure: 101325
-            fluid_models:
-                turbulence:     
-                    option: shear_stress_transport
-            boundaries:
-              - name: bump
-                type: wall
-                location: [bump]
-              - name: inlet
-                type: inlet
-                location: [inlet]
-                boundary_details:
-                    mass_and_momentum:
-                        option: velocity_components
-                        u: 69.44
-                        v: 0
-                    turbulence:
-                        option: k_and_omega
-                        k: 1.08e-3
-                        omega: 5220.8
-              - name: outlet
-                type: outlet
-                location: [outlet]
-                boundary_details:
-                    mass_and_momentum:
-                        option: static_pressure
-                        relative_pressure: 0
-              - name: symmetry
-                type: symmetry
-                location: [symup,symdown,top]
-            initialization:
-                velocity:
-                    option: value
-                    velocity: [69.44,0]
-                pressure:
-                    option: value
-                    pressure: 0
-                turbulent_kinetic_energy:
-                    option: value
-                    turbulent_kinetic_energy: 1.08e-3
-                turbulent_eddy_frequency:
-                    option: value
-                    turbulent_eddy_frequency: 5220.8    
+        - name: default_domain
+          location: [fluid]
+          materials: [fluid_1]
+          type: fluid
+          domain_models:
+            reference_pressure: 101325
+          fluid_models:
+            turbulence:
+                option: shear_stress_transport
+          boundaries:
+          - name: wall
+            type: wall
+            location: [wall]
+          - name: inlet
+            type: inlet
+            location: [inlet]
+            boundary_details:
+                mass_and_momentum:
+                    option: velocity_components
+                    u: 10
+                    v: 0
+                turbulence:
+                    option: k_and_omega
+                    k: 0.375
+                    omega: 440.15
+          - name: outlet
+            type: outlet
+            location: [outlet]
+            boundary_details:
+                mass_and_momentum:
+                    option: static_pressure
+                    relative_pressure: 0
+          initialization:
+            velocity:
+                option: value
+                velocity: [0, 0]
+            pressure:
+                option: value
+                pressure: 0
+            turbulent_kinetic_energy:
+                option: value
+                turbulent_kinetic_energy: 0.375
+            turbulent_eddy_frequency:
+                option: value
+                turbulent_eddy_frequency: 440.15
     solver:
         solver_control:
             basic_settings:
@@ -120,4 +117,4 @@ simulation:
         transport_properties:
             dynamic_viscosity:
                 option: value
-                dynamic_viscosity: 2.31e-5 
+                dynamic_viscosity: 1e-05
