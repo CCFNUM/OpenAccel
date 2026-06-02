@@ -64,7 +64,7 @@ simulation:
                     max_iterations: 2500
                     physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.5
+                        velocity_relaxation_factor: 0.9
                         turbulence_relaxation_factor: 0.5
                 convergence_criteria:
                     residual_type: RMS
