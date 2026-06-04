@@ -12,10 +12,6 @@
 #endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
-#ifdef HAS_OVERSET
-#include "overset.h"
-#include "oversetInfo.h"
-#endif /* HAS_OVERSET */
 
 using namespace linearSolver;
 
