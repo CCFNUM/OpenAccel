@@ -217,6 +217,12 @@ void segregatedFreeSurfaceFlowEquations::solve()
         FOREACH_DOMAIN(flowModel::updateMassDivergenceField);
     }
 
+    // frozen flow ... do not assemble/solve for flow equations
+    if (controlsRef().solverRef().solverControl_.expertParameters_.freezeFlow_)
+    {
+        return;
+    }
+
     // predictor step: solve bulk momentum
     {
         U_eq_->preSolve();
