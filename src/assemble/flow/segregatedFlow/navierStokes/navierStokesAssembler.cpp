@@ -235,7 +235,7 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
 
 #ifdef HAS_INTERFACE
     // conformal interface: give master and slave the effective (vol1+vol2)
-    // volume in their D coefficients, mirroring the coupled assembler
+    // volume in their D coefficients
     for (const interface* interf : domain->interfacesRef())
     {
         if (!interf->isConformalTreatment() ||

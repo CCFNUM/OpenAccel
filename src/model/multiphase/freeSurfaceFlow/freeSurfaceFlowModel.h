@@ -182,6 +182,30 @@ protected:
                            STKScalarField* kappaFieldPtr);
     std::map<std::string, STKScalarField*> kappaSTKFieldPtrs_;
 
+    // Balanced-force CSF: the body force is F = sigma*kappa*grad(alpha) (NOT
+    // grad(sigma*kappa*alpha), which is curl-free and dynamically inert). This
+    // field holds alpha (gradient-capable, pressure's gradient operator) so its
+    // gradient is grad(alpha); sigmaKappaSTKFieldPtr_ holds sigma*kappa.
+    std::unique_ptr<nodeScalarField> capillaryPotentialFieldPtr_ = nullptr;
+    STKScalarField* sigmaKappaSTKFieldPtr_ = nullptr;
+
+    // store alpha (in capillaryPotential) and sigma*kappa for the CSF force
+    void computeCapillaryPotential_(const std::shared_ptr<domain> domain);
+
+    // Extend the interface curvature (kappa=-div nHat gives iso-contour 1/r in
+    // the bulk) via |grad alpha|-weighted normalized diffusion of w*kappa and
+    // w.
+    void extendCurvatureToBulk_(const std::shared_ptr<domain> domain,
+                                STKScalarField* kappaFieldPtr,
+                                const STKScalarField* alphaFieldPtr);
+    void smoothField_(const std::shared_ptr<domain> domain,
+                      STKScalarField* fieldPtr,
+                      label nIterations);
+    STKScalarField* curvNumSTKFieldPtr_ = nullptr;
+    STKScalarField* curvDenSTKFieldPtr_ = nullptr;
+    STKScalarField* curvAccumSTKFieldPtr_ = nullptr;
+    STKScalarField* curvCntSTKFieldPtr_ = nullptr;
+
     void initializeMassFlowRateInterior_(const std::shared_ptr<domain> domain,
                                          label iPhase) override;
 
@@ -258,6 +282,15 @@ protected:
 
     // Protected methods (iPhase is global to the simulation)
 
+    // Laplacian diffusion smoother (explicit Fo*dx^2*lap). Generic (field,rhs)
+    // core, reused by the iPhase VOF-smoothing wrappers and the curvature
+    // extension.
+    void computeSmoothRHS_(const std::shared_ptr<domain> domain,
+                           const STKScalarField* fieldPtr,
+                           STKScalarField* rhsFieldPtr);
+    void assembleSmoothingTerm_(const std::shared_ptr<domain> domain,
+                                STKScalarField* fieldPtr,
+                                const STKScalarField* rhsFieldPtr);
     void computeSmoothRHS_(const std::shared_ptr<domain> domain, label iPhase);
 
     void assembleSmoothingTerm_(const std::shared_ptr<domain> domain,

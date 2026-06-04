@@ -862,6 +862,34 @@ void controls::read(YAML::Node inputNode)
                                            ["fourier_number"]
                                                .template as<scalar>();
                     }
+
+                    if (advancedOptions["equation_controls"]
+                                       ["volume_fraction_smoothing"]
+                                       ["curvature_smoothing_method"])
+                    {
+                        const std::string method =
+                            advancedOptions["equation_controls"]
+                                           ["volume_fraction_smoothing"]
+                                           ["curvature_smoothing_method"]
+                                               .template as<std::string>();
+                        solver_.solverControl_.advancedOptions_
+                            .equationControls_.volumeFractionSmoothing_
+                            .curvatureSmootherLaplacian_ =
+                            (method == "laplacian");
+                    }
+
+                    if (advancedOptions["equation_controls"]
+                                       ["volume_fraction_smoothing"]
+                                       ["curvature_smoothing_iterations"])
+                    {
+                        solver_.solverControl_.advancedOptions_
+                            .equationControls_.volumeFractionSmoothing_
+                            .curvatureSmoothingIterations_ =
+                            advancedOptions["equation_controls"]
+                                           ["volume_fraction_smoothing"]
+                                           ["curvature_smoothing_iterations"]
+                                               .template as<label>();
+                    }
                 }
 
                 if (advancedOptions["equation_controls"]["mesh_motion"])
@@ -903,24 +931,6 @@ void controls::read(YAML::Node inputNode)
                         .template as<bool>();
             }
 
-            if (expertParameters["coupled_pressure_velocity"])
-            {
-                solver_.solverControl_.expertParameters_
-                    .coupledPressureVelocity_ =
-                    expertParameters["coupled_pressure_velocity"]
-                        .template as<bool>();
-
-                if (!solver_.solverControl_.expertParameters_
-                         .coupledPressureVelocity_ &&
-                    expertParameters["disable_momentum_predictor"])
-                {
-                    solver_.solverControl_.expertParameters_
-                        .disableMomentumPredictor_ =
-                        expertParameters["disable_momentum_predictor"]
-                            .template as<bool>();
-                }
-            }
-
             if (expertParameters["limit_gradients"])
             {
                 solver_.solverControl_.expertParameters_.limitGradients_ =
@@ -952,14 +962,6 @@ void controls::read(YAML::Node inputNode)
                 solver_.solverControl_.expertParameters_
                     .falseMassAccumulation_ =
                     expertParameters["false_mass_accumulation"]
-                        .template as<bool>();
-            }
-
-            if (expertParameters["coupled_volume_fraction"])
-            {
-                solver_.solverControl_.expertParameters_
-                    .coupledVolumeFraction_ =
-                    expertParameters["coupled_volume_fraction"]
                         .template as<bool>();
             }
 

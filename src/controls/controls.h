@@ -204,6 +204,11 @@ struct solverDictionary
                     bool smoothVolumeFraction_ = false;
                     label smoothingIterations_ = 3;
                     scalar fourierNumber_ = 0.25;
+                    // curvature-extension smoother: false = box_average
+                    // (default), true = laplacian (reuses the VOF diffusion
+                    // smoother)
+                    bool curvatureSmootherLaplacian_ = false;
+                    label curvatureSmoothingIterations_ = 40;
                 };
 
                 struct meshMotionDictionary
@@ -226,10 +231,8 @@ struct solverDictionary
 
         struct expertParametersDictionary
         {
-            bool coupledPressureVelocity_ = true;
             bool disableMomentumPredictor_ = false;
             bool printMomentumInterfaceImbalance_ = false;
-            bool coupledVolumeFraction_ = false;
             bool consistent_ = false;
             bool limitGradients_ = false;
             bool correctGradients_ = false;

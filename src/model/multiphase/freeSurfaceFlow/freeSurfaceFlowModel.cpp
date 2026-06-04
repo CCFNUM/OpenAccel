@@ -156,6 +156,71 @@ freeSurfaceFlowModel::freeSurfaceFlowModel(realm* realm)
                         stk::mesh::put_field_on_mesh(*kappaPtr, *part, nullptr);
                     }
                 }
+
+                // balanced-force capillary potential psi (gradient-capable,
+                // mirrors the pressure gradient operator/interpolation scheme)
+                if (!capillaryPotentialFieldPtr_)
+                {
+                    capillaryPotentialFieldPtr_ =
+                        std::make_unique<nodeScalarField>(&this->realmRef(),
+                                                          "capillary_potential",
+                                                          1,
+                                                          false,
+                                                          false,
+                                                          true,
+                                                          false);
+                    const auto& basic = controlsRef()
+                                            .solverRef()
+                                            .solverControl_.basicSettings_
+                                            .interpolationSchemeType_;
+                    capillaryPotentialFieldPtr_->setInterpolationScheme(
+                        basic.pressureInterpolationType_);
+                    capillaryPotentialFieldPtr_->setGradientInterpolationScheme(
+                        basic.pressureGradientInterpolationType_);
+                    // psi is rebuilt each step: full gradient, no relaxation
+                    // lag
+                    capillaryPotentialFieldPtr_->setGradURF(1.0);
+                }
+
+                // sigma*kappa at nodes: the CSF force is
+                // sigma*kappa*grad(alpha)
+                if (!sigmaKappaSTKFieldPtr_)
+                {
+                    sigmaKappaSTKFieldPtr_ = &metaData.declare_field<scalar>(
+                        stk::topology::NODE_RANK, "capillary_sigma_kappa");
+                    stk::io::set_field_output_type(*sigmaKappaSTKFieldPtr_,
+                                                   fieldType[1]);
+                }
+                for (const stk::mesh::Part* part : partVec)
+                {
+                    if (!sigmaKappaSTKFieldPtr_->defined_on(*part))
+                        stk::mesh::put_field_on_mesh(
+                            *sigmaKappaSTKFieldPtr_, *part, nullptr);
+                }
+
+                // scratch fields for the interface-weighted curvature extension
+                if (!curvNumSTKFieldPtr_)
+                {
+                    curvNumSTKFieldPtr_ = &metaData.declare_field<scalar>(
+                        stk::topology::NODE_RANK, "curv_num");
+                    curvDenSTKFieldPtr_ = &metaData.declare_field<scalar>(
+                        stk::topology::NODE_RANK, "curv_den");
+                    curvAccumSTKFieldPtr_ = &metaData.declare_field<scalar>(
+                        stk::topology::NODE_RANK, "curv_accum");
+                    curvCntSTKFieldPtr_ = &metaData.declare_field<scalar>(
+                        stk::topology::NODE_RANK, "curv_cnt");
+                }
+                for (const stk::mesh::Part* part : partVec)
+                {
+                    for (STKScalarField* fp : {curvNumSTKFieldPtr_,
+                                               curvDenSTKFieldPtr_,
+                                               curvAccumSTKFieldPtr_,
+                                               curvCntSTKFieldPtr_})
+                    {
+                        if (!fp->defined_on(*part))
+                            stk::mesh::put_field_on_mesh(*fp, *part, nullptr);
+                    }
+                }
             }
         }
     }
@@ -476,15 +541,38 @@ void freeSurfaceFlowModel::computeBodyForces(
     // Compute buoyancy, Lorentz, uniform body forces + redistribution
     flowModel::computeBodyForces(domain);
 
-    // Add CSF surface tension forces for each fluid pair
-    // (added after redistribution: surface tension is already interface-local)
+    // FOrig holds only non-ST forces (buoyancy); the CSF force enters as
+    // grad(psi), added to F during redistribution (consistent with gradP).
+    computeCapillaryPotential_(domain);
+
+    // Seed F with the non-ST body forces; grad(psi) is added in redistribution
+    ops::copy<scalar>(FOriginalSTKFieldPtr_,
+                      FSTKFieldPtr_,
+                      domain->zonePtr()->interiorParts());
+}
+
+void freeSurfaceFlowModel::computeCapillaryPotential_(
+    const std::shared_ptr<domain> domain)
+{
+    if (!capillaryPotentialFieldPtr_)
+        return;
 
     auto& mesh = this->meshRef();
     stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    // get interior parts
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+
+    // capillaryPotential holds alpha (its gradient = grad(alpha)); sigmaKappa
+    // holds sigma*kappa. The CSF force is sigma*kappa*grad(alpha).
+    STKScalarField* psiSTKFieldPtr = capillaryPotentialFieldPtr_->stkFieldPtr();
+    STKScalarField* skSTKFieldPtr = sigmaKappaSTKFieldPtr_;
+    ops::zero(psiSTKFieldPtr, partVec);
+    ops::zero(skSTKFieldPtr, partVec);
+
+    const bool smooth = controlsRef()
+                            .solverRef()
+                            .solverControl_.advancedOptions_.equationControls_
+                            .volumeFractionSmoothing_.smoothVolumeFraction_;
 
     for (const auto& fpm : domain->fluidPairModels_)
     {
@@ -492,187 +580,256 @@ void freeSurfaceFlowModel::computeBodyForces(
             surfaceTensionModelOption::continuumSurfaceForce)
             continue;
 
-        // Use materialA as the phase for curvature/gradient
         const label phaseIndex = fpm.globalIndexA_;
+        const scalar sigma = fpm.surfaceTension_.coefficient_;
 
-        // Retrieve smoothing boolean from user input
-        const bool smooth =
-            controlsRef()
-                .solverRef()
-                .solverControl_.advancedOptions_.equationControls_
-                .volumeFractionSmoothing_.smoothVolumeFraction_;
-
-        // get geometry
-        const auto* coordsSTKFieldPtr = metaData.get_field<scalar>(
-            stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
-
-        const auto* volSTKFieldPtr = metaData.get_field<scalar>(
-            stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
-
-        // Get alpha field (smoothed or raw)
         const STKScalarField* alphaSTKFieldPtr =
             smooth ? this->alphaSmoothRef(phaseIndex).stkFieldPtr()
                    : this->alphaRef(phaseIndex).stkFieldPtr();
 
-        const scalar sigma = fpm.surfaceTension_.coefficient_;
-
-        // Look up the per-pair curvature field
         const std::string kappaName =
             "curvature." + fpm.materialA_ + "_" + fpm.materialB_;
         auto it = kappaSTKFieldPtrs_.find(kappaName);
         STK_ThrowAssert(it != kappaSTKFieldPtrs_.end());
         STKScalarField* kappaFieldPtr = it->second;
 
-        // Compute curvature for this pair
+        // curvature, then a LIGHT |grad(alpha)|-weighted band denoise (the
+        // force sigma*kappa*grad(alpha) is band-localized, so no bulk extension
+        // is needed; heavy smoothing would wash kappa toward uniform -> inert
+        // force)
         computeCurvature_(domain, phaseIndex, kappaFieldPtr);
+        extendCurvatureToBulk_(
+            domain, kappaFieldPtr, this->alphaRef(phaseIndex).stkFieldPtr());
 
-        // workspace
-        std::vector<scalar> ws_coordinates;
-        std::vector<scalar> ws_alpha;
-        std::vector<scalar> ws_kappa;
-        std::vector<scalar> ws_dualVolume;
-        std::vector<scalar> ws_scVolume;
-        std::vector<scalar> ws_dndx;
-        std::vector<scalar> ws_deriv;
-        std::vector<scalar> ws_det_j;
-        std::vector<scalar> ws_shape_function;
-
-        // ip values
-        std::vector<scalar> gradAlphaIp(SPATIAL_DIM);
-
-        // pointers for fast access
-        scalar* p_gradAlphaIp = &gradAlphaIp[0];
-
-        stk::mesh::Selector selAllElements =
+        stk::mesh::Selector selNodes =
             metaData.universal_part() & stk::mesh::selectUnion(partVec);
-
-        stk::mesh::BucketVector const& elementBuckets =
-            bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
-
-        for (auto ib = elementBuckets.begin(); ib != elementBuckets.end(); ++ib)
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selNodes);
+        for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
         {
-            stk::mesh::Bucket& elementBucket = **ib;
-            const auto nElemPerBucket = elementBucket.size();
-
-            // extract master element SCV
-            MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
-                elementBucket.topology());
-            const label nodesPerElement = meSCV->nodesPerElement_;
-            const label numScvIp = meSCV->numIntPoints_;
-            const label* ipNodeMap = meSCV->ipNodeMap();
-
-            // resize workspaces
-            ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
-            ws_alpha.resize(nodesPerElement);
-            ws_kappa.resize(nodesPerElement);
-            ws_dualVolume.resize(nodesPerElement);
-            ws_scVolume.resize(numScvIp);
-            ws_dndx.resize(SPATIAL_DIM * numScvIp * nodesPerElement);
-            ws_deriv.resize(SPATIAL_DIM * numScvIp * nodesPerElement);
-            ws_det_j.resize(numScvIp);
-            ws_shape_function.resize(numScvIp * nodesPerElement);
-
-            // get shape functions at SCV integration points
-            meSCV->shape_fcn(&ws_shape_function[0]);
-
-            for (stk::mesh::Bucket::size_type k = 0; k < nElemPerBucket; ++k)
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const auto nNodes = nodeBucket.size();
+            const scalar* alphab =
+                stk::mesh::field_data(*alphaSTKFieldPtr, nodeBucket);
+            const scalar* kappab =
+                stk::mesh::field_data(*kappaFieldPtr, nodeBucket);
+            scalar* psib = stk::mesh::field_data(*psiSTKFieldPtr, nodeBucket);
+            scalar* skb = stk::mesh::field_data(*skSTKFieldPtr, nodeBucket);
+            for (stk::mesh::Bucket::size_type in = 0; in < nNodes; ++in)
             {
-                stk::mesh::Entity const* nodeRels =
-                    elementBucket.begin_nodes(k);
-                const label numNodes = elementBucket.num_nodes(k);
-                STK_ThrowAssert(numNodes == nodesPerElement);
-
-                // gather nodal data
-                for (label ni = 0; ni < nodesPerElement; ++ni)
-                {
-                    stk::mesh::Entity node = nodeRels[ni];
-
-                    const scalar* coords =
-                        stk::mesh::field_data(*coordsSTKFieldPtr, node);
-                    ws_alpha[ni] =
-                        *stk::mesh::field_data(*alphaSTKFieldPtr, node);
-                    ws_kappa[ni] = *stk::mesh::field_data(*kappaFieldPtr, node);
-                    ws_dualVolume[ni] =
-                        *stk::mesh::field_data(*volSTKFieldPtr, node);
-
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        ws_coordinates[ni * SPATIAL_DIM + d] = coords[d];
-                    }
-                }
-
-                // compute SCV volumes and grad operator
-                scalar scv_error = 0.0;
-                meSCV->determinant(
-                    1, &ws_coordinates[0], &ws_scVolume[0], &scv_error);
-                meSCV->grad_op(1,
-                               &ws_coordinates[0],
-                               &ws_dndx[0],
-                               &ws_deriv[0],
-                               &ws_det_j[0],
-                               &scv_error);
-
-                // loop over SCV integration points
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    const label nn = ipNodeMap[ip];
-
-                    // interpolate kappa to ip using shape functions
-                    scalar kappaIp = 0.0;
-                    for (label ni = 0; ni < nodesPerElement; ++ni)
-                    {
-                        kappaIp +=
-                            ws_shape_function[ip * nodesPerElement + ni] *
-                            ws_kappa[ni];
-                    }
-
-                    // zero-out
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        p_gradAlphaIp[d] = 0;
-                    }
-
-                    // compute grad(alpha) at ip using dndx
-                    for (label ni = 0; ni < nodesPerElement; ++ni)
-                    {
-                        const label offsetDnDx =
-                            SPATIAL_DIM * nodesPerElement * ip +
-                            ni * SPATIAL_DIM;
-                        for (label d = 0; d < SPATIAL_DIM; ++d)
-                        {
-                            p_gradAlphaIp[d] +=
-                                ws_dndx[offsetDnDx + d] * ws_alpha[ni];
-                        }
-                    }
-
-                    // nearest node
-                    stk::mesh::Entity nearestNode = nodeRels[nn];
-                    scalar* F_node = stk::mesh::field_data(
-                        *FOriginalSTKFieldPtr_, nearestNode);
-
-                    // F_st = sigma * kappa * grad(alpha) * V_scv / V_dual
-                    const scalar dualVol = ws_dualVolume[nn];
-                    const scalar weight = ws_scVolume[ip] / dualVol;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        F_node[d] +=
-                            weight * sigma * kappaIp * p_gradAlphaIp[d];
-                    }
-                }
+                psib[in] = alphab[in];
+                skb[in] += sigma * kappab[in];
             }
         }
     }
 
-    // Sync F from owners: This is needed because computeBodyForces accumulates
-    // CSF surface tension via element-to-node scatter, and ghost nodes may not
-    // have received contributions from all surrounding elements.
+    // alpha is pointwise; make ghosts consistent then take grad(alpha) with the
+    // pressure's gradient operator. sigma*kappa ghosts also synced.
+    capillaryPotentialFieldPtr_->synchronizeGhostedEntities(domain->index());
+    capillaryPotentialFieldPtr_->updateGradientField(domain->index());
     if (messager::parallel())
+        stk::mesh::communicate_field_data(bulkData, {skSTKFieldPtr});
+}
+
+void freeSurfaceFlowModel::extendCurvatureToBulk_(
+    const std::shared_ptr<domain> domain,
+    STKScalarField* kappaFieldPtr,
+    const STKScalarField* alphaFieldPtr)
+{
+    auto& mesh = this->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+
+    const auto& vofSmooth = controlsRef()
+                                .solverRef()
+                                .solverControl_.advancedOptions_
+                                .equationControls_.volumeFractionSmoothing_;
+    const label nIter = vofSmooth.curvatureSmoothingIterations_;
+    const bool laplacian = vofSmooth.curvatureSmootherLaplacian_;
+
+    stk::mesh::Selector selNodes =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selNodes);
+
+    // interface weight w = |grad(alpha)| -> curvDen, then N = w*kappa ->
+    // curvNum
+    ops::zero(curvDenSTKFieldPtr_, partVec);
     {
-        stk::mesh::communicate_field_data(bulkData, {FOriginalSTKFieldPtr_});
+        const auto* coordsPtr = metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+        std::vector<scalar> ws_coords, ws_a, ws_dndx, ws_deriv, ws_detj, ws_scv;
+        std::vector<scalar> gIp(SPATIAL_DIM);
+        stk::mesh::Selector selE =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
+        stk::mesh::BucketVector const& eb =
+            bulkData.get_buckets(stk::topology::ELEMENT_RANK, selE);
+        for (auto ib = eb.begin(); ib != eb.end(); ++ib)
+        {
+            stk::mesh::Bucket& bk = **ib;
+            MasterElement* meSCV =
+                MasterElementRepo::get_volume_master_element(bk.topology());
+            const label npe = meSCV->nodesPerElement_;
+            const label nip = meSCV->numIntPoints_;
+            const label* ipNodeMap = meSCV->ipNodeMap();
+            ws_coords.resize(npe * SPATIAL_DIM);
+            ws_a.resize(npe);
+            ws_dndx.resize(SPATIAL_DIM * nip * npe);
+            ws_deriv.resize(SPATIAL_DIM * nip * npe);
+            ws_detj.resize(nip);
+            ws_scv.resize(nip);
+            for (stk::mesh::Bucket::size_type k = 0; k < bk.size(); ++k)
+            {
+                stk::mesh::Entity const* nodes = bk.begin_nodes(k);
+                for (label ni = 0; ni < npe; ++ni)
+                {
+                    const scalar* c =
+                        stk::mesh::field_data(*coordsPtr, nodes[ni]);
+                    ws_a[ni] =
+                        *stk::mesh::field_data(*alphaFieldPtr, nodes[ni]);
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        ws_coords[ni * SPATIAL_DIM + d] = c[d];
+                }
+                scalar err = 0.0;
+                meSCV->determinant(1, &ws_coords[0], &ws_scv[0], &err);
+                meSCV->grad_op(1,
+                               &ws_coords[0],
+                               &ws_dndx[0],
+                               &ws_deriv[0],
+                               &ws_detj[0],
+                               &err);
+                for (label ip = 0; ip < nip; ++ip)
+                {
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        gIp[d] = 0.0;
+                    for (label ni = 0; ni < npe; ++ni)
+                    {
+                        const label off =
+                            SPATIAL_DIM * npe * ip + ni * SPATIAL_DIM;
+                        for (label d = 0; d < SPATIAL_DIM; ++d)
+                            gIp[d] += ws_dndx[off + d] * ws_a[ni];
+                    }
+                    scalar gmag = 0.0;
+                    for (label d = 0; d < SPATIAL_DIM; ++d)
+                        gmag += gIp[d] * gIp[d];
+                    gmag = std::sqrt(gmag);
+                    *stk::mesh::field_data(*curvDenSTKFieldPtr_,
+                                           nodes[ipNodeMap[ip]]) +=
+                        gmag * ws_scv[ip];
+                }
+            }
+        }
+    }
+    if (messager::parallel())
+        stk::mesh::communicate_field_data(bulkData, {curvDenSTKFieldPtr_});
+
+    for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
+    {
+        stk::mesh::Bucket& bk = **ib;
+        const auto n = bk.size();
+        const scalar* kap = stk::mesh::field_data(*kappaFieldPtr, bk);
+        const scalar* den = stk::mesh::field_data(*curvDenSTKFieldPtr_, bk);
+        scalar* num = stk::mesh::field_data(*curvNumSTKFieldPtr_, bk);
+        for (stk::mesh::Bucket::size_type in = 0; in < n; ++in)
+            num[in] = den[in] * kap[in];
     }
 
-    // Copy FOrig values to F
-    ops::copy<scalar>(FOriginalSTKFieldPtr_, FSTKFieldPtr_, partVec);
+    // normalized convolution: smooth N and D, then kappa_ext = N / D. Two
+    // smoothers (curvAccum is the Laplacian rhs scratch / box-average sum).
+    if (laplacian)
+    {
+        for (label it = 0; it < nIter; ++it)
+        {
+            computeSmoothRHS_(
+                domain, curvNumSTKFieldPtr_, curvAccumSTKFieldPtr_);
+            assembleSmoothingTerm_(
+                domain, curvNumSTKFieldPtr_, curvAccumSTKFieldPtr_);
+            computeSmoothRHS_(
+                domain, curvDenSTKFieldPtr_, curvAccumSTKFieldPtr_);
+            assembleSmoothingTerm_(
+                domain, curvDenSTKFieldPtr_, curvAccumSTKFieldPtr_);
+        }
+    }
+    else
+    {
+        smoothField_(domain, curvNumSTKFieldPtr_, nIter);
+        smoothField_(domain, curvDenSTKFieldPtr_, nIter);
+    }
+
+    for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
+    {
+        stk::mesh::Bucket& bk = **ib;
+        const auto n = bk.size();
+        const scalar* num = stk::mesh::field_data(*curvNumSTKFieldPtr_, bk);
+        const scalar* den = stk::mesh::field_data(*curvDenSTKFieldPtr_, bk);
+        scalar* kap = stk::mesh::field_data(*kappaFieldPtr, bk);
+        for (stk::mesh::Bucket::size_type in = 0; in < n; ++in)
+            kap[in] = num[in] / (den[in] + SMALL);
+    }
+    if (messager::parallel())
+        stk::mesh::communicate_field_data(bulkData, {kappaFieldPtr});
+}
+
+void freeSurfaceFlowModel::smoothField_(const std::shared_ptr<domain> domain,
+                                        STKScalarField* fieldPtr,
+                                        label nIterations)
+{
+    // Jacobi box-average over element neighbours (owned+aura loop is complete;
+    // ghost sync per iteration refreshes the aura)
+    auto& mesh = this->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+
+    stk::mesh::Selector sel =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+
+    for (label it = 0; it < nIterations; ++it)
+    {
+        ops::zero(curvAccumSTKFieldPtr_, partVec);
+        ops::zero(curvCntSTKFieldPtr_, partVec);
+
+        stk::mesh::BucketVector const& elementBuckets =
+            bulkData.get_buckets(stk::topology::ELEMENT_RANK, sel);
+        for (auto ib = elementBuckets.begin(); ib != elementBuckets.end(); ++ib)
+        {
+            stk::mesh::Bucket& bk = **ib;
+            const auto ne = bk.size();
+            for (stk::mesh::Bucket::size_type k = 0; k < ne; ++k)
+            {
+                stk::mesh::Entity const* nodes = bk.begin_nodes(k);
+                const label nn = bk.num_nodes(k);
+                scalar elemSum = 0.0;
+                for (label i = 0; i < nn; ++i)
+                    elemSum += *stk::mesh::field_data(*fieldPtr, nodes[i]);
+                for (label i = 0; i < nn; ++i)
+                {
+                    *stk::mesh::field_data(*curvAccumSTKFieldPtr_, nodes[i]) +=
+                        elemSum;
+                    *stk::mesh::field_data(*curvCntSTKFieldPtr_, nodes[i]) +=
+                        static_cast<scalar>(nn);
+                }
+            }
+        }
+
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, sel);
+        for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
+        {
+            stk::mesh::Bucket& bk = **ib;
+            const auto n = bk.size();
+            scalar* f = stk::mesh::field_data(*fieldPtr, bk);
+            const scalar* acc =
+                stk::mesh::field_data(*curvAccumSTKFieldPtr_, bk);
+            const scalar* cnt = stk::mesh::field_data(*curvCntSTKFieldPtr_, bk);
+            for (stk::mesh::Bucket::size_type in = 0; in < n; ++in)
+                if (cnt[in] > 0.0)
+                    f[in] = acc[in] / cnt[in];
+        }
+        if (messager::parallel())
+            stk::mesh::communicate_field_data(bulkData, {fieldPtr});
+    }
 }
 
 void freeSurfaceFlowModel::redistributeBodyForces(
@@ -908,6 +1065,38 @@ void freeSurfaceFlowModel::redistributeBodyForces(
             }
         }
     }
+
+    // F += sigma*kappa*grad(alpha): the true CSF force (retains the rotational
+    // part that resists deformation). For const kappa this equals grad(psi_old)
+    // so the static balance/no-currents is preserved.
+    if (capillaryPotentialFieldPtr_ && sigmaKappaSTKFieldPtr_)
+    {
+        auto& mesh = this->meshRef();
+        stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+        stk::mesh::MetaData& metaData = mesh.metaDataRef();
+        const stk::mesh::PartVector& partVec =
+            domain->zonePtr()->interiorParts();
+        const STKScalarField* gradAlphaSTKFieldPtr =
+            capillaryPotentialFieldPtr_->gradRef().stkFieldPtr();
+        stk::mesh::Selector selNodes =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selNodes);
+        for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const auto nNodes = nodeBucket.size();
+            const scalar* gradAlphab =
+                stk::mesh::field_data(*gradAlphaSTKFieldPtr, nodeBucket);
+            const scalar* skb =
+                stk::mesh::field_data(*sigmaKappaSTKFieldPtr_, nodeBucket);
+            scalar* Fb = stk::mesh::field_data(*FSTKFieldPtr_, nodeBucket);
+            for (stk::mesh::Bucket::size_type in = 0; in < nNodes; ++in)
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                    Fb[SPATIAL_DIM * in + d] +=
+                        skb[in] * gradAlphab[SPATIAL_DIM * in + d];
+        }
+    }
 }
 
 void freeSurfaceFlowModel::transformMassFlowRateToRelative(
@@ -962,6 +1151,13 @@ void freeSurfaceFlowModel::setupVolumeFraction(
 
     // enable interface normal
     nHatRef(iPhase).setZone(domain->index());
+
+    // enable the balanced-force capillary potential on this zone (once)
+    if (capillaryPotentialFieldPtr_ &&
+        capillaryPotentialFieldPtr_->isZoneUnset(domain->index()))
+    {
+        capillaryPotentialFieldPtr_->setZone(domain->index());
+    }
 
     // also setup alpha smooth and rhs if required
     if (controlsRef()
@@ -2014,7 +2210,8 @@ void freeSurfaceFlowModel::updateInterfaceNormal(
 
 void freeSurfaceFlowModel::computeSmoothRHS_(
     const std::shared_ptr<domain> domain,
-    label iPhase)
+    const STKScalarField* fieldPtr,
+    STKScalarField* rhsFieldPtr)
 {
     auto& mesh = this->meshRef();
     stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
@@ -2031,8 +2228,7 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
     scalar l_dxMin = 1.0e16;
     scalar g_dxMin = 1.0e16;
 
-    ops::zero(this->rhsSmoothRef(iPhase).stkFieldPtr(),
-              domain->zonePtr()->interiorParts());
+    ops::zero(rhsFieldPtr, domain->zonePtr()->interiorParts());
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -2051,12 +2247,9 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
 
-    // get fields for a given iPhase
-    const STKScalarField* alphaSmoothedSTKFieldPtr =
-        this->alphaSmoothRef(iPhase).stkFieldPtr();
-
-    STKScalarField* rhsSmoothSTKFieldPtr =
-        this->rhsSmoothRef(iPhase).stkFieldPtr();
+    // the field being smoothed and its diffusion-RHS accumulator
+    const STKScalarField* alphaSmoothedSTKFieldPtr = fieldPtr;
+    STKScalarField* rhsSmoothSTKFieldPtr = rhsFieldPtr;
 
     for (stk::mesh::BucketVector::const_iterator ib = elementBuckets.begin();
          ib < elementBuckets.end();
@@ -2174,7 +2367,8 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
     }
 
     // synchronize ghosted entities
-    this->rhsSmoothRef(iPhase).synchronizeGhostedEntities(domain->index());
+    if (messager::parallel())
+        stk::mesh::communicate_field_data(bulkData, {rhsFieldPtr});
 
     // find global min dxmin
     stk::all_reduce_min(MPI_COMM_WORLD, &l_dxMin, &g_dxMin, 1);
@@ -2183,9 +2377,19 @@ void freeSurfaceFlowModel::computeSmoothRHS_(
     dxMin_ = std::min(dxMin_, g_dxMin);
 }
 
-void freeSurfaceFlowModel::assembleSmoothingTerm_(
+void freeSurfaceFlowModel::computeSmoothRHS_(
     const std::shared_ptr<domain> domain,
     label iPhase)
+{
+    computeSmoothRHS_(domain,
+                      this->alphaSmoothRef(iPhase).stkFieldPtr(),
+                      this->rhsSmoothRef(iPhase).stkFieldPtr());
+}
+
+void freeSurfaceFlowModel::assembleSmoothingTerm_(
+    const std::shared_ptr<domain> domain,
+    STKScalarField* fieldPtr,
+    const STKScalarField* rhsFieldPtr)
 {
     auto& mesh = this->meshRef();
     stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
@@ -2194,12 +2398,9 @@ void freeSurfaceFlowModel::assembleSmoothingTerm_(
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
 
-    // get fields for a given iPhase
-    const STKScalarField* rhsSmoothSTKFieldPtr =
-        this->rhsSmoothRef(iPhase).stkFieldPtr();
-
-    STKScalarField* alphaSmoothSTKFieldPtr =
-        this->alphaSmoothRef(iPhase).stkFieldPtr();
+    // explicit update: field += Fo*dx^2*lap(field)
+    const STKScalarField* rhsSmoothSTKFieldPtr = rhsFieldPtr;
+    STKScalarField* alphaSmoothSTKFieldPtr = fieldPtr;
 
     // copy vof value to vof_smooth in the current domain
     stk::mesh::Selector selAllNodes =
@@ -2224,6 +2425,15 @@ void freeSurfaceFlowModel::assembleSmoothingTerm_(
                 Fo_ * dxMin_ * dxMin_ * smoothedRHS[iNode] + vof_smooth[iNode];
         }
     }
+}
+
+void freeSurfaceFlowModel::assembleSmoothingTerm_(
+    const std::shared_ptr<domain> domain,
+    label iPhase)
+{
+    assembleSmoothingTerm_(domain,
+                           this->alphaSmoothRef(iPhase).stkFieldPtr(),
+                           this->rhsSmoothRef(iPhase).stkFieldPtr());
 }
 
 void freeSurfaceFlowModel::applyVOFSmoothing(
@@ -5787,6 +5997,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     std::vector<scalar> ws_gradRho;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_capPot;
+    std::vector<scalar> ws_sk;
 
     // geometry related to populate
     std::vector<scalar> ws_scs_areav;
@@ -5837,6 +6049,15 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
 
+    // balanced-force ST: FOrigIp = B_el(FOrig) + compact grad(psi), as in the
+    // pressure assembler, so the advecting flux carries the same CSF balance
+    const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_potential");
+    const auto* sigKappaSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_sigma_kappa");
+    const bool balancedST =
+        (capPotSTKFieldPtr != nullptr && sigKappaSTKFieldPtr != nullptr);
+
     // Geometric fields
     const auto& coordinatesRef = *metaData.get_field<scalar>(
         stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
@@ -5885,6 +6106,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
         ws_gradRho.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
+        ws_capPot.resize(nodesPerElement);
+        ws_sk.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
         ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
@@ -5903,6 +6126,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
         scalar* p_gradRho = &ws_gradRho[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_capPot = &ws_capPot[0];
+        scalar* p_sk = &ws_sk[0];
         scalar* p_scs_areav = &ws_scs_areav[0];
         scalar* p_dndx = &ws_dndx[0];
         scalar* p_velocity_shape_function = &ws_velocity_shape_function[0];
@@ -5976,6 +6201,13 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                 {
                     p_F[offSet + j] = F[j];
                     p_FOrig[offSet + j] = FOrig[j];
+                }
+                if (balancedST)
+                {
+                    p_capPot[ni] =
+                        *stk::mesh::field_data(*capPotSTKFieldPtr, node);
+                    p_sk[ni] =
+                        *stk::mesh::field_data(*sigKappaSTKFieldPtr, node);
                 }
             }
 
@@ -6106,6 +6338,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                 }
 
                 scalar rhoIp = 0.0;
+                scalar skIp = 0.0;
+                scalar gradAlphaIp[SPATIAL_DIM] = {};
                 for (label ic = 0; ic < nodesPerElement; ++ic)
                 {
                     const scalar r_vel =
@@ -6115,6 +6349,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
 
                     // use velocity shape functions
                     rhoIp += r_vel * p_rho[ic];
+                    if (balancedST)
+                        skIp += r_vel * p_sk[ic];
 
                     const label offSetDnDx =
                         SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
@@ -6127,11 +6363,21 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                         // use pressure shape function derivative
                         p_dpdxIp[j] += p_dndx[offSetDnDx + j] * p_p[ic];
 
+                        // compact grad(alpha) (same dndx as grad p)
+                        if (balancedST)
+                            gradAlphaIp[j] +=
+                                p_dndx[offSetDnDx + j] * p_capPot[ic];
+
                         // use coordinates shape functions
                         p_coordIp[j] +=
                             r_coord * p_coordinates[SPATIAL_DIM * ic + j];
                     }
                 }
+
+                // balanced CSF: FOrigIp += sigma*kappa_ip * compact grad(alpha)
+                if (balancedST)
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        p_FOrigIp[j] += skIp * gradAlphaIp[j];
 
                 // calculate a local relative flow rate
                 scalar tUDotRel = mDot[ip] / rhoIp;
@@ -6847,6 +7093,8 @@ void freeSurfaceFlowModel::
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
     std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_capPot;
+    std::vector<scalar> ws_sk;
     std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
@@ -6874,6 +7122,13 @@ void freeSurfaceFlowModel::
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_potential");
+    const auto* sigKappaSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_sigma_kappa");
+    const bool balancedST =
+        (capPotSTKFieldPtr != nullptr && sigKappaSTKFieldPtr != nullptr);
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -6927,6 +7182,8 @@ void freeSurfaceFlowModel::
         // (exposed face and element)
         ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
         ws_p.resize(nodesPerElement);
+        ws_capPot.resize(nodesPerElement);
+        ws_sk.resize(nodesPerElement);
         ws_U.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
         ws_du.resize(nodesPerSide * SPATIAL_DIM);
@@ -6944,6 +7201,8 @@ void freeSurfaceFlowModel::
         // pointers
         scalar* p_coordinates = &ws_coordinates[0];
         scalar* p_p = &ws_p[0];
+        scalar* p_capPot = &ws_capPot[0];
+        scalar* p_sk = &ws_sk[0];
         scalar* p_U = &ws_U[0];
         scalar* p_Gpdx = &ws_Gpdx[0];
         scalar* p_du = &ws_du[0];
@@ -7011,6 +7270,13 @@ void freeSurfaceFlowModel::
 
                 // gather scalars
                 p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+                if (balancedST)
+                {
+                    p_capPot[ni] =
+                        *stk::mesh::field_data(*capPotSTKFieldPtr, node);
+                    p_sk[ni] =
+                        *stk::mesh::field_data(*sigKappaSTKFieldPtr, node);
+                }
 
                 // gather vectors
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
@@ -7199,6 +7465,7 @@ void freeSurfaceFlowModel::
 
                 // interpolate to bip
                 scalar rhoBip = 0;
+                scalar skBip = 0.0;
                 const label offSetSF_face = ip * nodesPerSide;
                 for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
@@ -7208,6 +7475,8 @@ void freeSurfaceFlowModel::
                         p_coordinate_face_shape_function[offSetSF_face + ic];
 
                     rhoBip += r * p_rho[ic];
+                    if (balancedST)
+                        skBip += r * p_sk[inn];
 
                     const label icNdim = ic * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -7228,6 +7497,10 @@ void freeSurfaceFlowModel::
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         p_dpdxBip[j] += p_dndx[offSetDnDx + j] * pIc;
+                        // balanced CSF: sigma*kappa_ip * compact grad(alpha)
+                        if (balancedST)
+                            p_FOrigBip[j] +=
+                                skBip * p_dndx[offSetDnDx + j] * p_capPot[ic];
                     }
                 }
 
@@ -7303,6 +7576,8 @@ void freeSurfaceFlowModel::
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
     std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_capPot;
+    std::vector<scalar> ws_sk;
     std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
@@ -7332,6 +7607,13 @@ void freeSurfaceFlowModel::
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_potential");
+    const auto* sigKappaSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_sigma_kappa");
+    const bool balancedST =
+        (capPotSTKFieldPtr != nullptr && sigKappaSTKFieldPtr != nullptr);
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -7384,6 +7666,8 @@ void freeSurfaceFlowModel::
         // (exposed face and element)
         ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
         ws_p.resize(nodesPerElement);
+        ws_capPot.resize(nodesPerElement);
+        ws_sk.resize(nodesPerElement);
         ws_U.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
         ws_du.resize(nodesPerSide * SPATIAL_DIM);
@@ -7401,6 +7685,8 @@ void freeSurfaceFlowModel::
         // pointers
         scalar* p_coordinates = &ws_coordinates[0];
         scalar* p_p = &ws_p[0];
+        scalar* p_capPot = &ws_capPot[0];
+        scalar* p_sk = &ws_sk[0];
         scalar* p_U = &ws_U[0];
         scalar* p_Gpdx = &ws_Gpdx[0];
         scalar* p_du = &ws_du[0];
@@ -7472,6 +7758,13 @@ void freeSurfaceFlowModel::
 
                 // gather scalars
                 p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+                if (balancedST)
+                {
+                    p_capPot[ni] =
+                        *stk::mesh::field_data(*capPotSTKFieldPtr, node);
+                    p_sk[ni] =
+                        *stk::mesh::field_data(*sigKappaSTKFieldPtr, node);
+                }
 
                 // gather vectors
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
@@ -7664,6 +7957,7 @@ void freeSurfaceFlowModel::
 
                 // interpolate to bip
                 scalar rhoBip = 0;
+                scalar skBip = 0.0;
                 const label offSetSF_face = ip * nodesPerSide;
                 for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
@@ -7694,6 +7988,10 @@ void freeSurfaceFlowModel::
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         p_dpdxBip[j] += p_dndx[offSetDnDx + j] * pIc;
+                        // balanced CSF: sigma*kappa_ip * compact grad(alpha)
+                        if (balancedST)
+                            p_FOrigBip[j] +=
+                                skBip * p_dndx[offSetDnDx + j] * p_capPot[ic];
                     }
                 }
 
@@ -7768,6 +8066,8 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
     std::vector<scalar> ws_FOrig_elem;
+    std::vector<scalar> ws_capPot;
+    std::vector<scalar> ws_sk;
     std::vector<scalar> B_el(SPATIAL_DIM);
 
     // master element
@@ -7793,6 +8093,13 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_potential");
+    const auto* sigKappaSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_sigma_kappa");
+    const bool balancedST =
+        (capPotSTKFieldPtr != nullptr && sigKappaSTKFieldPtr != nullptr);
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -7845,6 +8152,8 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         // (exposed face and element)
         ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
         ws_p.resize(nodesPerElement);
+        ws_capPot.resize(nodesPerElement);
+        ws_sk.resize(nodesPerElement);
         ws_U.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx.resize(nodesPerSide * SPATIAL_DIM);
         ws_du.resize(nodesPerSide * SPATIAL_DIM);
@@ -7862,6 +8171,8 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         // pointers
         scalar* p_coordinates = &ws_coordinates[0];
         scalar* p_p = &ws_p[0];
+        scalar* p_capPot = &ws_capPot[0];
+        scalar* p_sk = &ws_sk[0];
         scalar* p_U = &ws_U[0];
         scalar* p_Gpdx = &ws_Gpdx[0];
         scalar* p_du = &ws_du[0];
@@ -7931,6 +8242,13 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
 
                 // gather scalars
                 p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+                if (balancedST)
+                {
+                    p_capPot[ni] =
+                        *stk::mesh::field_data(*capPotSTKFieldPtr, node);
+                    p_sk[ni] =
+                        *stk::mesh::field_data(*sigKappaSTKFieldPtr, node);
+                }
 
                 // gather vectors
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
@@ -8114,6 +8432,7 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
 
                 // interpolate to bip
                 scalar rhoBip = 0;
+                scalar skBip = 0.0;
                 const label offSetSF_face = ip * nodesPerSide;
                 for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
@@ -8123,6 +8442,8 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                         p_coordinate_face_shape_function[offSetSF_face + ic];
 
                     rhoBip += r * p_rho[ic];
+                    if (balancedST)
+                        skBip += r * p_sk[inn];
 
                     const label icNdim = ic * SPATIAL_DIM;
                     for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -8143,6 +8464,10 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         p_dpdxBip[j] += p_dndx[offSetDnDx + j] * pIc;
+                        // balanced CSF: sigma*kappa_ip * compact grad(alpha)
+                        if (balancedST)
+                            p_FOrigBip[j] +=
+                                skBip * p_dndx[offSetDnDx + j] * p_capPot[ic];
                     }
                 }
 

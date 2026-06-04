@@ -65,6 +65,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_duRhs;
     std::vector<scalar> ws_F;
     std::vector<scalar> ws_FOrig;
+    std::vector<scalar> ws_capPot;
+    std::vector<scalar> ws_sk;
     std::vector<scalar> ws_scv_volume;
     std::vector<scalar> ws_scv_weight;
 
@@ -142,6 +144,17 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
 
+    // Balanced-force ST: FOrigIp = B_el(FOrig) + sigma*kappa_ip*compact
+    // grad(alpha) (same dndx as grad p). capillary_potential holds alpha,
+    // capillary_sigma_kappa holds sigma*kappa. Null (fall back to B_el alone)
+    // without surface tension.
+    const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_potential");
+    const auto* sigKappaSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_sigma_kappa");
+    const bool balancedST =
+        (capPotSTKFieldPtr != nullptr && sigKappaSTKFieldPtr != nullptr);
+
     // Get geometric fields
     const auto& coordinatesRef = *metaData.get_field<scalar>(
         stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
@@ -208,6 +221,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         ws_duRhs.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
+        ws_capPot.resize(nodesPerElement);
+        ws_sk.resize(nodesPerElement);
         ws_scv_volume.resize(numScvIp);
         ws_scv_weight.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
@@ -234,6 +249,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         scalar* p_duRhs = &ws_duRhs[0];
         scalar* p_F = &ws_F[0];
         scalar* p_FOrig = &ws_FOrig[0];
+        scalar* p_capPot = &ws_capPot[0];
+        scalar* p_sk = &ws_sk[0];
         scalar* p_scs_areav = &ws_scs_areav[0];
         scalar* p_dndx = &ws_dndx[0];
         scalar* p_velocity_shape_function = &ws_velocity_shape_function[0];
@@ -343,6 +360,15 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     p_F[niNdim + j] = F[j];
                     p_FOrig[niNdim + j] = FOrig[j];
                 }
+
+                // alpha (for compact grad alpha) and sigma*kappa
+                if (balancedST)
+                {
+                    p_capPot[ni] =
+                        *stk::mesh::field_data(*capPotSTKFieldPtr, node);
+                    p_sk[ni] =
+                        *stk::mesh::field_data(*sigKappaSTKFieldPtr, node);
+                }
             }
 
             // compute geometry
@@ -372,7 +398,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 }
             }
 
-            // projection-based harmonic mean for FOrig
+            // projection-based harmonic mean of the non-ST body force
+            // (buoyancy); the CSF part is added below as grad(psi)
             {
                 // Step 1: arithmetic mean direction
                 for (label d = 0; d < SPATIAL_DIM; ++d)
@@ -479,6 +506,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 }
 
                 scalar alphaIp = 0;
+                scalar skIp = 0.0;
+                scalar gradAlphaIp[SPATIAL_DIM] = {};
                 const label offSetSF = ip * nodesPerElement;
                 for (label ic = 0; ic < nodesPerElement; ++ic)
                 {
@@ -488,6 +517,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                         p_coordinate_shape_function[offSetSF + ic];
 
                     alphaIp += r_vel * p_alpha[ic];
+                    if (balancedST)
+                        skIp += r_vel * p_sk[ic];
 
                     const label offSetDnDx =
                         SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
@@ -506,9 +537,21 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                         // use pressure shape function derivative
                         p_dpdxIp[j] += p_dndx[offSetDnDx + j] * p_p[ic];
 
+                        // compact grad(alpha) (same dndx as grad p)
+                        if (balancedST)
+                            gradAlphaIp[j] +=
+                                p_dndx[offSetDnDx + j] * p_capPot[ic];
+
                         // (Gpdx moved to 2-node harmonic below)
                     }
                 }
+
+                // balanced CSF: FOrigIp += sigma*kappa_ip * compact
+                // grad(alpha), so it cancels grad p at equilibrium (const
+                // kappa)
+                if (balancedST)
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        p_FOrigIp[j] += skIp * gradAlphaIp[j];
 
                 // 2-node harmonic for Gpdx
                 for (label j = 0; j < SPATIAL_DIM; ++j)
