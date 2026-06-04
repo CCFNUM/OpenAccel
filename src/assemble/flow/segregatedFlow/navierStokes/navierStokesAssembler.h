@@ -17,7 +17,6 @@ namespace accel
 // Forward declarations
 class flowModel;
 class domain;
-class cnavierStokesAssembler;
 
 // TODO: Some specializations for navierStokesAssembler based on phiAssembler
 // result in some degree of code duplication in this class. If possible,
@@ -31,7 +30,6 @@ public:
     using Context = typename Base::Context;
 
 protected:
-    friend cnavierStokesAssembler;
     using Matrix = typename Context::Matrix;
     using Vector = typename Context::Vector;
     using Base::field_broker_;

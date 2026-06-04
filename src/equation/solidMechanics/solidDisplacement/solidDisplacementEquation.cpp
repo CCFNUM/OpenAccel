@@ -218,8 +218,6 @@ void solidDisplacementEquation::solve()
 void solidDisplacementEquation::preTimeStep()
 {
     FOREACH_DOMAIN(updateDisplacementPrevTimeField);
-
-    // FSI-level acceleration is handled in simulation; no per-equation state.
 }
 
 void solidDisplacementEquation::postSolve()
