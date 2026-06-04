@@ -1,4 +1,5 @@
 # vim: ft=yaml
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -25,27 +26,24 @@ simulation:
                 mass_and_momentum:
                     wall_velocity:
                         option: cartesian_components
-                        wall_velocity: [1, 0, 0]
+                        wall_velocity: [1, 0]
           - name: sides
             type: wall
             location: [sides]
-          - name: front_and_back
-            type: symmetry
-            location: [frontandback]
           initialization:
             velocity:
                 option: value
-                velocity: [0, 0, 0]
+                velocity: [0, 0]
             pressure:
                 option: value
                 pressure: 0
     solver:
         solver_control:
             basic_settings:
-                advection_scheme: upwind
+                advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 100
+                    max_iterations: 200
                     physical_timescale: 1
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.9
@@ -53,12 +51,10 @@ simulation:
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-6
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
             advanced_options:
                 pressure_level_information:
                     option: cartesian_coordinates
-                    cartesian_coordinates: [0, 0, 0]
+                    cartesian_coordinates: [0, 0]
                     relative_pressure_level: 0
                 linear_solver_settings:
                     default:
@@ -77,6 +73,8 @@ simulation:
                         options:
                             belos_solver: gmres
                             preconditioner: ilu
+            expert_parameters:
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 10

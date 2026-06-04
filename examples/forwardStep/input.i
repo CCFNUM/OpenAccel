@@ -1,4 +1,5 @@
 # vim: ft=yaml
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -55,18 +56,16 @@ simulation:
     solver:
         solver_control:
             basic_settings:
-                advection_scheme: upwind
+                advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 1200
-                    physical_timescale: 1e-2
+                    max_iterations: 1000
+                    physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.7
+                        velocity_relaxation_factor: 0.75
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-8
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
             advanced_options:
                 linear_solver_settings:
                     default:
@@ -99,6 +98,7 @@ simulation:
                                 trunc_factor: 0.3 # Keeps the solver lean
             expert_parameters:
                 consistent: true
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 10

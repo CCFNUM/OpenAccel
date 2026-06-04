@@ -1,4 +1,5 @@
 # vim: ft=yaml
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -9,8 +10,8 @@ simulation:
             option: steady_state
         domains:
         - name: default_domain
-          location: [fluid-hex]
-          materials: [air]
+          location: [fluid]
+          materials: [fluid_1]
           type: fluid
           domain_models:
             reference_pressure: 101325
@@ -20,7 +21,7 @@ simulation:
           boundaries:
           - name: wall
             type: wall
-            location: [lower_wall, upper_wall]
+            location: [wall]
           - name: inlet
             type: inlet
             location: [inlet]
@@ -29,7 +30,6 @@ simulation:
                     option: velocity_components
                     u: 10
                     v: 0
-                    w: 0
                 turbulence:
                     option: k_and_omega
                     k: 0.375
@@ -41,13 +41,10 @@ simulation:
                 mass_and_momentum:
                     option: static_pressure
                     relative_pressure: 0
-          - name: front_and_back
-            type: symmetry
-            location: [front_and_back]
           initialization:
             velocity:
                 option: value
-                velocity: [0, 0, 0]
+                velocity: [0, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -67,13 +64,11 @@ simulation:
                     max_iterations: 2500
                     physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.5
-                        pressure_relaxation_factor: 0.3
+                        velocity_relaxation_factor: 0.9
+                        turbulence_relaxation_factor: 0.5
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-8
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
+                    residual_target: 1e-6
             advanced_options:
                 linear_solver_settings:
                     default:
@@ -105,19 +100,21 @@ simulation:
                                 aggressive_levels: 1
                                 trunc_factor: 0.3
             expert_parameters:
+                relax_gradients: false
+                incremental_gradient_change: false
+                consistent: true
                 wall_distance_method: mesh_wave
         output_control:
             file_path: results.e
-            output_frequency: 100
-            output_fields: [velocity, pressure, turbulent_kinetic_energy, turbulent_eddy_frequency, turbulent_viscosity, total_pressure, minimum_distance_to_wall]
-            corrected_boundary_values: true
+            output_frequency: 50
+            output_fields: [velocity, pressure, turbulent_kinetic_energy, turbulent_eddy_frequency, minimum_distance_to_wall, turbulent_viscosity]
     material_library:
-    - name: air
-      thermodynamic_properties:
-        equation_of_state:
-            option: value
-            density: 1.0
-      transport_properties:
-        dynamic_viscosity:
-            option: value
-            dynamic_viscosity: 1.0e-5
+      - name: fluid_1
+        thermodynamic_properties:
+            equation_of_state:
+                option: value
+                density: 1.0
+        transport_properties:
+            dynamic_viscosity:
+                option: value
+                dynamic_viscosity: 1e-05

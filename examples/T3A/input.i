@@ -1,4 +1,5 @@
 # vim: ft=yaml
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -9,7 +10,7 @@ simulation:
             option: steady_state
         domains:
         - name: default_domain
-          location: [fluid-hex]
+          location: [fluid]
           materials: [air]
           type: fluid
           domain_models:
@@ -27,7 +28,6 @@ simulation:
                     option: velocity_components
                     u: 5.4
                     v: 0
-                    w: 0
                 turbulence:
                     option: intensity_and_eddy_viscosity_ratio
                     fractional_intensity: 0.033
@@ -48,13 +48,10 @@ simulation:
             boundary_details:
                 mass_and_momentum:
                     option: free_slip_wall
-          - name: symmetry
-            type: symmetry
-            location: [defaultfaces]
           initialization:
             velocity:
                 option: value
-                velocity: [5.4, 0, 0]
+                velocity: [5.4, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -75,12 +72,9 @@ simulation:
                     physical_timescale: 1
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.9
-                        turbulence_relaxation_factor: 0.9
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-12
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
+                    residual_target: 1e-8
             advanced_options:
                 linear_solver_settings:
                     default:
@@ -113,6 +107,7 @@ simulation:
                                 trunc_factor: 0.3
             expert_parameters:
                 consistent: true
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 50

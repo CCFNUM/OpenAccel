@@ -1,4 +1,5 @@
 # vim: ft=yaml
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -29,7 +30,6 @@ simulation:
                     option: cartesian_components
                     x: 1
                     y: 0
-                    z: 0
                 heat_transfer:
                     option: total_temperature
                     total_temperature: 315.0095
@@ -46,13 +46,10 @@ simulation:
             boundary_details:
                 mass_and_momentum:
                     option: free_slip_wall
-          - name: symmetry
-            type: symmetry
-            location: [symmetry]
           initialization:
             velocity:
                 option: value
-                velocity: [173.64, 0, 0]
+                velocity: [173.64, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -62,16 +59,16 @@ simulation:
     solver:
         solver_control:
             basic_settings:
-                advection_scheme: upwind
+                advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 1000
-                    physical_timescale: 1e-2
+                    max_iterations: 1500
+                    physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.9
+                        velocity_relaxation_factor: 0.75
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-6
+                    residual_target: 1e-8
             advanced_options:
                 linear_solver_settings:
                     default:
@@ -104,6 +101,7 @@ simulation:
                                 trunc_factor: 0.3 # Keeps the solver lean
             expert_parameters:
                 consistent: true
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 10

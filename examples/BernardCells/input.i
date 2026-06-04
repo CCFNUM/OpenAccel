@@ -1,4 +1,5 @@
 # vim: ft=yaml
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -13,14 +14,14 @@ simulation:
             total_time: 1000
         domains:
         - name: default_domain
-          location: [fluid-hex]
+          location: [fluid]
           materials: [fluid_1]
           type: fluid
           domain_models:
             reference_pressure: 0
             buoyancy_model:
                 option: buoyant
-                gravity: [0, -9.81, 0]
+                gravity: [0, -9.81]
                 buoyancy_reference_temperature: 300
           fluid_models:
             turbulence:
@@ -45,13 +46,10 @@ simulation:
           - name: sideWalls
             type: wall
             location: [sideWalls]
-          - name: frontandback
-            type: symmetry
-            location: [frontandback]
           initialization:
             velocity:
                 option: value
-                velocity: [1e-4, 0, 0]
+                velocity: [1e-4, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -87,6 +85,8 @@ simulation:
                         options:
                             belos_solver: gmres
                             preconditioner: ilu
+            expert_parameters:
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency:
