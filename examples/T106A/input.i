@@ -1,5 +1,5 @@
 # vim: ft=yaml
-# This is a 3D case and must be run with a 3D-compiled binary.
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -30,7 +30,6 @@ simulation:
                     option: velocity_components
                     u: 0.891224
                     v: 0.611527
-                    w: 0
                 turbulence:
                     option: k_and_omega
                     k: 0.004381
@@ -42,13 +41,10 @@ simulation:
                 mass_and_momentum:
                     option: static_pressure
                     relative_pressure: 0
-          - name: symmetry
-            type: symmetry
-            location: [symmetry]
           initialization:
             velocity:
                 option: value
-                velocity: [0, 0, 0]
+                velocity: [0, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -85,8 +81,6 @@ simulation:
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-8
-                interpolation_scheme:
-                    velocity_interpolation_type: linear_linear
             advanced_options:
                 linear_solver_settings:
                     default:
