@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 cmake_policy(SET CMP0079 NEW)
 
-project(Accel)
+project(OpenAccel)
 
 # Set C++ standard (optional but recommended)
 set(CMAKE_CXX_STANDARD 20)
@@ -43,9 +43,9 @@ set(exec_suffix "-${SPATIAL_DIM}D")
 if(WITH_CANONICAL_SUFFIX)
     set(exec_suffix "-stk")
 endif()
-set(exec "accel${exec_suffix}.exe")
+set(exec "openaccel${exec_suffix}.exe")
 if(CMAKE_BUILD_TYPE STREQUAL DEBUG OR CMAKE_BUILD_TYPE STREQUAL Debug)
-   set(exec "accel${exec_suffix}-debug.exe")
+   set(exec "openaccel${exec_suffix}-debug.exe")
 endif()
 
 # NOTE [faw 2026-05-04]: silence trilinos stk_topology related deprecation
