@@ -11,7 +11,7 @@ simulation:
             total_time: 0.5
             time_steps:
                 option: constant
-                timestep: 1e-3
+                timestep: 5e-4
         domains:
         - name: fluid
           location: [fluid]
@@ -149,9 +149,9 @@ simulation:
                     acceleration:
                         solid_displacement:
                             option: aitken
-                            initial_omega: 0.2
-                            omega_min: 0.1
-                            omega_max: 1
+                            initial_omega: 0.1
+                            omega_min: 0.05
+                            omega_max: 0.4
                     mesh_motion:
                         freeze_per_timestep: false
                         max_smoothing_iters: 25
