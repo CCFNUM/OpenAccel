@@ -48,6 +48,7 @@ void nodeGraph::buildGraph_()
             elementBucket.topology());
 
         // extract master element specifics
+        const label nodesPerElement = meSCS->nodesPerElement_;
         const label numScsIp = meSCS->numIntPoints_;
         const label* lrscv = meSCS->adjacentNodes();
 
