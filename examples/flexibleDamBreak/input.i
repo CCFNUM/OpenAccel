@@ -1,5 +1,5 @@
 # vim: ft=yaml
-# This is a 3D case and must be run with a 3D-compiled binary.
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -10,26 +10,18 @@ simulation:
             option: transient
             total_time: 0.5
             time_steps:
-                option: adaptive
-                initial_timestep: 0.001
-                timestep_update_frequency: 1
-                timestep_adaptation:
-                    option: max_courant
-                    courant_number: 1.0
-                    min_timestep: 1.0e-6
-                    max_timestep: 1
-                    timestep_decrease_factor: 0.8
-                    timestep_increase_factor: 1.06
+                option: constant
+                timestep: 1e-3
         domains:
         - name: fluid
-          location: [fluid-hex]
+          location: [fluid]
           materials: [water, air]
           type: fluid
           domain_models:
             reference_pressure: 101325
             buoyancy_model:
                 option: buoyant
-                gravity: [0, -9.81, 0]
+                gravity: [0, -9.81]
                 buoyancy_reference_density: 1
             mesh_deformation:
                 option: regions_of_motion_specified
@@ -53,7 +45,7 @@ simulation:
           - pair: [water, air]
             surface_tension:
                 option: continuum_surface_force
-                surface_tension_coefficient: 0.07
+                surface_tension_coefficient: 0
           boundaries:
           - name: walls
             type: wall
@@ -69,7 +61,6 @@ simulation:
                     option: cartesian_components
                     x: 0
                     y: -1
-                    z: 0
             fluid_values:
                 water:
                     volume_fraction:
@@ -85,7 +76,7 @@ simulation:
           initialization:
             velocity:
                 option: value
-                velocity: [0, 0, 0]
+                velocity: [0, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -101,7 +92,7 @@ simulation:
                         input_type: expression
                         volume_fraction: "if (x<=0.146 and y<=0.292, 0, 1)"
         - name: solid
-          location: [solid-hex]
+          location: [solid]
           materials: [solid_1]
           type: solid
           solid_models:
@@ -122,7 +113,7 @@ simulation:
           initialization:
             displacement:
                 option: value
-                displacement: [0, 0, 0]
+                displacement: [0, 0]
         interfaces:
         - name: interface
           option: general_connection
@@ -138,10 +129,10 @@ simulation:
         solver_control:
             basic_settings:
                 advection_scheme: high_resolution
-                transient_scheme: first_order_backward_euler
+                transient_scheme: second_order_backward_euler
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 5
+                    max_iterations: 25
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-8
@@ -151,16 +142,16 @@ simulation:
                 equation_controls:
                     volume_fraction_smoothing:
                         smooth_volume_fraction: true
-                        smoothing_iterations: 3
+                        smoothing_iterations: 10
                         fourier_number: 0.25
                     sub_iterations:
-                        pressure_correction: 4
+                        pressure_correction: 30
                     acceleration:
                         solid_displacement:
                             option: aitken
-                            initial_omega: 0.1
-                            omega_min: 0.01
-                            omega_max: 0.5
+                            initial_omega: 0.2
+                            omega_min: 0.1
+                            omega_max: 1
                     mesh_motion:
                         freeze_per_timestep: false
                         max_smoothing_iters: 25
@@ -170,19 +161,39 @@ simulation:
                     default:
                         family: Trilinos
                         min_iterations: 3
-                        max_iterations: 20
-                        rtol: 1.0e-2
+                        max_iterations: 50
+                        rtol: 1.0e-3
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
                             preconditioner: ilu
+                    pressure_correction:
+                        family: HYPRE
+                        min_iterations: 3
+                        max_iterations: 100
+                        rtol: 1.0e-5
+                        atol: 1.0e-10
+                        options:
+                            solver:
+                                type: GMRES
+                            precond:
+                                type: BoomerAMG
+                                coarsen_type: 6 # Falgout — robust for jumps
+                                interp_type: 6
+                                relax_type: 18 # Symmetric hybrid SOR
+                                strong_threshold: 0.5
+                                num_sweeps: 3
+                                max_levels: 25
+                                aggressive_levels: 0
+                                trunc_factor: 0.1
+        options:
             expert_parameters:
                 body_force_redistribution: false
         output_control:
             file_path: results.e
             output_frequency:
                 option: time_interval
-                time_interval: 0.01
+                time_interval: 0.001
             write_timestep_info: true
             output_fields: [velocity, pressure, volume_fraction.water, displacement_mesh, velocity_mesh, density, dynamic_viscosity]
             corrected_boundary_values: true
@@ -204,12 +215,12 @@ simulation:
       transport_properties:
         dynamic_viscosity:
             option: value
-            dynamic_viscosity: 1.48e-5
+            dynamic_viscosity: 1e-5
     - name: solid_1
       thermodynamic_properties:
         equation_of_state:
             option: value
-            density: 2.7e3
+            density: 2500
       mechanical_properties:
         young_modulus:
             option: value
