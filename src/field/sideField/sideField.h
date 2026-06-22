@@ -8,11 +8,9 @@
 #define SIDEFIELD_H
 
 // code
-#ifdef HAS_INTERFACE
-#include "interface.h"
-#endif /* HAS_INTERFACE */
 #include "field.h"
-#include "master_element/MasterElement.h"
+#include "interface.h"
+#include "ipInfo.h"
 
 namespace accel
 {
@@ -98,10 +96,8 @@ public:
                      bool master,
                      bool shifted);
 
-#ifdef HAS_INTERFACE
     // interpolate from an interface side to another
     void transfer(label iInterface, bool reverse = false, bool shifted = false);
-#endif /* HAS_INTERFACE */
 
     // Access
 
@@ -123,13 +119,11 @@ void sideField<scalar, 1>::interpolate(const nodeSideField<scalar, 1>& nsf,
                                        label iBoundary,
                                        bool shifted);
 
-#ifdef HAS_INTERFACE
 template <>
 void sideField<scalar, 1>::interpolate(const nodeSideField<scalar, 1>& nsf,
                                        label iInterface,
                                        bool master,
                                        bool shifted);
-#endif /* HAS_INTERFACE */
 
 template <>
 void sideField<scalar, SPATIAL_DIM>::interpolate(
@@ -138,16 +132,13 @@ void sideField<scalar, SPATIAL_DIM>::interpolate(
     label iBoundary,
     bool shifted);
 
-#ifdef HAS_INTERFACE
 template <>
 void sideField<scalar, SPATIAL_DIM>::interpolate(
     const nodeSideField<scalar, SPATIAL_DIM>& nsf,
     label iInterface,
     bool master,
     bool shifted);
-#endif /* HAS_INTERFACE */
 
-#ifdef HAS_INTERFACE
 template <>
 void sideField<scalar, 1>::transfer(label iInterface,
                                     bool reverse,
@@ -157,7 +148,6 @@ template <>
 void sideField<scalar, SPATIAL_DIM>::transfer(label iInterface,
                                               bool reverse,
                                               bool shifted);
-#endif /* HAS_INTERFACE */
 
 } // namespace accel
 

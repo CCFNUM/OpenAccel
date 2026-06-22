@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "bulkPressureCorrectionAssembler.h"
 #include "freeSurfaceFlowModel.h"
@@ -197,12 +195,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
     // GGI path is not yet validated for the bulk-pressure-correction problem;
     // preserve the original errorMsg behavior at the top of the function and
     // run the unified loop for DG below.
-    if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-        nonconformalMethod::generalGridInterface)
-    {
-        errorMsg("Not implemented yet");
-        return;
-    }
 
     // Unified loop over per-IP info.  Storage is owned by the base
     // interfaceSideInfo; concrete side classes store derived records upcast to
@@ -1243,5 +1235,3 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterfaceSideNoSlipWall_(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

@@ -9,11 +9,11 @@
 namespace accel
 {
 
-void solidDisplacementAssembler::postAssemble_(const domain* domain,
-                                               Context* ctx)
+void solidDisplacementAssembler::postAssemble(const domain* domain,
+                                              Context* ctx)
 {
 #ifdef USE_CVFEM_SOLID_MECHANICS
-    phiAssembler<SPATIAL_DIM>::postAssemble_(domain, ctx);
+    phiAssembler<SPATIAL_DIM>::postAssemble(domain, ctx);
     applySymmetryConditions_(domain, ctx);
 #else
     errorMsg("FEM solid mechanics not implemented yet");

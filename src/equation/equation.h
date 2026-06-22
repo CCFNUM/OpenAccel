@@ -8,6 +8,7 @@
 #define EQUATION_H
 
 // code
+#include "coefficients.h"
 #include "convergenceAcceleration.h"
 #include "domain.h"
 #include "mesh.h"
@@ -229,7 +230,7 @@ protected:
               int CLIP = 0,
               int OFFSET = 0>
     void correctField_(const domain* domain,
-                       const Vector& correction,
+                       ::linearSolver::coefficients<BLOCKSIZE>* coeffs,
                        const stk::mesh::EntityRank entityRank,
                        STKScalarField& stk_dst,
                        const scalar relaxValue = 1.0,
@@ -261,6 +262,7 @@ protected:
 
         const BucketVec& buckets = bulkData.get_buckets(entityRank, selection);
 
+        const Vector& correction = coeffs->getXVector();
         scalar effectiveRelaxValue = relaxValue;
         const Vector& effectiveCorrection =
             applyAcceleration_(correction, relaxValue, effectiveRelaxValue);

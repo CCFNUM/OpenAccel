@@ -53,6 +53,10 @@ public:
         return ID;
     }
 
+    // update overrides which involve direct dependency over linear system
+
+    void updateMassFlowRate(const std::shared_ptr<domain> domain) override;
+
 private:
     // instances for segregated equations
     std::unique_ptr<navierStokesEquation> U_eq_;

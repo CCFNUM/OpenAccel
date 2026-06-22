@@ -383,7 +383,6 @@ void elementField<T, N>::registerSideField(label iZone, label iBoundary)
     }
 }
 
-#ifdef HAS_INTERFACE
 template <class T, size_t N>
 void elementField<T, N>::registerSideFieldsForInterfaceSide(
     label iInterface,
@@ -437,7 +436,6 @@ void elementField<T, N>::registerSideFieldsForInterfaceSide(
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 template <class T, size_t N>
 elementField<T, N>& elementField<T, N>::operator=(const elementField<T, N>& fld)
@@ -524,7 +522,6 @@ void elementField<T, N>::initializeSideField(label iZone)
 
     zone* zonePtr = this->meshPtr()->zonePtr(iZone);
 
-#ifdef HAS_INTERFACE
     // Interfaces
     for (const interface* interf : zonePtr->interfacesRef())
     {
@@ -542,7 +539,6 @@ void elementField<T, N>::initializeSideField(label iZone)
             initializeInterfaceSideField(interfaceSideInfoPtr);
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundaries
     for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
@@ -556,13 +552,11 @@ void elementField<T, N>::initializeSideField(label iZone)
     }
 }
 
-#ifdef HAS_INTERFACE
 template <class T, size_t N>
 void elementField<T, N>::initializeInterfaceSideField(
     const interfaceSideInfo* interfaceSideInfoPtr)
 {
 }
-#endif /* HAS_INTERFACE */
 
 template <class T, size_t N>
 void elementField<T, N>::initializeBoundarySideField(label iZone,
@@ -605,7 +599,6 @@ void elementField<T, N>::updateSideFields(label iZone)
 
     zone* zonePtr = this->meshPtr()->zonePtr(iZone);
 
-#ifdef HAS_INTERFACE
     // Interfaces
     for (const interface* interf : zonePtr->interfacesRef())
     {
@@ -620,7 +613,6 @@ void elementField<T, N>::updateSideFields(label iZone)
                                      interf->isMasterZone(iZone));
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundaries
     for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
@@ -629,12 +621,10 @@ void elementField<T, N>::updateSideFields(label iZone)
     }
 }
 
-#ifdef HAS_INTERFACE
 template <class T, size_t N>
 void elementField<T, N>::updateInterfaceSideField(label iInterface, bool master)
 {
 }
-#endif /* HAS_INTERFACE */
 
 template <class T, size_t N>
 void elementField<T, N>::updateBoundarySideField(label iZone, label iBoundary)

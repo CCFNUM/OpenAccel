@@ -6,9 +6,7 @@
 
 #include "volumeFraction.h"
 #include "controls.h"
-#ifdef HAS_INTERFACE
 #include "ipInfo.h"
-#endif
 #include "realm.h"
 
 namespace accel
@@ -48,9 +46,6 @@ volumeFraction::volumeFraction(realm* realmPtr,
             .controlsRef()
             .solverRef()
             .solverControl_.expertParameters_.volumeFractionBlendingFactorMax_;
-
-    // volume fraction may only apply to fluid domains
-    mediumIndependent_ = false;
 
     // set min/max accepted values for volume fraction
     minAcceptedValue_ = 0.0;
@@ -325,7 +320,6 @@ void volumeFraction::updateBlendingFactorField(label iZone)
         }
     }
 
-#ifdef HAS_INTERFACE
     // Interface ip
     for (const interface* interf :
          this->meshPtr()->zonePtr(iZone)->interfacesRef())
@@ -587,7 +581,6 @@ void volumeFraction::updateBlendingFactorField(label iZone)
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary ip
     {

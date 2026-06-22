@@ -30,11 +30,9 @@ private:
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 
-#ifdef HAS_INTERFACE
     void updateDisplacementInterfaceSideFieldDeformation_(
         const std::shared_ptr<domain> domain,
         const interfaceSideInfo* interfaceSideInfoPtr);
-#endif /* HAS_INTERFACE */
 
     // Calculate force and moment over a specified patch
     void calculateSurfaceForceAndMoment_(const boundary* boundary,

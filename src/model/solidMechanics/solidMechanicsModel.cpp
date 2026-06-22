@@ -37,7 +37,6 @@ void solidMechanicsModel::setupDisplacement(
         initialCondition::setupFieldInitializationOverDomainFromInput(
             DRef(), realm::D_ID, domain);
 
-#ifdef HAS_INTERFACE
         // In the case of fluid-structure interaction, that is, the presence of
         // fluid domains adjacent to the current solid domain (provided that
         // this solid domain is naturally deforming), therefore, the fluid-solid
@@ -74,7 +73,6 @@ void solidMechanicsModel::setupDisplacement(
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // boundary conditions for this domain
         setupBoundaryConditions_(
@@ -614,14 +612,12 @@ void solidMechanicsModel::updateDisplacement(
 void solidMechanicsModel::updateDisplacementSideFields_(
     const std::shared_ptr<domain> domain)
 {
-#ifdef HAS_INTERFACE
     // Interface
     for (const interface* interf : domain->interfacesRef())
     {
         updateDisplacementInterfaceSideFieldTraction_(
             domain, interf->interfaceSideInfoPtr(domain->index()));
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary
     for (label iBoundary = 0;
@@ -660,7 +656,6 @@ void solidMechanicsModel::updateDisplacementSideFields_(
     }
 }
 
-#ifdef HAS_INTERFACE
 void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr)
@@ -1039,7 +1034,6 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
     }
 #endif /* NDEBUG */
 }
-#endif /* HAS_INTERFACE */
 
 void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
     const std::shared_ptr<domain> domain,

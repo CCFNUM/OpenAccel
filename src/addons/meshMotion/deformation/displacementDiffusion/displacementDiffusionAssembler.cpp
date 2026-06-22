@@ -9,10 +9,10 @@
 namespace accel
 {
 
-void displacementDiffusionAssembler::postAssemble_(const domain* domain,
-                                                   Context* ctx)
+void displacementDiffusionAssembler::postAssemble(const domain* domain,
+                                                  Context* ctx)
 {
-    phiAssembler<SPATIAL_DIM>::postAssemble_(domain, ctx);
+    phiAssembler<SPATIAL_DIM>::postAssemble(domain, ctx);
     applySymmetryConditions_(domain, ctx);
 }
 

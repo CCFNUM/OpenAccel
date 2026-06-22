@@ -123,10 +123,8 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
         this->setupMinMaxFields();
     }
 
-#ifdef HAS_INTERFACE
     // Initialize interface transfer vector
     dataTransferVector_.resize(this->meshPtr()->nInterfaces());
-#endif /* HAS_INTERFACE */
 }
 
 template <size_t N, size_t M>
@@ -148,6 +146,9 @@ void nodeField<N, M>::setZone(label iZone)
 {
     // enable zone for the current field
     field<scalar, N>::setZone(iZone);
+
+    // two-sided interface closures by default; overrides in setupXxx
+    setInterfaceTwoSided(iZone, 1);
 
     // enable zone for prev iter field
     if (prevIterFieldPtr_)
@@ -562,7 +563,6 @@ void nodeField<N, M>::registerSideFluxField(label iZone, label iBoundary)
     }
 }
 
-#ifdef HAS_INTERFACE
 template <size_t N, size_t M>
 void nodeField<N, M>::registerSideFieldsForInterfaceSide(label iInterface,
                                                          bool master,
@@ -673,7 +673,6 @@ void nodeField<N, M>::registerSideFluxFieldForInterfaceSide(
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 template <size_t N, size_t M>
 nodeField<N, M>& nodeField<N, M>::operator=(const nodeField& fld)
@@ -1079,7 +1078,6 @@ void nodeField<N, M>::updateSideFields(label iZone)
 
     zone* zonePtr = this->meshPtr()->zonePtr(iZone);
 
-#ifdef HAS_INTERFACE
     // Interfaces
     for (const interface* interf : zonePtr->interfacesRef())
     {
@@ -1094,7 +1092,6 @@ void nodeField<N, M>::updateSideFields(label iZone)
                                      interf->isMasterZone(iZone));
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundaries
     for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
@@ -1103,7 +1100,6 @@ void nodeField<N, M>::updateSideFields(label iZone)
     }
 }
 
-#ifdef HAS_INTERFACE
 template <size_t N, size_t M>
 void nodeField<N, M>::updateInterfaceSideField(label iInterface, bool master)
 {
@@ -1163,7 +1159,6 @@ void nodeField<N, M>::updateInterfaceSideField(label iInterface, bool master)
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 template <size_t N, size_t M>
 void nodeField<N, M>::updateBoundarySideField(label iZone, label iBoundary)
@@ -2449,7 +2444,6 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
         }
     }
 
-#ifdef HAS_INTERFACE
     // Interface ip
     for (const interface* interf :
          this->meshPtr()->zonePtr(iZone)->interfacesRef())
@@ -3013,7 +3007,6 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary ip
     {
@@ -3257,6 +3250,13 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
     const auto& blendingFactorSTKFieldRefPrev =
         this->blendingFactorRef().prevIterRef().stkFieldRef();
 
+    // optional shock-sensor damping factor; registered by the flow model when
+    // the high_speed_blend_damping expert parameter is enabled (the name must
+    // match realm::betaDamp_ID)
+    const STKScalarField* dampSTKFieldPtr =
+        this->metaDataRef().template get_field<scalar>(
+            stk::topology::NODE_RANK, "blending_damping_factor");
+
     stk::mesh::BucketVector const& nodeBuckets =
         this->bulkDataRef().get_buckets(stk::topology::NODE_RANK, selAllNodes);
     for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
@@ -3270,14 +3270,23 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
             stk::mesh::field_data(*blendingFactorSTKFieldPtr, nodeBucket);
         const scalar* betaPrev =
             stk::mesh::field_data(blendingFactorSTKFieldRefPrev, nodeBucket);
+        const scalar* damp =
+            dampSTKFieldPtr
+                ? stk::mesh::field_data(*dampSTKFieldPtr, nodeBucket)
+                : nullptr;
 
         for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
              ++iNode)
         {
+            const scalar dampFac = damp ? damp[iNode] : 1.0;
             for (label i = 0; i < N; ++i)
             {
-                beta[N * iNode + i] =
-                    0.75 * betaPrev[N * iNode + i] + 0.25 * beta[N * iNode + i];
+                // one-sided relaxation: relax beta upward only, so the
+                // limiter bound is never exceeded at forming/moving shocks
+                const scalar betaNew = dampFac * beta[N * iNode + i];
+                const scalar betaRelaxed =
+                    0.75 * betaPrev[N * iNode + i] + 0.25 * betaNew;
+                beta[N * iNode + i] = std::min(betaNew, betaRelaxed);
             }
         }
     }
@@ -3481,7 +3490,6 @@ void nodeField<N, M>::updateGradientField(label iZone)
         }
     }
 
-#ifdef HAS_INTERFACE
     // Interface ip contribution
     for (const interface* interf :
          this->meshPtr()->zonePtr(iZone)->interfacesRef())
@@ -3746,7 +3754,6 @@ void nodeField<N, M>::updateGradientField(label iZone)
                             {
                                 const label offset =
                                     i * current_num_face_nodes + nn;
-
                                 scalar phiip = 0.5 * (currentPhiBip[i] +
                                                       opposingPhiBip[i]);
                                 scalar phic = p_c_phi[offset];
@@ -3996,7 +4003,6 @@ void nodeField<N, M>::updateGradientField(label iZone)
                             {
                                 const label offset =
                                     i * current_num_face_nodes + nn;
-
                                 scalar phiip = 0.5 * (currentPhiBip[i] +
                                                       opposingPhiBip[i]);
                                 scalar phic = p_c_phi[offset];
@@ -4018,468 +4024,17 @@ void nodeField<N, M>::updateGradientField(label iZone)
         }
         else
         {
-            if (interf->isFluidSolidType())
-            {
-                const auto* interfaceSideInfoPtr =
-                    interf->interfaceSideInfoPtr(iZone);
-
-                // if the field applies to any medium, use dg to
-                // interpolate, otherwise, the gradient at the interface
-                // must no see the values of the other side
-                if (mediumIndependent_)
-                {
-                    // Get geometric fields
-                    const auto& exposedAreaVecSTKFieldRef =
-                        *metaData.template get_field<scalar>(
-                            metaData.side_rank(),
-                            this->getExposedAreaVectorID_(iZone));
-                    const STKScalarField* dualNodalVolumeSTKFieldPtr =
-                        metaData.template get_field<scalar>(
-                            stk::topology::NODE_RANK,
-                            this->getDualNodalVolumeID_(iZone));
-
-                    // ip values; both boundary and opposing surface
-                    std::vector<scalar> currentIsoParCoords(SPATIAL_DIM);
-                    std::vector<scalar> opposingIsoParCoords(SPATIAL_DIM);
-
-                    // space for current/opposing interpolated value for
-                    // phi
-                    std::vector<scalar> currentPhiBip(N);
-                    std::vector<scalar> opposingPhiBip(N);
-
-                    // interpolate nodal values to point-in-elem
-                    const label sizeOfField = N;
-
-                    // nodal fields to gather
-                    std::vector<scalar> ws_c_phi;
-                    std::vector<scalar> ws_o_phi;
-
-                    const auto& ipInfoVec = (*interfaceSideInfoPtr).ipInfoVec();
-
-                    for (label iSide = 0;
-                         iSide < static_cast<label>(ipInfoVec.size());
-                         iSide++)
-                    {
-                        const auto& faceIpInfoVec = ipInfoVec[iSide];
-
-                        // now loop over all the ipInfo objects on
-                        // this particular exposed face
-                        for (label k = 0;
-                             k < static_cast<label>(faceIpInfoVec.size());
-                             ++k)
-                        {
-                            const ipInfo* ip = faceIpInfoVec[k];
-
-                            if (ip->isExposed_)
-                            {
-                                // extract current/opposing
-                                // face/element
-                                stk::mesh::Entity currentFace =
-                                    ip->currentFace_;
-
-                                // master element
-                                MasterElement* meFCCurrent = ip->meFCCurrent_;
-
-                                // local ip, ordinals, etc
-                                const label currentGaussPointId =
-                                    ip->currentGaussPointId_;
-                                currentIsoParCoords = ip->currentIsoParCoords_;
-
-                                // mapping from ip to nodes for this
-                                // ordinal
-                                const label* faceIpNodeMap =
-                                    meFCCurrent->ipNodeMap();
-
-                                // extract some master element info
-                                const label currentNodesPerFace =
-                                    meFCCurrent->nodesPerElement_;
-
-                                // algorithm related; face
-                                ws_c_phi.resize(currentNodesPerFace * N);
-
-                                scalar* p_c_phi = &ws_c_phi[0];
-
-                                // gather current face data
-                                stk::mesh::Entity const*
-                                    current_face_node_rels =
-                                        bulkData.begin_nodes(currentFace);
-                                const label current_num_face_nodes =
-                                    bulkData.num_nodes(currentFace);
-                                for (label ni = 0; ni < current_num_face_nodes;
-                                     ++ni)
-                                {
-                                    stk::mesh::Entity node =
-                                        current_face_node_rels[ni];
-
-                                    // gather...
-                                    const scalar* phi = stk::mesh::field_data(
-                                        *phiSTKFieldPtr, node);
-                                    for (label i = 0; i < N; ++i)
-                                    {
-                                        const label offset =
-                                            i * current_num_face_nodes + ni;
-                                        p_c_phi[offset] = phi[i];
-                                    }
-                                }
-
-                                meFCCurrent->interpolatePoint(
-                                    sizeOfField,
-                                    &currentIsoParCoords[0],
-                                    &ws_c_phi[0],
-                                    &currentPhiBip[0]);
-
-                                // extract pointers to nearest node
-                                // fields
-                                const label nn =
-                                    faceIpNodeMap[currentGaussPointId];
-                                stk::mesh::Entity nNode =
-                                    current_face_node_rels[nn];
-
-                                const scalar volNN = *stk::mesh::field_data(
-                                    *dualNodalVolumeSTKFieldPtr, nNode);
-                                scalar* gradPhi = stk::mesh::field_data(
-                                    *gradPhiSTKFieldPtr, nNode);
-
-                                // nearest node inverse volume
-                                scalar inv_volNN = 1.0 / volNN;
-
-                                // pointer to face data
-                                const scalar* c_areaVec = stk::mesh::field_data(
-                                    exposedAreaVecSTKFieldRef, currentFace);
-
-                                // assemble to nearest node
-                                for (label i = 0; i < N; ++i)
-                                {
-                                    const label offset =
-                                        i * current_num_face_nodes + nn;
-
-                                    scalar phiip = currentPhiBip[i];
-                                    scalar phic = p_c_phi[offset];
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        scalar fac =
-                                            (phiip - incMult * phic) *
-                                            c_areaVec[currentGaussPointId *
-                                                          SPATIAL_DIM +
-                                                      j];
-                                        gradPhi[i * N + j] +=
-                                            gradURF_ * fac * inv_volNN;
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                // extract current/opposing
-                                // face/element
-                                stk::mesh::Entity currentFace =
-                                    ip->currentFace_;
-                                stk::mesh::Entity opposingFace =
-                                    ip->opposingFace_;
-
-                                // master element
-                                MasterElement* meFCCurrent = ip->meFCCurrent_;
-                                MasterElement* meFCOpposing = ip->meFCOpposing_;
-
-                                // local ip, ordinals, etc
-                                const label currentGaussPointId =
-                                    ip->currentGaussPointId_;
-                                currentIsoParCoords = ip->currentIsoParCoords_;
-                                opposingIsoParCoords =
-                                    ip->opposingIsoParCoords_;
-
-                                // mapping from ip to nodes for this
-                                // ordinal
-                                const label* faceIpNodeMap =
-                                    meFCCurrent->ipNodeMap();
-
-                                // extract some master element info
-                                const label currentNodesPerFace =
-                                    meFCCurrent->nodesPerElement_;
-                                const label opposingNodesPerFace =
-                                    meFCOpposing->nodesPerElement_;
-
-                                // algorithm related; face
-                                ws_c_phi.resize(currentNodesPerFace * N);
-                                ws_o_phi.resize(opposingNodesPerFace * N);
-
-                                scalar* p_c_phi = &ws_c_phi[0];
-                                scalar* p_o_phi = &ws_o_phi[0];
-
-                                // gather current face data
-                                stk::mesh::Entity const*
-                                    current_face_node_rels =
-                                        bulkData.begin_nodes(currentFace);
-                                const label current_num_face_nodes =
-                                    bulkData.num_nodes(currentFace);
-                                for (label ni = 0; ni < current_num_face_nodes;
-                                     ++ni)
-                                {
-                                    stk::mesh::Entity node =
-                                        current_face_node_rels[ni];
-
-                                    // gather...
-                                    const scalar* phi = stk::mesh::field_data(
-                                        *phiSTKFieldPtr, node);
-                                    for (label i = 0; i < N; ++i)
-                                    {
-                                        const label offset =
-                                            i * current_num_face_nodes + ni;
-                                        p_c_phi[offset] = phi[i];
-                                    }
-                                }
-
-                                // gather opposing face data
-                                stk::mesh::Entity const*
-                                    opposing_face_node_rels =
-                                        bulkData.begin_nodes(opposingFace);
-                                const label opposing_num_face_nodes =
-                                    bulkData.num_nodes(opposingFace);
-                                for (label ni = 0; ni < opposing_num_face_nodes;
-                                     ++ni)
-                                {
-                                    stk::mesh::Entity node =
-                                        opposing_face_node_rels[ni];
-
-                                    // gather...
-                                    const scalar* phi = stk::mesh::field_data(
-                                        *phiSTKFieldPtr, node);
-                                    for (label i = 0; i < N; ++i)
-                                    {
-                                        const label offset =
-                                            i * opposing_num_face_nodes + ni;
-                                        p_o_phi[offset] = phi[i];
-                                    }
-                                }
-
-                                // apply transformation
-                                interfaceSideInfoPtr
-                                    ->template rotateVectorListCompact<N>(
-                                        ws_o_phi, opposing_num_face_nodes);
-
-                                meFCCurrent->interpolatePoint(
-                                    sizeOfField,
-                                    &currentIsoParCoords[0],
-                                    &ws_c_phi[0],
-                                    &currentPhiBip[0]);
-
-                                meFCOpposing->interpolatePoint(
-                                    sizeOfField,
-                                    &opposingIsoParCoords[0],
-                                    &ws_o_phi[0],
-                                    &opposingPhiBip[0]);
-
-                                // extract pointers to nearest node
-                                // fields
-                                const label nn =
-                                    faceIpNodeMap[currentGaussPointId];
-                                stk::mesh::Entity nNode =
-                                    current_face_node_rels[nn];
-
-                                const scalar volNN = *stk::mesh::field_data(
-                                    *dualNodalVolumeSTKFieldPtr, nNode);
-                                scalar* gradPhi = stk::mesh::field_data(
-                                    *gradPhiSTKFieldPtr, nNode);
-
-                                // nearest node inverse volume
-                                scalar inv_volNN = 1.0 / volNN;
-
-                                // pointer to face data
-                                const scalar* c_areaVec = stk::mesh::field_data(
-                                    exposedAreaVecSTKFieldRef, currentFace);
-
-                                // assemble to nearest node
-                                for (label i = 0; i < N; ++i)
-                                {
-                                    const label offset =
-                                        i * current_num_face_nodes + nn;
-
-                                    scalar phiip = 0.5 * (currentPhiBip[i] +
-                                                          opposingPhiBip[i]);
-                                    scalar phic = p_c_phi[offset];
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        scalar fac =
-                                            (phiip - incMult * phic) *
-                                            c_areaVec[currentGaussPointId *
-                                                          SPATIAL_DIM +
-                                                      j];
-                                        gradPhi[i * N + j] +=
-                                            gradURF_ * fac * inv_volNN;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    // Get geometric fields
-                    const auto& exposedAreaVecSTKFieldRef =
-                        *metaData.template get_field<scalar>(
-                            metaData.side_rank(),
-                            this->getExposedAreaVectorID_(iZone));
-                    const STKScalarField* dualNodalVolumeSTKFieldPtr =
-                        metaData.template get_field<scalar>(
-                            stk::topology::NODE_RANK,
-                            this->getDualNodalVolumeID_(iZone));
-
-                    // nodal fields to gather; gather everything other than
-                    // what we are assembling
-                    std::vector<scalar> ws_phi;
-
-                    // geometry related to populate
-                    std::vector<scalar> ws_shape_function;
-
-                    // ip data
-                    std::vector<scalar> phiIp(N);
-
-                    // pointers to fixed size
-                    scalar* p_phiIp = &phiIp[0];
-
-                    // define vector of parent topos; should always be UNITY
-                    // in size
-                    std::vector<stk::topology> parentTopo;
-
-                    // define some common selectors
-                    stk::mesh::Selector selAllSides =
-                        metaData.universal_part() &
-                        stk::mesh::selectUnion(
-                            interfaceSideInfoPtr->currentPartVec_);
-
-                    stk::mesh::BucketVector const& sideBuckets =
-                        bulkData.get_buckets(metaData.side_rank(), selAllSides);
-                    for (stk::mesh::BucketVector::const_iterator ib =
-                             sideBuckets.begin();
-                         ib != sideBuckets.end();
-                         ++ib)
-                    {
-                        stk::mesh::Bucket& sideBucket = **ib;
-
-                        const stk::mesh::Bucket::size_type nSidesPerBucket =
-                            sideBucket.size();
-
-                        // extract master element
-                        MasterElement* meFC =
-                            MasterElementRepo::get_surface_master_element(
-                                sideBucket.topology());
-
-                        // extract master element specifics
-                        const label nodesPerSide = meFC->nodesPerElement_;
-                        const label numScsIp = meFC->numIntPoints_;
-                        const label* ipNodeMap = meFC->ipNodeMap();
-
-                        // algorithm related
-                        ws_phi.resize(nodesPerSide * N);
-                        ws_shape_function.resize(numScsIp * nodesPerSide);
-
-                        // pointers
-                        scalar* p_phi = &ws_phi[0];
-                        scalar* p_shape_function = &ws_shape_function[0];
-
-                        if (this->interpolationScheme_ ==
-                            interpolationSchemeType::linearLinear)
-                        {
-                            meFC->shifted_shape_fcn(&p_shape_function[0]);
-                        }
-                        else
-                        {
-                            meFC->shape_fcn(&p_shape_function[0]);
-                        }
-
-                        for (stk::mesh::Bucket::size_type iSide = 0;
-                             iSide < nSidesPerBucket;
-                             ++iSide)
-                        {
-                            // face data
-                            scalar* areaVec = stk::mesh::field_data(
-                                exposedAreaVecSTKFieldRef, sideBucket, iSide);
-
-                            //===============================================
-                            // gather nodal data; this is how we do it
-                            // now..
-                            //===============================================
-                            stk::mesh::Entity const* sideNodeRels =
-                                sideBucket.begin_nodes(iSide);
-                            label numNodes = sideBucket.num_nodes(iSide);
-
-                            // sanity check on num nodes
-                            STK_ThrowAssert(numNodes == nodesPerSide);
-
-                            for (label ni = 0; ni < numNodes; ++ni)
-                            {
-                                stk::mesh::Entity node = sideNodeRels[ni];
-
-                                // pointers to real data
-                                scalar* phi = stk::mesh::field_data(
-                                    *phiSTKFieldPtr, node);
-
-                                // gather vectors
-                                const label offset = ni * N;
-                                for (label j = 0; j < N; ++j)
-                                {
-                                    p_phi[offset + j] = phi[j];
-                                }
-                            }
-
-                            // start assembly
-                            for (label ip = 0; ip < numScsIp; ++ip)
-                            {
-                                // nearest node
-                                const label nn = ipNodeMap[ip];
-
-                                stk::mesh::Entity node = sideNodeRels[nn];
-
-                                // pointer to fields to assemble
-                                scalar* gradPhi = stk::mesh::field_data(
-                                    *gradPhiSTKFieldPtr, node);
-
-                                // suplemental
-                                scalar vol = *stk::mesh::field_data(
-                                    *dualNodalVolumeSTKFieldPtr, node);
-
-                                // interpolate to scs point; operate on
-                                // saved off ws_field
-                                for (label j = 0; j < N; ++j)
-                                {
-                                    p_phiIp[j] = 0.0;
-                                }
-
-                                const label offset = ip * nodesPerSide;
-                                for (label ic = 0; ic < nodesPerSide; ++ic)
-                                {
-                                    const scalar r =
-                                        p_shape_function[offset + ic];
-                                    for (label j = 0; j < N; ++j)
-                                    {
-                                        p_phiIp[j] += r * p_phi[ic * N + j];
-                                    }
-                                }
-
-                                // nearest node volume
-                                scalar inv_vol = 1.0 / vol;
-
-                                // assemble to nearest node
-                                for (label i = 0; i < N; ++i)
-                                {
-                                    const label offset = nn * N;
-
-                                    scalar phiip = p_phiIp[i];
-                                    scalar phic = p_phi[offset];
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        scalar fac =
-                                            (phiip - incMult * phic) *
-                                            areaVec[ip * SPATIAL_DIM + j];
-                                        gradPhi[i * N + j] +=
-                                            gradURF_ * fac * inv_vol;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            else
+            const auto* interfaceSideInfoPtr =
+                interf->interfaceSideInfoPtr(iZone);
+
+            // opposing zone of this inter-domain interface
+            const label opposingZone = interf->masterZoneIndex() == iZone
+                                           ? interf->slaveZoneIndex()
+                                           : interf->masterZoneIndex();
+
+            // dg-averaged closure if both zones allow it, else one-sided
+            if (this->interfaceTwoSided(iZone) &&
+                this->interfaceTwoSided(opposingZone))
             {
                 // Get geometric fields
                 const auto& exposedAreaVecSTKFieldRef =
@@ -4507,10 +4062,6 @@ void nodeField<N, M>::updateGradientField(label iZone)
                 std::vector<scalar> ws_c_phi;
                 std::vector<scalar> ws_o_phi;
 
-                // get interface side that is sitting in this domain
-                const auto* interfaceSideInfoPtr =
-                    interf->interfaceSideInfoPtr(iZone);
-
                 const auto& ipInfoVec = (*interfaceSideInfoPtr).ipInfoVec();
 
                 for (label iSide = 0;
@@ -4519,8 +4070,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                 {
                     const auto& faceIpInfoVec = ipInfoVec[iSide];
 
-                    // now loop over all the interface IP info objects on this
-                    // particular exposed face
+                    // now loop over all the ipInfo objects on
+                    // this particular exposed face
                     for (label k = 0;
                          k < static_cast<label>(faceIpInfoVec.size());
                          ++k)
@@ -4529,7 +4080,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
 
                         if (ip->isExposed_)
                         {
-                            // extract current/opposing face/element
+                            // extract current/opposing
+                            // face/element
                             stk::mesh::Entity currentFace = ip->currentFace_;
 
                             // master element
@@ -4622,7 +4174,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                         }
                         else
                         {
-                            // extract current/opposing face/element
+                            // extract current/opposing
+                            // face/element
                             stk::mesh::Entity currentFace = ip->currentFace_;
                             stk::mesh::Entity opposingFace = ip->opposingFace_;
 
@@ -4738,7 +4291,6 @@ void nodeField<N, M>::updateGradientField(label iZone)
                             {
                                 const label offset =
                                     i * current_num_face_nodes + nn;
-
                                 scalar phiip = 0.5 * (currentPhiBip[i] +
                                                       opposingPhiBip[i]);
                                 scalar phic = p_c_phi[offset];
@@ -4757,9 +4309,173 @@ void nodeField<N, M>::updateGradientField(label iZone)
                     }
                 }
             }
+            else
+            {
+                // Get geometric fields
+                const auto& exposedAreaVecSTKFieldRef =
+                    *metaData.template get_field<scalar>(
+                        metaData.side_rank(),
+                        this->getExposedAreaVectorID_(iZone));
+                const STKScalarField* dualNodalVolumeSTKFieldPtr =
+                    metaData.template get_field<scalar>(
+                        stk::topology::NODE_RANK,
+                        this->getDualNodalVolumeID_(iZone));
+
+                // nodal fields to gather; gather everything other than
+                // what we are assembling
+                std::vector<scalar> ws_phi;
+
+                // geometry related to populate
+                std::vector<scalar> ws_shape_function;
+
+                // ip data
+                std::vector<scalar> phiIp(N);
+
+                // pointers to fixed size
+                scalar* p_phiIp = &phiIp[0];
+
+                // define vector of parent topos; should always be UNITY
+                // in size
+                std::vector<stk::topology> parentTopo;
+
+                // define some common selectors
+                stk::mesh::Selector selAllSides =
+                    metaData.universal_part() &
+                    stk::mesh::selectUnion(
+                        interfaceSideInfoPtr->currentPartVec_);
+
+                stk::mesh::BucketVector const& sideBuckets =
+                    bulkData.get_buckets(metaData.side_rank(), selAllSides);
+                for (stk::mesh::BucketVector::const_iterator ib =
+                         sideBuckets.begin();
+                     ib != sideBuckets.end();
+                     ++ib)
+                {
+                    stk::mesh::Bucket& sideBucket = **ib;
+
+                    const stk::mesh::Bucket::size_type nSidesPerBucket =
+                        sideBucket.size();
+
+                    // extract master element
+                    MasterElement* meFC =
+                        MasterElementRepo::get_surface_master_element(
+                            sideBucket.topology());
+
+                    // extract master element specifics
+                    const label nodesPerSide = meFC->nodesPerElement_;
+                    const label numScsIp = meFC->numIntPoints_;
+                    const label* ipNodeMap = meFC->ipNodeMap();
+
+                    // algorithm related
+                    ws_phi.resize(nodesPerSide * N);
+                    ws_shape_function.resize(numScsIp * nodesPerSide);
+
+                    // pointers
+                    scalar* p_phi = &ws_phi[0];
+                    scalar* p_shape_function = &ws_shape_function[0];
+
+                    if (this->interpolationScheme_ ==
+                        interpolationSchemeType::linearLinear)
+                    {
+                        meFC->shifted_shape_fcn(&p_shape_function[0]);
+                    }
+                    else
+                    {
+                        meFC->shape_fcn(&p_shape_function[0]);
+                    }
+
+                    for (stk::mesh::Bucket::size_type iSide = 0;
+                         iSide < nSidesPerBucket;
+                         ++iSide)
+                    {
+                        // face data
+                        scalar* areaVec = stk::mesh::field_data(
+                            exposedAreaVecSTKFieldRef, sideBucket, iSide);
+
+                        //===============================================
+                        // gather nodal data; this is how we do it
+                        // now..
+                        //===============================================
+                        stk::mesh::Entity const* sideNodeRels =
+                            sideBucket.begin_nodes(iSide);
+                        label numNodes = sideBucket.num_nodes(iSide);
+
+                        // sanity check on num nodes
+                        STK_ThrowAssert(numNodes == nodesPerSide);
+
+                        for (label ni = 0; ni < numNodes; ++ni)
+                        {
+                            stk::mesh::Entity node = sideNodeRels[ni];
+
+                            // pointers to real data
+                            scalar* phi =
+                                stk::mesh::field_data(*phiSTKFieldPtr, node);
+
+                            // gather vectors
+                            const label offset = ni * N;
+                            for (label j = 0; j < N; ++j)
+                            {
+                                p_phi[offset + j] = phi[j];
+                            }
+                        }
+
+                        // start assembly
+                        for (label ip = 0; ip < numScsIp; ++ip)
+                        {
+                            // nearest node
+                            const label nn = ipNodeMap[ip];
+
+                            stk::mesh::Entity node = sideNodeRels[nn];
+
+                            // pointer to fields to assemble
+                            scalar* gradPhi = stk::mesh::field_data(
+                                *gradPhiSTKFieldPtr, node);
+
+                            // suplemental
+                            scalar vol = *stk::mesh::field_data(
+                                *dualNodalVolumeSTKFieldPtr, node);
+
+                            // interpolate to scs point; operate on
+                            // saved off ws_field
+                            for (label j = 0; j < N; ++j)
+                            {
+                                p_phiIp[j] = 0.0;
+                            }
+
+                            const label offset = ip * nodesPerSide;
+                            for (label ic = 0; ic < nodesPerSide; ++ic)
+                            {
+                                const scalar r = p_shape_function[offset + ic];
+                                for (label j = 0; j < N; ++j)
+                                {
+                                    p_phiIp[j] += r * p_phi[ic * N + j];
+                                }
+                            }
+
+                            // nearest node volume
+                            scalar inv_vol = 1.0 / vol;
+
+                            // assemble to nearest node
+                            for (label i = 0; i < N; ++i)
+                            {
+                                const label offset = nn * N;
+
+                                scalar phiip = p_phiIp[i];
+                                scalar phic = p_phi[offset + i];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    scalar fac = (phiip - incMult * phic) *
+                                                 areaVec[ip * SPATIAL_DIM + j];
+                                    gradPhi[i * N + j] +=
+                                        gradURF_ * fac * inv_vol;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary ip contribution
     {
@@ -4947,7 +4663,6 @@ void nodeField<N, M>::updateGradientField(label iZone)
         }
     }
 
-#ifdef HAS_INTERFACE
     // Conformal interface completions
     for (label iInterface = 0; iInterface < this->meshPtr()->nInterfaces();
          iInterface++)
@@ -4961,7 +4676,6 @@ void nodeField<N, M>::updateGradientField(label iZone)
         this->gradRef().transfer(interf.index(),
                                  dataTransferType::volumeAverage);
     }
-#endif /* HAS_INTERFACE */
 
     if (limitGradient_)
     {
@@ -5253,7 +4967,6 @@ void nodeField<N, M>::limitGradientField_(label iZone)
         }
     }
 
-#ifdef HAS_INTERFACE
     // Process interface sides
     for (const interface* interf :
          this->meshPtr()->zonePtr(iZone)->interfacesRef())
@@ -5767,7 +5480,6 @@ void nodeField<N, M>::limitGradientField_(label iZone)
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Process boundary sides
     {
@@ -6056,7 +5768,6 @@ void nodeField<N, M>::synchronize(label iZone)
     }
 }
 
-#ifdef HAS_INTERFACE
 template <size_t N, size_t M>
 void nodeField<N, M>::transfer(label iInterface,
                                dataTransferType type,
@@ -6157,7 +5868,6 @@ void nodeField<N, M>::transfer(label iInterface,
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 template <size_t N, size_t M>
 scalar nodeField<N, M>::max()
@@ -6328,7 +6038,6 @@ void nodeField<N, M>::correctBoundaryNodes(label iZone, label iBoundary)
     }
 }
 
-#ifdef HAS_INTERFACE
 template <size_t N, size_t M>
 void nodeField<N, M>::correctInterfaceNodes(label iInterface, bool master)
 {
@@ -6376,7 +6085,6 @@ void nodeField<N, M>::correctInterfaceNodes(label iInterface, bool master)
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 template <size_t N, size_t M>
 void nodeField<N, M>::relax(label iZone, const scalar urf)
@@ -6541,6 +6249,18 @@ template <size_t N, size_t M>
 sideField<scalar, N>& nodeField<N, M>::sideFieldRef()
 {
     return *sideFieldPtr_.get();
+}
+
+template <size_t N, size_t M>
+sideField<scalar, N>* nodeField<N, M>::sideFieldPtr()
+{
+    return sideFieldPtr_.get();
+}
+
+template <size_t N, size_t M>
+const sideField<scalar, N>* nodeField<N, M>::sideFieldPtr() const
+{
+    return sideFieldPtr_.get();
 }
 
 template <size_t N, size_t M>

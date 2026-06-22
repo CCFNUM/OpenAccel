@@ -6,6 +6,7 @@
 
 #include "transitionOnsetReynoldsNumberTransitionSSTEquation.h"
 #include "realm.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -136,11 +137,23 @@ void transitionOnsetReynoldsNumberTransitionSSTEquation::solve()
     // assembly
     linearSystem::simulationRef().getProfiler().push("linear_system_assembly");
 
+    // assemble
+    FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
 
+    // Schur-complement static condensation of the augmented system. It must run
+    // BEFORE any relaxations
+    linearSystem::condense();
+
+    // post-assembly
+    FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
+
     // fix system in domains where the model is not active
-    assembler_->fix(
-        this->collectInactiveInteriorParts(), {}, ctx.get(), {}, true);
+    assembler_->fix(this->collectInactiveInteriorParts(),
+                    {},
+                    ctx.get(),
+                    {},
+                    !model_->meshRef().anyZoneMeshWithOverset());
 
     linearSystem::simulationRef().getProfiler().pop();
 
@@ -159,7 +172,7 @@ void transitionOnsetReynoldsNumberTransitionSSTEquation::solve()
     {
         this->template correctField_<linearSystem::BLOCKSIZE, 1, 0, CLIP>(
             domain.get(),
-            ctx->getXVector(),
+            ctx->coeffs().get(),
             stk::topology::NODE_RANK,
             ReTheta.stkFieldRef(),
             relax_value);

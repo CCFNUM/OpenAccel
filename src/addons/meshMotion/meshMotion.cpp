@@ -11,8 +11,6 @@
 #include "transformation.h"
 #include "zoneDeformation.h"
 #include "zoneTransformation.h"
-#ifdef HAS_INTERFACE
-#endif
 
 namespace accel
 {
@@ -497,7 +495,6 @@ void meshMotion::updateMeshVelocityDivergenceField_()
                 }
             }
 
-#ifdef HAS_INTERFACE
             // ========================================
             // Scope 2: Interface IP contribution
             // ========================================
@@ -867,7 +864,6 @@ void meshMotion::updateMeshVelocityDivergenceField_()
                     }
                 }
             }
-#endif /* HAS_INTERFACE */
 
             // ========================================
             // Boundary IP contribution

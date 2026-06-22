@@ -7,6 +7,7 @@
 #ifndef WITH_THERMAL_TEMPERATURE
 
 #include "thermalEnergyEquation.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -195,11 +196,23 @@ void thermalEnergyEquation::solve()
     // assembly
     linearSystem::simulationRef().getProfiler().push("linear_system_assembly");
 
+    // assemble
+    FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
 
+    // Schur-complement static condensation of the augmented system. It must run
+    // BEFORE any relaxations
+    linearSystem::condense();
+
+    // post-assembly
+    FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
+
     // fix system in domains where the model is not active
-    assembler_->fix(
-        this->collectInactiveInteriorParts(), {}, ctx.get(), {}, true);
+    assembler_->fix(this->collectInactiveInteriorParts(),
+                    {},
+                    ctx.get(),
+                    {},
+                    !this->meshRef().anyZoneMeshWithOverset());
 
     linearSystem::simulationRef().getProfiler().pop();
 
@@ -230,7 +243,7 @@ void thermalEnergyEquation::solve()
 
         this->template correctField_<linearSystem::BLOCKSIZE, 1, 0, CLIP>(
             domain.get(),
-            ctx->getXVector(),
+            ctx->coeffs().get(),
             stk::topology::NODE_RANK,
             hRef().stkFieldRef(),
             effectiveRelaxationFactor,
@@ -259,10 +272,8 @@ void thermalEnergyEquation::solve()
     cpRef().updateScale();
     lambdaRef().updateScale();
 
-#ifdef HAS_INTERFACE
     // 5) Post-processed quantities
     FOREACH_DOMAIN(updateInterfaceHeatImbalance_);
-#endif /* HAS_INTERFACE */
 }
 
 void thermalEnergyEquation::preTimeStep()

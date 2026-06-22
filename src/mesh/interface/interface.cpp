@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 #include "interface.h"
 #include "controls.h"
 #include "messager.h"
@@ -137,12 +135,6 @@ void interface::update()
 }
 
 // Operations
-
-void interface::completeSearch()
-{
-    this->masterInfoRef().completeSearch();
-    this->slaveInfoRef().completeSearch();
-}
 
 void interface::provideDiagnosis()
 {
@@ -782,5 +774,3 @@ void computePreciseGhostingLists(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

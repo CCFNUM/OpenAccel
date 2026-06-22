@@ -40,9 +40,6 @@ transitionOnsetReynoldsNumber::transitionOnsetReynoldsNumber(
             .solverRef()
             .solverControl_.basicSettings_.interpolationSchemeType_
             .transitionOnsetReynoldsNumberGradientInterpolationType_;
-
-    // turbulent dissipation rate may only apply to fluid domains
-    mediumIndependent_ = false;
 }
 
 void transitionOnsetReynoldsNumber::updateBoundarySideField(label iZone,

@@ -39,9 +39,6 @@ turbulentEddyFrequency::turbulentEddyFrequency(realm* realmPtr,
             .solverRef()
             .solverControl_.basicSettings_.interpolationSchemeType_
             .turbulentEddyFrequencyGradientInterpolationType_;
-
-    // turbulent eddy frequency may only apply to fluid domains
-    mediumIndependent_ = false;
 }
 
 void turbulentEddyFrequency::updateBoundarySideField(label iZone,

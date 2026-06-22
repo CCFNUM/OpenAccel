@@ -246,7 +246,6 @@ void fieldBroker::setupMassFlowRate(const std::shared_ptr<domain> domain,
         this->mDotRef(iPhase).setZone(domain->index());
         this->mDotRef(iPhase).divRef().setZone(domain->index());
 
-#ifdef HAS_INTERFACE
         // register mass flux side field for interfaces in fluid domain
         for (interface* interf : domain->interfacesRef())
         {
@@ -270,7 +269,6 @@ void fieldBroker::setupMassFlowRate(const std::shared_ptr<domain> domain,
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // Register mass flux side field for patches in fluid domain
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -370,7 +368,6 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain,
     // interior
     initializeMassFlowRateInterior_(domain, iPhase);
 
-#ifdef HAS_INTERFACE
     // Interfaces
     for (const interface* interf : domain->zonePtr()->interfacesRef())
     {
@@ -391,7 +388,6 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain,
                 domain, interfaceSideInfoPtr, iPhase);
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -537,7 +533,6 @@ void fieldBroker::updateMassFlowRate(const std::shared_ptr<domain> domain,
     // interior
     updateMassFlowRateInterior_(domain, iPhase);
 
-#ifdef HAS_INTERFACE
     // Interfaces
     for (const interface* interf : domain->interfacesRef())
     {
@@ -558,7 +553,6 @@ void fieldBroker::updateMassFlowRate(const std::shared_ptr<domain> domain,
                 domain, interfaceSideInfoPtr, iPhase);
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();

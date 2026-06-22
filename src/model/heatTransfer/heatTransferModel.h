@@ -22,9 +22,7 @@ protected:
 
     void updateHeatImbalance_(const std::shared_ptr<domain> domain);
 
-#ifdef HAS_INTERFACE
     void updateInterfaceHeatImbalance_(const std::shared_ptr<domain> domain);
-#endif /* HAS_INTERFACE */
 
 public:
     heatTransferModel(realm* realm);

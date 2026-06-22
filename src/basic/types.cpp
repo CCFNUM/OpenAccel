@@ -680,7 +680,6 @@ initialConditionOption convertInitialConditionOptionFromString(std::string s)
     return initialConditionOption::null; // useless
 }
 
-#ifdef HAS_INTERFACE
 // Interface model option
 
 std::unordered_map<std::string, interfaceModelOption> interfaceModelOptionMap{
@@ -743,7 +742,7 @@ std::string toString(interfaceType type)
 
 std::unordered_map<std::string, nonconformalMethod> nonconformalMethodMap{
     {"discontinuous_galerkin", nonconformalMethod::discontinuousGalerkin},
-    {"general_grid_interface", nonconformalMethod::generalGridInterface}};
+};
 
 nonconformalMethod convertNonconformalMethodFromString(std::string s)
 {
@@ -756,25 +755,6 @@ nonconformalMethod convertNonconformalMethodFromString(std::string s)
     }
     return it->second;
 }
-
-// GGI assembly method
-
-std::unordered_map<std::string, ggiAssemblyMethod> ggiAssemblyMethodMap{
-    {"penalty_mortar", ggiAssemblyMethod::penaltyMortar},
-    {"constrained_mortar", ggiAssemblyMethod::constrainedMortar}};
-
-ggiAssemblyMethod convertGgiAssemblyMethodFromString(std::string s)
-{
-    ::accel::tolower(s);
-    std::replace(s.begin(), s.end(), '-', '_');
-    const auto it = ggiAssemblyMethodMap.find(s);
-    if (it == ggiAssemblyMethodMap.end())
-    {
-        errorMsg("Invalid GGI assembly method: `" + s + "`");
-    }
-    return it->second;
-}
-#endif /* HAS_INTERFACE */
 
 // Wall-function type
 

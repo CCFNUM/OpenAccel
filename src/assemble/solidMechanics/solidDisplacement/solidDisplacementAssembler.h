@@ -71,9 +71,9 @@ public:
     {
     }
 
-protected:
-    void postAssemble_(const domain* domain, Context* ctx) override;
+    void postAssemble(const domain* domain, Context* ctx) override;
 
+protected:
     void applySymmetryConditions_(const domain* domain, Context* ctx) override;
 
 private:
@@ -88,12 +88,10 @@ private:
 
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
-#ifdef HAS_INTERFACE
     void assembleElemTermsInterfaceSide_(
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx) override;
-#endif /* HAS_INTERFACE */
 };
 
 } /* namespace accel */

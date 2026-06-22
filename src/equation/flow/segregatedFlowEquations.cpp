@@ -113,6 +113,10 @@ void segregatedFlowEquations::solve()
             // correct density (only if compressible)
             FOREACH_DOMAIN_IF(updateDensity, domain->isMaterialCompressible());
 
+            // update shock-sensor damping of the high-resolution blending
+            // factor
+            FOREACH_DOMAIN(updateBlendingDampingFactorField_);
+
             // update density-related fields
             FOREACH_DOMAIN_IF(updateDensityGradientField,
                               domain->isMaterialCompressible());
@@ -229,10 +233,8 @@ void segregatedFlowEquations::postSolve()
     FOREACH_DOMAIN(updateUWallCoeffs);     // laminar
     FOREACH_DOMAIN(updateWallShearStress); // laminar
     FOREACH_DOMAIN(updateMassImbalance_);
-#ifdef HAS_INTERFACE
     FOREACH_DOMAIN(updateInterfaceMassImbalance_);
     FOREACH_DOMAIN(updateInterfaceMomentumImbalance_);
-#endif /* HAS_INTERFACE */
 
     this->reportFlowData_();
 }
@@ -249,6 +251,13 @@ void segregatedFlowEquations::printScales()
 {
     U_eq_->printScales();
     pCorr_eq_->printScales();
+}
+
+void segregatedFlowEquations::updateMassFlowRate(
+    const std::shared_ptr<domain> domain)
+{
+    // update according to rhie-chow
+    fieldBroker::updateMassFlowRate(domain);
 }
 
 } /* namespace accel */

@@ -2683,7 +2683,6 @@ void heatTransferModel::updateSpecificTotalEnthalpyBoundarySideFieldOpening_(
 
 void heatTransferModel::reportHeatData_()
 {
-#ifdef HAS_INTERFACE
     // Mass imbalance for interfaces
     if (this->meshRef().hasInterfaces())
     {
@@ -2713,7 +2712,6 @@ void heatTransferModel::reportHeatData_()
         // destroy interface data vector
         heatInterfaceDataVector_.clear();
     }
-#endif /* HAS_INTERFACE */
 }
 
 void heatTransferModel::updateHeatImbalance_(
@@ -2721,7 +2719,6 @@ void heatTransferModel::updateHeatImbalance_(
 {
 }
 
-#ifdef HAS_INTERFACE
 void heatTransferModel::updateInterfaceHeatImbalance_(
     const std::shared_ptr<domain> domain)
 {
@@ -2896,6 +2893,5 @@ void heatTransferModel::updateInterfaceHeatImbalance_(
                                         globalInterfaceDataVector.end());
     }
 }
-#endif /* HAS_INTERFACE */
 
 } /* namespace accel */

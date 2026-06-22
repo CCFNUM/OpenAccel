@@ -7,8 +7,6 @@
 #ifndef INTERFACE_H
 #define INTERFACE_H
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "interfaceSideInfo.h"
 #include "mesh.h"
@@ -116,8 +114,6 @@ public:
     void update();
 
     // Operations
-
-    void completeSearch();
 
     void provideDiagnosis();
 
@@ -335,5 +331,4 @@ public:
 
 } // namespace accel
 
-#endif /* HAS_INTERFACE */
 #endif // INTERFACE_H

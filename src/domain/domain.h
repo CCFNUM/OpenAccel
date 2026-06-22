@@ -16,9 +16,7 @@ namespace accel
 
 class realm;
 class simulation;
-#ifdef HAS_INTERFACE
 class interface;
-#endif /* HAS_INTERFACE */
 class zone;
 class mesh;
 
@@ -331,13 +329,11 @@ public:
         return equations_[static_cast<int>(id)];
     }
 
-#ifdef HAS_INTERFACE
     bool hasInterfaces() const;
 
     std::vector<interface*>& interfacesRef();
 
     const std::vector<interface*>& interfacesRef() const;
-#endif /* HAS_INTERFACE */
 
     simulation* simulationPtr();
 

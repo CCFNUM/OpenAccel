@@ -7,10 +7,8 @@
 // code
 #include "mesh.h"
 #include "controls.h"
-#ifdef HAS_INTERFACE
 #include "interface.h"
 #include "interfaceSideInfo.h"
-#endif /* HAS_INTERFACE */
 #include "messager.h"
 #include "realm.h"
 #include "zone.h"
@@ -122,10 +120,8 @@ void mesh::setup()
     // Create and allocate containers
     setupZones_();
 
-#ifdef HAS_INTERFACE
     // Create and allocate structures and containers
     setupInterfaces_();
-#endif /* HAS_INTERFACE */
 
 #if SPATIAL_DIM == 3
     // Create element validator for quality checking and correction (if enabled)
@@ -144,17 +140,19 @@ void mesh::initialize()
     // factors if those exist on the input mesh file.
     ioBrokerPtr_->populate_field_data();
 
+    // Drop element blocks that are not listed in any domain so they take no
+    // part in allocations, numbering or output, as if never read
+    removeIgnoredBlocks_();
+
     // After population, it is essential to make sure that the coordinate
     // field is filled and ready to use
     initializeCoordinateField_();
 
-    // Initialize zones: boundaries, etc.
+    // Initialize zones: boundaries, oversets, etc.
     initializeZones_();
 
-#ifdef HAS_INTERFACE
     // Initialize interfaces: make required searches
     initializeInterfaces_();
-#endif /* HAS_INTERFACE */
 
     // Calculate geometric quantities (volume, exposed area, etc.)
     initializeGeometricFields_();
@@ -175,9 +173,7 @@ void mesh::update()
 {
     // Update mesh structures in case of possible mesh motion/deformation
     updateZones_();
-#ifdef HAS_INTERFACE
     updateInterfaces_();
-#endif /* HAS_INTERFACE */
     updateGeometricFields_();
     updateNodeGraph_();
 }
@@ -254,7 +250,6 @@ const stk::mesh::ConstPartVector mesh::symmetryBoundaryActiveParts() const
     return symmetryBoundaryActiveParts_;
 }
 
-#ifdef HAS_INTERFACE
 // Interfaces
 
 label mesh::nInterfaces() const
@@ -281,7 +276,6 @@ const interface& mesh::interfaceRef(label iInterface) const
 {
     return *interfaceVector_[iInterface].get();
 }
-#endif /* HAS_INTERFACE */
 
 // Zones
 

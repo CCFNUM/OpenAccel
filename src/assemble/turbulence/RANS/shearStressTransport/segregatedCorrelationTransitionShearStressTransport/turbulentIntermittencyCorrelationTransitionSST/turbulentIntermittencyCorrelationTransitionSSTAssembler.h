@@ -36,6 +36,12 @@ public:
     {
     }
 
+    void postAssemble(const domain* domain, Context* ctx) override
+    {
+        Base::postAssemble(domain, ctx);
+        assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
+    }
+
 protected:
     void assembleNodeTermsFusedSteady_(const domain* domain,
                                        Context* ctx) override;
@@ -43,12 +49,6 @@ protected:
                                                    Context* ctx) override;
     void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
                                                     Context* ctx) override;
-
-    void postAssemble_(const domain* domain, Context* ctx) override
-    {
-        Base::postAssemble_(domain, ctx);
-        assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
-    }
 };
 
 } /* namespace accel */

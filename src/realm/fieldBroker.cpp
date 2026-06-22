@@ -44,7 +44,6 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
         initialCondition::setupFieldInitializationOverDomainFromInput(
             URef(), realm::U_ID, domain);
 
-#ifdef HAS_INTERFACE
         // 1) Register velocity side fields on fluid-solid interface
         // (only fluid)
         //    side, because we deal with this as a typical no-slip wall
@@ -89,7 +88,6 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // boundary conditions for this domain
         setupBoundaryConditions_(
@@ -1482,6 +1480,13 @@ void fieldBroker::setupTemperature(const std::shared_ptr<domain> domain)
     {
         TRef().setZone(domain->index());
 
+        // one-sided closure: wall-function T jump at fluid-solid interfaces
+        if (domain->type() == domainType::fluid &&
+            domain->turbulence_.option_ != turbulenceOption::laminar)
+        {
+            TRef().setInterfaceTwoSided(domain->index(), 0);
+        }
+
         // set initial conditions from input
         initialCondition::setupFieldInitializationOverDomainFromInput(
             TRef(), realm::T_ID, domain);
@@ -1717,6 +1722,22 @@ void fieldBroker::setupTemperature(const std::shared_ptr<domain> domain)
                                 TRef().registerSideFluxField(domain->index(),
                                                              iBoundary);
                             }
+                            else if (option == "heat_transfer_coefficient")
+                            {
+                                // external (Robin): q = U*(Tout - Tnw)
+                                bc.setType(boundaryConditionType::mixed);
+                                bc.query<1>(
+                                    node, "value", "outside_temperature");
+                                bc.query<1>(node,
+                                            "transfer_coefficient",
+                                            "heat_transfer_coefficient");
+                                // unused flux; required by mixed side update
+                                bc.setConstantValue<1>("flux", {0.0});
+                                TRef().registerSideFields(domain->index(),
+                                                          iBoundary);
+                                TRef().registerSideFluxField(domain->index(),
+                                                             iBoundary);
+                            }
                             else
                             {
                                 errorMsg(std::string("option for ") +
@@ -1747,6 +1768,13 @@ void fieldBroker::setupSpecificEnthalpy(const std::shared_ptr<domain> domain)
     if (hRef().isZoneUnset(domain->index()))
     {
         hRef().setZone(domain->index());
+
+        // one-sided closure: cp jump across media + wall-function T jump
+        if (domain->type() == domainType::solid ||
+            domain->turbulence_.option_ != turbulenceOption::laminar)
+        {
+            hRef().setInterfaceTwoSided(domain->index(), 0);
+        }
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
@@ -1834,6 +1862,13 @@ void fieldBroker::setupSpecificTotalEnthalpy(
     {
         h0Ref().setZone(domain->index());
 
+        // one-sided closure: same reasoning as specific enthalpy
+        if (domain->type() == domainType::solid ||
+            domain->turbulence_.option_ != turbulenceOption::laminar)
+        {
+            h0Ref().setInterfaceTwoSided(domain->index(), 0);
+        }
+
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
         {
@@ -1919,7 +1954,6 @@ void fieldBroker::setupWallScale(const std::shared_ptr<domain> domain)
     {
         yScaleRef().setZone(domain->index());
 
-#ifdef HAS_INTERFACE
         // 1) Register yscale side fields on fluid-solid interface (only fluid)
         //    side, because we deal with this as a typical no-slip wall
         // 2) Register also on an interface side which has a non-overlap portion
@@ -1949,7 +1983,6 @@ void fieldBroker::setupWallScale(const std::shared_ptr<domain> domain)
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
@@ -2021,7 +2054,6 @@ void fieldBroker::setupTurbulentKineticEnergy(
         initialCondition::setupFieldInitializationOverDomainFromInput(
             kRef(), turbRealm::k_ID, domain);
 
-#ifdef HAS_INTERFACE
         // 1) Register k side fields on fluid-solid interface (only fluid)
         //    side, because we deal with this as a typical no-slip wall
         // 2) Register also on an interface side which has a non-overlap
@@ -2049,7 +2081,6 @@ void fieldBroker::setupTurbulentKineticEnergy(
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // boundary conditions
         setupBoundaryConditions_(
@@ -2304,7 +2335,6 @@ void fieldBroker::setupTurbulentEddyFrequency(
         initialCondition::setupFieldInitializationOverDomainFromInput(
             omegaRef(), turbRealm::omega_ID, domain);
 
-#ifdef HAS_INTERFACE
         // 1) Register omega side fields on fluid-solid interface (only
         // fluid)
         //    side, because we deal with this as a typical no-slip wall
@@ -2333,7 +2363,6 @@ void fieldBroker::setupTurbulentEddyFrequency(
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // boundary conditions for this domain
         setupBoundaryConditions_(
@@ -2586,7 +2615,6 @@ void fieldBroker::setupTurbulentDissipationRate(
         initialCondition::setupFieldInitializationOverDomainFromInput(
             epsilonRef(), turbRealm::epsilon_ID, domain);
 
-#ifdef HAS_INTERFACE
         // 1) Register epsilon side fields on fluid-solid interface (only fluid)
         //    side, because we deal with this as a typical no-slip wall
         // 2) Register also on an interface side which has a non-overlap
@@ -2614,7 +2642,6 @@ void fieldBroker::setupTurbulentDissipationRate(
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // boundary conditions
         setupBoundaryConditions_(
@@ -3074,7 +3101,6 @@ void fieldBroker::setupDisplacement(const std::shared_ptr<domain> domain)
         initialCondition::setupFieldInitializationOverDomainFromValues(
             DRef(), domain->index(), std::vector<scalar>(SPATIAL_DIM, 0.0));
 
-#ifdef HAS_INTERFACE
         // for a fluid-solid interface, the interface side in this domain will
         // act as a dirichlet boundary for the displacement diffusion equation,
         // which is being solved over this domain, thus, side fields on the
@@ -3100,7 +3126,6 @@ void fieldBroker::setupDisplacement(const std::shared_ptr<domain> domain)
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         setupBoundaryConditions_(domain,
                                  // anonymous function to set boundary
@@ -3313,7 +3338,6 @@ void fieldBroker::setupMassFlowRate(const std::shared_ptr<domain> domain)
         this->mDotRef().setZone(domain->index());
         this->mDotRef().divRef().setZone(domain->index());
 
-#ifdef HAS_INTERFACE
         // register mass flux side field for interfaces in fluid domain
         for (interface* interf : domain->interfacesRef())
         {
@@ -3337,7 +3361,6 @@ void fieldBroker::setupMassFlowRate(const std::shared_ptr<domain> domain)
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
@@ -3368,7 +3391,6 @@ void fieldBroker::setupHeatFlowRate(const std::shared_ptr<domain> domain)
     {
         this->qDotRef().setZone(domain->index());
 
-#ifdef HAS_INTERFACE
         // register heat flux side field for interfaces
         for (interface* interf : domain->interfacesRef())
         {
@@ -3385,7 +3407,6 @@ void fieldBroker::setupHeatFlowRate(const std::shared_ptr<domain> domain)
                     interf->index(), interf->isMasterZone(domain->index()));
             }
         }
-#endif /* HAS_INTERFACE */
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
@@ -3401,7 +3422,6 @@ void fieldBroker::setupMomentumFlowRate(const std::shared_ptr<domain> domain)
     {
         this->pDotRef().setZone(domain->index());
 
-#ifdef HAS_INTERFACE
         // register momentum flux side field for interfaces
         for (interface* interf : domain->interfacesRef())
         {
@@ -3418,7 +3438,6 @@ void fieldBroker::setupMomentumFlowRate(const std::shared_ptr<domain> domain)
                     interf->index(), interf->isMasterZone(domain->index()));
             }
         }
-#endif /* HAS_INTERFACE */
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
@@ -3633,7 +3652,6 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain)
         // interior
         initializeMassFlowRateInterior_(domain);
 
-#ifdef HAS_INTERFACE
         // Interfaces
         for (const interface* interf : domain->zonePtr()->interfacesRef())
         {
@@ -3657,7 +3675,6 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain)
                                                           interfaceSideInfoPtr);
             }
         }
-#endif /* HAS_INTERFACE */
 
         // Boundary
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -4041,7 +4058,6 @@ void fieldBroker::updateMassFlowRate(const std::shared_ptr<domain> domain)
     // interior
     updateMassFlowRateInterior_(domain);
 
-#ifdef HAS_INTERFACE
     // Interfaces
     for (const interface* interf : domain->interfacesRef())
     {
@@ -4064,7 +4080,6 @@ void fieldBroker::updateMassFlowRate(const std::shared_ptr<domain> domain)
             updateMassFlowRateInterfaceSideField_(domain, interfaceSideInfoPtr);
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -4874,6 +4889,24 @@ const simpleScalarField& fieldBroker::MaRef() const
                          simpleScalarField,
                          realmPtr_,
                          realm::Ma_ID,
+                         stk::topology::NODE_RANK);
+};
+
+simpleScalarField& fieldBroker::betaDampRef()
+{
+    RETURN_REF_ALLOC_AUX(realmPtr_->betaDamp_,
+                         simpleScalarField,
+                         realmPtr_,
+                         realm::betaDamp_ID,
+                         stk::topology::NODE_RANK);
+};
+
+const simpleScalarField& fieldBroker::betaDampRef() const
+{
+    RETURN_REF_ALLOC_AUX(realmPtr_->betaDamp_,
+                         simpleScalarField,
+                         realmPtr_,
+                         realm::betaDamp_ID,
                          stk::topology::NODE_RANK);
 };
 

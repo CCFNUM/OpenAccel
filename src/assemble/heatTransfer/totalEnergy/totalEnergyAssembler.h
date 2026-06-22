@@ -31,6 +31,55 @@ public:
     {
     }
 
+    void preAssemble(const domain* domain, Context* ctx) override
+    {
+        Base::preAssemble(domain, ctx);
+
+        // Zero qDot on interface IP slots before scatter.
+        auto& qDotSideSTKFieldRef =
+            model_->qDotRef().sideFieldRef().stkFieldRef();
+        for (const interface* interf : domain->interfacesRef())
+        {
+            if (interf->isConformalTreatment())
+                continue;
+            const bool zeroBothSides = interf->isInternal();
+            const bool zeroOwnSide = !interf->isInternal();
+
+            if (!zeroBothSides && !zeroOwnSide)
+                continue; // slave domain of a cross-domain GGI iface
+
+            auto zeroSide = [&](const interfaceSideInfo* sidePtr)
+            {
+                for (const auto& faceVec : sidePtr->ipInfoVec())
+                {
+                    for (const ipInfo* ip : faceVec)
+                    {
+                        if (ip == nullptr || ip->isExposed_)
+                            continue;
+                        scalar* q = stk::mesh::field_data(qDotSideSTKFieldRef,
+                                                          ip->currentFace_);
+                        q[ip->currentGaussPointId_] = 0.0;
+                    }
+                }
+            };
+            if (zeroBothSides)
+            {
+                zeroSide(interf->masterInfoPtr());
+                zeroSide(interf->slaveInfoPtr());
+            }
+            else
+            {
+                zeroSide(interf->interfaceSideInfoPtr(domain->index()));
+            }
+        }
+    }
+
+    void postAssemble(const domain* domain, Context* ctx) override
+    {
+        Base::postAssemble(domain, ctx);
+        assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
+    }
+
 protected:
     void assembleNodeTermsFusedSteady_(const domain* domain,
                                        Context* ctx) override;
@@ -44,7 +93,6 @@ protected:
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
 
-#ifdef HAS_INTERFACE
     void assembleElemTermsInterfaceSide_(
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
@@ -53,7 +101,6 @@ protected:
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx);
-#endif /* HAS_INTERFACE */
 
     // boundary conditions
     void assembleElemTermsBoundary_(const domain* domain,
@@ -82,12 +129,6 @@ protected:
     void assembleElemTermsBoundaryOpening_(const domain* domain,
                                            const boundary* boundary,
                                            Context* ctx) override;
-
-    void postAssemble_(const domain* domain, Context* ctx) override
-    {
-        Base::postAssemble_(domain, ctx);
-        assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
-    }
 };
 
 } /* namespace accel */

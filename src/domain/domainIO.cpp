@@ -424,9 +424,6 @@ void domain::read_()
 
         const auto& fluidModelsBlock = domain_conf_["fluid_models"];
 
-        // flow model: always ON if no multiphase model
-        equations_[static_cast<int>(equationID::segregatedFlow)] = true;
-
         // query multiphase model: must exist in case more than a material is
         // assigned
         if (this->nMaterials() > 1)
@@ -471,8 +468,6 @@ void domain::read_()
                     {
                         equations_[static_cast<int>(
                             equationID::segregatedFreeSurfaceFlow)] = true;
-
-                        // turn off single-phase flow solver in the domain
                         equations_[static_cast<int>(
                             equationID::segregatedFlow)] = false;
 
@@ -1155,7 +1150,7 @@ void domain::read_()
                                         else
                                         {
                                             errorMsg("buoyancy_reference_"
-                                                     "density key is "
+                                                     "temperature key is "
                                                      "not provided for "
                                                      "buoyancy model");
                                         }

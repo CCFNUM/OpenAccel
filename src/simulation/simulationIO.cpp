@@ -9,10 +9,8 @@
 #include "elementField.h"
 #include "equation.h"
 #include "fluidEquationsIncludes.h"
-#ifdef HAS_INTERFACE
 #include "interface.h"
 #include "interfaceSideInfo.h"
-#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
 #include "simulation.h"
@@ -175,7 +173,6 @@ void simulation::createDomains_()
         }
     }
 
-#ifdef HAS_INTERFACE
     // 2.) Assign interfaces to domains (requires interfaces to be created)
     for (label i = 0; i < meshPtr_->nInterfaces(); i++)
     {
@@ -321,7 +318,6 @@ void simulation::createDomains_()
             }
         }
     }
-#endif /* HAS_INTERFACE */
 }
 
 void simulation::createEquations_()
@@ -355,7 +351,6 @@ void simulation::createEquations_()
         }
     }
 
-#ifdef HAS_INTERFACE
     // 3.) Physics sanity check
     for (label i = 0; i < meshPtr_->nInterfaces(); i++)
     {
@@ -414,7 +409,6 @@ void simulation::createEquations_()
                 break;
         }
     }
-#endif /* HAS_INTERFACE */
 
     if (messager::master())
     {
@@ -475,6 +469,7 @@ void simulation::collectEquations_()
 
     for (const auto& domain : domainVector_)
     {
+
         // segregated NS-pcorr equations
         if (domain->hasEquation(equationID::segregatedFlow))
         {

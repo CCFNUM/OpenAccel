@@ -322,7 +322,16 @@ void displacementDiffusionEquation::solve()
     // assembly
     linearSystem::simulationRef().getProfiler().push("linear_system_assembly");
 
+    // assemble
+    FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
+
+    // Schur-complement static condensation of the augmented system. It must run
+    // BEFORE any relaxations
+    linearSystem::condense();
+
+    // post-assembly
+    FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
     // fix system in domains where the model is not active
     assembler_->fix(this->collectInactiveInteriorParts(), {}, ctx.get());
@@ -343,7 +352,7 @@ void displacementDiffusionEquation::solve()
     {
         this->template correctField_<linearSystem::BLOCKSIZE, SPATIAL_DIM>(
             domain.get(),
-            ctx->getXVector(),
+            ctx->coeffs().get(),
             stk::topology::NODE_RANK,
             this->DRef().stkFieldRef());
 
@@ -370,7 +379,6 @@ displacementDiffusionEquation::collectDirichletBoundaryParts_()
     stk::mesh::PartVector incPartVec;
     for (const auto& domain : domainVector_)
     {
-#ifdef HAS_INTERFACE
         for (const interface* interf : domain->interfacesRef())
         {
             if (interf->isFluidSolidType())
@@ -382,7 +390,6 @@ displacementDiffusionEquation::collectDirichletBoundaryParts_()
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)

@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 // #code
 #include "dgInfo.h"
 #include "master_element/MasterElement.h"
@@ -97,5 +95,3 @@ void dgInfo::dumpInfo()
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

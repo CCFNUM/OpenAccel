@@ -8,8 +8,6 @@
 #ifndef DATATRANSFER_H
 #define DATATRANSFER_H
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "interface.h"
 
@@ -693,5 +691,4 @@ public:
 
 #include "dataTransfer.hpp"
 
-#endif /* HAS_INTERFACE */
 #endif

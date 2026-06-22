@@ -25,6 +25,7 @@
 #include <stk_mesh/base/CoordinateSystems.hpp>
 #include <stk_mesh/base/CreateEdges.hpp>
 #include <stk_mesh/base/CreateFaces.hpp>
+#include <stk_mesh/base/DestroyElements.hpp>
 #include <stk_mesh/base/Entity.hpp>
 #include <stk_mesh/base/Field.hpp>
 #include <stk_mesh/base/FieldBLAS.hpp>
@@ -230,8 +231,8 @@ public:
 // equations
 enum class equationID
 {
-    // fluid equations
-    coupledNavierStokes = 0,
+// fluid equations
+    coupledNavierStokes,
     pressureCorrection,
     segregatedCorrelationTransitionShearStressTransport,
     segregatedFlow,
@@ -556,7 +557,6 @@ enum class initialConditionOption
 
 initialConditionOption convertInitialConditionOptionFromString(std::string s);
 
-#ifdef HAS_INTERFACE
 // Interface model option
 enum class interfaceModelOption
 {
@@ -583,20 +583,9 @@ std::string toString(interfaceType type);
 enum class nonconformalMethod
 {
     discontinuousGalerkin,
-    generalGridInterface
 };
 
 nonconformalMethod convertNonconformalMethodFromString(std::string s);
-
-// GGI assembly method
-enum class ggiAssemblyMethod
-{
-    penaltyMortar,
-    constrainedMortar
-};
-
-ggiAssemblyMethod convertGgiAssemblyMethodFromString(std::string s);
-#endif /* HAS_INTERFACE */
 
 // Wall-function type
 enum class wallFunctionType

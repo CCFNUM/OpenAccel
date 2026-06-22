@@ -6,10 +6,6 @@
 
 #include "navierStokesAssembler.h"
 #include "flowModel.h"
-#ifdef HAS_INTERFACE
-#include "dataTransfer.h"
-#include "interface.h"
-#endif
 
 namespace accel
 {
@@ -233,9 +229,8 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
         }
     }
 
-#ifdef HAS_INTERFACE
     // conformal interface: give master and slave the effective (vol1+vol2)
-    // volume in their D coefficients
+    // volume in their D coefficients, mirroring the coupled assembler
     for (const interface* interf : domain->interfacesRef())
     {
         if (!interf->isConformalTreatment() ||
@@ -258,14 +253,15 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
         transfer.initialize();
         transfer.update();
     }
-#endif /* HAS_INTERFACE */
 }
 
-void navierStokesAssembler::postAssemble_(const domain* domain, Context* ctx)
+void navierStokesAssembler::postAssemble(const domain* domain, Context* ctx)
 {
-    phiAssembler::postAssemble_(domain, ctx);
+    phiAssembler::postAssemble(domain, ctx);
     assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
     applySymmetryConditions_(domain, ctx);
+    computeDUCoefficients(domain, ctx);
+    assembleNormalRelaxation(domain, ctx, 0.75);
 }
 
 void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
@@ -366,7 +362,6 @@ void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
         }
     }
 
-#ifdef HAS_INTERFACE
     // add interface parts for relaxation under certain circumstances:
     // 1) if the interface is a fluid-solid interface
     // 2) if the interface whether inter-domain are connecting multiple
@@ -382,7 +377,6 @@ void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Apply relaxation
     {
@@ -580,7 +574,6 @@ void navierStokesAssembler::assembleNormalRelaxation(const domain* domain,
             }
         }
 
-#ifdef HAS_INTERFACE
         // add interface parts for relaxation if fluid-solid interface
         for (const interface* interf : domain->interfacesRef())
         {
@@ -594,7 +587,6 @@ void navierStokesAssembler::assembleNormalRelaxation(const domain* domain,
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // Apply relaxation
         {

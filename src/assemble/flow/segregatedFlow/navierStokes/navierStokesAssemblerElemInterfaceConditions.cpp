@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "flowModel.h"
 #include "interface.h"
@@ -125,6 +123,7 @@ void navierStokesAssembler::assembleElemTermsInterfaceSide_(
     // Get transport fields/side fields
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
     const auto& muEffSTKFieldRef = model_->muEffRef().stkFieldRef();
+    // prescribed side velocity for the non-slip exposed (non-overlap) wall
     const auto* nodalSideUSTKFieldPtr =
         interfaceSideInfoPtr->hasNonoverlap() && !slipNonOverlap
             ? model_->URef().nodeSideFieldRef().stkFieldPtr()
@@ -143,17 +142,7 @@ void navierStokesAssembler::assembleElemTermsInterfaceSide_(
     const utils::matrix& rotMat = interfaceSideInfoPtr->rotationMatrix_;
 
     // extract vector of interface IP info
-
-    const auto ggiMethod =
-        field_broker_->meshRef()
-            .controlsRef()
-            .solverRef()
-            .solverControl_.expertParameters_.ggiAssemblyMethod_;
-    const bool useGgiNonPenalty =
-        interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-            nonconformalMethod::generalGridInterface &&
-        ggiMethod != ggiAssemblyMethod::penaltyMortar;
-    const scalar multiplier = useGgiNonPenalty ? 1.0 : 0.5;
+    const scalar multiplier = 0.5;
 
     const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
 
@@ -164,9 +153,6 @@ void navierStokesAssembler::assembleElemTermsInterfaceSide_(
         for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
         {
             const ipInfo* ip = faceIpInfoVec[k];
-
-            if (ip->isExposed_)
-                continue;
 
             // extract current/opposing face/element
             stk::mesh::Entity currentFace = ip->currentFace_;
@@ -184,10 +170,220 @@ void navierStokesAssembler::assembleElemTermsInterfaceSide_(
 
             // local ip
             const label currentGaussPointId = ip->currentGaussPointId_;
-            const label opposingGaussPointId = ip->opposingGaussPointId_;
 
             currentIsoParCoords = ip->currentIsoParCoords_;
             opposingIsoParCoords = ip->opposingIsoParCoords_;
+
+            // Exposed (non-overlapping) GGI fragment: treat as a wall (assumed
+            // non-moving). Pressure is handled outside the segregated momentum
+            // equation, so only the viscous wall stress is assembled (no
+            // pressure force). Mirror of the coupled cnavierStokes exposed
+            // treatment: slipNonOverlap -> slip wall (normal stress only);
+            // otherwise -> no-slip wall (tangential stress, prescribed side
+            // velocity on the face nodes).
+            if (ip->isExposed_)
+            {
+                const label* ipNodeMap =
+                    meSCSCurrent->ipNodeMap(currentFaceOrdinal);
+                const label nearestNode = ipNodeMap[currentGaussPointId];
+                const label currentNodesPerSide = meFCCurrent->nodesPerElement_;
+                const label currentNodesPerElement =
+                    meSCSCurrent->nodesPerElement_;
+
+                const label lhsSize = currentNodesPerElement * SPATIAL_DIM *
+                                      currentNodesPerElement * SPATIAL_DIM;
+                const label rhsSize = currentNodesPerElement * SPATIAL_DIM;
+                lhs.resize(lhsSize);
+                rhs.resize(rhsSize);
+                scratchIds.resize(rhsSize);
+                scratchVals.resize(rhsSize);
+                connectedNodes.resize(currentNodesPerElement);
+                ws_c_elem_velocity.resize(currentNodesPerElement * SPATIAL_DIM);
+                ws_c_elem_coordinates.resize(currentNodesPerElement *
+                                             SPATIAL_DIM);
+                ws_bcMultiplier.resize(currentNodesPerElement);
+                ws_c_dndx.resize(SPATIAL_DIM * currentNodesPerElement);
+                ws_c_det_j.resize(1);
+                ws_c_muEff.resize(currentNodesPerSide);
+                ws_c_general_shape_function.resize(currentNodesPerSide);
+
+                scalar* p_lhs = &lhs[0];
+                scalar* p_rhs = &rhs[0];
+                scalar* p_c_elem_velocity = &ws_c_elem_velocity[0];
+                scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
+                scalar* p_c_muEff = &ws_c_muEff[0];
+                scalar* p_bcMultiplier = &ws_bcMultiplier[0];
+                scalar* p_c_general_shape_function =
+                    &ws_c_general_shape_function[0];
+                scalar* p_c_dndx = &ws_c_dndx[0];
+
+                const label* c_face_node_ordinals =
+                    meSCSCurrent->side_node_ordinals(currentFaceOrdinal);
+
+                // current element: off-face velocity + coordinates
+                stk::mesh::Entity const* current_elem_node_rels =
+                    bulkData.begin_nodes(currentElement);
+                const label current_num_elem_nodes =
+                    bulkData.num_nodes(currentElement);
+                for (label ni = 0; ni < current_num_elem_nodes; ++ni)
+                {
+                    stk::mesh::Entity node = current_elem_node_rels[ni];
+                    connectedNodes[ni] = node;
+                    p_bcMultiplier[ni] = 1.0;
+                    const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                    const scalar* coords =
+                        stk::mesh::field_data(coordsSTKFieldRef, node);
+                    const label niNdim = ni * SPATIAL_DIM;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_c_elem_velocity[niNdim + i] = U[i];
+                        p_c_elem_coordinates[niNdim + i] = coords[i];
+                    }
+                }
+
+                // current face: muEff; for the no-slip case, override the
+                // face-node velocity with the prescribed side velocity and
+                // mark those nodes explicit (bcMultiplier = 0).
+                stk::mesh::Entity const* current_face_node_rels =
+                    bulkData.begin_nodes(currentFace);
+                const label current_num_face_nodes =
+                    bulkData.num_nodes(currentFace);
+                for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                {
+                    const label icnn = c_face_node_ordinals[ni];
+                    stk::mesh::Entity node = current_face_node_rels[ni];
+                    p_c_muEff[ni] =
+                        *stk::mesh::field_data(muEffSTKFieldRef, node);
+
+                    if (!slipNonOverlap && nodalSideUSTKFieldPtr != nullptr)
+                    {
+                        p_bcMultiplier[icnn] = 0.0;
+                        const scalar* U =
+                            stk::mesh::field_data(*nodalSideUSTKFieldPtr, node);
+                        const label niNdim = icnn * SPATIAL_DIM;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                            p_c_elem_velocity[niNdim + i] = U[i];
+                    }
+                }
+
+                // area magnitude + unit normal
+                const scalar* c_areaVec = stk::mesh::field_data(
+                    exposedAreaVecSTKFieldRef, currentFace);
+                scalar c_amag = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar a =
+                        c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
+                    c_amag += a * a;
+                }
+                c_amag = std::sqrt(c_amag);
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                    p_cNx[i] =
+                        c_areaVec[currentGaussPointId * SPATIAL_DIM + i] /
+                        c_amag;
+
+                // dndx at the bip
+                meSCSCurrent->sidePcoords_to_elemPcoords(
+                    currentFaceOrdinal,
+                    1,
+                    &currentIsoParCoords[0],
+                    &currentElementIsoParCoords[0]);
+                scalar scs_error = 0.0;
+                meSCSCurrent->general_face_grad_op(
+                    currentFaceOrdinal,
+                    &currentElementIsoParCoords[0],
+                    &p_c_elem_coordinates[0],
+                    &p_c_dndx[0],
+                    &ws_c_det_j[0],
+                    &scs_error);
+
+                // interpolate muEff to the bip
+                scalar currentMuEffBip = 0.0;
+                meFCCurrent->interpolatePoint(sizeOfScalarField,
+                                              &currentIsoParCoords[0],
+                                              &ws_c_muEff[0],
+                                              &currentMuEffBip);
+
+                // zero lhs/rhs
+                for (label p = 0; p < lhsSize; ++p)
+                    p_lhs[p] = 0.0;
+                for (label p = 0; p < rhsSize; ++p)
+                    p_rhs[p] = 0.0;
+
+                for (label ic = 0; ic < currentNodesPerElement; ++ic)
+                {
+                    const label offSetDnDx = ic * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj =
+                            c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
+                        const scalar dndxj = p_c_dndx[offSetDnDx + j];
+                        const scalar uxj =
+                            p_c_elem_velocity[ic * SPATIAL_DIM + j];
+                        const scalar divUstress = 2.0 / 3.0 * currentMuEffBip *
+                                                  dndxj * uxj * axj * comp;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            const label indexR = nearestNode * SPATIAL_DIM + i;
+                            const label rowR =
+                                indexR * currentNodesPerElement * SPATIAL_DIM;
+                            const scalar dndxi = p_c_dndx[offSetDnDx + i];
+                            const scalar uxi =
+                                p_c_elem_velocity[ic * SPATIAL_DIM + i];
+                            const scalar nxi = p_cNx[i];
+                            // slip wall keeps the normal stress (n.n); no-slip
+                            // keeps the tangential stress (1 - n.n) and is
+                            // implicit only for off-face nodes (bcMultiplier).
+                            const scalar proj =
+                                slipNonOverlap ? nxi * nxi : 1.0 - nxi * nxi;
+                            const scalar mult =
+                                slipNonOverlap ? 1.0 : p_bcMultiplier[ic];
+
+                            scalar lhsfac =
+                                -currentMuEffBip * dndxj * axj * proj;
+                            p_lhs[rowR + ic * SPATIAL_DIM + i] += lhsfac * mult;
+                            p_rhs[indexR] -=
+                                lhsfac * uxi +
+                                (slipNonOverlap ? divUstress * nxi * nxi : 0.0);
+
+                            lhsfac = -currentMuEffBip * dndxi * axj * proj;
+                            p_lhs[rowR + ic * SPATIAL_DIM + j] += lhsfac * mult;
+                            p_rhs[indexR] -= lhsfac * uxj;
+
+                            for (label l = 0; l < SPATIAL_DIM; ++l)
+                            {
+                                if (i == l)
+                                    continue;
+                                const scalar nxinxl = nxi * p_cNx[l];
+                                const scalar uxl =
+                                    p_c_elem_velocity[ic * SPATIAL_DIM + l];
+                                const scalar dndxl = p_c_dndx[offSetDnDx + l];
+                                // slip: -ni*nl*(...); no-slip: +ni*nl*(...)
+                                const scalar sgn = slipNonOverlap ? -1.0 : 1.0;
+
+                                lhsfac = sgn * currentMuEffBip * dndxj * axj *
+                                         nxinxl;
+                                p_lhs[rowR + ic * SPATIAL_DIM + l] +=
+                                    lhsfac * mult;
+                                p_rhs[indexR] -=
+                                    lhsfac * uxl + (slipNonOverlap
+                                                        ? divUstress * nxinxl
+                                                        : 0.0);
+
+                                lhsfac = sgn * currentMuEffBip * dndxl * axj *
+                                         nxinxl;
+                                p_lhs[rowR + ic * SPATIAL_DIM + j] +=
+                                    lhsfac * mult;
+                                p_rhs[indexR] -= lhsfac * uxj;
+                            }
+                        }
+                    }
+                }
+
+                this->applyCoeff_(
+                    A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+                continue;
+            }
 
             // area fraction for this CS connection
             const scalar fcs = ip->areaFraction_;
@@ -458,6 +654,9 @@ void navierStokesAssembler::assembleElemTermsInterfaceSide_(
                                            &ws_o_muEff[0],
                                            &opposingMuEffBip);
 
+            // GGI scatter: Laplacian diffusion +
+            // first-order upwind advection (diagonal-in-component).
+
             // zero-out diffusion fluxes
             for (label j = 0; j < SPATIAL_DIM; ++j)
             {
@@ -546,7 +745,7 @@ void navierStokesAssembler::assembleElemTermsInterfaceSide_(
             const scalar tmDot = ncmDot[currentGaussPointId] * fcs;
             const scalar abs_tmDot = std::abs(tmDot);
 
-            // compute penalty (active for penaltyMortar)
+            // compute penalty (DG only)
             const scalar penaltyIp = penaltyFactor * 0.5 *
                                      (currentMuEffBip * currentInverseLength +
                                       opposingMuEffBip * opposingInverseLength);
@@ -1289,5 +1488,3 @@ void navierStokesAssembler::assembleElemTermsInterfaceSideNoSlipWall_(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

@@ -71,6 +71,8 @@ private:
 
     std::unique_ptr<simpleScalarField> Ma_;
 
+    std::unique_ptr<simpleScalarField> betaDamp_;
+
     std::unique_ptr<simpleScalarField> Co_;
 
     std::unique_ptr<dynamicViscosity> mu_;
@@ -192,6 +194,8 @@ public:
     static constexpr char Co_ID[] = "courant_number";
 
     static constexpr char Ma_ID[] = "mach_number";
+
+    static constexpr char betaDamp_ID[] = "blending_damping_factor";
 
     static constexpr char nHat_ID[] = "interface_normal";
 

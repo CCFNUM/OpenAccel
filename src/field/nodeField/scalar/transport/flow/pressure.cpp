@@ -39,9 +39,6 @@ pressure::pressure(realm* realmPtr,
             .solverControl_.basicSettings_.interpolationSchemeType_
             .pressureGradientInterpolationType_;
 
-    // pressure may only apply to fluid domains
-    mediumIndependent_ = false;
-
     // force correct gradient for pressure: remove symmetric contributions to
     // gradient
     correctGradient_ = true;

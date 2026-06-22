@@ -6,6 +6,7 @@
 
 #include "pressureCorrectionEquation.h"
 #include "realm.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -94,8 +95,16 @@ void pressureCorrectionEquation::solve()
     auto ctx = linearSystem::getContext();
     ctx->zeroSystemStorage();
 
-    // assembly
+    // assemble
+    FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
+
+    // Schur-complement static condensation of the augmented system. It must run
+    // BEFORE any relaxations
+    linearSystem::condense();
+
+    // post-assembly
+    FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
     // assemble diagonal-domainance for pressure correction equation in
     // compressible domains
@@ -109,8 +118,11 @@ void pressureCorrectionEquation::solve()
                           ctx.get());
 
     // fix system in domains where the model is not active
-    assembler_->fix(
-        this->collectInactiveInteriorParts(), {}, ctx.get(), {}, true);
+    assembler_->fix(this->collectInactiveInteriorParts(),
+                    {},
+                    ctx.get(),
+                    {},
+                    !model_->meshRef().anyZoneMeshWithOverset());
 
     // solve linear system
     linearSystem::solve();
@@ -135,7 +147,7 @@ void pressureCorrectionEquation::solve()
 
         this->template correctField_<linearSystem::BLOCKSIZE>(
             domain.get(),
-            ctx->getXVector(),
+            ctx->coeffs().get(),
             stk::topology::NODE_RANK,
             p.stkFieldRef(),
             effectiveRelaxationFactor);

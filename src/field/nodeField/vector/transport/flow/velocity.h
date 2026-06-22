@@ -48,9 +48,7 @@ public:
 
     void registerSideFlowDirectionFields(label iZone, label iBoundary);
 
-#ifdef HAS_INTERFACE
     void updateInterfaceSideField(label iInterface, bool master) override;
-#endif /* HAS_INTERFACE */
 
     // Access
 

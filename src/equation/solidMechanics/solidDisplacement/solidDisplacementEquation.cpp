@@ -5,6 +5,7 @@
 // Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "solidDisplacementEquation.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -127,7 +128,16 @@ void solidDisplacementEquation::solve()
     // assembly
     linearSystem::simulationRef().getProfiler().push("linear_system_assembly");
 
+    // assemble
+    FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
+
+    // Schur-complement static condensation of the augmented system. It must run
+    // BEFORE any relaxations
+    linearSystem::condense();
+
+    // post-assembly
+    FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
     // fix system in domains where the model is not active
     assembler_->fix(this->collectInactiveInteriorParts(), {}, ctx.get());
@@ -186,7 +196,6 @@ void solidDisplacementEquation::solve()
     linearSystem::solve();
 
     // Compute relaxation factor (acceleration handled in base equation)
-    const Vector& correction = ctx->getXVector();
     scalar relaxationFactor = DRef().urf();
 
     // correction
@@ -194,7 +203,7 @@ void solidDisplacementEquation::solve()
     {
         this->template correctField_<linearSystem::BLOCKSIZE, SPATIAL_DIM>(
             domain.get(),
-            correction,
+            ctx->coeffs().get(),
             stk::topology::NODE_RANK,
             DRef().stkFieldRef(),
             relaxationFactor);
@@ -284,7 +293,6 @@ void solidDisplacementEquation::applyDependencyUpdates_(
     // displacement from solid side to fluid side
     if (domain->zonePtr()->meshDeforming())
     {
-#ifdef HAS_INTERFACE
         for (const interface* interf : domain->interfacesRef())
         {
             if (interf->isFluidSolidType())
@@ -294,7 +302,6 @@ void solidDisplacementEquation::applyDependencyUpdates_(
                                 !interf->isMasterZone(domain->index()));
             }
         }
-#endif /* HAS_INTERFACE */
     }
 }
 

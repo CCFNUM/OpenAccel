@@ -7,8 +7,6 @@
 #ifndef DGINTERFACESIDEINFO_H
 #define DGINTERFACESIDEINFO_H
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "interfaceSideInfo.h"
 
@@ -98,5 +96,4 @@ private:
 
 } // namespace accel
 
-#endif /* HAS_INTERFACE */
 #endif

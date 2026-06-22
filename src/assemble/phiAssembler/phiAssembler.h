@@ -15,7 +15,6 @@
 // code
 #include "assembler.h"
 #include "elementField.h"
-#include "macros.h"
 #include "mesh.h"
 #include "nodeField.h"
 #include "types.h"
@@ -378,14 +377,31 @@ public:
         }
     }
 
+    void preAssemble(const domain* domain, Context* ctx) override
+    {
+        computeGamma_(domain);
+    }
+
+    void assemble(const domain* domain, Context* ctx) override
+    {
+        assert(phi_);
+        assembleNodeTerms_(domain, ctx); // pointwise kernels
+        assembleElemTerms_(domain, ctx); // stencil kernels
+    }
+
+    virtual void postAssemble(const domain* domain, Context* ctx) override
+    {
+        assert(phi_);
+        applyConstraints(domain, ctx);
+        assembleRelaxation_(domain, ctx->getAMatrix(), phi_->urf());
+    }
+
     void applyConstraints(const domain* domain, Context* ctx)
     {
-#ifdef HAS_INTERFACE
         // Interface constraints applied under either of two conditions:
         // 1) conformal interfaces (in case non-conformal treatment forces to
         // false)
-        // 2) non-conformal interfaces in the case of GGI + constrained
-        // mortar
+        // 2) non-conformal interfaces in the case of GGI
         if (field_broker_->meshRef().hasInterfaces())
         {
             // select all locally owned nodes for this domain
@@ -408,21 +424,7 @@ public:
 
                 if (!interf->isConformalTreatment())
                 {
-                    // GGI CS static condensation
-                    const auto& ctrls = field_broker_->meshRef().controlsRef();
-                    const auto ncMethod = ctrls.solverRef()
-                                              .solverControl_.expertParameters_
-                                              .nonconformalMethod_;
-                    const auto ggiMethod = ctrls.solverRef()
-                                               .solverControl_.expertParameters_
-                                               .ggiAssemblyMethod_;
-
-                    if (ncMethod == nonconformalMethod::generalGridInterface &&
-                        ggiMethod == ggiAssemblyMethod::constrainedMortar)
-                    {
-                        errorMsg(
-                            "GGI CS static condensation not implemented yet");
-                    }
+                    // nothing to do
                 }
                 else
                 {
@@ -809,12 +811,10 @@ public:
                 }
             }
         }
-#endif /* HAS_INTERFACE */
     }
 
-#ifdef HAS_INTERFACE
     // Cross-rank conformal fold for split pairs: rotation T for vectors,
-    // identity for scalars.
+    // identity for scalars (coupled assemblers call applyCrossRankFold direct).
     virtual void applyConstraintsCrossRank_(const interface* interf,
                                             const domain* domain,
                                             Context* ctx)
@@ -851,7 +851,6 @@ public:
                                  static_cast<int>(N),
                                  gather);
     }
-#endif /* HAS_INTERFACE */
 
 protected:
     FieldType* phi_;
@@ -861,24 +860,9 @@ protected:
     STKScalarField* divUSTKFieldPtr_;
     transportMode transportMode_;
 
-    void preAssemble_(const domain* domain, Context*) override
-    {
-        computeGamma_(domain);
-    }
-
-    virtual void postAssemble_(const domain* domain, Context* ctx) override
-    {
-        assert(phi_);
-        applyConstraints(domain, ctx);
-        assembleRelaxation_(domain, ctx->getAMatrix(), phi_->urf());
-    }
-
-    void assemble_(const domain* domain, Context* ctx) override
-    {
-        assert(phi_);
-        assembleNodeTerms_(domain, ctx); // pointwise kernels
-        assembleElemTerms_(domain, ctx); // stencil kernels
-    }
+    // Size the Schur-augmented storage on this assembler's
+    // linearSolverContext->coefficients to the current globally-
+    // consistent CS count.
 
     void computeGamma_(const domain* domain);
     virtual void
@@ -902,7 +886,6 @@ protected:
                                                Context* ctx);
     virtual void assembleElemTermsInterior_(const domain* domain, Context* ctx);
 
-#ifdef HAS_INTERFACE
     virtual void assembleElemTermsInterfaces_(const domain* domain,
                                               Context* ctx);
     virtual void assembleElemTermsInterfaceSide_(
@@ -917,7 +900,6 @@ protected:
                                       scalar /*fluxValue*/)
     {
     }
-#endif /* HAS_INTERFACE */
 
     virtual void assembleElemTermsBoundary_(const domain* domain, Context* ctx);
 
@@ -1016,9 +998,7 @@ private:
     void assembleElemTerms_(const domain* domain, Context* ctx)
     {
         assembleElemTermsInterior_(domain, ctx);
-#ifdef HAS_INTERFACE
         assembleElemTermsInterfaces_(domain, ctx);
-#endif /* HAS_INTERFACE */
         assembleElemTermsBoundary_(domain, ctx);
     }
 };
@@ -1232,7 +1212,6 @@ void phiAssembler<N>::assembleBoundaryRelaxation_(const domain* domain,
         }
     }
 
-#ifdef HAS_INTERFACE
     // add interface parts for relaxation under certain circumstances:
     // 1) if the interface is a fluid-solid interface
     // 2) if the interface whether inter-domain are connecting multiple
@@ -1248,7 +1227,6 @@ void phiAssembler<N>::assembleBoundaryRelaxation_(const domain* domain,
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Apply relaxation
     {
@@ -1284,9 +1262,7 @@ void phiAssembler<N>::assembleBoundaryRelaxation_(const domain* domain,
 
 // kernel implementations
 #include "phiAssemblerElemBoundaryConditions.hpp"
-#ifdef HAS_INTERFACE
 #include "phiAssemblerElemInterfaceConditions.hpp"
-#endif /* HAS_INTERFACE */
 #include "phiAssemblerElemTerms.hpp"
 #include "phiAssemblerNodeTerms.hpp"
 

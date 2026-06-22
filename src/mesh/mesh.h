@@ -16,9 +16,7 @@ namespace accel
 {
 
 class controls;
-#ifdef HAS_INTERFACE
 class interface;
-#endif /* HAS_INTERFACE */
 class zone;
 
 #if SPATIAL_DIM == 3
@@ -78,11 +76,12 @@ private:
 
     bool anyZoneMeshDeforming_ = false;
 
+    bool anyZoneMeshWithOverset_ = false;
+
     // a container which maps the local node id (from STK) to the entity. This
     // is because we re-define the local id's of the nodes
     std::vector<stk::mesh::Entity> localNodeIDToEntity_;
 
-#ifdef HAS_INTERFACE
     // Interfaces
 
     bool hasInterfaces_ = false;
@@ -90,7 +89,6 @@ private:
     // all interfaces in the simulation (translational periodic, rotational
     // periodic and general connection)
     std::vector<std::unique_ptr<interface>> interfaceVector_;
-#endif /* HAS_INTERFACE */
 
     // Zones
 
@@ -107,23 +105,22 @@ private:
 
     void validateYamlAgainstExodus_(const YAML::Node& inputNode);
 
+    // destroy elements (and orphaned nodes) of blocks absent from all domains
+    void removeIgnoredBlocks_();
+
     void setupCoordinateField_();
 
     void setupGeometricFields_();
 
     void setupZones_();
 
-#ifdef HAS_INTERFACE
     void setupInterfaces_();
-#endif /* HAS_INTERFACE */
 
     void initializeCoordinateField_();
 
     void initializeZones_();
 
-#ifdef HAS_INTERFACE
     void initializeInterfaces_();
-#endif /* HAS_INTERFACE */
 
     void initializeGeometricFields_();
 
@@ -131,9 +128,7 @@ private:
 
     void updateZones_(bool force = false);
 
-#ifdef HAS_INTERFACE
     void updateInterfaces_(bool force = false);
-#endif /* HAS_INTERFACE */
 
     void updateGeometricFields_(bool force = false);
 
@@ -269,6 +264,16 @@ public:
     const bool anyZoneMeshDeforming() const
     {
         return anyZoneMeshDeforming_;
+    }
+
+    void setAnyZoneMeshWithOverset(bool state)
+    {
+        anyZoneMeshWithOverset_ = state;
+    }
+
+    const bool anyZoneMeshWithOverset() const
+    {
+        return anyZoneMeshWithOverset_;
     }
 
     const std::string getCoordinateFieldName() const
@@ -419,7 +424,6 @@ public:
                stk::mesh::selectUnion(this->boundaryActiveParts());
     };
 
-#ifdef HAS_INTERFACE
     // Interfaces
 
     label nInterfaces() const;
@@ -434,7 +438,6 @@ public:
     {
         return hasInterfaces_;
     }
-#endif /* HAS_INTERFACE */
 
     // Zones
 

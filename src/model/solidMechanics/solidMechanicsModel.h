@@ -25,11 +25,9 @@ private:
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 
-#ifdef HAS_INTERFACE
     void updateDisplacementInterfaceSideFieldTraction_(
         const std::shared_ptr<domain> domain,
         const interfaceSideInfo* interfaceSideInfoPtr);
-#endif /* HAS_INTERFACE */
 
 public:
     solidMechanicsModel(realm* realm);

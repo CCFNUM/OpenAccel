@@ -69,13 +69,11 @@ protected:
 
     mutable std::unique_ptr<zoneDeformation> deformationPtr_ = nullptr;
 
-#ifdef HAS_INTERFACE
     // interfaces to be processed by this domain (meta data is owned by mesh)
     std::vector<interface*> interfaces_;
 
     // zone indices that are connected to this zone with an interface
     std::vector<label> interfacingZoneIndices_;
-#endif /* HAS_INTERFACE */
 
 public:
     zone(mesh* meshPtr, label index, std::string name);
@@ -123,7 +121,6 @@ public:
         return stats_;
     }
 
-#ifdef HAS_INTERFACE
     // interfacing zones
 
     std::vector<label>& interfacingZoneIndices()
@@ -135,7 +132,6 @@ public:
     {
         return interfacingZoneIndices_;
     }
-#endif /* HAS_INTERFACE */
 
     // For zone motion, a transient motion implies a real
     // mesh motion, but if steady-state, then a frame motion
@@ -208,7 +204,6 @@ public:
 
     const mesh& meshRef() const;
 
-#ifdef HAS_INTERFACE
     // Interfaces
 
     bool hasInterfaces() const
@@ -237,7 +232,6 @@ public:
                          interfacingZoneIndices_.end(),
                          iZone) != interfacingZoneIndices_.end();
     }
-#endif /* HAS_INTERFACE */
 };
 
 } // namespace accel

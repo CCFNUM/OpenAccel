@@ -39,9 +39,6 @@ turbulentDissipationRate::turbulentDissipationRate(realm* realmPtr,
             .solverRef()
             .solverControl_.basicSettings_.interpolationSchemeType_
             .turbulentDissipationRateGradientInterpolationType_;
-
-    // turbulent dissipation rate may only apply to fluid domains
-    mediumIndependent_ = false;
 }
 
 void turbulentDissipationRate::updateBoundarySideField(label iZone,

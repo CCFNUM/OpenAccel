@@ -726,7 +726,6 @@ void controls::read(YAML::Node inputNode)
                 }
             }
 
-#ifdef HAS_INTERFACE
             if (advancedOptions["interface_transfer"])
             {
                 const auto& interfaceTransfer =
@@ -770,7 +769,6 @@ void controls::read(YAML::Node inputNode)
                             .template as<bool>();
                 }
             }
-#endif /* HAS_INTERFACE */
 
             if (advancedOptions["equation_controls"])
             {
@@ -957,6 +955,14 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["relax_gradients"].template as<bool>();
             }
 
+            if (expertParameters["high_speed_blend_damping"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .highSpeedBlendDamping_ =
+                    expertParameters["high_speed_blend_damping"]
+                        .template as<bool>();
+            }
+
             if (expertParameters["false_mass_accumulation"])
             {
                 solver_.solverControl_.expertParameters_
@@ -1074,7 +1080,6 @@ void controls::read(YAML::Node inputNode)
                         .template as<scalar>();
             }
 
-#ifdef HAS_INTERFACE
             if (expertParameters["non_conformal_method"])
             {
                 solver_.solverControl_.expertParameters_.nonconformalMethod_ =
@@ -1082,21 +1087,6 @@ void controls::read(YAML::Node inputNode)
                         expertParameters["non_conformal_method"]
                             .template as<std::string>());
             }
-            if (expertParameters["ggi_assembly_method"])
-            {
-                solver_.solverControl_.expertParameters_.ggiAssemblyMethod_ =
-                    convertGgiAssemblyMethodFromString(
-                        expertParameters["ggi_assembly_method"]
-                            .template as<std::string>());
-
-                if (solver_.solverControl_.expertParameters_
-                        .ggiAssemblyMethod_ ==
-                    ggiAssemblyMethod::constrainedMortar)
-                {
-                    errorMsg("constrained mortar not implemented yet");
-                }
-            }
-#endif /* HAS_INTERFACE */
         }
 
         if (solver["output_control"])

@@ -8,12 +8,12 @@
 #define LINEARSYSTEM_H
 
 // code
-#include "assembler.h"
 #include "linearSolver.h"
 #include "macros.h"
 #include "mesh.h"
-#include "messager.h"
 #include "residual.h"
+#include "scaling.h"
+#include "schur.h"
 #include "simulation.h"
 #include "types.h"
 #include "version.h"
@@ -109,9 +109,14 @@ public:
         convergence_tolerance_ = tol;
     }
 
+    // reduce augmented system by static condensation
+    void condense();
+
     void solve()
     {
+        scaleSystem_();
         solveSystem_();
+        recoverLambda_();
     }
 
 protected:
@@ -126,7 +131,15 @@ protected:
 
     virtual void setResidualScales_() = 0;
     virtual void convergenceReport_();
+
+    // scale system (direct pre-conditioning activities)
+    void scaleSystem_();
+
+    // solve
     void solveSystem_();
+
+    // recover lagrange multipliers for schur complement
+    void recoverLambda_();
 
     // residual I/O
     static constexpr char COMMENT[] = "# ";
@@ -457,18 +470,89 @@ void linearSystem<N>::setEquationName(const std::vector<std::string>& name)
 }
 
 template <size_t N>
+void linearSystem<N>::condense()
+{
+
+    // schur complement condensation
+    auto& coeffs = lsolver_->getContext()->getCoefficients();
+    if (coeffs.numConstraints() > 0)
+    {
+        const auto& bulkData = mesh_->bulkDataRef();
+
+        // Row mapping: global node id -> local matrix row (always the
+        // local id; rows are stored local-indexed in the CRS matrix).
+        auto globalToLocalRow = [&bulkData](std::uint64_t gid) -> label
+        {
+            const stk::mesh::Entity e =
+                bulkData.get_entity(stk::topology::NODE_RANK, gid);
+            if (!bulkData.is_valid(e))
+                return -1;
+            return static_cast<label>(bulkData.local_id(e));
+        };
+
+        // Column mapping: global node id -> the key stored in the
+        // matrix's column index array. Local-column-order graphs store
+        // local ids; global-column-order graphs (PETSc / HYPRE /
+        // Trilinos) store the renumbered global id.
+        const bool localColumnOrder = coeffs.getGraph()->isLocalColumnOrder();
+        auto globalToColumn = [&bulkData,
+                               localColumnOrder](std::uint64_t gid) -> label
+        {
+            const stk::mesh::Entity e =
+                bulkData.get_entity(stk::topology::NODE_RANK, gid);
+            if (!bulkData.is_valid(e))
+                return -1;
+            return localColumnOrder ? static_cast<label>(bulkData.local_id(e))
+                                    : static_cast<label>(bulkData.global_id(e));
+        };
+
+        ::linearSolver::schur::condense(
+            coeffs, globalToLocalRow, globalToColumn);
+    }
+}
+
+template <size_t N>
+void linearSystem<N>::scaleSystem_()
+{
+    // Optional linear-system scaling steps.
+
+    // Normalization rescales the assembled matrix and right-hand-side
+    // vector to reduce differences in coefficient magnitudes. This can
+    // improve the numerical conditioning of the system and make the linear
+    // solver more robust.
+    if (normalize_)
+    {
+        ::linearSolver::normalize(lsolver_->getContext()->getAMatrix(),
+                                  lsolver_->getContext()->getBVector());
+    }
+
+    // Diagonal scaling rescales each equation using the diagonal entries of
+    // the matrix. This is a simple equilibration/preconditioning operation
+    // intended to improve the balance of the linear system before solving.
+    if (diagonalScale_)
+    {
+        ::linearSolver::diagonalScale(lsolver_->getContext()->getAMatrix(),
+                                      lsolver_->getContext()->getBVector());
+    }
+}
+
+template <size_t N>
 void linearSystem<N>::solveSystem_()
 {
     if (lsolver_)
     {
         if (normalize_)
         {
-            lsolver_->getContext()->getCoefficients().normalize();
+            linearSolver::normalize(
+                lsolver_->getContext()->getCoefficients().getAMatrix(),
+                lsolver_->getContext()->getCoefficients().getBVector());
         }
 
         if (diagonalScale_)
         {
-            lsolver_->getContext()->getCoefficients().diagonalScale();
+            linearSolver::diagonalScale(
+                lsolver_->getContext()->getCoefficients().getAMatrix(),
+                lsolver_->getContext()->getCoefficients().getBVector());
         }
 
         if (lsolver_->getContext()->getCallCount() == 0)
@@ -501,6 +585,28 @@ void linearSystem<N>::solveSystem_()
     else
     {
         errorMsg("linearSystem: no solver available to solve system!");
+    }
+}
+
+template <size_t N>
+void linearSystem<N>::recoverLambda_()
+{
+    // lagrange multiplier recovery
+    if (lsolver_->getContext()->getCoefficients().numConstraints() > 0)
+    {
+        const auto& bulkData = mesh_->bulkDataRef();
+        ::linearSolver::schur::calculateLambda(
+            lsolver_->getContext()->getCoefficients(),
+            [&bulkData](std::uint64_t gid) -> label
+        {
+            const stk::mesh::Entity e =
+                bulkData.get_entity(stk::topology::NODE_RANK, gid);
+            // owned-only: calculateLambda Allreduce-SUMs each rank's MinvH*x,
+            // so each column is counted once (ghosts are valid on many ranks)
+            if (!bulkData.is_valid(e) || !bulkData.bucket(e).owned())
+                return -1;
+            return static_cast<label>(bulkData.local_id(e));
+        });
     }
 }
 

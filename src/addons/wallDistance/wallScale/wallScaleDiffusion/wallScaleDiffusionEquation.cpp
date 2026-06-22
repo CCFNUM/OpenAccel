@@ -24,7 +24,6 @@ wallScaleDiffusionEquation::wallScaleDiffusionEquation(realm* realm)
             .solverRef()
             .solverControl_.basicSettings_.convergenceControl_
             .relaxationParameters_.wallScaleRelaxationFactor_);
-    yScaleRef().setMediumIndependent(false);
     yScaleRef().setInterpolationScheme(
         meshRef()
             .controlsRef()
@@ -106,7 +105,15 @@ void wallScaleDiffusionEquation::solve()
     ctx->zeroSystemStorage();
 
     // assembly
+    FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
+
+    // Schur-complement static condensation of the augmented system. It must run
+    // BEFORE any relaxations
+    linearSystem::condense();
+
+    // post-assembly
+    FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
     // fix system in domains where the model is not active
     assembler_->fix(
@@ -130,7 +137,7 @@ void wallScaleDiffusionEquation::solve()
     {
         this->template correctField_<linearSystem::BLOCKSIZE>(
             domain.get(),
-            ctx->getXVector(),
+            ctx->coeffs().get(),
             stk::topology::NODE_RANK,
             y_scale.stkFieldRef(),
             relax_value);
@@ -158,7 +165,6 @@ wallScaleDiffusionEquation::collectDirichletBoundaryParts_()
     stk::mesh::PartVector incPartVec;
     for (const auto& domain : domainVector_)
     {
-#ifdef HAS_INTERFACE
         for (const interface* interf : domain->interfacesRef())
         {
             if (interf->isFluidSolidType())
@@ -170,7 +176,6 @@ wallScaleDiffusionEquation::collectDirichletBoundaryParts_()
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)

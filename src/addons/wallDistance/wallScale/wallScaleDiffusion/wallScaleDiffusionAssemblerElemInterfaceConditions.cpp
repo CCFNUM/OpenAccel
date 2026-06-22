@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 #include "wallScaleDiffusionAssembler.h"
 
 namespace accel
@@ -310,5 +308,3 @@ void wallScaleDiffusionAssembler::assembleElemTermsInterfaceSideNoSlipWall_(
 }
 
 } /* namespace accel */
-
-#endif /* HAS_INTERFACE */

@@ -4,7 +4,6 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
 #include "displacementDiffusionAssembler.h"
 
 namespace accel
@@ -39,4 +38,3 @@ void displacementDiffusionAssembler::assembleElemTermsInterfaces_(
 }
 
 } /* namespace accel */
-#endif /* HAS_INTERFACE */

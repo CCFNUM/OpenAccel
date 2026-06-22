@@ -275,7 +275,6 @@ void nodeSideField<scalar, 1>::interpolate(const sideField<scalar, 1>& sf,
     }
 }
 
-#ifdef HAS_INTERFACE
 template <>
 void nodeSideField<scalar, 1>::interpolate(const sideField<scalar, 1>& sf,
                                            label iInterface,
@@ -534,7 +533,6 @@ void nodeSideField<scalar, 1>::interpolate(const sideField<scalar, 1>& sf,
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 template <>
 void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
@@ -805,7 +803,6 @@ void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
     }
 }
 
-#ifdef HAS_INTERFACE
 template <>
 void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
     const sideField<scalar, SPATIAL_DIM>& sf,
@@ -1069,6 +1066,5 @@ void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 } // namespace accel

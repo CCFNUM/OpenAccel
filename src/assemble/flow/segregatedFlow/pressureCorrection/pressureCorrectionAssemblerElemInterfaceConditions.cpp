@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "flowModel.h"
 #include "interface.h"
@@ -198,17 +196,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
     // extract vector of interface IP info
-
-    const auto ggiMethod =
-        field_broker_->meshRef()
-            .controlsRef()
-            .solverRef()
-            .solverControl_.expertParameters_.ggiAssemblyMethod_;
-    const bool useGgiNonPenalty =
-        interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-            nonconformalMethod::generalGridInterface &&
-        ggiMethod != ggiAssemblyMethod::penaltyMortar;
-    const scalar multiplier = useGgiNonPenalty ? 1.0 : 0.5;
+    const scalar multiplier = 0.5;
 
     const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
 
@@ -705,6 +693,43 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                            &ws_o_duRhs[0],
                                            &oDuRhsBip[0]);
 
+            // GGI scatter: rho*du diffusion stencil + per-cs mass-flow source.
+
+            // projected nodal gradient; zero-out first
+            for (label i = 0; i < SPATIAL_DIM; i++)
+            {
+                cGjpBip[i] = 0;
+                oGjpBip[i] = 0;
+            }
+
+            for (label ic = 0; ic < currentNodesPerSide; ++ic)
+            {
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    const label offSet = i * currentNodesPerSide + ic;
+                    cGjpBip[i] += f_c * p_c_Gjp[offSet];
+                }
+            }
+
+            for (label ic = 0; ic < opposingNodesPerSide; ++ic)
+            {
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    const label offSet = i * opposingNodesPerSide + ic;
+                    oGjpBip[i] += f_o * p_o_Gjp[offSet];
+                }
+            }
+
+            // zero lhs/rhs
+            for (label p = 0; p < lhsSize; ++p)
+            {
+                p_lhs[p] = 0.0;
+            }
+            for (label p = 0; p < rhsSize; ++p)
+            {
+                p_rhs[p] = 0.0;
+            }
+
             // projected nodal gradient; zero-out first
             for (label i = 0; i < SPATIAL_DIM; i++)
             {
@@ -751,7 +776,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                     oRhoBip * oDuBip[i] / static_cast<scalar>(SPATIAL_DIM);
             }
 
-            // compute penalty (active for penaltyMortar)
+            // compute penalty (DG only)
             const scalar penaltyIp =
                 penaltyFactor * 0.5 *
                 (currentDiffBipmag * currentInverseLength +
@@ -1232,5 +1257,3 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSideNoSlipWall_(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

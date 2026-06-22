@@ -43,9 +43,6 @@ velocity::velocity(realm* realmPtr,
             .solverControl_.basicSettings_.interpolationSchemeType_
             .velocityGradientInterpolationType_;
 
-    // velocity may only apply to fluid domains
-    mediumIndependent_ = false;
-
     // force correct gradient for velocity: remove symmetric contributions to
     // gradient
     correctGradient_ = true;
@@ -5461,7 +5458,6 @@ void velocity::updateBoundarySideDirectionFields(label iZone, label iBoundary)
     }
 }
 
-#ifdef HAS_INTERFACE
 void velocity::updateInterfaceSideField(label iInterface, bool master)
 {
     const auto& mesh = this->meshRef();
@@ -5531,7 +5527,6 @@ void velocity::updateInterfaceSideField(label iInterface, bool master)
             this->nodeSideFieldRef(), iInterface, master, this->isShifted());
     }
 }
-#endif /* HAS_INTERFACE */
 
 void velocity::registerSideFlowDirectionFields(label iZone, label iBoundary)
 {

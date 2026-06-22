@@ -6,6 +6,9 @@
 
 #include "navierStokesEquation.h"
 #include "realm.h"
+#include "scaling.h"
+#include "interface.h"
+#include "ipInfo.h"
 
 namespace accel
 {
@@ -141,7 +144,7 @@ void navierStokesEquation::preSolve()
     // properties update
     FOREACH_DOMAIN_IF(model_->updateDensity, domain->isMaterialCompressible());
     FOREACH_DOMAIN(model_->updateDynamicViscosity);
-    FOREACH_DOMAIN(model_->updateEffectiveDynamicViscosity); // laminar
+    FOREACH_DOMAIN(model_->updateEffectiveDynamicViscosity);
 
     // update density-related fields
     FOREACH_DOMAIN_IF(model_->updateDensityGradientField,
@@ -159,18 +162,23 @@ void navierStokesEquation::solve()
     auto ctx = linearSystem::getContext();
     ctx->zeroSystemStorage();
 
-    // assembly
+    // assemble
+    FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
 
-    // compute pressure-diffusivity
-    FOREACH_DOMAIN_PTR(assembler_->computeDUCoefficients, ctx.get());
+    // Schur-complement static condensation of the augmented system. It must run
+    // BEFORE any relaxations
+    linearSystem::condense();
 
-    // relax momentum at mass specified (or nearly specified) boundaries
-    FOREACH_DOMAIN_PTR(assembler_->assembleNormalRelaxation, ctx.get(), 0.75);
+    // post-assembly
+    FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
     // fix system in domains where the model is not active
-    assembler_->fix(
-        this->collectInactiveInteriorParts(), {}, ctx.get(), {}, true);
+    assembler_->fix(this->collectInactiveInteriorParts(),
+                    {},
+                    ctx.get(),
+                    {},
+                    !model_->meshRef().anyZoneMeshWithOverset());
 
     if (!model_->controlsRef()
              .solverRef()
@@ -200,7 +208,7 @@ void navierStokesEquation::solve()
 
             this->template correctField_<linearSystem::BLOCKSIZE, SPATIAL_DIM>(
                 domain.get(),
-                ctx->getXVector(),
+                ctx->coeffs().get(),
                 stk::topology::NODE_RANK,
                 U.stkFieldRef(),
                 effectiveRelaxationFactor);
@@ -248,26 +256,5 @@ void navierStokesEquation::printScales()
                   << std::endl;
     }
 }
-
-#ifdef HAS_INTERFACE
-void navierStokesEquation::accumulateInterfacePDot_(
-    const domain* domain,
-    ::linearSolver::coefficients<SPATIAL_DIM>* coeffs)
-{
-    if (!model_->controlsRef()
-             .solverRef()
-             .solverControl_.expertParameters_.printMomentumInterfaceImbalance_)
-        return;
-
-    if (model_->pDotRef().sideFieldPtr() == nullptr)
-        return;
-
-    const auto& interfaces = domain->zonePtr()->interfacesRef();
-    if (interfaces.empty())
-        return;
-
-    // not implemented yet
-}
-#endif /* HAS_INTERFACE */
 
 } /* namespace accel */

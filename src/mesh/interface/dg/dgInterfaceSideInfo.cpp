@@ -4,8 +4,6 @@
 // Description: DG (Discontinuous Galerkin) implementation of interfaceSideInfo
 // Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "dgInterfaceSideInfo.h"
 #include "dgInfo.h"
@@ -1468,5 +1466,3 @@ size_t dgInterfaceSideInfo::errorCheck()
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

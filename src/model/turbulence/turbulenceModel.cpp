@@ -254,7 +254,6 @@ turbulenceModel::collectNoSlipWallParts_(const std::shared_ptr<domain> domain)
 {
     stk::mesh::PartVector parts;
 
-#ifdef HAS_INTERFACE
     // fluid-solid interface side
     for (const interface* interf : domain->interfacesRef())
     {
@@ -270,7 +269,6 @@ turbulenceModel::collectNoSlipWallParts_(const std::shared_ptr<domain> domain)
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // no-slip boundary walls
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();

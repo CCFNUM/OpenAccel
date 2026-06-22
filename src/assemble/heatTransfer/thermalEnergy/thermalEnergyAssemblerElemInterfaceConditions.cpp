@@ -5,7 +5,6 @@
 // Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef WITH_THERMAL_TEMPERATURE
-#ifdef HAS_INTERFACE
 
 #include "interface.h"
 #include "ipInfo.h"
@@ -140,17 +139,7 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
             metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
         // extract vector of interface IP info
-
-        const auto ggiMethod =
-            field_broker_->meshRef()
-                .controlsRef()
-                .solverRef()
-                .solverControl_.expertParameters_.ggiAssemblyMethod_;
-        const bool useGgiNonPenalty =
-            interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-                nonconformalMethod::generalGridInterface &&
-            ggiMethod != ggiAssemblyMethod::penaltyMortar;
-        const scalar multiplier = useGgiNonPenalty ? 1.0 : 0.5;
+        const scalar multiplier = 0.5;
 
         const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
 
@@ -158,6 +147,8 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
              iSide++)
         {
             const auto& faceIpInfoVec = ipInfoVec[iSide];
+
+            // Local cs-fragment index within this face
 
             for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
@@ -503,6 +494,8 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 meFCOpposing->interpolatePoint(
                     1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
 
+                // GGI scatter (single-sided)
+
                 // compute diffusion vector; current
                 scalar currentDiffFluxBip = 0;
                 for (label ic = 0; ic < currentNodesPerElement; ++ic)
@@ -575,7 +568,7 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                 const scalar abs_tmDot = std::abs(tmDot);
 
-                // compute penalty (active for penaltyMortar)
+                // compute penalty (DG only)
                 const scalar penaltyIp =
                     penaltyFactor *
                     (currentLambdaEffBip * currentInverseLength +
@@ -602,8 +595,13 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                          fcs * c_amag +
                      fcs * ncAdv);
 
-                // fill the nc-heat flow rate
-                qDot[currentGaussPointId] =
+                // fill the nc-heat flow rate; accumulate so that
+                // multiple ggiInfos sharing one master gauss point
+                // sum into a single IP slot (non-conformal mesh
+                // can have multiple slave SCSes overlapping one
+                // master SCS). Zeroing happens up-front in
+                // assembleElemTermsInterfaces_.
+                qDot[currentGaussPointId] +=
                     ((ncDiffFlux + penaltyIp * penaltyMultiplier *
                                        (currentTBip - opposingTBip)) *
                          fcs * c_amag +
@@ -694,8 +692,6 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
-    const bool includeAdv = domain->type() == domainType::fluid;
-
     // space for LHS/RHS; nodesPerElem*nodesPerElem and nodesPerElem
     std::vector<scalar> lhs;
     std::vector<scalar> rhs;
@@ -735,12 +731,6 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
     // GGI path is not yet validated for the total-energy HTC problem;
     // preserve the original errorMsg behavior at the top of the function and
     // run the unified loop for DG below.
-    if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-        nonconformalMethod::generalGridInterface)
-    {
-        errorMsg("Not implemented yet");
-        return;
-    }
 
     // Unified loop over per-IP info.  Storage is owned by the base
     // interfaceSideInfo; concrete side classes store derived records upcast to
@@ -953,8 +943,9 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
             const label indexR = nn;
             p_rhs[indexR] -= diffFlux;
 
-            // fill the nc-heat flow rate
-            qDot[currentGaussPointId] = diffFlux;
+            // fill the nc-heat flow rate (accumulate to handle
+            // multiple ggiInfos per gauss point)
+            qDot[currentGaussPointId] += diffFlux;
 
             // set-up row for matrix
             const label rowR = indexR * totalNodes;
@@ -988,5 +979,4 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
 
 } // namespace accel
 
-#endif /* HAS_INTERFACE */
 #endif /* WITH_THERMAL_TEMPERATURE */

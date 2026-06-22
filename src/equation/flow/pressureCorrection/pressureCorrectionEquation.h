@@ -11,7 +11,6 @@
 #include "equation.h"
 #include "flowModel.h"
 #include "linearSystem.h"
-#include "macros.h"
 #include "pressureCorrectionAssembler.h"
 
 namespace accel
@@ -64,7 +63,7 @@ protected:
               int CLIP = 0,
               int OFFSET = 0>
     void correctField_(const domain* domain,
-                       const Vector& correction,
+                       ::linearSolver::coefficients<BLOCKSIZE>* coeffs,
                        const stk::mesh::EntityRank entityRank,
                        STKScalarField& stk_dst,
                        const scalar relaxValue = 1.0,
@@ -76,7 +75,7 @@ protected:
         // 1) base correction: under-relaxes and updates the pressure field
         equation::correctField_<BLOCKSIZE, FIELD_DIM, STRIDE, CLIP, OFFSET>(
             domain,
-            correction,
+            coeffs,
             entityRank,
             stk_dst,
             relaxValue,
@@ -88,6 +87,7 @@ protected:
         // 2) store the full (un-relaxed) pressure correction p'
         pressureCorrection& pCorr = model_->pCorrRef();
         STKScalarField& pCorrSTKFieldRef = pCorr.stkFieldRef();
+        const Vector& correction = coeffs->getXVector();
 
         const mesh& meshObj = domain->meshRef();
         const stk::mesh::MetaData& metaData = meshObj.metaDataRef();

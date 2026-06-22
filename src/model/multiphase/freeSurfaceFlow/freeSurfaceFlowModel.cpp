@@ -6,11 +6,9 @@
 
 #include "freeSurfaceFlowModel.h"
 #include "idealGasModel.h"
+#include "ipInfo.h"
 #include "simulation.h"
 #include "sutherlandsFormulaModel.h"
-#ifdef HAS_INTERFACE
-#include "ipInfo.h"
-#endif
 
 namespace accel
 {
@@ -1421,7 +1419,6 @@ void freeSurfaceFlowModel::initializeMassFlowRateInterior_(
         domain, this->mDotRef(iPhase), this->rhoRef(iPhase));
 }
 
-#ifdef HAS_INTERFACE
 void freeSurfaceFlowModel::initializeMassFlowRateInterfaceSideField_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr,
@@ -1433,7 +1430,6 @@ void freeSurfaceFlowModel::initializeMassFlowRateInterfaceSideField_(
         this->mDotRef(iPhase).sideFieldRef(),
         this->rhoRef(iPhase));
 }
-#endif /* HAS_INTERFACE */
 
 void freeSurfaceFlowModel::initializeMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
@@ -1575,7 +1571,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     }
 }
 
-#ifdef HAS_INTERFACE
 void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr)
@@ -1689,7 +1684,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
@@ -1862,7 +1856,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
         domain, this->mDotRef(iPhase), this->rhoRef(iPhase));
 }
 
-#ifdef HAS_INTERFACE
 void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr,
@@ -1874,7 +1867,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
         this->mDotRef(iPhase).sideFieldRef(),
         this->rhoRef(iPhase));
 }
-#endif /* HAS_INTERFACE */
 
 void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
@@ -6456,7 +6448,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     }
 }
 
-#ifdef HAS_INTERFACE
 void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr,
@@ -7044,7 +7035,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterfaceSideField_(
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 void freeSurfaceFlowModel::
     updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(

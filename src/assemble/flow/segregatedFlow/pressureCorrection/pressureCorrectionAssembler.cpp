@@ -6,9 +6,7 @@
 
 #include "pressureCorrectionAssembler.h"
 #include "flowModel.h"
-#ifdef HAS_INTERFACE
 #include "interface.h"
-#endif
 
 namespace accel
 {
@@ -18,14 +16,12 @@ pressureCorrectionAssembler::pressureCorrectionAssembler(flowModel* model)
 {
 }
 
-void pressureCorrectionAssembler::postAssemble_(const domain* domain,
-                                                Context* ctx)
+void pressureCorrectionAssembler::postAssemble(const domain* domain,
+                                               Context* ctx)
 {
     // skip the base velocity-style relaxation, but still apply the conformal
     // constraint (else the matched p' nodes are never linked -> singular)
-#ifdef HAS_INTERFACE
     this->applyConstraints(domain, ctx);
-#endif
 }
 
 void pressureCorrectionAssembler::adjustMatrixForPressureReference(

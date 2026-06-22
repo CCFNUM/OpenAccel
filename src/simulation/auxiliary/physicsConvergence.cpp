@@ -74,7 +74,6 @@ void physicsConvergence::update()
 
 void physicsConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
 {
-#ifdef HAS_INTERFACE
     solidDisplacementEquation* solidEq = nullptr;
     for (auto& equation : sim_.equationVector_)
     {
@@ -200,7 +199,6 @@ void physicsConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
             }
         }
     }
-#endif /* HAS_INTERFACE */
 }
 
 bool physicsConvergence::isConverged() const

@@ -25,21 +25,9 @@ public:
     {
     }
 
-protected:
-    void assembleNodeTermsFusedSteady_(const domain* domain,
-                                       Context* ctx) override;
-    void assembleNodeTermsFusedFirstOrderUnsteady_(const domain* domain,
-                                                   Context* ctx) override;
-    void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
-                                                    Context* ctx) override;
-
-    // Boundary conditions
-    void assembleElemTermsBoundary_(const domain* domain,
-                                    Context* ctx) override;
-
-    void postAssemble_(const domain* domain, Context* ctx) override
+    void postAssemble(const domain* domain, Context* ctx) override
     {
-        turbulentEddyFrequencyAssembler::postAssemble_(domain, ctx);
+        turbulentEddyFrequencyAssembler::postAssemble(domain, ctx);
 
         stk::mesh::BulkData& bulkData = model_->meshRef().bulkDataRef();
         stk::mesh::MetaData& metaData = model_->meshRef().metaDataRef();
@@ -51,7 +39,6 @@ protected:
 
         stk::mesh::PartVector parts;
 
-#ifdef HAS_INTERFACE
         // fluid-solid interface side
         for (const interface* interf : domain->interfacesRef())
         {
@@ -67,7 +54,6 @@ protected:
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // no-slip boundary walls
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -144,6 +130,18 @@ protected:
             }
         }
     }
+
+protected:
+    void assembleNodeTermsFusedSteady_(const domain* domain,
+                                       Context* ctx) override;
+    void assembleNodeTermsFusedFirstOrderUnsteady_(const domain* domain,
+                                                   Context* ctx) override;
+    void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
+                                                    Context* ctx) override;
+
+    // Boundary conditions
+    void assembleElemTermsBoundary_(const domain* domain,
+                                    Context* ctx) override;
 };
 
 } /* namespace accel */

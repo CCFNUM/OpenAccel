@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#include "initialConditions.h"
-#include "messager.h"
 #include "realm.h"
 #include "turbulenceModel.h"
 
@@ -617,7 +615,6 @@ void turbulenceModel::updateTWallCoeffs(const std::shared_ptr<domain> domain)
         }
     }
 
-#ifdef HAS_INTERFACE
     // interpolate T-wall coefficient field to the solid side: use temporary
     // sideField container to make use of the transfer functionality
     sideField<scalar, 1> t_TWallField(&this->meshRef(),
@@ -632,7 +629,6 @@ void turbulenceModel::updateTWallCoeffs(const std::shared_ptr<domain> domain)
                                   TRef().isShifted());
         }
     }
-#endif /* HAS_INTERFACE */
 }
 
 void turbulenceModel::updateWallShearStress(
@@ -2421,8 +2417,9 @@ void turbulenceModel::updateTPlusAutomatic_(
                 scalar beta =
                     std::pow(3.85 * std::pow(Pr, 1.0 / 3.0) - 1.3, 2.0) +
                     2.12 * std::log(Pr);
+                // Kader (1981): Gamma = 0.01*(Pr*y*)^4 / (1 + 5*Pr^3*y*)
                 scalar Gamma = 0.01 * std::pow(Pr * yStarBip[ip], 4.0) /
-                               (1.5 * pow(Pr, 3.0) * yStarBip[ip]);
+                               (1.0 + 5.0 * pow(Pr, 3.0) * yStarBip[ip]);
 
                 TPlusBip[ip] = Pr * yStarBip[ip] * exp(-Gamma) +
                                (2.12 * std::log(yStarBip[ip]) + beta) *

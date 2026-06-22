@@ -5,11 +5,6 @@
 //              interfaces
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
-#include "interface.h"
-#include "ipInfo.h"
-
 namespace accel
 {
 
@@ -24,6 +19,7 @@ void phiAssembler<N>::assembleElemTermsInterfaces_(const domain* domain,
 
         if (interf->isInternal())
         {
+            // Internal interface (same domain): scatter both sides.
             assembleElemTermsInterfaceSide_(
                 domain, interf->masterInfoPtr(), ctx);
             assembleElemTermsInterfaceSide_(
@@ -31,10 +27,10 @@ void phiAssembler<N>::assembleElemTermsInterfaces_(const domain* domain,
         }
         else
         {
-            // get interface side that is sitting in this domain
+            // Cross-domain penalty / DG path: each domain scatters its
+            // own side (existing behaviour).
             const auto* interfaceSideInfoPtr =
                 interf->interfaceSideInfoPtr(domain->index());
-
             assembleElemTermsInterfaceSide_(domain, interfaceSideInfoPtr, ctx);
         }
     }
@@ -59,7 +55,13 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
-    const bool mediumIndependent = phi_->mediumIndependent();
+    // two-sided interface treatment only if both zones allow it
+    const label opposingZone =
+        interfaceSideInfoPtr->interfPtr()->masterZoneIndex() == domain->index()
+            ? interfaceSideInfoPtr->interfPtr()->slaveZoneIndex()
+            : interfaceSideInfoPtr->interfPtr()->masterZoneIndex();
+    const bool mediumIndependent = phi_->interfaceTwoSided(domain->index()) &&
+                                   phi_->interfaceTwoSided(opposingZone);
 
     scalar penaltyFactor = interfaceSideInfoPtr->interfPtr()->penaltyFactor();
 
@@ -108,6 +110,17 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
     std::vector<scalar> ws_c_general_shape_function;
     std::vector<scalar> ws_o_general_shape_function;
 
+    // GGI Schur kernel workspace. Mirrors the
+    // thermalEnergy assembler's pattern: declared here, resized in
+    // the per-IP block, accessed via raw pointers in the hot loop.
+    // faceMask / offFaceMask are 1.0 / 0.0 scalar masks that replace
+    // branching on face vs off-face node classification in the
+    // accumulation / scatter loops — the compiler can then vectorise
+    // those loops with SIMD/FMA. Constant-size augmented-block
+    // buffers (acvBlock, dBlock, rcsBlock) are sized once at
+    // declaration because their size is fixed by N for this
+    // assembler instance.
+
     // Get transport fields/side fields
     const auto& phiSTKFieldRef = phi_->stkFieldRef();
 
@@ -127,20 +140,11 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
     }
     else
     {
-        const auto ggiMethod =
-            field_broker_->meshRef()
-                .controlsRef()
-                .solverRef()
-                .solverControl_.expertParameters_.ggiAssemblyMethod_;
-        const bool isGgi = (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-                            nonconformalMethod::generalGridInterface);
-        const scalar multiplier =
-            isGgi
-                ? ((ggiMethod == ggiAssemblyMethod::penaltyMortar) ? 0.5 : 1.0)
-                : 0.5;
+        const scalar multiplier = 0.5;
 
         for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
         {
+
             for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
                 ipInfo* ip = faceIpInfoVec[k];
@@ -461,6 +465,8 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                                                &ws_o_Gamma[0],
                                                &opposingGammaBip);
 
+                // GGI scatter (Laplacian-only)
+
                 // zero-out diffusion fluxes
                 for (label i = 0; i < N; ++i)
                 {
@@ -523,7 +529,7 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                                : 0.0;
                 const scalar abs_tmDot = std::abs(tmDot);
 
-                // compute penalty (active for penaltyMortar)
+                // compute penalty (DG only)
                 const scalar penaltyIp =
                     penaltyFactor *
                     (currentGammaBip * currentInverseLength +
@@ -554,7 +560,8 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                          fcs * ncAdv);
                     p_rhs[indexR] -= fluxResid;
 
-                    // diagnostics hook. Only meaningful for scalar phi (N==1).
+                    // diagnostics hook. Only meaningful for scalar phi
+                    // (N==1).
                     if constexpr (N == 1)
                     {
                         this->recordInterfaceFlux_(
@@ -636,5 +643,3 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

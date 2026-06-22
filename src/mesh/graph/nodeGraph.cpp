@@ -5,11 +5,9 @@
 // Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "nodeGraph.h"
-#ifdef HAS_INTERFACE
 #include "interface.h"
 #include "interfaceSideInfo.h"
 #include "ipInfo.h"
-#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
 
@@ -119,7 +117,6 @@ void nodeGraph::buildGraph_()
         }
     }
 
-#ifdef HAS_INTERFACE
     // Additional connections from non-conformal boundaries (fully-implicit
     // matrix)
     if (meshPtr_->hasInterfaces())
@@ -248,6 +245,7 @@ void nodeGraph::buildGraph_()
                                     crsRowStencil[rowLid].insert(
                                         opposing_elem_node_rels[no]);
                                 }
+
                                 // Same-side intra-element coupling.
                                 for (label nc2 = 0;
                                      nc2 < current_num_elem_nodes;
@@ -266,7 +264,6 @@ void nodeGraph::buildGraph_()
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // create CRS structure
     row_ptr_.resize(n_owned_nodes_ + 1);

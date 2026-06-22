@@ -33,21 +33,9 @@ public:
     {
     }
 
-protected:
-    void assembleNodeTermsFusedSteady_(const domain* domain,
-                                       Context* ctx) override;
-    void assembleNodeTermsFusedFirstOrderUnsteady_(const domain* domain,
-                                                   Context* ctx) override;
-    void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
-                                                    Context* ctx) override;
-
-    // Boundary conditions
-    void assembleElemTermsBoundary_(const domain* domain,
-                                    Context* ctx) override;
-
-    void postAssemble_(const domain* domain, Context* ctx) override
+    void postAssemble(const domain* domain, Context* ctx) override
     {
-        Base::postAssemble_(domain, ctx);
+        Base::postAssemble(domain, ctx);
         assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
 
         stk::mesh::BulkData& bulkData = model_->meshRef().bulkDataRef();
@@ -60,7 +48,6 @@ protected:
 
         stk::mesh::PartVector parts;
 
-#ifdef HAS_INTERFACE
         // fluid-solid interface side
         for (const interface* interf : domain->interfacesRef())
         {
@@ -76,7 +63,6 @@ protected:
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // no-slip boundary walls
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -153,6 +139,18 @@ protected:
             }
         }
     }
+
+protected:
+    void assembleNodeTermsFusedSteady_(const domain* domain,
+                                       Context* ctx) override;
+    void assembleNodeTermsFusedFirstOrderUnsteady_(const domain* domain,
+                                                   Context* ctx) override;
+    void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
+                                                    Context* ctx) override;
+
+    // Boundary conditions
+    void assembleElemTermsBoundary_(const domain* domain,
+                                    Context* ctx) override;
 };
 
 } /* namespace accel */

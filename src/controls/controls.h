@@ -178,7 +178,6 @@ struct solverDictionary
                 scalar relativePressureLevel_ = 0.0;
             };
 
-#ifdef HAS_INTERFACE
             struct interfaceTransferDictionary
             {
                 scalar searchTolerance_ = 1e-4;
@@ -187,7 +186,6 @@ struct solverDictionary
                 bool conservativeFluxTransfer_ = false;
                 label verbose_ = 0;
             };
-#endif /* HAS_INTERFACE */
 
             struct equationControlsDictionary
             {
@@ -223,9 +221,7 @@ struct solverDictionary
             };
 
             pressureLevelInformationDictionary pressureLevelInformation_;
-#ifdef HAS_INTERFACE
             interfaceTransferDictionary interfaceTransfer_;
-#endif /* HAS_INTERFACE */
             equationControlsDictionary equationControls_;
         };
 
@@ -252,12 +248,9 @@ struct solverDictionary
             bool freezeFlow_ = false;
             bool nso_ = false;
             scalar nsoFourthOrderFac_ = 1.0;
-#ifdef HAS_INTERFACE
+            bool highSpeedBlendDamping_ = false;
             nonconformalMethod nonconformalMethod_ =
                 nonconformalMethod::discontinuousGalerkin;
-            ggiAssemblyMethod ggiAssemblyMethod_ =
-                ggiAssemblyMethod::penaltyMortar;
-#endif /* HAS_INTERFACE */
         };
 
         basicSettingsDictionary basicSettings_;

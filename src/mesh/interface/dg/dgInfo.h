@@ -9,8 +9,6 @@
 #ifndef DGINFO_H
 #define DGINFO_H
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "ipInfo.h"
 
@@ -61,5 +59,4 @@ public:
 
 } // namespace accel
 
-#endif /* HAS_INTERFACE */
 #endif

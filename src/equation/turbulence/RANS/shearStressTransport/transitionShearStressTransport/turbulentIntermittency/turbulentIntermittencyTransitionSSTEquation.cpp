@@ -6,6 +6,7 @@
 
 #include "turbulentIntermittencyTransitionSSTEquation.h"
 #include "realm.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -135,11 +136,23 @@ void turbulentIntermittencyTransitionSSTEquation::solve()
     // assembly
     linearSystem::simulationRef().getProfiler().push("linear_system_assembly");
 
+    // assemble
+    FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
 
+    // Schur-complement static condensation of the augmented system. It must run
+    // BEFORE any relaxations
+    linearSystem::condense();
+
+    // post-assembly
+    FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
+
     // fix system in domains where the model is not active
-    assembler_->fix(
-        this->collectInactiveInteriorParts(), {}, ctx.get(), {}, true);
+    assembler_->fix(this->collectInactiveInteriorParts(),
+                    {},
+                    ctx.get(),
+                    {},
+                    !model_->meshRef().anyZoneMeshWithOverset());
 
     linearSystem::simulationRef().getProfiler().pop();
 
@@ -158,7 +171,7 @@ void turbulentIntermittencyTransitionSSTEquation::solve()
     {
         this->template correctField_<linearSystem::BLOCKSIZE, 1, 0, CLIP>(
             domain.get(),
-            ctx->getXVector(),
+            ctx->coeffs().get(),
             stk::topology::NODE_RANK,
             gamma.stkFieldRef(),
             relax_value,
@@ -195,7 +208,6 @@ void turbulentIntermittencyTransitionSSTEquation::applyDependencyUpdates_(
     // if this is a fluid-solid interface, then it is necessary to transfer the
     // gamma field to the solid, as this will be used in the hybrid heat
     // transfer appraoch
-#ifdef HAS_INTERFACE
     for (const interface* interf : domain->interfacesRef())
     {
         if (interf->isFluidSolidType())
@@ -205,7 +217,6 @@ void turbulentIntermittencyTransitionSSTEquation::applyDependencyUpdates_(
                                         !interf->isMasterZone(domain->index()));
         }
     }
-#endif /* HAS_INTERFACE */
 }
 
 void turbulentIntermittencyTransitionSSTEquation::printScales()

@@ -7,10 +7,8 @@
 // code
 #include "boundary.h"
 #include "controls.h"
-#ifdef HAS_INTERFACE
 #include "interface.h"
 #include "interfaceSideInfo.h"
-#endif /* HAS_INTERFACE */
 #include "messager.h"
 #include "types.h"
 #include "zone.h"
@@ -234,7 +232,6 @@ void mesh::read(const YAML::Node& inputNode)
         errorMsg("simulation block is not provided in the yaml input file");
     }
 
-#ifdef HAS_INTERFACE
     // Read and register interfaces
     if (inputNode["simulation"])
     {
@@ -295,25 +292,6 @@ void mesh::read(const YAML::Node& inputNode)
     {
         errorMsg("simulation block is not provided in the yaml input file");
     }
-#else
-    if (inputNode["simulation"])
-    {
-        if (inputNode["simulation"]["physical_analysis"])
-        {
-            if (inputNode["simulation"]["physical_analysis"]["interfaces"])
-            {
-                const auto& interfacesBlock =
-                    inputNode["simulation"]["physical_analysis"]["interfaces"];
-
-                if (interfacesBlock.size() > 0)
-                {
-                    errorMsg("interfaces are not supported (HAS_INTERFACE is "
-                             "not enabled)");
-                }
-            }
-        }
-    }
-#endif /* HAS_INTERFACE */
 
     // Collect interior parts: this includes all interior parts found in the
     // mesh database. The code currently assumes that the node-graph used in
@@ -331,7 +309,6 @@ void mesh::read(const YAML::Node& inputNode)
     {
         if (inputNode["simulation"]["physical_analysis"])
         {
-#ifdef HAS_INTERFACE
             // collect boundary mesh parts from interfaces if any
             if (inputNode["simulation"]["physical_analysis"]["interfaces"])
             {
@@ -411,7 +388,6 @@ void mesh::read(const YAML::Node& inputNode)
                     }
                 }
             }
-#endif /* HAS_INTERFACE */
 
             // collect interior mesh parts from domains and the relevant
             // boundary mesh parts
@@ -499,14 +475,16 @@ void mesh::read(const YAML::Node& inputNode)
                     }
                 }
 
-#ifndef NDEBUG
+                // report element blocks absent from all domains; these are
+                // intentionally ignored and take no part in the simulation
                 if (messager::master())
                 {
                     const auto& allParts = metaDataRef().get_mesh_parts();
                     for (const auto* part : allParts)
                     {
                         if (part->primary_entity_rank() ==
-                            stk::mesh::EntityRank::ELEMENT_RANK)
+                                stk::mesh::EntityRank::ELEMENT_RANK &&
+                            part->topology() != stk::topology::INVALID_TOPOLOGY)
                         {
                             const auto it =
                                 std::find(interiorActiveParts_.begin(),
@@ -514,13 +492,15 @@ void mesh::read(const YAML::Node& inputNode)
                                           part);
                             if (it == interiorActiveParts_.end())
                             {
-                                warningMsg("Element block " + part->name() +
-                                           " has not been used");
+                                std::cout
+                                    << "  Element block '" << part->name()
+                                    << "' is not listed in any domain and will "
+                                       "be ignored"
+                                    << std::endl;
                             }
                         }
                     }
                 }
-#endif /* NDEBUG */
             }
         }
         else
@@ -543,6 +523,43 @@ void mesh::read(const YAML::Node& inputNode)
     {
         std::cout << "Finished reading mesh .." << std::endl << std::endl;
     }
+}
+
+void mesh::removeIgnoredBlocks_()
+{
+    auto& bulkData = this->bulkDataRef();
+    auto& metaData = this->metaDataRef();
+
+    // collect element-block parts that are not listed in any domain
+    stk::mesh::PartVector ignoredParts;
+    for (stk::mesh::Part* part : metaData.get_mesh_parts())
+    {
+        if (part->primary_entity_rank() ==
+                stk::mesh::EntityRank::ELEMENT_RANK &&
+            part->topology() != stk::topology::INVALID_TOPOLOGY &&
+            std::find(interiorActiveParts_.begin(),
+                      interiorActiveParts_.end(),
+                      part) == interiorActiveParts_.end())
+        {
+            ignoredParts.push_back(part);
+        }
+    }
+
+    if (ignoredParts.empty())
+    {
+        return;
+    }
+
+    // destroy owned ignored elements and any node/face left orphaned; entities
+    // still shared with an active block keep connectivity and survive
+    stk::mesh::EntityVector elementsToDestroy;
+    stk::mesh::get_selected_entities(
+        metaData.locally_owned_part() & stk::mesh::selectUnion(ignoredParts),
+        bulkData.buckets(stk::topology::ELEMENT_RANK),
+        elementsToDestroy);
+
+    stk::mesh::destroy_elements(
+        bulkData, elementsToDestroy, metaData.universal_part());
 }
 
 void mesh::write(size_t resultsFileIndex, scalar writeTime)
@@ -990,7 +1007,6 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
             }
         }
 
-#ifdef HAS_INTERFACE
         // Check interfaces
         if (inputNode["simulation"]["physical_analysis"]["interfaces"])
         {
@@ -1104,7 +1120,240 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
                 }
             }
         }
-#endif /* HAS_INTERFACE */
+
+        // Active-parts consistency: blocks absent from all domains are ignored
+        // only if unreferenced; every sideset on an active block must be
+        // declared
+
+        // canonicalize a YAML part name to the STK part name (handles aliases)
+        auto canonicalName = [this](const std::string& name) -> std::string
+        {
+            const stk::mesh::Part* part = metaDataRef().get_part(name);
+            return part ? part->name() : name;
+        };
+
+        // sideset name -> touching element-block names; only parent sideset
+        // parts (side rank, invalid topology) are recorded, as named in the
+        // YAML
+        std::map<std::string, std::vector<std::string>> sidesetToBlocks;
+
+        try
+        {
+            auto inputRegion = ioBrokerPtr_->get_input_ioss_region();
+            if (inputRegion != nullptr)
+            {
+                for (const auto* ioBlock : inputRegion->get_element_blocks())
+                {
+                    const stk::mesh::Part* blockPart =
+                        metaDataRef().get_part(ioBlock->name());
+                    if (!blockPart)
+                    {
+                        continue;
+                    }
+
+                    const auto& touchingSurfaces =
+                        metaDataRef().get_surfaces_touched_by_block(blockPart);
+                    for (const stk::mesh::Part* surface : touchingSurfaces)
+                    {
+                        if (surface->primary_entity_rank() ==
+                                metaDataRef().side_rank() &&
+                            surface->topology() ==
+                                stk::topology::INVALID_TOPOLOGY)
+                        {
+                            sidesetToBlocks[surface->name()].push_back(
+                                blockPart->name());
+                        }
+                    }
+                }
+            }
+        }
+        catch (...)
+        {
+            // if the IO region is unavailable, skip the active-parts checks
+        }
+
+        // map: active element-block name -> owning domain name
+        std::map<std::string, std::string> blockToDomain;
+        // map: domain name -> sidesets declared as its boundaries
+        std::map<std::string, std::set<std::string>> domainBoundarySidesets;
+
+        for (const auto& domainBlock : domainsBlock)
+        {
+            const std::string domainName =
+                domainBlock["name"].template as<std::string>();
+
+            for (const std::string& location :
+                 domainBlock["location"]
+                     .template as<std::vector<std::string>>())
+            {
+                const std::string blockName = canonicalName(location);
+
+                // an element block may belong to at most one domain
+                const auto existing = blockToDomain.find(blockName);
+                if (existing != blockToDomain.end() &&
+                    existing->second != domainName)
+                {
+                    errorMsg("Element block '" + blockName +
+                             "' is listed in both domain '" + existing->second +
+                             "' and domain '" + domainName +
+                             "'. An element block may belong to only one "
+                             "domain.");
+                }
+                blockToDomain[blockName] = domainName;
+            }
+
+            if (domainBlock["boundaries"])
+            {
+                for (const auto& boundaryBlock : domainBlock["boundaries"])
+                {
+                    for (const std::string& boundaryLocation :
+                         boundaryBlock["location"]
+                             .template as<std::vector<std::string>>())
+                    {
+                        domainBoundarySidesets[domainName].insert(
+                            canonicalName(boundaryLocation));
+                    }
+                }
+            }
+        }
+
+        // sidesets declared as interface regions
+        std::set<std::string> interfaceSidesets;
+        if (inputNode["simulation"]["physical_analysis"]["interfaces"])
+        {
+            const auto& interfacesBlock =
+                inputNode["simulation"]["physical_analysis"]["interfaces"];
+
+            for (const auto& interfaceBlock : interfacesBlock)
+            {
+                for (const char* sideKey : {"side1", "side2"})
+                {
+                    if (interfaceBlock[sideKey])
+                    {
+                        for (const std::string& regionName :
+                             interfaceBlock[sideKey]["region_list"]
+                                 .template as<std::vector<std::string>>())
+                        {
+                            interfaceSidesets.insert(canonicalName(regionName));
+                        }
+                    }
+                }
+            }
+        }
+
+        // helper: is a sideset referenced anywhere (boundary or interface)?
+        auto isReferencedAnywhere =
+            [&domainBoundarySidesets,
+             &interfaceSidesets](const std::string& sidesetName) -> bool
+        {
+            if (interfaceSidesets.count(sidesetName) > 0)
+            {
+                return true;
+            }
+            for (const auto& entry : domainBoundarySidesets)
+            {
+                if (entry.second.count(sidesetName) > 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // helper: comma-join a list of names for error messages
+        auto joinNames =
+            [](const std::vector<std::string>& names) -> std::string
+        {
+            std::string out;
+            for (size_t i = 0; i < names.size(); ++i)
+            {
+                out += (i ? ", " : "");
+                out += names[i];
+            }
+            return out;
+        };
+
+        // walk every sideset of the mesh and enforce consistency
+        for (const auto& entry : sidesetToBlocks)
+        {
+            const std::string& sidesetName = entry.first;
+            const std::vector<std::string>& touchingBlocks = entry.second;
+
+            // partition touching blocks into active / ignored, and collect the
+            // set of domains owning the active ones
+            std::vector<std::string> activeBlocks;
+            std::vector<std::string> ignoredBlocks;
+            std::set<std::string> touchedDomains;
+            for (const std::string& blockName : touchingBlocks)
+            {
+                const auto it = blockToDomain.find(blockName);
+                if (it != blockToDomain.end())
+                {
+                    activeBlocks.push_back(blockName);
+                    touchedDomains.insert(it->second);
+                }
+                else
+                {
+                    ignoredBlocks.push_back(blockName);
+                }
+            }
+
+            const bool referenced = isReferencedAnywhere(sidesetName);
+
+            if (activeBlocks.empty())
+            {
+                // sideset touches only ignored blocks: it must not be used
+                if (referenced)
+                {
+                    errorMsg(
+                        "Sideset '" + sidesetName +
+                        "' is referenced in the YAML input but touches only "
+                        "element block(s) [" +
+                        joinNames(ignoredBlocks) +
+                        "] that are not listed in any domain. Either add one "
+                        "of "
+                        "those element blocks to a domain, or remove the "
+                        "sideset from boundaries/interfaces.");
+                }
+                // otherwise: legitimately ignored, nothing to enforce
+                continue;
+            }
+
+            // sideset touches at least one active block
+            if (touchedDomains.size() >= 2)
+            {
+                // inter-domain sideset: must be declared as an interface
+                if (interfaceSidesets.count(sidesetName) == 0)
+                {
+                    errorMsg(
+                        "Sideset '" + sidesetName +
+                        "' connects active element blocks of different domains "
+                        "[" +
+                        joinNames(activeBlocks) +
+                        "] but is not declared as an interface. Inter-domain "
+                        "sidesets must be listed under 'interfaces'.");
+                }
+            }
+            else
+            {
+                // exterior boundary of a single domain (any neighbour is
+                // ignored): must be declared as a boundary or interface
+                if (!referenced)
+                {
+                    const std::string owningDomain = *touchedDomains.begin();
+                    errorMsg(
+                        "Sideset '" + sidesetName +
+                        "' touches active element block(s) [" +
+                        joinNames(activeBlocks) + "] of domain '" +
+                        owningDomain +
+                        "' but is not declared as a boundary of that domain "
+                        "nor "
+                        "as an interface. The YAML input must be "
+                        "self-contained: declare this sideset, or it is an "
+                        "unintended omission.");
+                }
+            }
+        }
     }
 
     std::cout << "Finished validating YAML input" << std::endl;

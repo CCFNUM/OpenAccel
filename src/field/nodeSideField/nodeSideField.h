@@ -89,9 +89,7 @@ public:
 
     void interpolate(const sideField<T, N>& sf, label iZone, label iBoundary);
 
-#ifdef HAS_INTERFACE
     void interpolate(const sideField<T, N>& sf, label iInterface, bool master);
-#endif /* HAS_INTERFACE */
 
     // Access
 
@@ -112,12 +110,10 @@ void nodeSideField<scalar, 1>::interpolate(const sideField<scalar, 1>& sf,
                                            label iZone,
                                            label iBoundary);
 
-#ifdef HAS_INTERFACE
 template <>
 void nodeSideField<scalar, 1>::interpolate(const sideField<scalar, 1>& sf,
                                            label iInterface,
                                            bool master);
-#endif /* HAS_INTERFACE */
 
 template <>
 void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
@@ -125,13 +121,11 @@ void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
     label iZone,
     label iBoundary);
 
-#ifdef HAS_INTERFACE
 template <>
 void nodeSideField<scalar, SPATIAL_DIM>::interpolate(
     const sideField<scalar, SPATIAL_DIM>& sf,
     label iInterface,
     bool master);
-#endif /* HAS_INTERFACE */
 
 } // namespace accel
 

@@ -763,14 +763,12 @@ protected:
         errorMsg("Must not reach here");
     }
 
-#ifdef HAS_INTERFACE
     virtual void initializeMassFlowRateInterfaceSideField_(
         const std::shared_ptr<domain> domain,
         const interfaceSideInfo* interfaceSideInfoPtr)
     {
         errorMsg("Must not reach here");
     }
-#endif /* HAS_INTERFACE */
 
     virtual void
     initializeMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
@@ -785,14 +783,12 @@ protected:
         errorMsg("Must not reach here");
     }
 
-#ifdef HAS_INTERFACE
     virtual void updateMassFlowRateInterfaceSideField_(
         const std::shared_ptr<domain> domain,
         const interfaceSideInfo* interfaceSideInfoPtr)
     {
         errorMsg("Must not reach here");
     }
-#endif /* HAS_INTERFACE */
 
     virtual void
     updateMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
@@ -810,7 +806,6 @@ protected:
         errorMsg("Must not reach here");
     }
 
-#ifdef HAS_INTERFACE
     virtual void initializeMassFlowRateInterfaceSideField_(
         const std::shared_ptr<domain> domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
@@ -818,7 +813,6 @@ protected:
     {
         errorMsg("Must not reach here");
     }
-#endif /* HAS_INTERFACE */
 
     virtual void
     initializeMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
@@ -835,7 +829,6 @@ protected:
         errorMsg("Must not reach here");
     }
 
-#ifdef HAS_INTERFACE
     virtual void updateMassFlowRateInterfaceSideField_(
         const std::shared_ptr<domain> domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
@@ -843,7 +836,6 @@ protected:
     {
         errorMsg("Must not reach here");
     }
-#endif /* HAS_INTERFACE */
 
     virtual void
     updateMassFlowRateBoundaryField_(const std::shared_ptr<domain> domain,
@@ -894,6 +886,10 @@ protected:
     simpleScalarField& MaRef();
 
     const simpleScalarField& MaRef() const;
+
+    simpleScalarField& betaDampRef();
+
+    const simpleScalarField& betaDampRef() const;
 
     simpleScalarField& CoRef();
 
@@ -1168,7 +1164,6 @@ protected:
             }
         }
 
-#ifdef HAS_INTERFACE
         for (label iInterface = 0; iInterface < meshRef().nInterfaces();
              iInterface++)
         {
@@ -1212,7 +1207,6 @@ protected:
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // For very rare situations where no walls exist, f still needs to be
         // instantiated for consistency

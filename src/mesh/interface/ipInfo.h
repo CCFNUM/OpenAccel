@@ -9,8 +9,6 @@
 #ifndef IPINFO_H
 #define IPINFO_H
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "types.h"
 
@@ -62,5 +60,4 @@ public:
 
 } // namespace accel
 
-#endif /* HAS_INTERFACE */
 #endif

@@ -12,8 +12,6 @@ target_sources(main_obj PRIVATE
     ############################################################################
     ${DIR}/interface/dg/dgInfo.cpp
     ${DIR}/interface/dg/dgInterfaceSideInfo.cpp
-    ${DIR}/interface/ggi/ggiInfo.cpp
-    ${DIR}/interface/ggi/ggiInterfaceSideInfo.cpp
     ${DIR}/interface/interface.cpp
     ${DIR}/interface/interfaceSideInfo.cpp
     ${DIR}/interface/interfaceIO.cpp
@@ -41,7 +39,6 @@ target_include_directories(main_obj PUBLIC
     ${DIR}/graph
     ############################################################################
     ${DIR}/interface/dg
-    ${DIR}/interface/ggi
     ${DIR}/interface
     ${DIR}/interface/transfer
     ############################################################################

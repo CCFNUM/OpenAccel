@@ -11,12 +11,10 @@
 // code
 #include "boundary.h"
 #include "controls.h"
-#ifdef HAS_INTERFACE
+#include "dataHandler.h"
 #include "dataTransfer.h"
 #include "interface.h"
 #include "ipInfo.h"
-#endif /* HAS_INTERFACE */
-#include "dataHandler.h"
 #include "nodeSideField.h"
 #include "scatterToSurface.h"
 #include "sideField.h"
@@ -125,9 +123,7 @@ protected:
 
     std::unique_ptr<sideField<scalar, N>> sideFluxFieldPtr_ = nullptr;
 
-#ifdef HAS_INTERFACE
     std::vector<std::unique_ptr<dataTransfer>> dataTransferVector_;
-#endif /* HAS_INTERFACE */
 
     std::vector<std::vector<boundaryConditionDictionary>>
         boundaryConditionsDictionaryArray_;
@@ -152,9 +148,9 @@ protected:
     // values of nodes at boundaries are corrected or conservative?
     bool correctedBoundaryNodeValues_ = false;
 
-    // flag to mark if the field operates in all mediums or a single type of
-    // them, for instance, velocity and pressure may only apply to fluid domains
-    bool mediumIndependent_ = true;
+    // per-zone flag (1/0): field's values in this zone may enter two-sided
+    // interface closures; unset zones stay 0, overrides in setupXxx
+    std::vector<label> interfaceTwoSided_;
 
     // flag to limit the gradient to prevent new extrema
     bool limitGradient_ = false;
@@ -252,7 +248,6 @@ public:
 
     void registerSideFluxField(label iZone, label iBoundary);
 
-#ifdef HAS_INTERFACE
     void registerSideFieldsForInterfaceSide(label iInterface,
                                             bool master,
                                             bool onlyIfNonoverlap = false);
@@ -260,7 +255,6 @@ public:
     void registerSideFluxFieldForInterfaceSide(label iInterface,
                                                bool master,
                                                bool onlyIfNonoverlap = false);
-#endif /* HAS_INTERFACE */
 
     nodeField& operator=(const nodeField& fld);
 
@@ -288,9 +282,7 @@ public:
 
     virtual void updateSideFields(label iZone);
 
-#ifdef HAS_INTERFACE
     virtual void updateInterfaceSideField(label iInterface, bool master);
-#endif /* HAS_INTERFACE */
 
     virtual void updateBoundarySideField(label iZone, label iBoundary);
 
@@ -324,13 +316,11 @@ public:
 
     void synchronize(label iZone);
 
-#ifdef HAS_INTERFACE
     // Data transfer across interface
 
     void transfer(label iInterface,
                   dataTransferType type = dataTransferType::copy,
                   bool reverse = false);
-#endif /* HAS_INTERFACE */
 
     // Stats
 
@@ -344,9 +334,7 @@ public:
 
     void correctBoundaryNodes(label iZone, label iBoundary);
 
-#ifdef HAS_INTERFACE
     void correctInterfaceNodes(label iInterface, bool master);
-#endif /* HAS_INTERFACE */
 
     void relax(label iZone, const scalar urf);
 
@@ -396,6 +384,10 @@ public:
 
     const sideField<scalar, N>& sideFieldRef() const;
 
+    sideField<scalar, N>* sideFieldPtr();
+
+    const sideField<scalar, N>* sideFieldPtr() const;
+
     sideField<scalar, N>& sideFluxFieldRef();
 
     const sideField<scalar, N>& sideFluxFieldRef() const;
@@ -419,6 +411,11 @@ public:
     bool correctedBoundaryNodeValues() const
     {
         return correctedBoundaryNodeValues_;
+    };
+
+    void setCorrectedBoundaryNodeValues(const bool state)
+    {
+        correctedBoundaryNodeValues_ = state;
     };
 
     // Boundary-related access
@@ -489,14 +486,20 @@ public:
         isInitialized_[iZone] = state;
     }
 
-    bool mediumIndependent() const
+    label interfaceTwoSided(label iZone) const
     {
-        return mediumIndependent_;
+        return iZone < static_cast<label>(interfaceTwoSided_.size())
+                   ? interfaceTwoSided_[iZone]
+                   : 0;
     };
 
-    void setMediumIndependent(bool state)
+    void setInterfaceTwoSided(label iZone, label state)
     {
-        mediumIndependent_ = state;
+        if (static_cast<label>(interfaceTwoSided_.size()) <= iZone)
+        {
+            interfaceTwoSided_.resize(iZone + 1, 0);
+        }
+        interfaceTwoSided_[iZone] = state;
     };
 
     scalar gradURF() const

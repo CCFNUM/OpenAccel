@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 #include "interface.h"
 #include "ipInfo.h"
 #include "simulation.h"
@@ -153,17 +151,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
             metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
         // extract vector of interface IP info
-
-        const auto ggiMethod =
-            field_broker_->meshRef()
-                .controlsRef()
-                .solverRef()
-                .solverControl_.expertParameters_.ggiAssemblyMethod_;
-        const bool useGgiNonPenalty =
-            interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-                nonconformalMethod::generalGridInterface &&
-            ggiMethod != ggiAssemblyMethod::penaltyMortar;
-        const scalar multiplier = useGgiNonPenalty ? 1.0 : 0.5;
+        const scalar multiplier = 0.5;
 
         const auto& ipInfoVec = interfaceSideInfoPtr->ipInfoVec();
 
@@ -171,6 +159,8 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
              iSide++)
         {
             const auto& faceIpInfoVec = ipInfoVec[iSide];
+
+            // Per-face cs index, lock-step with the flowModel mDot deposition.
 
             for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
@@ -606,6 +596,10 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 meFCOpposing->interpolatePoint(
                     1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
 
+                // GGI scatter: conduction + advection
+                // (mirrors thermalEnergy; unknown is h0). `continue` skips
+                // the penalty path below.
+
                 // compute diffusion vector; current
                 scalar currentDiffFluxBip = 0;
                 for (label ic = 0; ic < currentNodesPerElement; ++ic)
@@ -689,7 +683,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                 const scalar abs_tmDot = std::abs(tmDot);
 
-                // compute penalty (active for penaltyMortar)
+                // compute penalty (DG only)
                 const scalar penaltyIp =
                     penaltyFactor *
                     (currentLambdaEffBip * currentInverseLength +
@@ -869,12 +863,6 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
     // GGI path is not yet validated for the total-energy HTC problem;
     // preserve the original errorMsg behavior at the top of the function and
     // run the unified loop for DG below.
-    if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-        nonconformalMethod::generalGridInterface)
-    {
-        errorMsg("Not implemented yet");
-        return;
-    }
 
     // Unified loop over per-IP info.  Storage is owned by the base
     // interfaceSideInfo; concrete side classes store derived records upcast to
@@ -1223,5 +1211,3 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

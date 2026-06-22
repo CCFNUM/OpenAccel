@@ -5,8 +5,6 @@
 //              interfaceSideInfo (shared by DG and GGI).
 // Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "interfaceSideInfo.h"
 #include "interface.h"
@@ -230,5 +228,3 @@ void interfaceSideInfo::reverseRotateVector<SPATIAL_DIM>(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

@@ -44,14 +44,12 @@ void displacementDiffusionModel::updateDisplacement(
 void displacementDiffusionModel::updateDisplacementSideFields_(
     const std::shared_ptr<domain> domain)
 {
-#ifdef HAS_INTERFACE
     // Interface
     for (const interface* interf : domain->interfacesRef())
     {
         updateDisplacementInterfaceSideFieldDeformation_(
             domain, interf->interfaceSideInfoPtr(domain->index()));
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary
     for (label iBoundary = 0;
@@ -636,7 +634,6 @@ void displacementDiffusionModel::
                                             this->DRef().isShifted());
 }
 
-#ifdef HAS_INTERFACE
 void displacementDiffusionModel::
     updateDisplacementInterfaceSideFieldDeformation_(
         const std::shared_ptr<domain> domain,
@@ -684,7 +681,6 @@ void displacementDiffusionModel::
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 void displacementDiffusionModel::calculateSurfaceForceAndMoment_(
     const boundary* boundary,

@@ -12,11 +12,6 @@ option(WITH_CANONICAL_SUFFIX "Enable canonical executable suffix" OFF)
 option(WITH_CVFEM_SOLID_MECHANICS "Use CVFEM for solid mechanics" ON)
 option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
 option(WITH_FASTMATH "Use fast math optimization" OFF)
-option(WITH_FSI "Build with Utopia FSI support" OFF)
-option(WITH_INTERFACE "Enable interface support" ON)
-option(WITH_CLIPPER2 "Use Clipper2 for GGI area fractions (RastClipper is buggy)" ON)
-option(WITH_MHD "Build with MHD support" OFF)
-option(WITH_OVERSET "Build with overset mesh support" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
 option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" ON)
 option(WITH_WARNINGS "Enable compiler warnings" OFF)
@@ -26,7 +21,8 @@ include(cmake/CheckGit.cmake)
 CheckGitSetup()
 
 # Find MPI package
-find_package(MPI REQUIRED)
+set(MPI_CXX_SKIP_MPICXX ON)
+find_package(MPI REQUIRED COMPONENTS CXX)
 
 # Set a default value of 3 for SPATIAL_DIM if not provided
 if(NOT DEFINED SPATIAL_DIM)
@@ -158,24 +154,6 @@ else()
     message("-- HYPRE functionalities are DISABLED")
 endif()
 
-# Interface support (enabled by default)
-if(WITH_INTERFACE)
-    add_compile_definitions(HAS_INTERFACE)
-    message("-- Interface support: ENABLED")
-else()
-    message("-- Interface support: DISABLED")
-endif()
-
-# GGI polygon clipping backend
-if(WITH_INTERFACE)
-    if(WITH_CLIPPER2)
-        add_compile_definitions(USE_CLIPPER2)
-        message("-- GGI polygon clipping backend: Clipper2")
-    else()
-        message("-- GGI polygon clipping backend: RastClipper")
-    endif()
-endif()
-
 # Solid mechanics assembler
 if(WITH_CVFEM_SOLID_MECHANICS)
     add_compile_definitions(USE_CVFEM_SOLID_MECHANICS)
@@ -212,7 +190,6 @@ add_subdirectory(external)
 
 # third-party includes
 target_include_directories(main_obj PUBLIC
-    ${MPI_C_INCLUDE_DIRS}
     ${libLinSolve_INC}
     ${Trilinos_INCLUDE_DIRS}
     ${Trilinos_TPL_INCLUDE_DIRS}
@@ -225,7 +202,7 @@ target_link_libraries(main_obj PUBLIC ${libLinSolve})
 target_link_libraries(main_obj PUBLIC ${Trilinos_LIBRARIES})
 
 # Link your executable with MPI libraries
-target_link_libraries(main_obj PUBLIC ${MPI_C_LIBRARIES})
+target_link_libraries(main_obj PUBLIC MPI::MPI_CXX)
 
 # Link to Git version object and various dependencies for external/
 target_link_libraries(main_obj PRIVATE git_version)

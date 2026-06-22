@@ -4,11 +4,8 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 #include "controls.h"
 #include "dgInterfaceSideInfo.h"
-#include "ggiInterfaceSideInfo.h"
 #include "interface.h"
 #include "messager.h"
 #include "zone.h"
@@ -244,64 +241,7 @@ void interface::read(const YAML::Node& inputNode)
                     name_ + "_slave_side");
             }
             break;
-
-        case nonconformalMethod::generalGridInterface:
-            {
-                // Parameters for interface
-
-                label bitmapRes = 128;
-                scalar discernFrac = 0.01;
-                bool ggiVerbose = false;
-                bool ggiWriteDiagFile = false;
-
-                if (inputNode["ggi_bitmap_resolution"])
-                {
-                    bitmapRes =
-                        inputNode["ggi_bitmap_resolution"].template as<label>();
-                }
-                if (inputNode["ggi_discernible_fraction"])
-                {
-                    discernFrac = inputNode["ggi_discernible_fraction"]
-                                      .template as<scalar>();
-                }
-                if (inputNode["ggi_verbose"])
-                {
-                    ggiVerbose = inputNode["ggi_verbose"].template as<bool>();
-                }
-                if (inputNode["ggi_write_diagnosis_file"])
-                {
-                    ggiWriteDiagFile = inputNode["ggi_write_diagnosis_file"]
-                                           .template as<bool>();
-                }
-
-                masterInfoPtr_ = std::make_unique<ggiInterfaceSideInfo>(
-                    this,
-                    true,
-                    masterParts,
-                    slaveParts,
-                    option_,
-                    bitmapRes,
-                    discernFrac,
-                    ggiVerbose,
-                    ggiWriteDiagFile,
-                    name_ + "_master_side");
-
-                slaveInfoPtr_ = std::make_unique<ggiInterfaceSideInfo>(
-                    this,
-                    false,
-                    slaveParts,
-                    masterParts,
-                    option_,
-                    bitmapRes,
-                    discernFrac,
-                    ggiVerbose,
-                    ggiWriteDiagFile,
-                    name_ + "_slave_side");
-            }
-            break;
     }
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

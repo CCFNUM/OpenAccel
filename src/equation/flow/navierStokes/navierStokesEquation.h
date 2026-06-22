@@ -53,12 +53,6 @@ public:
 protected:
     void setResidualScales_() override;
 
-#ifdef HAS_INTERFACE
-    void
-    accumulateInterfacePDot_(const domain* domain,
-                             ::linearSolver::coefficients<SPATIAL_DIM>* coeffs);
-#endif /* HAS_INTERFACE */
-
 private:
     std::unique_ptr<Assembler> assembler_;
 };

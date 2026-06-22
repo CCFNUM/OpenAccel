@@ -5,7 +5,6 @@
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifdef WITH_THERMAL_TEMPERATURE
-#ifdef HAS_INTERFACE
 
 #include "interface.h"
 #include "ipInfo.h"
@@ -140,12 +139,6 @@ void thermalTemperatureAssembler::assembleElemTermsInterfaceSide_(
         // GGI path is not yet validated for the thermal-temperature problem;
         // preserve the original errorMsg behavior at the top of the function
         // and run the unified loop for DG below.
-        if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-            nonconformalMethod::generalGridInterface)
-        {
-            errorMsg("Not implemented yet");
-            return;
-        }
 
         // Unified loop over per-IP info.  Storage is owned by the base
         // interfaceSideInfo; concrete side classes store derived records upcast
@@ -701,12 +694,6 @@ void thermalTemperatureAssembler::assembleElemTermsInterfaceSideHTC_(
     // GGI path is not yet validated for the thermal-temperature HTC problem;
     // preserve the original errorMsg behavior at the top of the function and
     // run the unified loop for DG below.
-    if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-        nonconformalMethod::generalGridInterface)
-    {
-        errorMsg("Not implemented yet");
-        return;
-    }
 
     // Unified loop over per-IP info.  Storage is owned by the base
     // interfaceSideInfo; concrete side classes store derived records upcast to
@@ -944,5 +931,4 @@ void thermalTemperatureAssembler::assembleElemTermsInterfaceSideHTC_(
 
 } // namespace accel
 
-#endif /* HAS_INTERFACE */
 #endif /* WITH_THERMAL_TEMPERATURE */

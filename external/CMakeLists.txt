@@ -15,24 +15,6 @@ target_include_directories(main_obj SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/gplotpp
 )
 
-# GGI polygon clipping backends
-if(WITH_INTERFACE)
-    if(WITH_CLIPPER2)
-        set(CLIPPER2_UTILS OFF CACHE BOOL "" FORCE)
-        set(CLIPPER2_EXAMPLES OFF CACHE BOOL "" FORCE)
-        set(CLIPPER2_TESTS OFF CACHE BOOL "" FORCE)
-        set(_accel_skip_install_rules_c2 ${CMAKE_SKIP_INSTALL_RULES})
-        set(CMAKE_SKIP_INSTALL_RULES ON)
-        add_subdirectory(Clipper2/CPP)
-        set(CMAKE_SKIP_INSTALL_RULES ${_accel_skip_install_rules_c2})
-        unset(_accel_skip_install_rules_c2)
-        target_link_libraries(main_obj PUBLIC Clipper2)
-    else()
-        add_subdirectory(RastClipper)
-        target_link_libraries(main_obj PUBLIC RastClipper)
-    endif()
-endif()
-
 # Nalu master_element sources
 target_sources(main_obj PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/nalu/src/master_element/Hex27CVFEM.C

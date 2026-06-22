@@ -41,9 +41,6 @@ pressureCorrection::pressureCorrection(realm* realmPtr,
             .solverControl_.basicSettings_.interpolationSchemeType_
             .pressureGradientInterpolationType_;
 
-    // pressure correction may only apply to fluid domains
-    mediumIndependent_ = false;
-
     // force correct gradient: remove symmetric contributions to the gradient
     correctGradient_ = true;
 }

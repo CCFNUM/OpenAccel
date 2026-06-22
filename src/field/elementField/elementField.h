@@ -11,10 +11,8 @@
 // code
 #include "boundary.h"
 #include "field.h"
-#include "master_element/MasterElement.h"
-#ifdef HAS_INTERFACE
 #include "interface.h"
-#endif /* HAS_INTERFACE */
+#include "master_element/MasterElement.h"
 #include "mesh.h"
 #include "messager.h"
 #include "sideField.h"
@@ -80,11 +78,9 @@ public:
 
     virtual void registerSideField(label iZone, label iBoundary);
 
-#ifdef HAS_INTERFACE
     void registerSideFieldsForInterfaceSide(label iInterface,
                                             bool master,
                                             bool onlyIfNonoverlap = false);
-#endif /* HAS_INTERFACE */
 
     elementField& operator=(const elementField& fld);
 
@@ -96,10 +92,8 @@ public:
 
     virtual void initializeSideField(label iZone);
 
-#ifdef HAS_INTERFACE
     virtual void
     initializeInterfaceSideField(const interfaceSideInfo* interfaceSideInfoPtr);
-#endif /* HAS_INTERFACE */
 
     virtual void initializeBoundarySideField(label iZone, label iBoundary);
 
@@ -111,9 +105,7 @@ public:
 
     virtual void updateSideFields(label iZone);
 
-#ifdef HAS_INTERFACE
     virtual void updateInterfaceSideField(label iInterface, bool master);
-#endif /* HAS_INTERFACE */
 
     virtual void updateBoundarySideField(label iZone, label iBoundary);
 

@@ -39,9 +39,6 @@ turbulentKineticEnergy::turbulentKineticEnergy(realm* realmPtr,
             .solverRef()
             .solverControl_.basicSettings_.interpolationSchemeType_
             .turbulentKineticEnergyGradientInterpolationType_;
-
-    // turbulent kinetic energy may only apply to fluid domains
-    mediumIndependent_ = false;
 }
 
 void turbulentKineticEnergy::updateBoundarySideField(label iZone,

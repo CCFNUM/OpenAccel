@@ -42,14 +42,12 @@ protected:
     void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
                                                     Context* ctx) override;
 
-#ifdef HAS_INTERFACE
     void assembleElemTermsInterfaces_(const domain* domain,
                                       Context* ctx) override;
     void assembleElemTermsInterfaceSideNoSlipWall_(
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx);
-#endif /* HAS_INTERFACE */
 
     // Boundary conditions
     void assembleElemTermsBoundary_(const domain* domain,

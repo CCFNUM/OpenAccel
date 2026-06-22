@@ -1560,10 +1560,17 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallMixed_(
     const boundary* boundary,
     Context* ctx)
 {
-    const scalar* fixedValueFlag =
-        ((phi_->boundaryConditionRef(domain->index(), boundary->index()))
-             .template data<1>("fixed_value_flag"))
-            .value();
+    // Robin wall q = U*(Tout - Tnw); turbulent fluid: 1/U = 1/hExt + 1/hWf
+    // with hWf = rho*cp*uStar/TPlus, otherwise U = hExt
+    const auto& bcRef =
+        model_->TRef().boundaryConditionRef(domain->index(), boundary->index());
+    const scalar Tout = (bcRef.template data<1>("value")).value()[0];
+    const scalar hExt =
+        (bcRef.template data<1>("transfer_coefficient")).value()[0];
+
+    const bool turbulentWall =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
 
     const auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
@@ -1572,58 +1579,29 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallMixed_(
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    const bool includeAdv = domain->type() == domainType::fluid;
-    const bool includeViscousWork =
-        domain->heatTransfer_.includeViscousWork_ && includeAdv;
-
-    // space for LHS/RHS; nodesPerElement*nodesPerElement and nodesPerElement
+    // space for LHS/RHS; nodesPerSide*nodesPerSide and nodesPerSide
     std::vector<scalar> lhs;
     std::vector<scalar> rhs;
     std::vector<label> scratchIds;
     std::vector<scalar> scratchVals;
     std::vector<stk::mesh::Entity> connectedNodes;
 
-    // ip values
-    std::vector<scalar> vwBip(SPATIAL_DIM);
-
-    // pointers to fixed values
-    scalar* p_vwBip = &vwBip[0];
-
     // nodal fields to gather
-    std::vector<scalar> ws_coordinates;
-    std::vector<scalar> ws_lambdaEff;
     std::vector<scalar> ws_cp;
     std::vector<scalar> ws_T;
-    std::vector<scalar> ws_bcMultiplier;
-    std::vector<scalar> ws_vw;
 
     // master element
     std::vector<scalar> ws_shape_function;
-    std::vector<scalar> ws_dndx;
-    std::vector<scalar> ws_det_j;
 
     // Get transport fields/side fields
     const auto& TSTKFieldRef = model_->TRef().stkFieldRef();
     const auto& cpSTKFieldRef = model_->cpRef().stkFieldRef();
-    const auto& nodalSideTSTKFieldRef =
-        model_->TRef().nodeSideFieldRef().stkFieldRef();
-    const auto& sideTFluxSTKFieldRef =
-        model_->TRef().sideFluxFieldRef().stkFieldRef();
-    const auto* USTKFieldPtr =
-        includeViscousWork ? model_->URef().stkFieldPtr() : nullptr;
-    const auto* gradUSTKFieldPtr =
-        includeViscousWork ? model_->URef().gradRef().stkFieldPtr() : nullptr;
-    const auto* muEffSTKFieldPtr =
-        includeViscousWork ? model_->muEffRef().stkFieldPtr() : nullptr;
+    const auto* TWallCoeffsSTKFieldPtr =
+        turbulentWall ? model_->TWallCoeffsRef().stkFieldPtr() : nullptr;
 
     // Get geometric fields
-    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
-        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
-
-    // define vector of parent topos; should always be UNITY in size
-    std::vector<stk::topology> parentTopo;
 
     // define some common selectors
     stk::mesh::Selector selAllSides =
@@ -1631,9 +1609,6 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallMixed_(
 
     // shifted ip's for field?
     const bool isShifted = phi_->isShifted();
-
-    // shifted ip's for gradients?
-    const bool isGradientShifted = phi_->isGradientShifted();
 
     stk::mesh::BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -1644,53 +1619,36 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallMixed_(
     {
         stk::mesh::Bucket& sideBucket = **ib;
 
-        // extract connected element topology
-        sideBucket.parent_topology(stk::topology::ELEMENT_RANK, parentTopo);
-        STK_ThrowAssert(parentTopo.size() == 1);
-        stk::topology theElemTopo = parentTopo[0];
-
-        // volume master element
-        MasterElement* meSCS =
-            MasterElementRepo::get_surface_master_element(theElemTopo);
-        const label nodesPerElement = meSCS->nodesPerElement_;
-
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
         const label numScsBip = meFC->numIntPoints_;
 
+        // mapping from ip to nodes for this ordinal; face perspective (use
+        // with face_node_relations)
+        const label* faceIpNodeMap = meFC->ipNodeMap();
+
         // resize some things; matrix related
-        const label lhsSize = nodesPerElement * nodesPerElement;
-        const label rhsSize = nodesPerElement;
+        const label lhsSize = nodesPerSide * nodesPerSide;
+        const label rhsSize = nodesPerSide;
         lhs.resize(lhsSize);
         rhs.resize(rhsSize);
         scratchIds.resize(rhsSize);
         scratchVals.resize(rhsSize);
-        connectedNodes.resize(nodesPerElement);
+        connectedNodes.resize(nodesPerSide);
 
-        // algorithm related; element
-        ws_T.resize(nodesPerElement);
-        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
-        ws_lambdaEff.resize(nodesPerSide);
+        // algorithm related; face
+        ws_T.resize(nodesPerSide);
         ws_cp.resize(nodesPerSide);
-        ws_vw.resize(nodesPerSide * SPATIAL_DIM);
-        ws_bcMultiplier.resize(nodesPerElement);
         ws_shape_function.resize(numScsBip * nodesPerSide);
-        ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
-        ws_det_j.resize(numScsBip);
 
         // pointers
         scalar* p_lhs = &lhs[0];
         scalar* p_rhs = &rhs[0];
         scalar* p_T = &ws_T[0];
-        scalar* p_coordinates = &ws_coordinates[0];
-        scalar* p_lambdaEff = &ws_lambdaEff[0];
         scalar* p_cp = &ws_cp[0];
-        scalar* p_vw = &ws_vw[0];
-        scalar* p_bcMultiplier = &ws_bcMultiplier[0];
         scalar* p_shape_function = &ws_shape_function[0];
-        scalar* p_dndx = &ws_dndx[0];
 
         // shape functions
         if (isShifted)
@@ -1723,56 +1681,10 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallMixed_(
             // face data
             const scalar* areaVec = stk::mesh::field_data(
                 exposedAreaVecSTKFieldRef, sideBucket, iSide);
-            const scalar* TFluxVec =
-                stk::mesh::field_data(sideTFluxSTKFieldRef, sideBucket, iSide);
-
-            // extract the connected element to this exposed face; should be
-            // single in size!
-            const stk::mesh::Entity* faceElemRels =
-                bulkData.begin_elements(side);
-            STK_ThrowAssert(bulkData.num_elements(side) == 1);
-
-            // get element; its face ordinal number and populate
-            // face_node_ordinals
-            stk::mesh::Entity element = faceElemRels[0];
-            const label faceOrdinal = bulkData.begin_element_ordinals(side)[0];
-
-            // mapping from ip to nodes for this ordinal
-            const label* ipNodeMap = meSCS->ipNodeMap(faceOrdinal);
-
-            // populate faceNodeOrdinals
-            const label* faceNodeOrdinals =
-                meSCS->side_node_ordinals(faceOrdinal);
-
-            //==========================================
-            // gather nodal data off of element; n/a
-            //==========================================
-            stk::mesh::Entity const* elemNodeRels =
-                bulkData.begin_nodes(element);
-            label numNodes = bulkData.num_nodes(element);
-
-            // sanity check on num nodes
-            STK_ThrowAssert(numNodes == nodesPerElement);
-            for (label ni = 0; ni < numNodes; ++ni)
-            {
-                stk::mesh::Entity node = elemNodeRels[ni];
-
-                // set connected nodes
-                connectedNodes[ni] = node;
-
-                p_bcMultiplier[ni] = 1.0;
-
-                // gather scalars
-                p_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
-
-                // gather vectors
-                scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
-                const label offSet = ni * SPATIAL_DIM;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    p_coordinates[offSet + j] = coords[j];
-                }
-            }
+            const scalar* TWallCoeffs =
+                turbulentWall
+                    ? stk::mesh::field_data(*TWallCoeffsSTKFieldPtr, side)
+                    : nullptr;
 
             //======================================
             // gather nodal data off of face
@@ -1783,99 +1695,25 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallMixed_(
             // sanity check on num nodes
             STK_ThrowAssert(numSideNodes == nodesPerSide);
 
-            // Fill gamma + overwrite phi values at boundary with dirichlet
-            // values
+            // Fill scratch vectors
             for (label ni = 0; ni < numSideNodes; ++ni)
             {
-                const label ic = faceNodeOrdinals[ni];
-
                 stk::mesh::Entity node = sideNodeRels[ni];
 
+                // set connected nodes
+                connectedNodes[ni] = node;
+
                 // gather scalars
-                p_lambdaEff[ni] =
-                    *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
                 p_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
-
-                p_T[ic] = *stk::mesh::field_data(nodalSideTSTKFieldRef, node);
-
-                // set 0 the boundary nodes
-                p_bcMultiplier[ic] = 0.0;
-
-                if (includeViscousWork)
-                {
-                    const scalar muEff =
-                        *stk::mesh::field_data(*muEffSTKFieldPtr, node);
-                    const scalar* U =
-                        stk::mesh::field_data(*USTKFieldPtr, node);
-                    const scalar* dudx =
-                        stk::mesh::field_data(*gradUSTKFieldPtr, node);
-
-                    // calculate divergence of velocity
-                    scalar divU = 0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    }
-
-                    // calculate viscous work: VW_i = Σⱼ τ_ji U_j
-                    // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3 δ_ji ∇·U)
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * U[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
-                        {
-                            p_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                U[j];
-                        }
-                    }
-                }
-                else
-                {
-                    // set viscous work to 0
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vw[ni * SPATIAL_DIM + i] = 0;
-                    }
-                }
-            }
-
-            // compute dndx
-            scalar scs_error = 0.0;
-            if (isGradientShifted)
-            {
-                meSCS->shifted_face_grad_op(1,
-                                            faceOrdinal,
-                                            &p_coordinates[0],
-                                            &p_dndx[0],
-                                            &ws_det_j[0],
-                                            &scs_error);
-            }
-            else
-            {
-                meSCS->face_grad_op(1,
-                                    faceOrdinal,
-                                    &p_coordinates[0],
-                                    &p_dndx[0],
-                                    &ws_det_j[0],
-                                    &scs_error);
+                p_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
             }
 
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const label nearestNode = ipNodeMap[ip];
+                const label nearestNode = faceIpNodeMap[ip];
 
-                const label faceOffSet = ip * SPATIAL_DIM;
                 const label offSetSF_face = ip * nodesPerSide;
-
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    p_vwBip[j] = 0.0;
-                }
 
                 scalar asq = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -1885,66 +1723,34 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallMixed_(
                 }
                 const scalar amag = std::sqrt(asq);
 
-                //================================
-                // Diffusion: only diffusion
-                //================================
-
-                // 1) specified value
-                scalar lambdaEffBip = 0.0;
                 scalar cpBip = 0.0;
+                scalar TBip = 0.0;
                 for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
                     const scalar r = p_shape_function[offSetSF_face + ic];
-                    lambdaEffBip += r * p_lambdaEff[ic];
                     cpBip += r * p_cp[ic];
-
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
-                    }
+                    TBip += r * p_T[ic];
                 }
 
-                for (label ic = 0; ic < nodesPerElement; ++ic)
+                // series combination with the log-law wall conductance
+                scalar UBip = hExt;
+                if (turbulentWall)
                 {
-                    const label offSetDnDx =
-                        SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;
-
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        const scalar axj = areaVec[faceOffSet + j];
-                        const scalar dndxj = p_dndx[offSetDnDx + j];
-
-                        // matrix entries
-                        label indexR = nearestNode;
-                        label rowR = indexR * nodesPerElement;
-
-                        const scalar phi = p_T[ic];
-
-                        // -lambda*dT/dxj*Aj
-                        scalar lhsfac = -lambdaEffBip * dndxj * axj;
-                        p_lhs[rowR + ic] += lhsfac * p_bcMultiplier[ic] *
-                                            fixedValueFlag[0] / cpBip;
-                        p_rhs[indexR] -= lhsfac * phi * fixedValueFlag[0];
-                    }
+                    const scalar hWf = TWallCoeffs[ip];
+                    UBip = hExt * hWf / std::max(hExt + hWf, SMALL);
                 }
 
-                // 2) specified flux
-
-                // matrix entries
-                label indexR = nearestNode;
-
-                // flux value is stored into domain: multiply by -1
-                p_rhs[indexR] -=
-                    (-TFluxVec[ip]) * amag * (1.0 - fixedValueFlag[0]);
-
-                //================================
-                // Viscous Work
-                //================================
-                for (label j = 0; j < SPATIAL_DIM; ++j)
+                for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
-                    const scalar axj = areaVec[ip * SPATIAL_DIM + j];
-                    p_rhs[indexR] += vwBip[j] * axj;
+                    const scalar r = p_shape_function[offSetSF_face + ic];
+
+                    // matrix entries
+                    label rowR = nearestNode * nodesPerSide;
+
+                    p_lhs[rowR + ic] += UBip * amag * r / cpBip;
                 }
+
+                p_rhs[nearestNode] += UBip * amag * (Tout - TBip);
             }
 
             Base::applyCoeff_(

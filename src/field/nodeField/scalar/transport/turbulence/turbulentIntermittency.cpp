@@ -39,9 +39,6 @@ turbulentIntermittency::turbulentIntermittency(realm* realmPtr,
             .solverRef()
             .solverControl_.basicSettings_.interpolationSchemeType_
             .turbulentIntermittencyGradientInterpolationType_;
-
-    // turbulent dissipation rate may only apply to fluid domains
-    mediumIndependent_ = false;
 }
 
 } // namespace accel

@@ -39,20 +39,19 @@ public:
     // Constructors
     bulkPressureCorrectionAssembler(freeSurfaceFlowModel* model);
 
+    void preAssemble(const domain*, Context*) override
+    {
+    }
+
+    void postAssemble(const domain*, Context*) override
+    {
+    }
+
     void adjustMatrixForPressureReference(const domain* domain, Context* ctx);
 
     void setPhaseIndex(label phaseIndex)
     {
         phaseIndex_ = phaseIndex;
-    }
-
-protected:
-    void preAssemble_(const domain*, Context*) override
-    {
-    }
-
-    void postAssemble_(const domain*, Context*) override
-    {
     }
 
 private:
@@ -69,7 +68,6 @@ private:
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
 
-#ifdef HAS_INTERFACE
     void assembleElemTermsInterfaces_(const domain* domain,
                                       Context* ctx) override;
     void assembleElemTermsInterfaceSide_(
@@ -80,7 +78,6 @@ private:
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx);
-#endif /* HAS_INTERFACE */
 
     void assembleElemTermsBoundary_(const domain* domain,
                                     Context* ctx) override;

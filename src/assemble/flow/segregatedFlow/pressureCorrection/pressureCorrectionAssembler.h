@@ -38,14 +38,14 @@ public:
     // Constructors
     pressureCorrectionAssembler(flowModel* model);
 
-    void adjustMatrixForPressureReference(const domain* domain, Context* ctx);
-
-protected:
-    void preAssemble_(const domain*, Context*) override
+    void preAssemble(const domain* domain, Context* ctx) override
     {
+        // Size GGI Schur storage (no-op otherwise; skips computeGamma_).
     }
 
-    void postAssemble_(const domain*, Context*) override;
+    void postAssemble(const domain*, Context*) override;
+
+    void adjustMatrixForPressureReference(const domain* domain, Context* ctx);
 
 private:
     flowModel* model_;
@@ -61,7 +61,6 @@ private:
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
 
-#ifdef HAS_INTERFACE
     void assembleElemTermsInterfaces_(const domain* domain,
                                       Context* ctx) override;
     void assembleElemTermsInterfaceSide_(
@@ -72,7 +71,6 @@ private:
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx);
-#endif /* HAS_INTERFACE */
 
     void assembleElemTermsBoundary_(const domain* domain,
                                     Context* ctx) override;

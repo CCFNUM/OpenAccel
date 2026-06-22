@@ -7,8 +7,6 @@
 #ifndef INTERFACESIDEINFO_H
 #define INTERFACESIDEINFO_H
 
-#ifdef HAS_INTERFACE
-
 // code
 #include "dataHandler.h"
 #include "vectorUtils.h"
@@ -260,5 +258,4 @@ void interfaceSideInfo::reverseRotateVector<SPATIAL_DIM>(
 
 } // namespace accel
 
-#endif /* HAS_INTERFACE */
 #endif

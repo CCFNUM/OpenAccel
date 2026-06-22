@@ -4,8 +4,6 @@
 // Description:
 // Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 #include "interface.h"
 #include "volumeFractionAssembler.h"
 
@@ -25,5 +23,3 @@ void volumeFractionAssembler::assembleElemTermsInterfaceSide_(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

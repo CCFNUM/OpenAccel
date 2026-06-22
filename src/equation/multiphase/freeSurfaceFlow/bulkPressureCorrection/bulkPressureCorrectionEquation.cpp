@@ -6,6 +6,7 @@
 
 #include "bulkPressureCorrectionEquation.h"
 #include "realm.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -120,8 +121,11 @@ void bulkPressureCorrectionEquation::solve()
                           ctx.get());
 
     // fix system in domains where the model is not active
-    assembler_->fix(
-        this->collectInactiveInteriorParts(), {}, ctx.get(), {}, true);
+    assembler_->fix(this->collectInactiveInteriorParts(),
+                    {},
+                    ctx.get(),
+                    {},
+                    !model_->meshRef().anyZoneMeshWithOverset());
 
     // solve linear system
     linearSystem::solve();
@@ -146,7 +150,7 @@ void bulkPressureCorrectionEquation::solve()
 
         this->template correctField_<linearSystem::BLOCKSIZE>(
             domain.get(),
-            ctx->getXVector(),
+            ctx->coeffs().get(),
             stk::topology::NODE_RANK,
             p.stkFieldRef(),
             effectiveRelaxationFactor);

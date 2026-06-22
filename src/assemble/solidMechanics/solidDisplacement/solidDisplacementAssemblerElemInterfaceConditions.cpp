@@ -4,8 +4,6 @@
 // Description: Nonconformal interface treatment for solid displacement
 // Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
-#ifdef HAS_INTERFACE
-
 #include "interface.h"
 #include "ipInfo.h"
 #include "solidDisplacementAssembler.h"
@@ -56,9 +54,6 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
 
         // shifted ip's for field
         const bool isShifted = phi_->isShifted();
-
-        // shifted ip's for gradients?
-        const bool isGradientShifted = phi_->isGradientShifted();
 
         stk::mesh::BucketVector const& sideBuckets =
             bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -276,12 +271,6 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
         // GGI path is not yet validated for the solid-displacement problem;
         // preserve the original errorMsg behavior at the top of the function
         // and run the unified loop for DG below.
-        if (interfaceSideInfoPtr->interfPtr()->ncMethod() ==
-            nonconformalMethod::generalGridInterface)
-        {
-            errorMsg("Not implemented yet");
-            return;
-        }
 
         // Unified loop over per-IP info.  Storage is owned by the base
         // interfaceSideInfo; concrete side classes store derived records upcast
@@ -839,5 +828,3 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

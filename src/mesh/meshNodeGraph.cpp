@@ -5,10 +5,8 @@
 // Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
-#ifdef HAS_INTERFACE
 #include "interface.h"
 #include "interfaceSideInfo.h"
-#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
 #include "zone.h"
@@ -84,23 +82,24 @@ void mesh::initializeLocalNodeIDs_()
             bulkData.get_buckets(stk::topology::NODE_RANK,
                                  this->locallyOwnedInteriorPartsSelector());
 
-        label nNodesPerBucket = static_cast<label>(nodeBuckets.size());
-        for (label iBucket = 0; iBucket < nNodesPerBucket; ++iBucket)
+        // reassign contiguous ids over the active nodes; ignored blocks would
+        // otherwise leave gaps in the stk default local ids
+        label nodeID_new = 0;
+        for (label iBucket = 0;
+             iBucket < static_cast<label>(nodeBuckets.size());
+             ++iBucket)
         {
             const stk::mesh::Bucket& nodeBucket = *nodeBuckets[iBucket];
 
-            const label nNodesPerBucket = static_cast<label>(nodeBucket.size());
-
-            for (label iNode = 0; iNode < nNodesPerBucket; ++iNode)
+            for (label iNode = 0; iNode < static_cast<label>(nodeBucket.size());
+                 ++iNode)
             {
                 const auto& node = nodeBucket[iNode];
 
-                // Set global ID to local ID. FIXME: For deactivated
-                // element blocks, the local id must also be redefined.
-                bulkData.set_global_id(node, bulkData.local_id(node));
-
-                // set the map value for this node
-                localNodeIDToEntity_[bulkData.local_id(node)] = node;
+                bulkData.set_local_id(node, nodeID_new);
+                bulkData.set_global_id(node, nodeID_new);
+                localNodeIDToEntity_[nodeID_new] = node;
+                nodeID_new++;
             }
         }
 
@@ -415,7 +414,6 @@ void mesh::initializeLocalNodeIDs_()
                 }
             }
 
-#ifdef HAS_INTERFACE
             // Loop over all elements that are ghosted as aura at non-conformal
             // interfaces. The nodes of these elements are ALWAYS useful
             if (hasInterfaces_)
@@ -452,7 +450,6 @@ void mesh::initializeLocalNodeIDs_()
                     }
                 }
             }
-#endif /* HAS_INTERFACE */
 
             // Set some sizes
             nActiveNodes_ = 0;
@@ -704,7 +701,6 @@ void mesh::updateLocalNodeIDs_()
         }
     }
 
-#ifdef HAS_INTERFACE
     // Loop over all elements that are ghosted as aura at non-conformal
     // interfaces. The nodes of these elements are ALWAYS useful
     if (hasInterfaces_)
@@ -739,7 +735,6 @@ void mesh::updateLocalNodeIDs_()
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Set some sizes
     nActiveNodes_ = 0;

@@ -13,7 +13,6 @@
 #include "equation.h"
 #include "heatTransferModel.h"
 #include "linearSystem.h"
-#include "macros.h"
 #include "realm.h"
 #include "thermalEnergyAssembler.h"
 #include "types.h"

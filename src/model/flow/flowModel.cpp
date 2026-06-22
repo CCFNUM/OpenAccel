@@ -45,6 +45,15 @@ flowModel::flowModel(realm* realm)
             domain->isMaterialCompressible())
         {
             MaRef();
+
+            // shock-sensor damping of the high-resolution blending factor
+            if (controlsRef()
+                    .solverRef()
+                    .solverControl_.expertParameters_.highSpeedBlendDamping_ &&
+                controlsRef().isHighResolution())
+            {
+                betaDampRef();
+            }
             break;
         }
     }
@@ -508,6 +517,101 @@ void flowModel::updateMachNumberField_(const std::shared_ptr<domain> domain)
 
             // calc mach number
             Mab[iNode] = Umag / a;
+        }
+    }
+}
+
+void flowModel::updateBlendingDampingFactorField_(
+    const std::shared_ptr<domain> domain)
+{
+    auto& mesh = meshRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    // only active when the damping field was instantiated (expert option)
+    STKScalarField* dampSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, realm::betaDamp_ID);
+    if (dampSTKFieldPtr == nullptr)
+        return;
+
+    // get interior parts the domain is defined on
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+
+    // define some common selectors; select universal nodes so ghosts are
+    // consistent without an extra synchronization
+    stk::mesh::Selector selUniversalNodes =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selUniversalNodes);
+
+    // no shock damping outside compressible fluid domains
+    if (domain->type() != domainType::fluid ||
+        !domain->isMaterialCompressible())
+    {
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
+            scalar* dampb = stk::mesh::field_data(*dampSTKFieldPtr, nodeBucket);
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
+            {
+                dampb[iNode] = 1.0;
+            }
+        }
+        return;
+    }
+
+    // refresh the pressure stencil extrema used by the shock sensor
+    pRef().updateMinMaxFields(domain->index());
+
+    // get fields
+    const STKScalarField* pSTKFieldPtr = pRef().stkFieldPtr();
+    const STKScalarField* pMinSTKFieldPtr = pRef().minValueRef().stkFieldPtr();
+    const STKScalarField* pMaxSTKFieldPtr = pRef().maxValueRef().stkFieldPtr();
+    const STKScalarField* MaSTKFieldPtr = MaRef().stkFieldPtr();
+
+    // absolute reference pressure for sensor normalization
+    const scalar pRefAbs = domain->referencePressure();
+
+    // supersonic gate ramp and sensor strength
+    constexpr scalar machLo = 0.7;
+    constexpr scalar machHi = 1.0;
+    constexpr scalar CDamp = 3.0;
+
+    for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+         ib != nodeBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& nodeBucket = **ib;
+        const stk::mesh::Bucket::size_type nNodesPerBucket = nodeBucket.size();
+
+        const scalar* pb = stk::mesh::field_data(*pSTKFieldPtr, nodeBucket);
+        const scalar* pMinb =
+            stk::mesh::field_data(*pMinSTKFieldPtr, nodeBucket);
+        const scalar* pMaxb =
+            stk::mesh::field_data(*pMaxSTKFieldPtr, nodeBucket);
+        const scalar* Mab = stk::mesh::field_data(*MaSTKFieldPtr, nodeBucket);
+        scalar* dampb = stk::mesh::field_data(*dampSTKFieldPtr, nodeBucket);
+
+        for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
+             ++iNode)
+        {
+            // relative pressure jump across the nodal stencil
+            const scalar pAbs = std::max(std::abs(pb[iNode] + pRefAbs), SMALL);
+            const scalar s = (pMaxb[iNode] - pMinb[iNode]) / pAbs;
+
+            // supersonic gate: 0 below machLo, 1 above machHi
+            const scalar g = std::min(
+                1.0, std::max(0.0, (Mab[iNode] - machLo) / (machHi - machLo)));
+
+            const scalar nu = CDamp * g * s;
+            dampb[iNode] = 1.0 / (1.0 + nu * nu);
         }
     }
 }
@@ -1281,7 +1385,6 @@ void flowModel::initializePressure(const std::shared_ptr<domain> domain)
     }
     else
     {
-#ifdef HAS_INTERFACE
         // check if this domain interfaces another domain which is
         // required to have its pressure level set
         for (const auto* interf : domain->interfacesRef())
@@ -1410,7 +1513,6 @@ void flowModel::initializePressure(const std::shared_ptr<domain> domain)
                 }
             }
         }
-#endif /* HAS_INTERFACE */
     }
 }
 
@@ -2174,37 +2276,37 @@ void flowModel::updateDynamicViscosity(const std::shared_ptr<domain> domain)
 void flowModel::updateEffectiveDynamicViscosity(
     const std::shared_ptr<domain> domain)
 {
-    if (domain->turbulence_.option_ == turbulenceOption::laminar)
+    // floor turbulent muEff to mu (cold start: turbulence model not yet run)
+    const bool laminar =
+        domain->turbulence_.option_ == turbulenceOption::laminar;
+
+    const auto& mesh = this->meshRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    const STKScalarField* muSTKFieldPtr = this->muRef().stkFieldPtr();
+    STKScalarField* muEffSTKFieldPtr = this->muEffRef().stkFieldPtr();
+
+    stk::mesh::Selector selAllNodes =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+
+    for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+         ib != nodeBuckets.end();
+         ++ib)
     {
-        const auto& mesh = this->meshRef();
-        const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-        const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+        stk::mesh::Bucket& b = **ib;
+        const stk::mesh::Bucket::size_type length = b.size();
 
-        const STKScalarField* muSTKFieldPtr = this->muRef().stkFieldPtr();
-        STKScalarField* muEffSTKFieldPtr = this->muEffRef().stkFieldPtr();
+        const scalar* mu = stk::mesh::field_data(*muSTKFieldPtr, b);
+        scalar* muEff = stk::mesh::field_data(*muEffSTKFieldPtr, b);
 
-        // define some common selectors
-        stk::mesh::Selector selAllNodes =
-            metaData.universal_part() &
-            stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
-
-        stk::mesh::BucketVector const& nodeBuckets =
-            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
-
-        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
-             ib != nodeBuckets.end();
-             ++ib)
+        for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
         {
-            stk::mesh::Bucket& b = **ib;
-            const stk::mesh::Bucket::size_type length = b.size();
-
-            const scalar* mu = stk::mesh::field_data(*muSTKFieldPtr, b);
-            scalar* muEff = stk::mesh::field_data(*muEffSTKFieldPtr, b);
-
-            for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
-            {
-                muEff[k] = mu[k];
-            }
+            muEff[k] = laminar ? mu[k] : std::max(muEff[k], mu[k]);
         }
     }
 }
@@ -2379,7 +2481,6 @@ void flowModel::reportFlowData_()
         flowBoundaryDataVector_.clear();
     }
 
-#ifdef HAS_INTERFACE
     // Mass imbalance for interfaces
     if (this->meshRef().hasInterfaces())
     {
@@ -2471,7 +2572,6 @@ void flowModel::reportFlowData_()
             flowInterfaceDataVector_.clear();
         }
     }
-#endif /* HAS_INTERFACE */
 }
 
 void flowModel::resetCourantNumber()
@@ -2653,7 +2753,6 @@ void flowModel::updateMassImbalance_(const std::shared_ptr<domain> domain)
                                    globalBoundaryDataVector.end());
 }
 
-#ifdef HAS_INTERFACE
 void flowModel::updateInterfaceMassImbalance_(
     const std::shared_ptr<domain> domain)
 {
@@ -2677,11 +2776,11 @@ void flowModel::updateInterfaceMassImbalance_(
         {
             for (const ipInfo* ip : faceIpInfoVec)
             {
-                if (bulkData.parallel_owner_rank(ip->currentElement_) !=
-                    messager::myProcNo())
+                if (ip->isExposed_)
                     continue;
 
-                if (ip->isExposed_)
+                if (bulkData.parallel_owner_rank(ip->currentElement_) !=
+                    messager::myProcNo())
                     continue;
 
                 const scalar* c_areaVec = stk::mesh::field_data(
@@ -2698,7 +2797,8 @@ void flowModel::updateInterfaceMassImbalance_(
                 }
                 c_amag = std::sqrt(c_amag) * ip->areaFraction_;
 
-                const scalar mass_flow =
+                // per-fragment mass flux through this sub-control surface
+                scalar mass_flow =
                     ncmDot[ip->currentGaussPointId_] * ip->areaFraction_;
                 if (mass_flow < 0.0)
                 {
@@ -2968,7 +3068,6 @@ void flowModel::updateInterfaceMomentumImbalance_(
                                             globalInterfaceDataVector.end());
     }
 }
-#endif /* HAS_INTERFACE */
 
 void flowModel::setupBodyForces(const std::shared_ptr<domain> domain)
 {
@@ -3344,7 +3443,6 @@ void flowModel::initializeMassFlowRateInterior_(
     initializeMassFlowRateInterior_(domain, this->mDotRef(), this->rhoRef());
 }
 
-#ifdef HAS_INTERFACE
 void flowModel::initializeMassFlowRateInterfaceSideField_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr)
@@ -3354,7 +3452,6 @@ void flowModel::initializeMassFlowRateInterfaceSideField_(
                                               this->mDotRef().sideFieldRef(),
                                               this->rhoRef());
 }
-#endif /* HAS_INTERFACE */
 
 void flowModel::initializeMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
@@ -3532,7 +3629,6 @@ void flowModel::initializeMassFlowRateInterior_(
     }
 }
 
-#ifdef HAS_INTERFACE
 void flowModel::initializeMassFlowRateInterfaceSideField_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr,
@@ -3857,20 +3953,22 @@ void flowModel::initializeMassFlowRateInterfaceSideField_(
                                            &opposingRhoVelocityBip[0]);
 
             scalar ncFlux = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
             {
-                const scalar cRhoVelocity = currentRhoVelocityBip[j];
-                const scalar oRhoVelocity = opposingRhoVelocityBip[j];
-                ncFlux +=
-                    0.5 * (cRhoVelocity * p_cNx[j] - oRhoVelocity * p_oNx[j]);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar cRhoVelocity = currentRhoVelocityBip[j];
+                    const scalar oRhoVelocity = opposingRhoVelocityBip[j];
+                    ncFlux += 0.5 * (cRhoVelocity * p_cNx[j] -
+                                     oRhoVelocity * p_oNx[j]);
+                }
             }
 
             // scatter it and accumulate
-            ncmDot[currentGaussPointId] += ncFlux * c_amag * fcs;
+            const scalar tmDotIp = ncFlux * c_amag * fcs;
+            ncmDot[currentGaussPointId] += tmDotIp;
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 void flowModel::initializeMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
@@ -5074,7 +5172,6 @@ void flowModel::updateMassFlowRateInterior_(
     updateMassFlowRateInterior_(domain, this->mDotRef(), this->rhoRef());
 }
 
-#ifdef HAS_INTERFACE
 void flowModel::updateMassFlowRateInterfaceSideField_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr)
@@ -5084,7 +5181,6 @@ void flowModel::updateMassFlowRateInterfaceSideField_(
                                           this->mDotRef().sideFieldRef(),
                                           this->rhoRef());
 }
-#endif /* HAS_INTERFACE */
 
 void flowModel::updateMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
@@ -5782,7 +5878,6 @@ void flowModel::updateMassFlowRateInterior_(
     }
 }
 
-#ifdef HAS_INTERFACE
 void flowModel::updateMassFlowRateInterfaceSideField_(
     const std::shared_ptr<domain> domain,
     const interfaceSideInfo* interfaceSideInfoPtr,
@@ -5875,6 +5970,9 @@ void flowModel::updateMassFlowRateInterfaceSideField_(
 
     const std::vector<std::vector<ipInfo*>>& ipInfoVec =
         interfaceSideInfoPtr->ipInfoVec();
+
+    // GGI seams use one-sided mDot (current side, no average/penalty);
+    // DG keeps the half-and-half + DG-stab + penalty formula.
 
     // scale existing mDot by (1 - lambda) in-place
     for (const auto& faceIpInfoVec : ipInfoVec)
@@ -6339,17 +6437,20 @@ void flowModel::updateMassFlowRateInterfaceSideField_(
 
             scalar ncFlux = 0.0;
             scalar ncPstabFlux = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
             {
-                const scalar cRhoU = cRhoUBip[j];
-                const scalar oRhoU = oRhoUBip[j];
-                ncFlux += 0.5 * (cRhoU * p_cNx[j] - oRhoU * p_oNx[j]);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar cRhoU = cRhoUBip[j];
+                    const scalar oRhoU = oRhoUBip[j];
+                    ncFlux += 0.5 * (cRhoU * p_cNx[j] - oRhoU * p_oNx[j]);
 
-                const scalar cPstab =
-                    cRhoBip * cDuBip[j] * (cDpdxBip[j] - cGjpBip[j]);
-                const scalar oPstab =
-                    oRhoBip * oDuBip[j] * (oDpdxBip[j] - oGjpBip[j]);
-                ncPstabFlux += 0.5 * (cPstab * p_cNx[j] - oPstab * p_oNx[j]);
+                    const scalar cPstab =
+                        cRhoBip * cDuBip[j] * (cDpdxBip[j] - cGjpBip[j]);
+                    const scalar oPstab =
+                        oRhoBip * oDuBip[j] * (oDpdxBip[j] - oGjpBip[j]);
+                    ncPstabFlux +=
+                        0.5 * (cPstab * p_cNx[j] - oPstab * p_oNx[j]);
+                }
             }
 
             // scatter it and accumulate with relaxation
@@ -6360,7 +6461,6 @@ void flowModel::updateMassFlowRateInterfaceSideField_(
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 void flowModel::updateMassFlowRateBoundaryField_(
     const std::shared_ptr<domain> domain,
@@ -9034,7 +9134,6 @@ void flowModel::transformMassFlowRateToRelative_(
             }
         }
 
-#ifdef HAS_INTERFACE
         // Interfaces
         for (const interface* interf : domain->interfacesRef())
         {
@@ -9401,7 +9500,6 @@ void flowModel::transformMassFlowRateToRelative_(
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // Boundaries
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -10228,7 +10326,6 @@ void flowModel::transformMassFlowRateToRelative_(
             }
         }
 
-#ifdef HAS_INTERFACE
         // Interfaces
         for (const interface* interf : domain->interfacesRef())
         {
@@ -10664,7 +10761,6 @@ void flowModel::transformMassFlowRateToRelative_(
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // Boundaries
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -11301,7 +11397,6 @@ void flowModel::transformMassFlowRateToAbsolute_(
             }
         }
 
-#ifdef HAS_INTERFACE
         // Interfaces
         for (const interface* interf : domain->interfacesRef())
         {
@@ -11661,7 +11756,6 @@ void flowModel::transformMassFlowRateToAbsolute_(
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // Boundaries
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -12493,7 +12587,6 @@ void flowModel::transformMassFlowRateToAbsolute_(
             }
         }
 
-#ifdef HAS_INTERFACE
         // Interfaces
         for (const interface* interf : domain->interfacesRef())
         {
@@ -12928,7 +13021,6 @@ void flowModel::transformMassFlowRateToAbsolute_(
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // Boundaries
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -13559,7 +13651,6 @@ void flowModel::updateMassDivergenceField_(
         }
     }
 
-#ifdef HAS_INTERFACE
     const auto accumulateInterfaceDiv =
         [&](const interfaceSideInfo& sideInfo,
             const STKScalarField& mDotSideSTKFieldRef)
@@ -13904,7 +13995,6 @@ void flowModel::updateMassDivergenceField_(
             }
         }
     }
-#endif /* HAS_INTERFACE */
 
     // Boundary ip contribution
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -14599,7 +14689,6 @@ void flowModel::updateMassDivergenceField_(
         }
     }
 
-#ifdef HAS_INTERFACE
     // Conformal interface completions
     for (const interface* interf : domain->interfacesRef())
     {
@@ -14610,7 +14699,6 @@ void flowModel::updateMassDivergenceField_(
         // move divergence field from slave to master (top it)
         divField.transfer(interf->index(), dataTransferType::move, true);
     }
-#endif /* HAS_INTERFACE */
 
     if (messager::parallel())
     {
@@ -23494,7 +23582,6 @@ void flowModel::updateUWallCoeffs(const std::shared_ptr<domain> domain)
         // near-wall distance factor (laminar 1/4 Delta n)
         const scalar NWDFactor = 0.25;
 
-#ifdef HAS_INTERFACE
         // fluid-solid interface side
         for (const interface* interf : domain->interfacesRef())
         {
@@ -23631,7 +23718,6 @@ void flowModel::updateUWallCoeffs(const std::shared_ptr<domain> domain)
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // no-slip walls
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
@@ -23842,7 +23928,6 @@ void flowModel::updateWallShearStress(const std::shared_ptr<domain> domain)
         const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
         const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-#ifdef HAS_INTERFACE
         // fluid-solid interface side
         for (const interface* interf : domain->interfacesRef())
         {
@@ -24040,7 +24125,6 @@ void flowModel::updateWallShearStress(const std::shared_ptr<domain> domain)
                 }
             }
         }
-#endif /* HAS_INTERFACE */
 
         // no-slip walls
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();

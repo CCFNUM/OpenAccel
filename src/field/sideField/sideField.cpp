@@ -7,10 +7,8 @@
 #include "sideField.h"
 #include "boundary.h"
 #include "controls.h"
-#include "nodeSideField.h"
-#ifdef HAS_INTERFACE
 #include "ipInfo.h"
-#endif
+#include "nodeSideField.h"
 
 namespace accel
 {
@@ -231,7 +229,6 @@ void sideField<scalar, SPATIAL_DIM>::interpolate(
     }
 }
 
-#ifdef HAS_INTERFACE
 template <>
 void sideField<scalar, 1>::interpolate(const nodeSideField<scalar, 1>& nsf,
                                        label iInterface,
@@ -1198,6 +1195,5 @@ void sideField<scalar, SPATIAL_DIM>::transfer(label iInterface,
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 } // namespace accel

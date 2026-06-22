@@ -5,7 +5,6 @@
 // Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
-#ifdef HAS_INTERFACE
 #include "dataTransfer.h"
 
 namespace accel
@@ -981,5 +980,3 @@ void nonconformalDataTransfer::update()
 }
 
 } // namespace accel
-
-#endif /* HAS_INTERFACE */

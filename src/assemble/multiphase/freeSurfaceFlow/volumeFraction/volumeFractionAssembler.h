@@ -31,12 +31,10 @@ protected:
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
 
-#ifdef HAS_INTERFACE
     void assembleElemTermsInterfaceSide_(
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx) override;
-#endif /* HAS_INTERFACE */
 
     // Auxiliary field access
 

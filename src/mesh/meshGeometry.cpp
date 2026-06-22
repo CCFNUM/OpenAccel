@@ -6,11 +6,9 @@
 
 // code
 #include "boundary.h"
-#ifdef HAS_INTERFACE
 #include "dgInfo.h"
 #include "interface.h"
 #include "interfaceSideInfo.h"
-#endif /* HAS_INTERFACE */
 #include "mesh.h"
 #include "messager.h"
 #include "zone.h"
@@ -182,7 +180,6 @@ void mesh::setupGeometricFields_()
                         metaDataRef().side_rank(),
                         original_exposed_area_vector_ID);
 
-#ifdef HAS_INTERFACE
                 // Interface
                 for (auto interf : this->zonePtr(iZone)->interfacesRef())
                 {
@@ -267,7 +264,6 @@ void mesh::setupGeometricFields_()
                         }
                     }
                 }
-#endif /* HAS_INTERFACE */
 
                 // Boundary
                 for (label iBoundary = 0;
@@ -392,7 +388,6 @@ void mesh::setupZones_()
     }
 }
 
-#ifdef HAS_INTERFACE
 void mesh::setupInterfaces_()
 {
     for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
@@ -400,7 +395,6 @@ void mesh::setupInterfaces_()
         interfaceRef(iInterface).setup();
     }
 }
-#endif /* HAS_INTERFACE */
 
 void mesh::initializeCoordinateField_()
 {
@@ -489,7 +483,6 @@ void mesh::initializeZones_()
     }
 }
 
-#ifdef HAS_INTERFACE
 void mesh::initializeInterfaces_()
 {
     if (hasInterfaces())
@@ -501,7 +494,6 @@ void mesh::initializeInterfaces_()
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 void mesh::initializeGeometricFields_()
 {
@@ -591,7 +583,6 @@ void mesh::initializeGeometricFields_()
                         metaDataRef().side_rank(),
                         original_exposed_area_vector_ID);
 
-#ifdef HAS_INTERFACE
                 // Interface
                 for (auto interf : this->zonePtr(iZone)->interfacesRef())
                 {
@@ -676,7 +667,6 @@ void mesh::initializeGeometricFields_()
                         }
                     }
                 }
-#endif /* HAS_INTERFACE */
 
                 // Boundary
                 for (label iBoundary = 0;
@@ -710,7 +700,6 @@ void mesh::initializeGeometricFields_()
             }
             else
             {
-#ifdef HAS_INTERFACE
                 // Interface
                 for (auto interf : this->zonePtr(iZone)->interfacesRef())
                 {
@@ -811,7 +800,6 @@ void mesh::initializeGeometricFields_()
                         }
                     }
                 }
-#endif /* HAS_INTERFACE */
 
                 // Boundary
                 for (label iBoundary = 0;
@@ -863,7 +851,6 @@ void mesh::initializeGeometricFields_()
             }
 #endif
 
-#ifdef HAS_INTERFACE
             // Interface
             for (auto interf : this->zonePtr(iZone)->interfacesRef())
             {
@@ -884,7 +871,6 @@ void mesh::initializeGeometricFields_()
                         interf->interfaceSideInfoPtr(iZone)->currentPartVec_);
                 }
             }
-#endif /* HAS_INTERFACE */
 
             // Boundary
             for (label iBoundary = 0;
@@ -953,7 +939,6 @@ void mesh::updateZones_(bool force)
     }
 }
 
-#ifdef HAS_INTERFACE
 void mesh::updateInterfaces_(bool force)
 {
     // only update if any of the two connected zones is moving (deforming or
@@ -981,7 +966,6 @@ void mesh::updateInterfaces_(bool force)
         }
     }
 }
-#endif /* HAS_INTERFACE */
 
 void mesh::updateGeometricFields_(bool force)
 {
@@ -1034,7 +1018,6 @@ void mesh::updateGeometricFields_(bool force)
                 }
 #endif
 
-#ifdef HAS_INTERFACE
                 for (auto interf : this->zonePtr(iZone)->interfacesRef())
                 {
                     if (interf->isInternal())
@@ -1059,7 +1042,6 @@ void mesh::updateGeometricFields_(bool force)
                         }
                     }
                 }
-#endif /* HAS_INTERFACE */
 
                 for (label iBoundary = 0;
                      iBoundary < this->zonePtr(iZone)->nBoundaries();
@@ -1110,7 +1092,6 @@ void mesh::updateGeometricFields_(bool force)
                     }
                 }
 
-#ifdef HAS_INTERFACE
                 for (auto interf : this->zonePtr(iZone)->interfacesRef())
                 {
                     if (interf->isFluidSolidType())
@@ -1122,7 +1103,6 @@ void mesh::updateGeometricFields_(bool force)
                         }
                     }
                 }
-#endif /* HAS_INTERFACE */
             }
         }
 
@@ -1162,7 +1142,6 @@ void mesh::updateGeometricFields_(bool force)
                     }
                 }
 
-#ifdef HAS_INTERFACE
                 for (auto interf : this->zonePtr(iZone)->interfacesRef())
                 {
                     if (interf->isFluidSolidType())
@@ -1174,7 +1153,6 @@ void mesh::updateGeometricFields_(bool force)
                         }
                     }
                 }
-#endif /* HAS_INTERFACE */
             }
         }
 
@@ -1252,7 +1230,6 @@ void mesh::updateGeometricFields_(bool force)
                     }
                 }
 
-#ifdef HAS_INTERFACE
                 for (auto interf : this->zonePtr(iZone)->interfacesRef())
                 {
                     if (interf->isFluidSolidType())
@@ -1264,7 +1241,6 @@ void mesh::updateGeometricFields_(bool force)
                         }
                     }
                 }
-#endif /* HAS_INTERFACE */
             }
         }
 

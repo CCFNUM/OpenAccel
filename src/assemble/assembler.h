@@ -7,8 +7,10 @@
 #ifndef ASSEMBLER_H
 #define ASSEMBLER_H
 
+#include "coefficients.h"
 #include "fieldBroker.h"
 #include "linearSolverContext.h"
+#include "scaling.h"
 #include "types.h"
 
 namespace accel
@@ -41,12 +43,15 @@ public:
     assembler& operator=(assembler&& c) = default;
 
     // public API
-    virtual void assemble(const domain* domain, Context* ctx)
+    virtual void preAssemble(const domain*, Context*)
     {
-        preAssemble_(domain, ctx);
-        assemble_(domain, ctx);
-        postAssemble_(domain, ctx);
     }
+
+    virtual void postAssemble(const domain*, Context*)
+    {
+    }
+
+    virtual void assemble(const domain*, Context*) = 0;
 
     // overloaded for parts input
     virtual void zero(stk::mesh::PartVector incPartVec,
@@ -209,7 +214,8 @@ public:
 
         if (normalise && nodeBuckets.size() > 0)
         {
-            ctx->getCoefficients().normalize();
+            linearSolver::normalize(ctx->getCoefficients().getAMatrix(),
+                                    ctx->getCoefficients().getBVector());
         }
     }
 
@@ -283,17 +289,6 @@ protected:
     std::vector<typename Context::Index> sortPermutation_;
     std::vector<typename Context::Index> matrixColumnIds_;
 
-    // polymorphic protected interface
-    virtual void preAssemble_(const domain*, Context*)
-    {
-    }
-
-    virtual void postAssemble_(const domain*, Context*)
-    {
-    }
-
-    virtual void assemble_(const domain*, Context*) = 0;
-
     // helper methods
     void applyCoeff_(
         Matrix& A,
@@ -305,7 +300,6 @@ protected:
         const std::vector<scalar>& lhs,
         bool deductUnfound = true);
 
-#ifdef HAS_INTERFACE
     // Cross-rank fold+constraint for split conformal/periodic pairs over dof
     // sub-range [r0,r1); T is the NxN column transform (rotation/identity).
     void applyCrossRankFold(
@@ -316,7 +310,6 @@ protected:
         int r0,
         int r1,
         const std::function<void(stk::mesh::Entity, scalar*)>& gatherPhiSub);
-#endif
 };
 
 template <size_t N>
@@ -463,7 +456,6 @@ void assembler<N>::applyCoeff_(
     }
 }
 
-#ifdef HAS_INTERFACE
 template <size_t N>
 void assembler<N>::applyCrossRankFold(
     Context& ctx,
@@ -739,7 +731,6 @@ void assembler<N>::applyCrossRankFold(
         }
     });
 }
-#endif /* HAS_INTERFACE */
 
 } /* namespace accel */
 
