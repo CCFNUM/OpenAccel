@@ -70,9 +70,6 @@ simulation:
                     volume_fraction:
                         option: value
                         volume_fraction: 1
-          - name: f_symmetry
-            type: symmetry
-            location: [f_front_and_back]
           initialization:
             velocity:
                 option: value
@@ -107,9 +104,6 @@ simulation:
             boundary_details:
                 solid_mechanics:
                     option: fixed
-          - name: s_symmetry
-            type: symmetry
-            location: [s_front_and_back]
           initialization:
             displacement:
                 option: value
