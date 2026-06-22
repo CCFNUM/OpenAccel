@@ -26,11 +26,12 @@ build*
 *.jpg*
 *.avi*
 
-examples/**/*.py
-examples/**/*.txt
-examples/**/*.bin*
-examples/**/postProcessing
-examples/**/log*
+# Ignore example outputs and assets, retaining only input/configuration files.
+examples/**
+!examples/**/
+!examples/**/*.i
+!examples/**/*.yml
+!examples/**/*.yaml
 test
 .qtc_clangd
 
