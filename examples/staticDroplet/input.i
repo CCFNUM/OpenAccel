@@ -104,7 +104,7 @@ simulation:
                         options:
                             belos_solver: gmres
                             preconditioner: ilu
-            expert_parameters:            
+            expert_parameters:
                 body_force_redistribution: true
                 relax_gradients: false
                 incremental_gradient_change: false

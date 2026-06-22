@@ -109,12 +109,12 @@ simulation:
             output_frequency: 50
             output_fields: [velocity, pressure, turbulent_kinetic_energy, turbulent_eddy_frequency, minimum_distance_to_wall, turbulent_viscosity]
     material_library:
-      - name: fluid_1
-        thermodynamic_properties:
-            equation_of_state:
-                option: value
-                density: 1.0
-        transport_properties:
-            dynamic_viscosity:
-                option: value
-                dynamic_viscosity: 1e-05
+    - name: fluid_1
+      thermodynamic_properties:
+        equation_of_state:
+            option: value
+            density: 1.0
+      transport_properties:
+        dynamic_viscosity:
+            option: value
+            dynamic_viscosity: 1e-05

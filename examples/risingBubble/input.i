@@ -133,7 +133,7 @@ simulation:
                                 max_levels: 20
                                 aggressive_levels: 1
                                 trunc_factor: 0.3
-            expert_parameters:            
+            expert_parameters:
                 body_force_redistribution: true
                 relax_gradients: true
                 incremental_gradient_change: false

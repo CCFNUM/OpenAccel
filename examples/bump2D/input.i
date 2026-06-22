@@ -9,55 +9,55 @@ simulation:
         analysis_type:
             option: steady_state
         domains:
-          - name: default_domain
-            location: [fluid-hex]
-            materials: [fluid_1]
-            type: fluid
-            domain_models:
-                reference_pressure: 101325
-            fluid_models:
-                turbulence:     
-                    option: shear_stress_transport
-            boundaries:
-              - name: bump
-                type: wall
-                location: [bump]
-              - name: inlet
-                type: inlet
-                location: [inlet]
-                boundary_details:
-                    mass_and_momentum:
-                        option: velocity_components
-                        u: 69.44
-                        v: 0
-                        w: 0
-                    turbulence:
-                        option: k_and_omega
-                        k: 1.08e-3
-                        omega: 5220.8
-              - name: outlet
-                type: outlet
-                location: [outlet]
-                boundary_details:
-                    mass_and_momentum:
-                        option: static_pressure
-                        relative_pressure: 0
-              - name: symmetry
-                type: symmetry
-                location: [frontandback,symup,symdown,top]
-            initialization:
-                velocity:
-                    option: value
-                    velocity: [69.44,0,0]
-                pressure:
-                    option: value
-                    pressure: 0
-                turbulent_kinetic_energy:
-                    option: value
-                    turbulent_kinetic_energy: 1.08e-3
-                turbulent_eddy_frequency:
-                    option: value
-                    turbulent_eddy_frequency: 5220.8    
+        - name: default_domain
+          location: [fluid-hex]
+          materials: [fluid_1]
+          type: fluid
+          domain_models:
+            reference_pressure: 101325
+          fluid_models:
+            turbulence:
+                option: shear_stress_transport
+          boundaries:
+          - name: bump
+            type: wall
+            location: [bump]
+          - name: inlet
+            type: inlet
+            location: [inlet]
+            boundary_details:
+                mass_and_momentum:
+                    option: velocity_components
+                    u: 69.44
+                    v: 0
+                    w: 0
+                turbulence:
+                    option: k_and_omega
+                    k: 1.08e-3
+                    omega: 5220.8
+          - name: outlet
+            type: outlet
+            location: [outlet]
+            boundary_details:
+                mass_and_momentum:
+                    option: static_pressure
+                    relative_pressure: 0
+          - name: symmetry
+            type: symmetry
+            location: [frontandback, symup, symdown, top]
+          initialization:
+            velocity:
+                option: value
+                velocity: [69.44, 0, 0]
+            pressure:
+                option: value
+                pressure: 0
+            turbulent_kinetic_energy:
+                option: value
+                turbulent_kinetic_energy: 1.08e-3
+            turbulent_eddy_frequency:
+                option: value
+                turbulent_eddy_frequency: 5220.8
     solver:
         solver_control:
             basic_settings:
@@ -76,7 +76,7 @@ simulation:
                     wall_scale_interpolation_type: linear_linear
                     turbulent_kinetic_energy_interpolation_type: linear_linear
                     turbulent_eddy_frequency_interpolation_type: linear_linear
-            advanced_options:  
+            advanced_options:
                 linear_solver_settings:
                     default:
                         family: AMGSolver
@@ -95,7 +95,7 @@ simulation:
                         atol: 1.0e-12
                         options:
                             smoother_type: dilu
-                            cycle_type: r-cycle  
+                            cycle_type: r-cycle
                     wall_scale:
                         family: AMGSolver
                         min_iterations: 3
@@ -104,18 +104,18 @@ simulation:
                         atol: 1.0e-12
                         options:
                             smoother_type: dilu
-                            cycle_type: v-cycle 
+                            cycle_type: v-cycle
         output_control:
             file_path: results.e
             output_frequency: 10
             output_fields: [velocity, pressure, turbulent_kinetic_energy, turbulent_eddy_frequency, wall_scale, minimum_distance_to_wall, turbulent_viscosity]
     material_library:
-      - name: fluid_1
-        thermodynamic_properties:
-            equation_of_state:
-                option: value
-                density: 1.0
-        transport_properties:
-            dynamic_viscosity:
-                option: value
-                dynamic_viscosity: 2.31e-5 
+    - name: fluid_1
+      thermodynamic_properties:
+        equation_of_state:
+            option: value
+            density: 1.0
+      transport_properties:
+        dynamic_viscosity:
+            option: value
+            dynamic_viscosity: 2.31e-5

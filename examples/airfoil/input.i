@@ -9,51 +9,51 @@ simulation:
         analysis_type:
             option: steady_state
         domains:
-            - name: default_domain
-              location: [fluid]
-              materials: [air]
-              type: fluid
-              domain_models:
-                  reference_pressure: 0.0
-              fluid_models:
-                  turbulence:
-                      option: shear_stress_transport
-              boundaries:
-                - name: inlet
-                  type: inlet
-                  location: [inlet]
-                  boundary_details:
-                      mass_and_momentum:
-                          option: velocity_components
-                          u: 30.5557
-                          v: 0.0
-                      turbulence:
-                        option: k_and_omega
-                        k: 0.0010850797033070765
-                        omega: 4734.870867768596
-                - name: outlet
-                  type: outlet
-                  location: [outlet]
-                  boundary_details:
-                      mass_and_momentum:
-                          option: static_pressure
-                          relative_pressure: 0.0
-                - name: airfoil
-                  type: wall
-                  location: [airfoil]
-              initialization:
-                  velocity:
-                      option: value
-                      velocity: [30.5557,0]
-                  pressure:
-                      option: value
-                      pressure: 0.0
-                  turbulent_kinetic_energy:
-                      option: value
-                      turbulent_kinetic_energy: 0.0010850797033070765
-                  turbulent_eddy_frequency:
-                      option: value
-                      turbulent_eddy_frequency: 4734.870867768596
+        - name: default_domain
+          location: [fluid]
+          materials: [air]
+          type: fluid
+          domain_models:
+            reference_pressure: 0.0
+          fluid_models:
+            turbulence:
+                option: shear_stress_transport
+          boundaries:
+          - name: inlet
+            type: inlet
+            location: [inlet]
+            boundary_details:
+                mass_and_momentum:
+                    option: velocity_components
+                    u: 30.5557
+                    v: 0.0
+                turbulence:
+                    option: k_and_omega
+                    k: 0.0010850797033070765
+                    omega: 4734.870867768596
+          - name: outlet
+            type: outlet
+            location: [outlet]
+            boundary_details:
+                mass_and_momentum:
+                    option: static_pressure
+                    relative_pressure: 0.0
+          - name: airfoil
+            type: wall
+            location: [airfoil]
+          initialization:
+            velocity:
+                option: value
+                velocity: [30.5557, 0]
+            pressure:
+                option: value
+                pressure: 0.0
+            turbulent_kinetic_energy:
+                option: value
+                turbulent_kinetic_energy: 0.0010850797033070765
+            turbulent_eddy_frequency:
+                option: value
+                turbulent_eddy_frequency: 4734.870867768596
     solver:
         solver_control:
             basic_settings:
@@ -81,7 +81,7 @@ simulation:
                         atol: 1.0e-12
                         options:
                             ksp_type: fgmres
-                            pc_type: bjacobi                
+                            pc_type: bjacobi
                     pressure_correction:
                         family: HYPRE
                         min_iterations: 3
@@ -107,15 +107,15 @@ simulation:
         output_control:
             file_path: results.e
             output_frequency: 50
-            output_fields: [velocity,pressure,turbulent_kinetic_energy,turbulent_eddy_frequency,minimum_distance_to_wall,wall_friction_velocity]
+            output_fields: [velocity, pressure, turbulent_kinetic_energy, turbulent_eddy_frequency, minimum_distance_to_wall, wall_friction_velocity]
             corrected_boundary_values: true
     material_library:
-        - name: air
-          thermodynamic_properties:
-              equation_of_state:
-                  option: value
-                  density: 1.0
-          transport_properties:
-              dynamic_viscosity:
-                  option: value
-                  dynamic_viscosity: 2.5463083333333333e-05
+    - name: air
+      thermodynamic_properties:
+        equation_of_state:
+            option: value
+            density: 1.0
+      transport_properties:
+        dynamic_viscosity:
+            option: value
+            dynamic_viscosity: 2.5463083333333333e-05
