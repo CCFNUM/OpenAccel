@@ -125,11 +125,17 @@ simulation:
                 advection_scheme: high_resolution
                 transient_scheme: second_order_backward_euler
                 convergence_controls:
-                    min_iterations: 1
+                    min_iterations: 10
                     max_iterations: 25
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-8
+                    physics_convergence:
+                        enabled: true
+                        write_residuals: true
+                        criteria: [fsi_interface_residual]
+                        targets:
+                            fsi_interface_residual: 1e-3
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:
