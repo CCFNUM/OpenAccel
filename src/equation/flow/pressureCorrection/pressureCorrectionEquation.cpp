@@ -98,12 +98,6 @@ void pressureCorrectionEquation::solve()
     // assemble
     FOREACH_DOMAIN_PTR(assembler_->preAssemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
-
-    // Schur-complement static condensation of the augmented system. It must run
-    // BEFORE any relaxations
-    linearSystem::condense();
-
-    // post-assembly
     FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
     // assemble diagonal-domainance for pressure correction equation in
