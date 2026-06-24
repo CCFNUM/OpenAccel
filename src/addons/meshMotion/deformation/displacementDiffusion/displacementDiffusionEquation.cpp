@@ -172,6 +172,27 @@ void displacementDiffusionEquation::setup()
                                               .displacementDiffusion()
                                               .referenceLengthScale_;
 
+            // minimum control volume -> physical floor for wall distance,
+            // guarding against yMin -> 0 at boundary-adjacent / deformed nodes
+            const auto& dualNodalVolumeSTKFieldRef =
+                *metaData.get_field<scalar>(stk::topology::NODE_RANK,
+                                            mesh::dual_nodal_volume_ID);
+            scalar volMin = std::numeric_limits<scalar>::max();
+            for (size_t ib = 0; ib < nodeBuckets.size(); ib++)
+            {
+                const Bucket& nodeBucket = *nodeBuckets[ib];
+                const scalar* volb =
+                    field_data(dualNodalVolumeSTKFieldRef, nodeBucket);
+                for (Bucket::size_type i = 0; i < nodeBucket.size(); i++)
+                {
+                    volMin = std::min(volMin, volb[i]);
+                }
+            }
+            messager::minReduce(volMin);
+            // dWall ~ smallest cell linear size (dimension-correct: V^(1/dim))
+            const scalar dWall =
+                std::pow(volMin, 1.0 / static_cast<scalar>(SPATIAL_DIM));
+
             const auto& yMinSTKFieldRef = this->yMinRef().stkFieldRef();
 
             for (size_t ib = 0; ib < nodeBuckets.size(); ib++)
@@ -185,8 +206,11 @@ void displacementDiffusionEquation::setup()
 
                 for (Bucket::size_type i = 0; i < nNodesPerBucket; i++)
                 {
-                    scalar stiffness = std::pow(referenceLengthScale / yMinb[i],
-                                                modelExponent);
+                    // GUARD: floor wall distance so Gamma stays finite/bounded
+                    const scalar effectiveDistance = std::max(yMinb[i], dWall);
+                    scalar stiffness =
+                        std::pow(referenceLengthScale / effectiveDistance,
+                                 modelExponent);
 
                     // store and clip
                     Gammab[i] = std::max(std::min(stiffness, 1e15), 1e-15);

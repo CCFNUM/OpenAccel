@@ -425,7 +425,9 @@ void domain::read_()
         const auto& fluidModelsBlock = domain_conf_["fluid_models"];
 
         // flow model: always ON if no multiphase model
-        equations_[static_cast<int>(equationID::segregatedFlow)] = true;
+        {
+            equations_[static_cast<int>(equationID::segregatedFlow)] = true;
+        }
 
         // query multiphase model: must exist in case more than a material is
         // assigned

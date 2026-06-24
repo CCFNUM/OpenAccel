@@ -21,8 +21,8 @@ include(cmake/CheckGit.cmake)
 CheckGitSetup()
 
 # Find MPI package
-set(MPI_CXX_SKIP_MPICXX ON)
-find_package(MPI REQUIRED COMPONENTS CXX)
+option(MPI_CXX_SKIP_MPICXX "Skip MPI C++ bindings" ON)
+find_package(MPI REQUIRED)
 
 # Set a default value of 3 for SPATIAL_DIM if not provided
 if(NOT DEFINED SPATIAL_DIM)
@@ -202,7 +202,7 @@ target_link_libraries(main_obj PUBLIC ${libLinSolve})
 target_link_libraries(main_obj PUBLIC ${Trilinos_LIBRARIES})
 
 # Link your executable with MPI libraries
-target_link_libraries(main_obj PUBLIC MPI::MPI_CXX)
+target_link_libraries(main_obj PUBLIC MPI::MPI_C)
 
 # Link to Git version object and various dependencies for external/
 target_link_libraries(main_obj PRIVATE git_version)

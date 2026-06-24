@@ -114,11 +114,7 @@ void turbulentEddyFrequencySSTEquation::solve()
     FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
     // fix system in domains where the model is not active
-    assembler_->fix(this->collectInactiveInteriorParts(),
-                    {},
-                    ctx.get(),
-                    {},
-                    !model_->meshRef().anyZoneMeshWithOverset());
+    assembler_->fix(this->collectInactiveInteriorParts(), {}, ctx.get(), {});
 
     linearSystem::simulationRef().getProfiler().pop();
 

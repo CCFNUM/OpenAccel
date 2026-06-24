@@ -76,8 +76,6 @@ private:
 
     bool anyZoneMeshDeforming_ = false;
 
-    bool anyZoneMeshWithOverset_ = false;
-
     // a container which maps the local node id (from STK) to the entity. This
     // is because we re-define the local id's of the nodes
     std::vector<stk::mesh::Entity> localNodeIDToEntity_;
@@ -264,16 +262,6 @@ public:
     const bool anyZoneMeshDeforming() const
     {
         return anyZoneMeshDeforming_;
-    }
-
-    void setAnyZoneMeshWithOverset(bool state)
-    {
-        anyZoneMeshWithOverset_ = state;
-    }
-
-    const bool anyZoneMeshWithOverset() const
-    {
-        return anyZoneMeshWithOverset_;
     }
 
     const std::string getCoordinateFieldName() const

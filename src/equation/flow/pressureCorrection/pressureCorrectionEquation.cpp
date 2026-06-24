@@ -118,11 +118,7 @@ void pressureCorrectionEquation::solve()
                           ctx.get());
 
     // fix system in domains where the model is not active
-    assembler_->fix(this->collectInactiveInteriorParts(),
-                    {},
-                    ctx.get(),
-                    {},
-                    !model_->meshRef().anyZoneMeshWithOverset());
+    assembler_->fix(this->collectInactiveInteriorParts(), {}, ctx.get(), {});
 
     // solve linear system
     linearSystem::solve();

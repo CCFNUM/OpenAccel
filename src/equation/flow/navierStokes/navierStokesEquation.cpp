@@ -5,10 +5,10 @@
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "navierStokesEquation.h"
-#include "realm.h"
-#include "scaling.h"
 #include "interface.h"
 #include "ipInfo.h"
+#include "realm.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -174,11 +174,7 @@ void navierStokesEquation::solve()
     FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
     // fix system in domains where the model is not active
-    assembler_->fix(this->collectInactiveInteriorParts(),
-                    {},
-                    ctx.get(),
-                    {},
-                    !model_->meshRef().anyZoneMeshWithOverset());
+    assembler_->fix(this->collectInactiveInteriorParts(), {}, ctx.get(), {});
 
     if (!model_->controlsRef()
              .solverRef()
