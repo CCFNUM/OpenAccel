@@ -14,9 +14,3 @@
 [submodule "external/gplotpp"]
 	path = external/gplotpp
 	url = https://github.com/ziotom78/gplotpp
-[submodule "external/RastClipper"]
-	path = external/RastClipper
-	url = https://github.com/CCFNUM/RastClipper.git
-[submodule "external/Clipper2"]
-	path = external/Clipper2
-	url = https://github.com/AngusJohnson/Clipper2.git
