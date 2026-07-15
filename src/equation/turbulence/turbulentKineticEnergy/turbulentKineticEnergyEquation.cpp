@@ -44,8 +44,10 @@ void turbulentKineticEnergyEquation::setup()
     FOREACH_DOMAIN(model_->setupTurbulentKineticEnergy);
 
     // linear solver
-    linearSystem::setupSolver(
-        this->name(), model_->meshRef(), this->fallbackName());
+    linearSystem::setupSolver(this->name(),
+                              model_->meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     equation::isCreated_ = true;
 }

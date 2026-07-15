@@ -39,7 +39,7 @@ public:
 
     virtual ~interfaceSideInfo();
 
-    // Core lifecycle methods (differ between DG and GGI)
+    // Core lifecycle methods (differ per non-conformal method)
     virtual void setup() = 0;
     virtual void initialize() = 0;
     virtual void update() = 0;
@@ -48,8 +48,7 @@ public:
     virtual void provideDiagnosis() = 0;
     virtual size_t errorCheck() = 0;
 
-    // Common accessors — concrete (non-virtual) implementations because both
-    // DG and GGI use identical bodies that read base-class state.
+    // Common accessors — concrete because identical for all derived methods
     bool isMasterSide() const
     {
         return isMasterSide_;
@@ -102,7 +101,7 @@ public:
         return opposingPartVec_;
     }
 
-    // Unified per-IP info storage (DG: dgInfo*, GGI: ggiInfo*).  Outer
+    // Unified per-IP info storage (concrete ipInfo subtypes).  Outer
     // index = current face index; inner = IP / connection index.  Owned by
     // this base class — populated by derived classes during initialize() /
     // update() and freed by the base destructor (via clearIpInfo_()).
@@ -112,7 +111,7 @@ public:
     }
 
     // For conformal interfaces only: match opposing gauss point ids.
-    // GGI does not need this; DG overrides with its full implementation.
+    // Only DG needs this and overrides it; the default is a no-op.
     virtual void determineOpposingGaussPointIds()
     {
     }
@@ -122,14 +121,10 @@ public:
     stk::mesh::PartVector currentPartVec_;
     stk::mesh::PartVector opposingPartVec_;
 
-    // Coordinate transformation for periodic interfaces.
-    // Default implementations do nothing (GGI with generalConnection),
-    // specialisations are provided for periodic DG cases via the
-    // concrete dgInterfaceSideInfo class.  External callers that use
-    // rotation/translation must downcast to dgInterfaceSideInfo when
-    // GGI is not relevant, or rely on the concrete type known at the
-    // call site.  The transformation data below is common to both
-    // methods so it lives here.
+    // Coordinate transformation for periodic interfaces.  Defaults do
+    // nothing; periodic DG specialises via dgInterfaceSideInfo (callers
+    // needing rotation/translation downcast or know the concrete type).
+    // The transformation data below is common to all methods.
     utils::matrix rotationMatrix_;
     utils::vector translationVector_;
 
@@ -175,12 +170,10 @@ protected:
     void clearIpInfo_();
 
     // Polymorphic per-IP info storage.  Populated by derived classes with
-    // either dgInfo* (from dgInterfaceSideInfo) or ggiInfo* (from
-    // ggiInterfaceSideInfo).  Ownership lives here.
+    // their concrete ipInfo records.  Ownership lives here.
     std::vector<std::vector<ipInfo*>> ipInfoVec_;
 
-    // Members shared between DG and GGI (formerly duplicated in each
-    // child).  Derived classes access these directly.
+    // Members shared by all derived methods; accessed directly.
     interface* interfPtr_;
     std::string name_;
     bool isMasterSide_;

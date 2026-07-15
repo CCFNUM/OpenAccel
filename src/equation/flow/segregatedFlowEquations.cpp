@@ -90,6 +90,17 @@ void segregatedFlowEquations::solve()
         U_eq_->postSolve();
     }
 
+    // freeze_pressure: momentum predictor only, skip the pressure corrector.
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezePressure_)
+    {
+        this->URef().updateScale();
+        FOREACH_DOMAIN(updateVelocityGradientField);
+        FOREACH_DOMAIN(updateVelocityBlendingFactorField);
+        return;
+    }
+
     // corrrector step: solve pressure correction
     {
         if (messager::master() && pCorr_eq_->subIters() > 1)

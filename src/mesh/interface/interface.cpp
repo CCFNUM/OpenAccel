@@ -442,7 +442,9 @@ void interface::determineGeometricRelations_()
     }
 }
 
-void interface::populateConformalRowToRowMapping_()
+const std::vector<std::vector<label>>&
+interface::populateConformalRowToRowMapping_(
+    const ::linearSolver::CRSNodeGraph* g)
 {
 #ifndef NDEBUG
     // sanity check
@@ -452,18 +454,42 @@ void interface::populateConformalRowToRowMapping_()
                  "non-conformal interface");
     }
 #endif
+    assert(g);
+
+    const auto buildStart = std::chrono::steady_clock::now();
 
     stk::mesh::BulkData& bulkData = meshPtr_->bulkDataRef();
-    stk::mesh::MetaData& metaData = meshPtr_->metaDataRef();
-
-    // get local order graph
-    const auto* localOrderGraphPtr = this->meshPtr()->getLocalOrderGraphPtr();
 
     // get local id to node mapper from mesh
     const auto& localNodeIDToEntity = this->meshPtr()->localNodeIDToEntity();
 
+    // graph column id -> entity (identity remap on the full graph)
+    std::vector<stk::mesh::Entity> colToEntity(
+        static_cast<size_t>(g->nOwnedNodes()) + g->nGhostNodes());
+    for (size_t lid = 0; lid < localNodeIDToEntity.size(); ++lid)
+    {
+        const int64_t r = g->localToRow(
+            static_cast<::linearSolver::CRSNodeGraph::Index>(lid));
+        if (r >= 0 && r < static_cast<int64_t>(colToEntity.size()))
+        {
+            colToEntity[r] = localNodeIDToEntity[lid];
+        }
+    }
+
+    // O(1) partner lookup (a linear pair scan per column is O(pairs^2))
+    std::unordered_map<size_t, stk::mesh::Entity> slaveToMaster;
+    slaveToMaster.reserve(matchingNodePairVector_.size());
+    for (const auto& p : matchingNodePairVector_)
+    {
+        slaveToMaster.emplace(p.second.local_offset(), p.first);
+    }
+
+    conformalRowToRowMaps_.emplace_back();
+    conformalGraphMap& entry = conformalRowToRowMaps_.back();
+    entry.graph = g;
+
     // set size
-    conformalRowToRowMap_.resize(matchingNodePairVector_.size());
+    entry.map.resize(matchingNodePairVector_.size());
 
     label iPair = 0;
     for (const auto& nodePair : matchingNodePairVector_)
@@ -481,42 +507,53 @@ void interface::populateConformalRowToRowMapping_()
             continue;
         }
 
-        const label& lid1 = bulkData.local_id(node1);
-        const auto cols = localOrderGraphPtr->rowLocalIndices(lid1);
+        // pair not in this (subset) graph: leave the mapper empty
+        const int64_t row1 = g->localToRow(bulkData.local_id(node1));
+        if (row1 < 0)
+        {
+            iPair++;
+            continue;
+        }
+
+        const auto cols = g->rowLocalIndices(row1);
 
         // set size of the local mapper
-        conformalRowToRowMap_[iPair].resize(cols.size(), -1);
+        entry.map[iPair].resize(cols.size(), -1);
 
         // populate the mapper
         for (label iCol = 0; iCol < cols.size(); iCol++)
         {
             // get the node that corresponds to the current column of stencil 2
-            const auto& node_s2 = localNodeIDToEntity[cols[iCol]];
+            const auto& node_s2 = colToEntity[cols[iCol]];
 
             // search for the matching node
-            auto it = std::find_if(matchingNodePairVector_.begin(),
-                                   matchingNodePairVector_.end(),
-                                   [&](const auto& p)
-            { return p.second == node_s2; });
+            const auto it = slaveToMaster.find(node_s2.local_offset());
 
-            if (it != matchingNodePairVector_.end())
+            if (it != slaveToMaster.end())
             {
                 // get matching node in stencil 1
-                const auto& node_s1 = it->first;
-                label lid_s1 = bulkData.local_id(node_s1);
+                const auto& node_s1 = it->second;
+                const int64_t col_s1 =
+                    g->localToRow(bulkData.local_id(node_s1));
 
                 // get the corresponding column order in the stencil of node 1
                 label iCol_s1;
                 for (iCol_s1 = 0; iCol_s1 < cols.size(); iCol_s1++)
                 {
-                    if (cols[iCol_s1] == lid_s1)
+                    if (static_cast<int64_t>(cols[iCol_s1]) == col_s1)
                     {
                         break;
                     }
                 }
 
+                if (iCol_s1 == static_cast<label>(cols.size()))
+                {
+                    errorMsg("conformal row-merge: master partner column "
+                             "missing from the row stencil");
+                }
+
                 // store in the mapper
-                conformalRowToRowMap_[iPair][iCol] = iCol_s1;
+                entry.map[iPair][iCol] = iCol_s1;
             }
             else
             {
@@ -525,12 +562,12 @@ void interface::populateConformalRowToRowMapping_()
 
                 // the current column corresponds to a node
                 // that is not sitting on the interface
-                conformalRowToRowMap_[iPair][iCol] = iCol_s1;
+                entry.map[iPair][iCol] = iCol_s1;
             }
         }
 #ifndef NDEBUG
         // diagnostics
-        for (auto& m : conformalRowToRowMap_[iPair])
+        for (auto& m : entry.map[iPair])
         {
             if (m < 0)
             {
@@ -542,6 +579,8 @@ void interface::populateConformalRowToRowMapping_()
         // increment the pair counter
         iPair++;
     }
+
+    return entry.map;
 }
 
 void interface::populateConformalElemsToGhost_()

@@ -47,7 +47,7 @@ protected:
 
     bool isConformal_ = false;
 
-    bool isForceNonconformalTreatment_ = true;
+    bool isForceNonconformalTreatment_ = false;
 
     bool isSlipNonOverlap_ = true;
 
@@ -80,7 +80,14 @@ protected:
 
     std::vector<conformalPairId> conformalPairIds_;
 
-    mutable std::vector<std::vector<label>> conformalRowToRowMap_;
+    // row-merge position maps, one per graph (column orders differ)
+    struct conformalGraphMap
+    {
+        const ::linearSolver::CRSNodeGraph* graph = nullptr;
+        std::vector<std::vector<label>> map;
+    };
+
+    mutable std::vector<conformalGraphMap> conformalRowToRowMaps_;
 
     void initializeGhostings_();
 
@@ -88,7 +95,8 @@ protected:
 
     void determineGeometricRelations_();
 
-    void populateConformalRowToRowMapping_();
+    const std::vector<std::vector<label>>&
+    populateConformalRowToRowMapping_(const ::linearSolver::CRSNodeGraph* g);
 
     // ghost each conformal pair's opposing node + its supporting elements to
     // the other side's rank, so split pairs are visible for graph/mapping
@@ -205,22 +213,25 @@ public:
         return matchingNodePairVector_;
     }
 
-    std::vector<std::vector<label>>& conformalRowToRowMap()
+    // graphs rebuild in place (mesh motion): drop the stale position maps
+    void clearConformalRowToRowMaps() const
     {
-        if (conformalRowToRowMap_.empty())
-        {
-            populateConformalRowToRowMapping_();
-        }
-        return conformalRowToRowMap_;
+        conformalRowToRowMaps_.clear();
     }
 
-    const std::vector<std::vector<label>>& conformalRowToRowMap() const
+    // position map for the given node graph (built lazily, cached per graph)
+    const std::vector<std::vector<label>>&
+    conformalRowToRowMap(const ::linearSolver::CRSNodeGraph* graph) const
     {
-        if (conformalRowToRowMap_.empty())
+        for (const auto& entry : conformalRowToRowMaps_)
         {
-            const_cast<interface*>(this)->populateConformalRowToRowMapping_();
+            if (entry.graph == graph)
+            {
+                return entry.map;
+            }
         }
-        return conformalRowToRowMap_;
+        return const_cast<interface*>(this)->populateConformalRowToRowMapping_(
+            graph);
     }
 
     interfaceSideInfo* interfaceSideInfoPtr(label zoneIndex)

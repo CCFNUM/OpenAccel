@@ -363,7 +363,11 @@ void displacementDiffusionEquation::solve()
     linearSystem::simulationRef().getProfiler().pop();
 
     // solve linear system
-    linearSystem::solve();
+    if (ctx->getGraph()->isGraphMember())
+    {
+        linearSystem::solve();
+    }
+    messager::barrier();
 
     // correction
     for (const auto& domain : domainVector_)

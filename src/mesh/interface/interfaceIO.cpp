@@ -4,7 +4,6 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#include "controls.h"
 #include "dgInterfaceSideInfo.h"
 #include "interface.h"
 #include "messager.h"
@@ -64,8 +63,9 @@ void interface::read(const YAML::Node& inputNode)
         penaltyFactor_ = inputNode["penalty_factor"].template as<scalar>();
     }
 
-    // force non-conformal treatment for conformal interface: this enables DG
-    // even if conformal, but it is always true for a fluid-solid interface
+    // force non-conformal treatment for conformal interface: this enables
+    // nc methods (i.e. DG, etc) even if conformal, but it is always true for a
+    // fluid-solid interface
     if (type_ == interfaceType::fluid_solid)
     {
         isForceNonconformalTreatment_ = true;

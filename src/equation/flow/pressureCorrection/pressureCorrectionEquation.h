@@ -105,8 +105,14 @@ protected:
             scalar* pCorrVal = stk::mesh::field_data(pCorrSTKFieldRef, bucket);
             for (stk::mesh::Bucket::size_type i = 0; i < nEntities; ++i)
             {
-                const auto id = bulkData.local_id(bucket[i]);
-                pCorrVal[i] = correction[id * BLOCKSIZE + STRIDE];
+                const int64_t row = coeffs->getGraph()->localToRow(
+                    bulkData.local_id(bucket[i]));
+                if (row < 0) // node not part of this (subset) system
+                {
+                    pCorrVal[i] = 0.0;
+                    continue;
+                }
+                pCorrVal[i] = correction[row * BLOCKSIZE + STRIDE];
             }
         }
 

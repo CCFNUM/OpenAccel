@@ -246,6 +246,9 @@ struct solverDictionary
             bool forceWallDistanceCalculation_ = false;
             bool disablePhysics_ = false;
             bool freezeFlow_ = false;
+            bool freezePressure_ = false;
+            // disable subset node graphs (default): subsets are opt-in
+            bool forceFullNodeGraph_ = true;
             bool nso_ = false;
             scalar nsoFourthOrderFac_ = 1.0;
             bool highSpeedBlendDamping_ = false;
@@ -320,7 +323,11 @@ public:
         return solver_;
     };
 
+    // bandwidth_reduction drives two branches: a reduced matrix stencil, and a
+    // node renumbering that pulls neighbouring nodes close in the row order
     bool isReducedStencil() const;
+
+    bool isRenumbered() const;
 
     bool isTransient() const;
 

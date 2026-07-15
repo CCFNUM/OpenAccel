@@ -94,8 +94,10 @@ void turbulentIntermittencyCorrelationTransitionSSTEquation::setup()
     });
 
     // linear solver
-    linearSystem::setupSolver(
-        this->name(), model_->meshRef(), this->fallbackName());
+    linearSystem::setupSolver(this->name(),
+                              model_->meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     equation::isCreated_ = true;
 }
@@ -149,7 +151,11 @@ void turbulentIntermittencyCorrelationTransitionSSTEquation::solve()
     linearSystem::simulationRef().getProfiler().pop();
 
     // solve linear system
-    linearSystem::solve();
+    if (ctx->getGraph()->isGraphMember())
+    {
+        linearSystem::solve();
+    }
+    messager::barrier();
 
     // correction
     // clip values in source field below `lower_clip_value` to

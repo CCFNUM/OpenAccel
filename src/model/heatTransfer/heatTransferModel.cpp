@@ -2736,6 +2736,9 @@ void heatTransferModel::updateInterfaceHeatImbalance_(
     const auto accumulateInterfaceHeat =
         [&](const interfaceSideInfo& sideInfo, HeatBoundaryData& interfaceData)
     {
+        // qDot[gp] is the per-gauss-point accumulated total heat flow (already
+        // area-fraction weighted).
+        std::unordered_set<uint64_t> seenGp;
         for (const auto& faceIpInfoVec : sideInfo.ipInfoVec())
         {
             for (const ipInfo* ip : faceIpInfoVec)
@@ -2761,19 +2764,27 @@ void heatTransferModel::updateInterfaceHeatImbalance_(
                 }
                 c_amag = std::sqrt(c_amag) * ip->areaFraction_;
 
-                const scalar heat_flow =
-                    ncqDot[ip->currentGaussPointId_] * ip->areaFraction_;
-                if (heat_flow < 0.0)
-                {
-                    interfaceData.in += heat_flow;
+                const scalar qgp = ncqDot[ip->currentGaussPointId_];
+
+                // fragment area accumulates per fragment (physical fragment
+                // area), classified by this gauss point's flux sign.
+                if (qgp < 0.0)
                     interfaceData.in_area += c_amag;
-                }
                 else
-                {
-                    interfaceData.out += heat_flow;
                     interfaceData.out_area += c_amag;
-                }
                 interfaceData.total_area += c_amag;
+
+                // heat counts qDot[gp] once per gauss point (no re-weighting).
+                const uint64_t key =
+                    (static_cast<uint64_t>(ip->currentFace_.local_offset())
+                     << 20) |
+                    static_cast<uint64_t>(ip->currentGaussPointId_);
+                if (!seenGp.insert(key).second)
+                    continue;
+                if (qgp < 0.0)
+                    interfaceData.in += qgp;
+                else
+                    interfaceData.out += qgp;
             }
         }
     };

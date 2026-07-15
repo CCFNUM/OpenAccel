@@ -104,6 +104,10 @@ private:
 
     int verbose_;
 
+    // wall clock started at construction, reported in the solver footer
+    std::chrono::high_resolution_clock::time_point wallTimeStart_ =
+        std::chrono::high_resolution_clock::now();
+
     std::unique_ptr<Gnuplot> gp_ptr_ = nullptr;
 
     std::vector<residualPlotItem> plot_items_;

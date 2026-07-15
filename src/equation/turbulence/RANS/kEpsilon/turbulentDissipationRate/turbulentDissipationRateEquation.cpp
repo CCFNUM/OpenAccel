@@ -50,8 +50,10 @@ void turbulentDissipationRateEquation::setup()
     using BucketVector = typename Assembler::BucketVector;
 
     // linear solver
-    linearSystem::setupSolver(
-        this->name(), model_->meshRef(), this->fallbackName());
+    linearSystem::setupSolver(this->name(),
+                              model_->meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     assembler_->setup(&model_->epsilonRef(),
                       advectionDiffusion,
@@ -149,7 +151,11 @@ void turbulentDissipationRateEquation::solve()
     linearSystem::simulationRef().getProfiler().pop();
 
     // solve linear system
-    linearSystem::solve();
+    if (ctx->getGraph()->isGraphMember())
+    {
+        linearSystem::solve();
+    }
+    messager::barrier();
 
     // correction
     // clip values in source field below `lower_clip_value` to

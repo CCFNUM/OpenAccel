@@ -65,9 +65,11 @@ void wallScaleDiffusionEquation::setup()
 
     assembler_->setup(&this->yScaleRef(), diffusion, domainVector_, 1.0);
 
-    // linear solver
-    linearSystem::setupSolver(
-        this->name(), this->meshRef(), this->fallbackName());
+    // linear solver (fluid-only zones: benefits from a subset node graph)
+    linearSystem::setupSolver(this->name(),
+                              this->meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     equation::isCreated_ = true;
 }
@@ -122,7 +124,11 @@ void wallScaleDiffusionEquation::solve()
     // solve linear system
     // enforce tolerance for this equation
     linearSystem::setConvergenceTolerance(1.0e-9);
-    linearSystem::solve();
+    if (ctx->getGraph()->isGraphMember())
+    {
+        linearSystem::solve();
+    }
+    messager::barrier();
 
     // correction
     const scalar relax_value = 0.75;

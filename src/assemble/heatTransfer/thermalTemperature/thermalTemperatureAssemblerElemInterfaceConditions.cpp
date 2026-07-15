@@ -136,10 +136,6 @@ void thermalTemperatureAssembler::assembleElemTermsInterfaceSide_(
         // rotation matrix (in case of rotational periodicity)
         const utils::matrix& rotMat = interfaceSideInfoPtr->rotationMatrix_;
 
-        // GGI path is not yet validated for the thermal-temperature problem;
-        // preserve the original errorMsg behavior at the top of the function
-        // and run the unified loop for DG below.
-
         // Unified loop over per-IP info.  Storage is owned by the base
         // interfaceSideInfo; concrete side classes store derived records upcast
         // to ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is
@@ -690,10 +686,6 @@ void thermalTemperatureAssembler::assembleElemTermsInterfaceSideHTC_(
         stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
-
-    // GGI path is not yet validated for the thermal-temperature HTC problem;
-    // preserve the original errorMsg behavior at the top of the function and
-    // run the unified loop for DG below.
 
     // Unified loop over per-IP info.  Storage is owned by the base
     // interfaceSideInfo; concrete side classes store derived records upcast to

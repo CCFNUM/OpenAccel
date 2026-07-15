@@ -81,6 +81,23 @@ void mesh::read(const YAML::Node& inputNode)
                 Ioss::Property("DECOMPOSITION_METHOD", auto_decomp));
         }
 
+        // extra Ioss properties (e.g. DECOMP_OMITTED_BLOCK_NAMES to balance
+        // the decomposition on the fluid blocks only)
+        if (mesh_node["decomposition_properties"])
+        {
+            for (const auto& prop : mesh_node["decomposition_properties"])
+            {
+                const auto name = prop["name"].template as<std::string>();
+                const auto value = prop["value"].template as<std::string>();
+                ioBrokerPtr_->property_add(Ioss::Property(name, value));
+                if (messager::master())
+                {
+                    std::cout << "Decomposition property: " << name << " = "
+                              << value << std::endl;
+                }
+            }
+        }
+
         // Initialize meta data (from exodus file)
         ioBrokerPtr_->add_mesh_database(meshFilePath,
                                         restart_ctrl.isRestart_

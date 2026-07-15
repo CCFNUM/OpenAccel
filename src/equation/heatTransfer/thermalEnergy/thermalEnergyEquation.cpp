@@ -102,8 +102,10 @@ void thermalEnergyEquation::setup()
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
-    linearSystem::setupSolver(
-        this->name(), fieldBroker::meshRef(), this->fallbackName());
+    linearSystem::setupSolver(this->name(),
+                              fieldBroker::meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     equation::isCreated_ = true;
 }
@@ -207,7 +209,11 @@ void thermalEnergyEquation::solve()
     linearSystem::simulationRef().getProfiler().pop();
 
     // solve linear system
-    linearSystem::solve();
+    if (ctx->getGraph()->isGraphMember())
+    {
+        linearSystem::solve();
+    }
+    messager::barrier();
 
     // correction
     // clip values in source field to `lower_clip_value` and `upper_clip_value`

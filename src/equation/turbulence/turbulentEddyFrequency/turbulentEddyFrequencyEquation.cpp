@@ -44,8 +44,10 @@ void turbulentEddyFrequencyEquation::setup()
     FOREACH_DOMAIN(model_->setupTurbulentEddyFrequency);
 
     // linear solver
-    linearSystem::setupSolver(
-        this->name(), model_->meshRef(), this->fallbackName());
+    linearSystem::setupSolver(this->name(),
+                              model_->meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     equation::isCreated_ = true;
 }

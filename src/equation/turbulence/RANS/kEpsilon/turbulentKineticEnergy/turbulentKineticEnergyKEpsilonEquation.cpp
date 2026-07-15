@@ -98,7 +98,11 @@ void turbulentKineticEnergyKEpsilonEquation::solve()
     linearSystem::simulationRef().getProfiler().pop();
 
     // solve linear system
-    linearSystem::solve();
+    if (ctx->getGraph()->isGraphMember())
+    {
+        linearSystem::solve();
+    }
+    messager::barrier();
 
     // correction
     // clip values in source field below `lower_clip_value` to

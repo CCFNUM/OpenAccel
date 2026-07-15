@@ -596,10 +596,6 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 meFCOpposing->interpolatePoint(
                     1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
 
-                // GGI scatter: conduction + advection
-                // (mirrors thermalEnergy; unknown is h0). `continue` skips
-                // the penalty path below.
-
                 // compute diffusion vector; current
                 scalar currentDiffFluxBip = 0;
                 for (label ic = 0; ic < currentNodesPerElement; ++ic)
@@ -859,10 +855,6 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
         stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
-
-    // GGI path is not yet validated for the total-energy HTC problem;
-    // preserve the original errorMsg behavior at the top of the function and
-    // run the unified loop for DG below.
 
     // Unified loop over per-IP info.  Storage is owned by the base
     // interfaceSideInfo; concrete side classes store derived records upcast to

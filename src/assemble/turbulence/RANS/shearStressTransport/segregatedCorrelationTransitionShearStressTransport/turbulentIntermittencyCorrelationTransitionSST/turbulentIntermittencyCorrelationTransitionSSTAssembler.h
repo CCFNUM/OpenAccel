@@ -39,7 +39,7 @@ public:
     void postAssemble(const domain* domain, Context* ctx) override
     {
         Base::postAssemble(domain, ctx);
-        assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
+        assembleBoundaryRelaxation_(domain, ctx, 0.75);
     }
 
 protected:

@@ -2,7 +2,7 @@
 // Created    : Fri Aug 25 2023 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description: A storage class for an ip info on a DG interface side. Inherits
-//              from ipInfo so that DG and GGI per-IP records live in a unified
+//              from ipInfo so that all per-IP records live in a unified
 //              ipInfoVec_ on the base interfaceSideInfo.
 // Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 

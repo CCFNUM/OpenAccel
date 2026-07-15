@@ -148,7 +148,7 @@ void mesh::initialize()
     // field is filled and ready to use
     initializeCoordinateField_();
 
-    // Initialize zones: boundaries, oversets, etc.
+    // Initialize zones: boundaries, etc.
     initializeZones_();
 
     // Initialize interfaces: make required searches

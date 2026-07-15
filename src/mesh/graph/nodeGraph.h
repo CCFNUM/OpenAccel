@@ -14,6 +14,7 @@ namespace accel
 {
 
 class mesh;
+class zone;
 
 class nodeGraph : public ::linearSolver::CRSNodeGraph
 {
@@ -32,10 +33,20 @@ public:
 
     void rebuildGraph();
 
+    // Restrict this graph to a subset of mesh zones
+    void setSubsetZones(const std::vector<const zone*>& zones)
+    {
+        subsetZones_ = zones;
+    }
+
 private:
     mesh* meshPtr_;
 
+    // empty => full-mesh graph; non-empty => subset graph over these zones
+    std::vector<const zone*> subsetZones_;
+
     void buildGraph_() override;
+    void buildSubsetGraph_();
 };
 
 // Out-of-line definitions

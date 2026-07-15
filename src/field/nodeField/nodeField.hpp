@@ -2045,6 +2045,10 @@ void nodeField<N, M>::updateMinMaxFields(label iZone,
         }
     }
 
+    // extend min/max bounds across conformal seams to the full both-sides
+    // stencil
+    this->mergeMinMaxAtConformalInterfaces_(iZone);
+
     if (applyExtremaExpansion && extremaCoeff > 0.0)
     {
         const scalar extrema =
@@ -2107,6 +2111,96 @@ void nodeField<N, M>::updateMinMaxFields(label iZone,
     // synchronize in case of parallel
     this->minValueRef().synchronizeGhostedEntities(iZone);
     this->maxValueRef().synchronizeGhostedEntities(iZone);
+}
+
+template <size_t N, size_t M>
+void nodeField<N, M>::mergeMinMaxAtConformalInterfaces_(label iZone)
+{
+    // give each conformal seam node the full both-sides stencil min/max (else
+    // beta is one-sidedly clamped at the seam)
+    if (!minValueFieldPtr_ || !maxValueFieldPtr_)
+        return;
+    if (advectionScheme_ != advectionSchemeType::highResolution &&
+        !limitGradient_)
+        return;
+
+    auto& minRef = this->minValueRef().stkFieldRef();
+    auto& maxRef = this->maxValueRef().stkFieldRef();
+
+    // pre-merge snapshots and the ghost-comm field list, allocated once
+    std::vector<scalar> ws_onM(N), ws_oxM(N), ws_onS(N), ws_oxS(N);
+    scalar* onM = ws_onM.data();
+    scalar* oxM = ws_oxM.data();
+    scalar* onS = ws_onS.data();
+    scalar* oxS = ws_oxS.data();
+    std::vector<const stk::mesh::FieldBase*> commFields = {&minRef, &maxRef};
+
+    for (label iInterface = 0; iInterface < this->meshPtr()->nInterfaces();
+         iInterface++)
+    {
+        interface& interf = this->meshPtr()->interfaceRef(iInterface);
+        if (!interf.isConformalTreatment() || !interf.isMasterZone(iZone))
+            continue;
+
+        // slave->master rotation (identity for translation / general
+        // connection)
+        const utils::matrix& R = interf.masterInfoPtr()->rotationMatrix_;
+
+        // refresh partner (possibly ghosted) bounds before reading them
+        if (messager::parallel() && interf.interfaceGhosting_)
+            stk::mesh::communicate_field_data(*interf.interfaceGhosting_,
+                                              commFields);
+
+        for (const auto& np : interf.matchingNodePairVector())
+        {
+            scalar* minMst = stk::mesh::field_data(minRef, np.first);
+            scalar* maxMst = stk::mesh::field_data(maxRef, np.first);
+            scalar* minSlv = stk::mesh::field_data(minRef, np.second);
+            scalar* maxSlv = stk::mesh::field_data(maxRef, np.second);
+
+            for (size_t i = 0; i < N; ++i)
+            {
+                onM[i] = minMst[i];
+                oxM[i] = maxMst[i];
+                onS[i] = minSlv[i];
+                oxS[i] = maxSlv[i];
+            }
+
+            if constexpr (N == SPATIAL_DIM)
+            {
+                for (size_t i = 0; i < N; ++i)
+                {
+                    // map slave box -> master frame and master box -> slave
+                    // frame by interval arithmetic
+                    scalar rnS = 0.0, rxS = 0.0, rnM = 0.0, rxM = 0.0;
+                    for (size_t j = 0; j < N; ++j)
+                    {
+                        const scalar rij = R(i, j); // slave -> master
+                        rnS += (rij >= 0.0) ? rij * onS[j] : rij * oxS[j];
+                        rxS += (rij >= 0.0) ? rij * oxS[j] : rij * onS[j];
+
+                        const scalar rji = R(j, i); // master -> slave (R^T)
+                        rnM += (rji >= 0.0) ? rji * onM[j] : rji * oxM[j];
+                        rxM += (rji >= 0.0) ? rji * oxM[j] : rji * onM[j];
+                    }
+                    minMst[i] = std::min(onM[i], rnS);
+                    maxMst[i] = std::max(oxM[i], rxS);
+                    minSlv[i] = std::min(onS[i], rnM);
+                    maxSlv[i] = std::max(oxS[i], rxM);
+                }
+            }
+            else
+            {
+                for (size_t i = 0; i < N; ++i)
+                {
+                    minMst[i] = std::min(onM[i], onS[i]);
+                    maxMst[i] = std::max(oxM[i], oxS[i]);
+                    minSlv[i] = std::min(onS[i], onM[i]);
+                    maxSlv[i] = std::max(oxS[i], oxM[i]);
+                }
+            }
+        }
+    }
 }
 
 template <size_t N, size_t M>
@@ -2449,6 +2543,13 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
          this->meshPtr()->zonePtr(iZone)->interfacesRef())
     {
         if (interf->isConformalTreatment())
+            continue;
+
+        // velocity/pressure one-sided at fluid-solid wall: skip interface beta
+        const label opposingZone = interf->isMasterZone(iZone)
+                                       ? interf->slaveZoneIndex()
+                                       : interf->masterZoneIndex();
+        if (!this->isZoneSet(opposingZone))
             continue;
 
         if (interf->isInternal())
@@ -3495,6 +3596,13 @@ void nodeField<N, M>::updateGradientField(label iZone)
          this->meshPtr()->zonePtr(iZone)->interfacesRef())
     {
         if (interf->isConformalTreatment())
+            continue;
+
+        // velocity/pressure one-sided at fluid-solid wall: skip interface term
+        const label opposingZone = interf->isMasterZone(iZone)
+                                       ? interf->slaveZoneIndex()
+                                       : interf->masterZoneIndex();
+        if (!this->isZoneSet(opposingZone))
             continue;
 
         if (interf->isInternal())

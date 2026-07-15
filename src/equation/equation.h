@@ -185,6 +185,18 @@ public:
 
     virtual stk::mesh::PartVector collectStationaryParts();
 
+    // zones spanned by this equation's domains (for subset node graphs)
+    std::vector<const zone*> domainZones_() const
+    {
+        std::vector<const zone*> zones;
+        zones.reserve(domainVector_.size());
+        for (const auto& d : domainVector_)
+        {
+            zones.push_back(d->zonePtr());
+        }
+        return zones;
+    }
+
     // unique equation identifier
     virtual equationID getID()
     {
@@ -275,7 +287,10 @@ protected:
             for (Bucket::size_type i = 0; i < n_entities; ++i)
             {
                 const stk::mesh::Entity entity = bucket[i];
-                const auto id = bulkData.local_id(entity);
+                const int64_t id =
+                    coeffs->getGraph()->localToRow(bulkData.local_id(entity));
+                if (id < 0) // node not part of this (subset) system
+                    continue;
                 for (int k = 0; k < FIELD_DIM; k++)
                 {
                     scalar newVal =

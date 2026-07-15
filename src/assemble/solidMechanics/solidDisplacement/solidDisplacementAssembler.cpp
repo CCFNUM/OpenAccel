@@ -71,7 +71,10 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
         for (size_t iNode = 0; iNode < bucket->size(); ++iNode)
         {
             stk::mesh::Entity node = (*bucket)[iNode];
-            const auto lid = bulkData.local_id(node);
+            const int64_t lid =
+                A.getGraph()->localToRow(bulkData.local_id(node));
+            if (lid < 0) // node not part of this (subset) system
+                continue;
 
             const scalar* aarea =
                 stk::mesh::field_data(assembledSymmSTKFieldRef, node);

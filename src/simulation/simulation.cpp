@@ -297,7 +297,7 @@ void simulation::runTransient()
             {
                 std::cout << std::endl
                           << " Iter CPU Time: " << std::scientific
-                          << elapsedSeconds.count() << std::endl
+                          << elapsedSeconds.count() << "[s]" << std::endl
                           << std::endl;
             }
 

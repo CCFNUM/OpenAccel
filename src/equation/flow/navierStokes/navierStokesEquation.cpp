@@ -5,10 +5,10 @@
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "navierStokesEquation.h"
-#include "interface.h"
-#include "ipInfo.h"
 #include "realm.h"
 #include "scaling.h"
+#include "interface.h"
+#include "ipInfo.h"
 
 namespace accel
 {
@@ -80,8 +80,10 @@ void navierStokesEquation::setup()
     assembler_->setup(&model_->URef(), null, domainVector_, nullptr);
 
     // setup linear solver
-    linearSystem::setupSolver(
-        this->name(), model_->meshRef(), this->fallbackName());
+    linearSystem::setupSolver(this->name(),
+                              model_->meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     equation::isCreated_ = true;
 }
@@ -175,7 +177,11 @@ void navierStokesEquation::solve()
              .solverControl_.expertParameters_.disableMomentumPredictor_)
     {
         // solve linear system
-        linearSystem::solve();
+        if (ctx->getGraph()->isGraphMember())
+        {
+            linearSystem::solve();
+        }
+        messager::barrier();
 
         // correction
         auto& U = model_->URef();

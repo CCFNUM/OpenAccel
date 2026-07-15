@@ -55,8 +55,10 @@ void pressureCorrectionEquation::setup()
     assembler_->setup(&model_->pRef(), null, domainVector_, nullptr);
 
     // linear solver
-    linearSystem::setupSolver(
-        this->name(), model_->meshRef(), this->fallbackName());
+    linearSystem::setupSolver(this->name(),
+                              model_->meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     equation::isCreated_ = true;
 }
@@ -115,7 +117,11 @@ void pressureCorrectionEquation::solve()
     assembler_->fix(this->collectInactiveInteriorParts(), {}, ctx.get(), {});
 
     // solve linear system
-    linearSystem::solve();
+    if (ctx->getGraph()->isGraphMember())
+    {
+        linearSystem::solve();
+    }
+    messager::barrier();
 
     // correction
     auto& p = model_->pRef();

@@ -1016,24 +1016,20 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
                                                 std::to_string(origin[0]) +
                                                 "))";
 #elif SPATIAL_DIM == 2
+                                            // 2D rotation is about z; drop the
+                                            // physically-zero z terms so the
+                                            // expression never references the
+                                            // unset z variable / origin[2]
                                             expression[0] =
-                                                std::to_string(omega) + " * (" +
-                                                std::to_string(0.0) +
-                                                " * (z - " +
-                                                std::to_string(origin[2]) +
-                                                ") - " + std::to_string(1.0) +
-                                                " * (y - " +
+                                                std::to_string(omega) +
+                                                " * ( - 1.0 * (y - " +
                                                 std::to_string(origin[1]) +
                                                 "))";
 
                                             expression[1] =
-                                                std::to_string(omega) + " * (" +
-                                                std::to_string(1.0) +
-                                                " * (x - " +
+                                                std::to_string(omega) +
+                                                " * (1.0 * (x - " +
                                                 std::to_string(origin[0]) +
-                                                ") - " + std::to_string(0.0) +
-                                                " * (z - " +
-                                                std::to_string(origin[2]) +
                                                 "))";
 #endif
                                             bc.addExpression<SPATIAL_DIM>(

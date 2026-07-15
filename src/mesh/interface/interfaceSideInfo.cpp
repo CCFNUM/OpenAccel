@@ -2,7 +2,7 @@
 // Created    : Fri Aug 25 2023
 // Author     : Mhamad Mahdi Alloush
 // Description: Coordinate transformation and rotation specializations for
-//              interfaceSideInfo (shared by DG and GGI).
+//              interfaceSideInfo (shared by all non-conformal methods).
 // Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code

@@ -1,8 +1,7 @@
 // File       : ipInfo.h
 // Created    : 2026
 // Author     : Mhamad Mahdi Alloush
-// Description: Common base class for per-integration-point info shared by DG
-//              (Discontinuous Galerkin) and GGI (General Grid Interface)
+// Description: Common base class for per-integration-point info shared by the
 //              non-conformal interface methods.
 // Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
@@ -47,14 +46,12 @@ public:
     MasterElement* meSCSOpposing_ = nullptr;
     label opposingFaceIsGhosted_ = 0;
 
-    // Surface area fraction. GGI fills with the rasterised value (0..1); DG
-    // keeps the default of 1.0 so unified assembler loops collapse to the
-    // same math when SCS surfaces are fully covered.
+    // Surface area fraction: partial-overlap methods fill 0..1; DG keeps the
+    // default 1.0 so unified assembler loops collapse to the same math.
     scalar areaFraction_ = 1.0;
 
-    // True when this IP has no opposing connection (non-overlap region).
-    // GGI sets this directly; for DG the corresponding flag is mirrored on
-    // dgInfo::gaussPointExposed_ until consumer loops are unified.
+    // True when this IP has no opposing connection (non-overlap region);
+    // for DG mirrored on dgInfo::gaussPointExposed_ until loops are unified.
     bool isExposed_ = false;
 };
 

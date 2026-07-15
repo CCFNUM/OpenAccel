@@ -109,7 +109,10 @@ public:
 
             for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
             {
-                stk::mesh::EntityId id = bulkData.local_id(nodeBucket[k]);
+                const int64_t id =
+                    A.getGraph()->localToRow(bulkData.local_id(nodeBucket[k]));
+                if (id < 0) // node not part of this (subset) system
+                    continue;
 
                 auto rowVals = A.rowVals(id);
 

@@ -40,7 +40,6 @@ public:
 
     void preAssemble(const domain* domain, Context* ctx) override
     {
-        // Size GGI Schur storage (no-op otherwise; skips computeGamma_).
     }
 
     void postAssemble(const domain*, Context*) override;

@@ -1058,6 +1058,19 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["freeze_flow"].template as<bool>();
             }
 
+            if (expertParameters["freeze_pressure"])
+            {
+                solver_.solverControl_.expertParameters_.freezePressure_ =
+                    expertParameters["freeze_pressure"].template as<bool>();
+            }
+
+            if (expertParameters["force_full_node_graph"])
+            {
+                solver_.solverControl_.expertParameters_.forceFullNodeGraph_ =
+                    expertParameters["force_full_node_graph"]
+                        .template as<bool>();
+            }
+
             if (expertParameters["print_momentum_interface_imbalance"])
             {
                 solver_.solverControl_.expertParameters_

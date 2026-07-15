@@ -1008,7 +1008,7 @@ void simulation::printSolverHeader()
     if (messager::master())
     {
         std::ostringstream h, d, v;
-        h << "Accel " << SPATIAL_DIM << "D";
+        h << PROJECT_NAME << " " << SPATIAL_DIM << "D";
         d << "Parallel fluid flow CFD package based on CVFEM";
         v << "v" << accel::PROJECT_VERSION;
         std::cout << "╔" << printHorizontalBar()         << "╗" << std::endl;
@@ -1024,10 +1024,15 @@ void simulation::printSolverFooter()
 {
     if (messager::master())
     {
-        std::ostringstream d;
+        const std::chrono::duration<scalar> totalWallTime =
+            std::chrono::high_resolution_clock::now() - wallTimeStart_;
+        std::ostringstream d, t;
         d << "Simulation is complete";
+        t << "Total wall time: " << std::fixed << std::setprecision(2)
+          << totalWallTime.count() << " [s]";
         std::cout << "╔" << printHorizontalBar()         << "╗" << std::endl;
         std::cout << "║" << printStringCentered(d.str()) << "║" << std::endl;
+        std::cout << "║" << printStringCentered(t.str()) << "║" << std::endl;
         std::cout << "╚" << printHorizontalBar()         << "╝" << std::endl;
         std::cout << std::endl;
     }

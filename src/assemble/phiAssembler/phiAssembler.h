@@ -401,7 +401,6 @@ public:
         // Interface constraints applied under either of two conditions:
         // 1) conformal interfaces (in case non-conformal treatment forces to
         // false)
-        // 2) non-conformal interfaces in the case of GGI
         if (field_broker_->meshRef().hasInterfaces())
         {
             // select all locally owned nodes for this domain
@@ -432,11 +431,13 @@ public:
                     // computeDUCoefficients reads the merged diag, not a bare 1
                     const bool scaledConstraints = true;
 
+                    const auto* graph = A.getGraph();
+
                     if constexpr (N == 1)
                     {
                         // conformal row-to-row mapping
                         const auto& matchingNodePairConnectivityMap =
-                            interf->conformalRowToRowMap();
+                            interf->conformalRowToRowMap(graph);
 
                         // get pairs
                         const auto& nodePairs =
@@ -453,8 +454,17 @@ public:
                             // data for stencils of node 1 and node 2
                             const auto& node1 = nodePair.first;
                             const auto& node2 = nodePair.second;
-                            const label lid1 = bulkData.local_id(node1);
-                            const label lid2 = bulkData.local_id(node2);
+                            const label lid1 = static_cast<label>(
+                                graph->localToRow(bulkData.local_id(node1)));
+                            const label lid2 = static_cast<label>(
+                                graph->localToRow(bulkData.local_id(node2)));
+
+                            // pair not in this (subset) graph
+                            if (lid1 < 0 || lid2 < 0)
+                            {
+                                iPair++;
+                                continue;
+                            }
 
                             // split pair (a row is off-rank): done by the
                             // cross-rank hook, not the local path
@@ -539,7 +549,7 @@ public:
 
                         // conformal row-to-row mapping
                         const auto& matchingNodePairConnectivityMap =
-                            interf->conformalRowToRowMap();
+                            interf->conformalRowToRowMap(graph);
 
                         // get pairs
                         const auto& nodePairs =
@@ -547,6 +557,14 @@ public:
 
                         // matrix connection data
                         const auto& diagOffsets = A.diagOffsetRef();
+
+                        // reusable snapshot buffers for the scaledConstraints
+                        // scaling (avoid in-place aliasing when R != I)
+                        std::vector<scalar> ws_srcDiag(
+                            SPATIAL_DIM * SPATIAL_DIM, 0.0);
+                        std::vector<scalar> ws_srcOff(SPATIAL_DIM * SPATIAL_DIM,
+                                                      0.0);
+                        std::vector<scalar> ws_srcRhs(SPATIAL_DIM, 0.0);
 
                         label iPair = 0;
                         for (const auto& nodePair : nodePairs)
@@ -556,8 +574,17 @@ public:
                             // data for stencils of node 1 and node 2
                             const auto& node1 = nodePair.first;
                             const auto& node2 = nodePair.second;
-                            const label lid1 = bulkData.local_id(node1);
-                            const label lid2 = bulkData.local_id(node2);
+                            const label lid1 = static_cast<label>(
+                                graph->localToRow(bulkData.local_id(node1)));
+                            const label lid2 = static_cast<label>(
+                                graph->localToRow(bulkData.local_id(node2)));
+
+                            // pair not in this (subset) graph
+                            if (lid1 < 0 || lid2 < 0)
+                            {
+                                iPair++;
+                                continue;
+                            }
 
                             // split pair (a row is off-rank): done by the
                             // cross-rank hook, not the local path
@@ -677,6 +704,15 @@ public:
                                 // R^T * D1 * R D1_rot[i,j] = sum_k sum_l R[k,i]
                                 // * D1[k,l] * R[l,j]
 
+                                // snapshot source to avoid in-place aliasing
+                                // (full D1_rot when R != I)
+                                scalar* srcDiag = ws_srcDiag.data();
+                                for (label p = 0; p < SPATIAL_DIM * SPATIAL_DIM;
+                                     ++p)
+                                    srcDiag[p] =
+                                        vals2[SPATIAL_DIM * SPATIAL_DIM *
+                                                  diagOffset2 +
+                                              p];
                                 // multiply diagonal block by rotated diagonal
                                 // of row 1
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -686,9 +722,8 @@ public:
                                         scalar sum = 0.0;
                                         for (label k = 0; k < SPATIAL_DIM; ++k)
                                         {
-                                            // Compute rotated diagonal
-                                            // on-the-fly: (R^T
-                                            // * D1 * R)[i,k]
+                                            // rotated diagonal (R^T * D1 *
+                                            // R)[i,k]
                                             scalar d_rot_ik = 0.0;
                                             for (label m = 0; m < SPATIAL_DIM;
                                                  ++m)
@@ -707,12 +742,8 @@ public:
                                                         rotMat(n, k);
                                                 }
                                             }
-                                            // Multiply: D1_rot[i,k] * A2[k,j]
                                             sum += d_rot_ik *
-                                                   vals2[SPATIAL_DIM *
-                                                             SPATIAL_DIM *
-                                                             diagOffset2 +
-                                                         k * SPATIAL_DIM + j];
+                                                   srcDiag[k * SPATIAL_DIM + j];
                                         }
                                         vals2[SPATIAL_DIM * SPATIAL_DIM *
                                                   diagOffset2 +
@@ -720,6 +751,15 @@ public:
                                     }
                                 }
 
+                                // snapshot source to avoid in-place aliasing
+                                // (full D1_rot when R != I)
+                                scalar* srcOff = ws_srcOff.data();
+                                for (label p = 0; p < SPATIAL_DIM * SPATIAL_DIM;
+                                     ++p)
+                                    srcOff[p] =
+                                        vals2[SPATIAL_DIM * SPATIAL_DIM *
+                                                  diagOffset1 +
+                                              p];
                                 // multiply off-diagonal block by rotated
                                 // diagonal of row 1
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -729,9 +769,8 @@ public:
                                         scalar sum = 0.0;
                                         for (label k = 0; k < SPATIAL_DIM; ++k)
                                         {
-                                            // Compute rotated diagonal
-                                            // on-the-fly: (R^T
-                                            // * D1 * R)[i,k]
+                                            // rotated diagonal (R^T * D1 *
+                                            // R)[i,k]
                                             scalar d_rot_ik = 0.0;
                                             for (label m = 0; m < SPATIAL_DIM;
                                                  ++m)
@@ -750,12 +789,8 @@ public:
                                                         rotMat(n, k);
                                                 }
                                             }
-                                            // Multiply: D1_rot[i,k] * A2[k,j]
                                             sum += d_rot_ik *
-                                                   vals2[SPATIAL_DIM *
-                                                             SPATIAL_DIM *
-                                                             diagOffset1 +
-                                                         k * SPATIAL_DIM + j];
+                                                   srcOff[k * SPATIAL_DIM + j];
                                         }
                                         vals2[SPATIAL_DIM * SPATIAL_DIM *
                                                   diagOffset1 +
@@ -763,14 +798,17 @@ public:
                                     }
                                 }
 
+                                // snapshot rhs to avoid in-place aliasing
+                                scalar* srcRhs = ws_srcRhs.data();
+                                for (label p = 0; p < SPATIAL_DIM; ++p)
+                                    srcRhs[p] = b[lid2 * SPATIAL_DIM + p];
                                 // multiply rhs by rotated diagonal of row 1
                                 for (label i = 0; i < SPATIAL_DIM; ++i)
                                 {
                                     scalar sum = 0.0;
                                     for (label k = 0; k < SPATIAL_DIM; ++k)
                                     {
-                                        // Compute rotated diagonal on-the-fly:
-                                        // (R^T * D1 * R)[i,k]
+                                        // rotated diagonal (R^T * D1 * R)[i,k]
                                         scalar d_rot_ik = 0.0;
                                         for (label m = 0; m < SPATIAL_DIM; ++m)
                                         {
@@ -786,9 +824,7 @@ public:
                                                     rotMat(n, k);
                                             }
                                         }
-                                        // Multiply: D1_rot[i,k] * b2[k]
-                                        sum += d_rot_ik *
-                                               b[lid2 * SPATIAL_DIM + k];
+                                        sum += d_rot_ik * srcRhs[k];
                                     }
                                     b[lid2 * SPATIAL_DIM + i] = sum;
                                 }
@@ -868,7 +904,7 @@ protected:
     virtual void
     assembleRelaxation_(const domain* domain, Matrix& A, const scalar urf);
     virtual void assembleBoundaryRelaxation_(const domain* domain,
-                                             Vector& b,
+                                             Context* ctx,
                                              const scalar urf);
 
     virtual void applySymmetryConditions_(const domain* domain, Context* ctx)
@@ -1093,6 +1129,7 @@ void phiAssembler<N>::assembleRelaxation_(const domain* domain,
         bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
 
     // loop over local nodes and relax associated matrix rows
+    const auto* graph = A.getGraph();
     const scalar urf_inv = 1.0 / urf;
     for (size_t ib = 0; ib < nodeBuckets.size(); ib++)
     {
@@ -1101,11 +1138,13 @@ void phiAssembler<N>::assembleRelaxation_(const domain* domain,
         for (Bucket::size_type i = 0; i < n_entities; ++i)
         {
             const stk::mesh::Entity entity = bucket[i];
-            const auto lid = bulkData.local_id(entity);
+            const int64_t row = graph->localToRow(bulkData.local_id(entity));
+            if (row < 0) // node not part of this (subset) system
+                continue;
 
             // relax diagonal
-            assert(lid < A.nRows());
-            scalar* diag = A.diag(lid);
+            assert(row < static_cast<int64_t>(A.nRows()));
+            scalar* diag = A.diag(row);
             for (label k = 0; k < BLOCKSIZE; k++)
             {
                 diag[BLOCKSIZE * k + k] *= urf_inv;
@@ -1116,11 +1155,14 @@ void phiAssembler<N>::assembleRelaxation_(const domain* domain,
 
 template <size_t N>
 void phiAssembler<N>::assembleBoundaryRelaxation_(const domain* domain,
-                                                  Vector& b,
+                                                  Context* ctx,
                                                   const scalar urf)
 {
     using Bucket = stk::mesh::Bucket;
     using BucketVec = stk::mesh::BucketVector;
+
+    Vector& b = ctx->getBVector();
+    const auto* graph = ctx->getAMatrix().getGraph();
 
     // select all locally owned nodes for this domain
     const auto& mesh = field_broker_->meshRef();
@@ -1244,11 +1286,14 @@ void phiAssembler<N>::assembleBoundaryRelaxation_(const domain* domain,
             for (Bucket::size_type i = 0; i < n_entities; ++i)
             {
                 const stk::mesh::Entity entity = bucket[i];
-                const auto lid = bulkData.local_id(entity);
+                const int64_t row =
+                    graph->localToRow(bulkData.local_id(entity));
+                if (row < 0) // node not part of this (subset) system
+                    continue;
 
                 // relax diagonal
-                assert(lid < b.size() / BLOCKSIZE);
-                scalar* rhs_val = &b[BLOCKSIZE * lid];
+                assert(row < static_cast<int64_t>(b.size() / BLOCKSIZE));
+                scalar* rhs_val = &b[BLOCKSIZE * row];
                 for (label k = 0; k < BLOCKSIZE; k++)
                 {
                     rhs_val[k] *= urf;

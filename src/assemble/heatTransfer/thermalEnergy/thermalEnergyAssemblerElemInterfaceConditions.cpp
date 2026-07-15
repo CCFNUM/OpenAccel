@@ -494,8 +494,6 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 meFCOpposing->interpolatePoint(
                     1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
 
-                // GGI scatter (single-sided)
-
                 // compute diffusion vector; current
                 scalar currentDiffFluxBip = 0;
                 for (label ic = 0; ic < currentNodesPerElement; ++ic)
@@ -596,7 +594,7 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSide_(
                      fcs * ncAdv);
 
                 // fill the nc-heat flow rate; accumulate so that
-                // multiple ggiInfos sharing one master gauss point
+                // multiple ipInfos sharing one master gauss point
                 // sum into a single IP slot (non-conformal mesh
                 // can have multiple slave SCSes overlapping one
                 // master SCS). Zeroing happens up-front in
@@ -727,10 +725,6 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
         stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
-
-    // GGI path is not yet validated for the total-energy HTC problem;
-    // preserve the original errorMsg behavior at the top of the function and
-    // run the unified loop for DG below.
 
     // Unified loop over per-IP info.  Storage is owned by the base
     // interfaceSideInfo; concrete side classes store derived records upcast to
@@ -944,7 +938,7 @@ void thermalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
             p_rhs[indexR] -= diffFlux;
 
             // fill the nc-heat flow rate (accumulate to handle
-            // multiple ggiInfos per gauss point)
+            // multiple ipInfos per gauss point)
             qDot[currentGaussPointId] += diffFlux;
 
             // set-up row for matrix

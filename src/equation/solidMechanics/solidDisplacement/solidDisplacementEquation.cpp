@@ -74,8 +74,10 @@ void solidDisplacementEquation::setup()
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
-    linearSystem::setupSolver(
-        this->name(), fieldBroker::meshRef(), this->fallbackName());
+    linearSystem::setupSolver(this->name(),
+                              fieldBroker::meshRef(),
+                              this->domainZones_(),
+                              this->fallbackName());
 
     equation::isCreated_ = true;
 }
@@ -187,7 +189,11 @@ void solidDisplacementEquation::solve()
     linearSystem::simulationRef().getProfiler().pop();
 
     // solve linear system
-    linearSystem::solve();
+    if (ctx->getGraph()->isGraphMember())
+    {
+        linearSystem::solve();
+    }
+    messager::barrier();
 
     // Compute relaxation factor (acceleration handled in base equation)
     scalar relaxationFactor = DRef().urf();

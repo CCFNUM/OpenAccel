@@ -43,7 +43,10 @@ void pressureCorrectionAssembler::adjustMatrixForPressureReference(
         stk::mesh::EntityId gid = domain->pressureLevelNodeId();
         stk::mesh::Entity refNode = model_->meshRef().bulkDataRef().get_entity(
             stk::topology::NODE_RANK, gid);
-        const label& lid = model_->meshRef().bulkDataRef().local_id(refNode);
+        const int64_t lid = A.getGraph()->localToRow(
+            model_->meshRef().bulkDataRef().local_id(refNode));
+        if (lid < 0) // reference node not in this (subset) graph
+            return;
 
         // get reference to diagonal and store it
         scalar& dia = A.dofDiag(lid);

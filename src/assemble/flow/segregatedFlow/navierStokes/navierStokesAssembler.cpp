@@ -6,6 +6,7 @@
 
 #include "navierStokesAssembler.h"
 #include "flowModel.h"
+#include "interface.h"
 
 namespace accel
 {
@@ -172,7 +173,10 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
             // get node
             stk::mesh::Entity node = nodeBucket[iNode];
 
-            label localID = bulkData.local_id(node);
+            const int64_t localID =
+                A.getGraph()->localToRow(bulkData.local_id(node));
+            if (localID < 0) // node not in this (subset) graph
+                continue;
 
             auto rowVals = A.rowVals(localID);
             auto rowCols = A.rowCols(localID);
@@ -258,18 +262,20 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
 void navierStokesAssembler::postAssemble(const domain* domain, Context* ctx)
 {
     phiAssembler::postAssemble(domain, ctx);
-    assembleBoundaryRelaxation_(domain, ctx->getBVector(), 0.75);
-    applySymmetryConditions_(domain, ctx);
     computeDUCoefficients(domain, ctx);
-    assembleNormalRelaxation(domain, ctx, 0.75);
+    assembleBoundaryRelaxation_(domain, ctx, 0.75);
+    applySymmetryConditions_(domain, ctx);
 }
 
 void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
-                                                        Vector& b,
+                                                        Context* ctx,
                                                         const scalar urf)
 {
     using Bucket = stk::mesh::Bucket;
     using BucketVec = stk::mesh::BucketVector;
+
+    Vector& b = ctx->getBVector();
+    const auto* graph = ctx->getAMatrix().getGraph();
 
     // select all locally owned nodes for this domain
     const auto& mesh = field_broker_->meshRef();
@@ -394,11 +400,14 @@ void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
             for (Bucket::size_type i = 0; i < n_entities; ++i)
             {
                 const stk::mesh::Entity entity = bucket[i];
-                const auto lid = bulkData.local_id(entity);
+                const int64_t row =
+                    graph->localToRow(bulkData.local_id(entity));
+                if (row < 0) // node not part of this (subset) system
+                    continue;
 
                 // relax diagonal
-                assert(lid < b.size() / BLOCKSIZE);
-                scalar* rhs_val = &b[BLOCKSIZE * lid];
+                assert(row < static_cast<int64_t>(b.size() / BLOCKSIZE));
+                scalar* rhs_val = &b[BLOCKSIZE * row];
                 for (int k = 0; k < BLOCKSIZE; k++)
                 {
                     rhs_val[k] *= urf;
@@ -411,308 +420,120 @@ void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
 void navierStokesAssembler::applySymmetryConditions_(const domain* domain,
                                                      Context* ctx)
 {
-    // get rhs vector
+    Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
 
-    // select all locally owned nodes for this domain
     const auto& mesh = model_->meshRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-
     const zone* zonePtr = domain->zonePtr();
 
-    // Collect symmetry boundary parts
+    // collect symmetry boundary parts
     stk::mesh::PartVector partVec;
+    for (label iB = 0; iB < zonePtr->nBoundaries(); ++iB)
+        if (zonePtr->boundaryRef(iB).type() == boundaryPhysicalType::symmetry)
+            for (auto* pp : zonePtr->boundaryRef(iB).parts())
+                partVec.push_back(pp);
+    if (partVec.empty())
+        return;
 
-    for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
-    {
-        const auto& boundaryRef = zonePtr->boundaryRef(iBoundary);
-        const stk::mesh::PartVector& parts = boundaryRef.parts();
-
-        boundaryPhysicalType type = boundaryRef.type();
-        switch (type)
-        {
-            case boundaryPhysicalType::symmetry:
-                {
-                    for (auto part : parts)
-                    {
-                        partVec.push_back(part);
-                    }
-                }
-                break;
-
-            default:
-                break;
-        }
-    }
-
-    // remove symmetry normal component from residual vector
-    // select all locally owned nodes for this domain
-    const auto& assembledSymmSTKFieldRef = *metaData.template get_field<scalar>(
+    const auto& symmArea = *metaData.template get_field<scalar>(
         stk::topology::NODE_RANK, mesh::assembled_symm_area_ID);
 
-    stk::mesh::Selector selOwnedNodes =
+    // check if any interface slave nodes shared by any symmetry boundary.
+    // Construct a set of these salve nodes to avoid applying any relaxation or
+    // normal-residual cancellation
+    std::unordered_set<std::size_t> slaveIfcNodes;
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (!interf->isConformalTreatment())
+            continue;
+
+        for (const auto& np : interf->matchingNodePairVector())
+            slaveIfcNodes.insert(np.second.local_offset());
+    }
+
+    // fixed-size containers
+    scalar n[SPATIAL_DIM];
+
+    // we require diagonal offsets
+    const auto& diagOffsets = A.diagOffsetRef();
+
+    stk::mesh::Selector sel =
         metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
-    const auto& sideNodeBuckets =
-        bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
-
-    for (const stk::mesh::Bucket* bucket : sideNodeBuckets)
+    for (const stk::mesh::Bucket* bkt :
+         bulkData.get_buckets(stk::topology::NODE_RANK, sel))
     {
-        const stk::mesh::Bucket& sideNodeBucket = *bucket;
-        const auto nSideNodesPerBucket = sideNodeBucket.size();
-
-        for (size_t iNode = 0; iNode < nSideNodesPerBucket; ++iNode)
+        for (size_t iN = 0; iN < bkt->size(); ++iN)
         {
-            stk::mesh::Entity node = sideNodeBucket[iNode];
+            const stk::mesh::Entity node = (*bkt)[iN];
+            if (slaveIfcNodes.count(node.local_offset()))
+                continue;
 
-            const auto lid = bulkData.local_id(node);
+            const int64_t row = ctx->getAMatrix().getGraph()->localToRow(
+                bulkData.local_id(node));
+            if (row < 0) // node not part of this (subset) system
+                continue;
 
-            scalar* rhs_val = &b[BLOCKSIZE * lid];
-
-            const scalar* aarea =
-                stk::mesh::field_data(assembledSymmSTKFieldRef, node);
-
+            // unit symmetry normal
+            const scalar* aarea = stk::mesh::field_data(symmArea, node);
             scalar asq = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
+            for (label i = 0; i < SPATIAL_DIM; ++i)
             {
-                const scalar axj = aarea[j];
-                asq += axj * axj;
+                n[i] = aarea[i];
+                asq += n[i] * n[i];
             }
+            if (asq < SMALL)
+                continue;
             const scalar amag = std::sqrt(asq);
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                n[i] /= amag;
 
-            scalar dot = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
+            auto vals = A.rowVals(row);
+            const label nBlocks =
+                static_cast<label>(vals.size()) / (SPATIAL_DIM * SPATIAL_DIM);
+            const label diagBk = diagOffsets[row];
+
+            // normal stiffness scale = n^T D n (keeps du physical after decoup)
+            scalar* Dblk = &vals[SPATIAL_DIM * SPATIAL_DIM * diagBk];
+            scalar scale = 0.0;
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                    scale += n[i] * Dblk[i * SPATIAL_DIM + j] * n[j];
+            if (std::abs(scale) < SMALL)
+                scale = amag;
+
+            // For every block B in the row: B <- T B (zero its normal row), and
+            // for the diagonal block restore the normal coefficient (+ scale
+            // N). Result: the normal equation is scale * (n.U) = 0 with no
+            // tangential or neighbour coupling, i.e. U.n = 0 fully decoupled.
+            for (label bk = 0; bk < nBlocks; ++bk)
             {
-                dot += rhs_val[j] * aarea[j] / amag;
-            }
-
-            for (int j = 0; j < SPATIAL_DIM; j++)
-            {
-                rhs_val[j] -= dot * aarea[j] / amag;
-            }
-        }
-    }
-}
-
-void navierStokesAssembler::assembleNormalRelaxation(const domain* domain,
-                                                     Context* ctx,
-                                                     const scalar urf)
-{
-    using Bucket = stk::mesh::Bucket;
-    using BucketVec = stk::mesh::BucketVector;
-
-    // select all locally owned nodes for this domain
-    const auto& mesh = model_->meshRef();
-    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-
-    const zone* zonePtr = domain->zonePtr();
-
-    // no-slip walls and specified-velocity inlets
-    {
-        // Collect all boundary parts: It is ensured in this way that no
-        // duplicate relaxation or more are made to corner nodes (belong to two
-        // or more boundaries)
-        stk::mesh::PartVector partVec;
-
-        for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries();
-             iBoundary++)
-        {
-            const auto& boundaryRef = zonePtr->boundaryRef(iBoundary);
-            const stk::mesh::PartVector& parts = boundaryRef.parts();
-
-            boundaryConditionType UBCType =
-                model_->URef()
-                    .boundaryConditionRef(domain->index(), iBoundary)
-                    .type();
-
-            boundaryPhysicalType type = boundaryRef.type();
-            switch (type)
-            {
-                case boundaryPhysicalType::inlet:
-                    {
-                        switch (UBCType)
-                        {
-                            case boundaryConditionType::specifiedValue:
-                            case boundaryConditionType::normalSpeed:
-                            case boundaryConditionType::massFlowRate:
-                                {
-                                    for (auto part : parts)
-                                    {
-                                        partVec.push_back(part);
-                                    }
-                                }
-                                break;
-
-                            default:
-                                break;
-                        }
-                    }
-                    break;
-
-                case boundaryPhysicalType::wall:
-                    {
-                        switch (UBCType)
-                        {
-                            case boundaryConditionType::noSlip:
-                                {
-                                    for (auto part : parts)
-                                    {
-                                        partVec.push_back(part);
-                                    }
-                                }
-                                break;
-
-                            default:
-                                break;
-                        }
-                    }
-                    break;
-
-                default:
-                    break;
-            }
-        }
-
-        // add interface parts for relaxation if fluid-solid interface
-        for (const interface* interf : domain->interfacesRef())
-        {
-            if (interf->isFluidSolidType())
-            {
-                auto parts = interf->interfaceSideInfoPtr(domain->index())
-                                 ->currentPartVec_;
-                for (auto part : parts)
+                scalar* B = &vals[SPATIAL_DIM * SPATIAL_DIM * bk];
+                scalar colProj[SPATIAL_DIM];
+                for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    partVec.push_back(part);
+                    scalar s = 0.0;
+                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                        s += n[k] * B[k * SPATIAL_DIM + j];
+                    colProj[j] = s;
                 }
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        B[i * SPATIAL_DIM + j] -= n[i] * colProj[j];
+                if (bk == diagBk)
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                            B[i * SPATIAL_DIM + j] += scale * n[i] * n[j];
             }
-        }
 
-        // Apply relaxation
-        {
-            // not implemented yet
-        }
-    }
-
-    // symmetry planes
-    {
-        // Collect all boundary parts: It is ensured in this way that no
-        // duplicate relaxation or more are made to corner nodes (belong to two
-        // or more boundaries)
-        stk::mesh::PartVector partVec;
-
-        for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries();
-             iBoundary++)
-        {
-            const auto& boundaryRef = zonePtr->boundaryRef(iBoundary);
-            const stk::mesh::PartVector& parts = boundaryRef.parts();
-
-            boundaryPhysicalType type = boundaryRef.type();
-            switch (type)
-            {
-                case boundaryPhysicalType::symmetry:
-                    {
-                        for (auto part : parts)
-                        {
-                            partVec.push_back(part);
-                        }
-                    }
-                    break;
-
-                default:
-                    break;
-            }
-        }
-
-        // Apply relaxation
-        {
-            Matrix& A = ctx->getAMatrix();
-
-            stk::mesh::Selector selOwnedNodes =
-                metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
-
-            const BucketVec& sideNodeBuckets =
-                bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
-
-            const auto& assembledSymmSTKFieldRef =
-                *metaData.template get_field<scalar>(
-                    stk::topology::NODE_RANK, mesh::assembled_symm_area_ID);
-
-            std::vector<scalar> tran(SPATIAL_DIM * SPATIAL_DIM, 0.0);
-            std::vector<scalar> modf(SPATIAL_DIM * SPATIAL_DIM, 0.0);
-
-            // loop over local nodes and relax associated matrix rows
-            for (size_t ib = 0; ib < sideNodeBuckets.size(); ib++)
-            {
-                const Bucket& sideNodeBucket = *sideNodeBuckets[ib];
-                const Bucket::size_type nSideNodesPerBucket =
-                    sideNodeBucket.size();
-                for (Bucket::size_type iNode = 0; iNode < nSideNodesPerBucket;
-                     ++iNode)
-                {
-                    const stk::mesh::Entity node = sideNodeBucket[iNode];
-
-                    const auto lid = bulkData.local_id(node);
-
-                    assert(lid < A.nRows());
-                    scalar* diag = A.diag(lid);
-
-                    const scalar* aarea =
-                        stk::mesh::field_data(assembledSymmSTKFieldRef, node);
-
-                    scalar amag = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; i++)
-                    {
-                        amag += aarea[i] * aarea[i];
-                    }
-                    amag = std::sqrt(amag);
-
-                    // zero out transformation matrix
-                    for (label i = 0; i < SPATIAL_DIM; i++)
-                    {
-                        for (label j = 0; j < SPATIAL_DIM; j++)
-                        {
-                            tran[SPATIAL_DIM * i + j] = 0;
-                            modf[SPATIAL_DIM * i + j] = 0;
-                        }
-                    }
-
-                    // calculate transformation matrix = ninj
-                    for (label i = 0; i < SPATIAL_DIM; i++)
-                    {
-                        scalar ni = aarea[i] / amag;
-                        for (label j = 0; j < SPATIAL_DIM; j++)
-                        {
-                            scalar nj = aarea[j] / amag;
-                            tran[SPATIAL_DIM * i + j] += ni * nj;
-                        }
-                    }
-
-                    // multiply matrices
-                    for (label i = 0; i < SPATIAL_DIM; i++)
-                    {
-                        for (label j = 0; j < SPATIAL_DIM; j++)
-                        {
-                            for (label k = 0; k < SPATIAL_DIM; ++k)
-                            {
-                                modf[SPATIAL_DIM * i + j] +=
-                                    diag[SPATIAL_DIM * i + k] *
-                                    tran[SPATIAL_DIM * k + j];
-                            }
-                        }
-                    }
-
-                    // modify momentum diagonal coefficient
-                    for (label i = 0; i < SPATIAL_DIM; i++)
-                    {
-                        for (label j = 0; j < SPATIAL_DIM; j++)
-                        {
-                            diag[SPATIAL_DIM * i + j] +=
-                                (1.0 - urf) * modf[SPATIAL_DIM * i + j];
-                        }
-                    }
-                }
-            }
+            // RHS: remove the normal component (normal equation rhs = 0)
+            scalar* rhs = &b[BLOCKSIZE * row];
+            scalar bproj = 0.0;
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                bproj += n[i] * rhs[i];
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                rhs[i] -= n[i] * bproj;
         }
     }
 }

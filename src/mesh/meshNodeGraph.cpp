@@ -7,8 +7,10 @@
 // code
 #include "interface.h"
 #include "interfaceSideInfo.h"
+#include "ipInfo.h"
 #include "mesh.h"
 #include "messager.h"
+#include "controls.h"
 #include "zone.h"
 
 namespace accel
@@ -31,6 +33,77 @@ mesh::createNodeGraph_(const ::linearSolver::GraphLayout layout)
         messager::comm(), this, layout | stencil_);
 }
 
+std::vector<label> mesh::zoneKey_(const std::vector<const zone*>& zones) const
+{
+    std::vector<label> key;
+    key.reserve(zones.size());
+    for (const zone* z : zones)
+        key.push_back(z->index());
+    std::sort(key.begin(), key.end());
+    key.erase(std::unique(key.begin(), key.end()), key.end());
+    return key;
+}
+
+bool mesh::useFullGraphForZones_(const std::vector<const zone*>& zones) const
+{
+    // expert override: disable subset node graphs entirely
+    if (this->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.forceFullNodeGraph_)
+        return true;
+
+    const std::vector<label> key = zoneKey_(zones);
+    // empty, or spanning every zone => the full mesh graph already fits
+    if (key.empty() || key.size() >= zoneVector_.size())
+        return true;
+
+    // row-merge cannot couple across the subset boundary: mixed -> full graph
+    const auto inKey = [&key](const label z)
+    { return std::binary_search(key.begin(), key.end(), z); };
+    for (label i = 0; i < nInterfaces(); ++i)
+    {
+        const interface& interf = interfaceRef(i);
+        if (!interf.isConformalTreatment())
+            continue;
+        if (inKey(interf.masterZoneIndex()) != inKey(interf.slaveZoneIndex()))
+        {
+            if (messager::master())
+                std::cout << "  [subset-graph] conformal interface '"
+                          << interf.name()
+                          << "' crosses the zone subset boundary: using full "
+                             "graph"
+                          << std::endl;
+            return true;
+        }
+    }
+    return false;
+}
+
+mesh::customGraphEntry&
+mesh::findOrCreateCustomGraphEntry_(const std::vector<const zone*>& zones)
+{
+    const std::vector<label> key = zoneKey_(zones);
+    std::string ks;
+    for (const label z : key)
+        ks += (ks.empty() ? "" : ",") + std::to_string(z);
+    for (auto& e : customGraphCache_)
+    {
+        if (e.zoneKey == key)
+        {
+            if (messager::master())
+                std::cout << "  [subset-graph] reuse shared graph for zones {"
+                          << ks << "}" << std::endl;
+            return e;
+        }
+    }
+    if (messager::master())
+        std::cout << "  [subset-graph] new graph for zones {" << ks << "}"
+                  << std::endl;
+    customGraphCache_.push_back(customGraphEntry{});
+    customGraphCache_.back().zoneKey = key;
+    return customGraphCache_.back();
+}
+
 void mesh::updateNodeGraph_()
 {
     // Need to re-number the nodes only in parallel
@@ -45,6 +118,487 @@ void mesh::updateNodeGraph_()
     if (localOrderGraphPtr_)
     {
         localOrderGraphPtr_->rebuildGraph();
+    }
+
+    // rebuild any cached subset graphs (parallel too: re-numbers ghosts)
+    for (auto& e : customGraphCache_)
+    {
+        if (e.local)
+            e.local->rebuildGraph();
+        if (e.global)
+            e.global->rebuildGraph();
+    }
+
+    // stencils changed: cached conformal row-merge position maps are stale
+    for (label i = 0; i < nInterfaces(); ++i)
+    {
+        interfaceRef(i).clearConformalRowToRowMaps();
+    }
+}
+
+void mesh::buildOwnedNodeAdjacency_(std::vector<label>& rowPtr,
+                                    std::vector<label>& colIdx) const
+{
+    const auto& bulkData = this->bulkDataRef();
+    const label nOwned = nNodes_;
+    const stk::mesh::Selector interiorSel =
+        this->universalInteriorPartsSelector();
+
+    // couplings that do not follow from element connectivity: matched pairs of
+    // a conformal interface, and the current/opposing elements of a
+    // non-conformal one. Mirrors what nodeGraph::buildGraph_ adds to the rows
+    std::vector<std::vector<label>> interfaceNbrs(nOwned);
+    const auto addInterfaceEdge =
+        [&](const stk::mesh::Entity a, const stk::mesh::Entity b)
+    {
+        const ulabel la = bulkData.local_id(a);
+        const ulabel lb = bulkData.local_id(b);
+        if (la >= static_cast<ulabel>(nOwned) ||
+            lb >= static_cast<ulabel>(nOwned) || la == lb)
+            return;
+        interfaceNbrs[la].push_back(static_cast<label>(lb));
+        interfaceNbrs[lb].push_back(static_cast<label>(la));
+    };
+
+    if (hasInterfaces_)
+    {
+        for (label iInterface = 0; iInterface < nInterfaces(); ++iInterface)
+        {
+            const interface& interf = interfaceRef(iInterface);
+
+            if (interf.isConformalTreatment())
+            {
+                for (const auto& nodePair : interf.matchingNodePairVector())
+                {
+                    addInterfaceEdge(nodePair.first, nodePair.second);
+                }
+                continue;
+            }
+
+            const auto addSide = [&](const interfaceSideInfo& side)
+            {
+                for (const auto& faceIpInfoVec : side.ipInfoVec())
+                {
+                    for (const ipInfo* ip : faceIpInfoVec)
+                    {
+                        if (ip->isExposed_)
+                            continue;
+
+                        const stk::mesh::Entity* cn =
+                            bulkData.begin_nodes(ip->currentElement_);
+                        const label nCur =
+                            bulkData.num_nodes(ip->currentElement_);
+                        const stk::mesh::Entity* on =
+                            bulkData.begin_nodes(ip->opposingElement_);
+                        const label nOpp =
+                            bulkData.num_nodes(ip->opposingElement_);
+
+                        for (label a = 0; a < nCur; ++a)
+                        {
+                            for (label b = 0; b < nOpp; ++b)
+                            {
+                                addInterfaceEdge(cn[a], on[b]);
+                            }
+                        }
+                    }
+                }
+            };
+            addSide(interf.masterInfoRef());
+            addSide(interf.slaveInfoRef());
+        }
+    }
+
+    for (auto& nbrs : interfaceNbrs)
+    {
+        std::sort(nbrs.begin(), nbrs.end());
+        nbrs.erase(std::unique(nbrs.begin(), nbrs.end()), nbrs.end());
+    }
+
+    // two passes (count, then fill) so no oversized temporary is needed;
+    // mark[] carries the owner row to de-duplicate without a per-row set
+    rowPtr.assign(nOwned + 1, 0);
+    std::vector<label> mark(nOwned, -1);
+
+    const auto sweep = [&](const bool counting)
+    {
+        for (label u = 0; u < nOwned; ++u)
+        {
+            label k = counting ? 0 : rowPtr[u];
+
+            const stk::mesh::Entity node = localNodeIDToEntity_[u];
+            const stk::mesh::Entity* elems = bulkData.begin_elements(node);
+            const unsigned nElems = bulkData.num_elements(node);
+
+            const auto visit = [&](const label v)
+            {
+                if (v == u || mark[v] == u)
+                    return;
+                mark[v] = u;
+                if (counting)
+                    ++k;
+                else
+                    colIdx[k++] = v;
+            };
+
+            for (unsigned e = 0; e < nElems; ++e)
+            {
+                const stk::mesh::Entity elem = elems[e];
+                if (!interiorSel(bulkData.bucket(elem)))
+                    continue;
+
+                const stk::mesh::Entity* en = bulkData.begin_nodes(elem);
+                const unsigned nn = bulkData.num_nodes(elem);
+                for (unsigned i = 0; i < nn; ++i)
+                {
+                    const ulabel v = bulkData.local_id(en[i]);
+                    if (v < static_cast<ulabel>(nOwned))
+                        visit(static_cast<label>(v));
+                }
+            }
+
+            for (const label v : interfaceNbrs[u])
+            {
+                visit(v);
+            }
+
+            if (counting)
+                rowPtr[u + 1] = k;
+        }
+    };
+
+    sweep(true);
+    for (label u = 0; u < nOwned; ++u)
+    {
+        rowPtr[u + 1] += rowPtr[u];
+    }
+    colIdx.resize(rowPtr[nOwned]);
+    std::fill(mark.begin(), mark.end(), -1);
+    sweep(false);
+}
+
+std::vector<label> mesh::computeOwnedNodePermutation_() const
+{
+    const label n = nNodes_;
+
+    // perm[bucket-order id] = new local id; identity until RCM says otherwise
+    std::vector<label> perm(n);
+    for (label i = 0; i < n; ++i)
+    {
+        perm[i] = i;
+    }
+
+    std::vector<label> rowPtr, colIdx;
+    buildOwnedNodeAdjacency_(rowPtr, colIdx);
+
+    // zone of every owned node. Zones are node-disjoint (they only meet through
+    // interfaces), so the min() is just a defensive tie-break. Nodes outside
+    // every zone land in the trailing group
+    const label nGroups = this->nZones() + 1;
+    std::vector<label> zoneOf(n, this->nZones());
+    {
+        const auto& bulkData = this->bulkDataRef();
+        for (label iZone = 0; iZone < this->nZones(); ++iZone)
+        {
+            const stk::mesh::Selector zoneSel =
+                this->metaDataRef().locally_owned_part() &
+                stk::mesh::selectUnion(this->zonePtr(iZone)->interiorParts());
+
+            for (const auto* bucket :
+                 bulkData.get_buckets(stk::topology::NODE_RANK, zoneSel))
+            {
+                for (label i = 0; i < static_cast<label>(bucket->size()); ++i)
+                {
+                    const ulabel lid = bulkData.local_id((*bucket)[i]);
+                    if (lid < static_cast<ulabel>(n) &&
+                        iZone < zoneOf[static_cast<label>(lid)])
+                    {
+                        zoneOf[static_cast<label>(lid)] = iZone;
+                    }
+                }
+            }
+        }
+    }
+
+    std::vector<label> deg(n);
+    for (label i = 0; i < n; ++i)
+    {
+        deg[i] = rowPtr[i + 1] - rowPtr[i];
+    }
+
+    std::vector<char> numbered(n, 0);
+    std::vector<label> levelOf(n, -1);
+    std::vector<label> bfsQueue;
+    bfsQueue.reserve(n);
+
+    // level-set BFS over the not-yet-numbered nodes of zone g; returns the
+    // eccentricity of src and collects the nodes of its last level
+    const auto bfs =
+        [&](const label src, const label g, std::vector<label>& lastLevel)
+    {
+        bfsQueue.clear();
+        bfsQueue.push_back(src);
+        levelOf[src] = 0;
+        label maxLevel = 0;
+
+        for (size_t head = 0; head < bfsQueue.size(); ++head)
+        {
+            const label u = bfsQueue[head];
+            for (label k = rowPtr[u]; k < rowPtr[u + 1]; ++k)
+            {
+                const label v = colIdx[k];
+                if (numbered[v] || zoneOf[v] != g || levelOf[v] >= 0)
+                    continue;
+                levelOf[v] = levelOf[u] + 1;
+                maxLevel = std::max(maxLevel, levelOf[v]);
+                bfsQueue.push_back(v);
+            }
+        }
+
+        lastLevel.clear();
+        for (const label u : bfsQueue)
+        {
+            if (levelOf[u] == maxLevel)
+                lastLevel.push_back(u);
+        }
+        for (const label u : bfsQueue)
+        {
+            levelOf[u] = -1; // reset the scratch for the next sweep
+        }
+        return maxLevel;
+    };
+
+    // George-Liu: walk to a node of (near) maximum eccentricity to start from
+    const auto pseudoPeripheralNode = [&](label root, const label g)
+    {
+        std::vector<label> lastLevel;
+        label ecc = bfs(root, g, lastLevel);
+
+        for (label iter = 0; iter < 5 && !lastLevel.empty(); ++iter)
+        {
+            label candidate = lastLevel[0];
+            for (const label u : lastLevel)
+            {
+                if (deg[u] < deg[candidate])
+                    candidate = u;
+            }
+
+            std::vector<label> candidateLastLevel;
+            const label candidateEcc = bfs(candidate, g, candidateLastLevel);
+            if (candidateEcc <= ecc)
+                break;
+
+            ecc = candidateEcc;
+            root = candidate;
+            lastLevel.swap(candidateLastLevel);
+        }
+        return root;
+    };
+
+    std::vector<label> order; // new local id -> bucket-order id
+    order.reserve(n);
+
+    for (label g = 0; g < nGroups; ++g)
+    {
+        const size_t zoneStart = order.size();
+
+        for (label seed = 0; seed < n; ++seed)
+        {
+            if (numbered[seed] || zoneOf[seed] != g)
+                continue;
+
+            // Cuthill-McKee over this component: neighbours of a node enter the
+            // queue by ascending degree
+            const label root = pseudoPeripheralNode(seed, g);
+            numbered[root] = 1;
+            order.push_back(root);
+
+            for (size_t head = order.size() - 1; head < order.size(); ++head)
+            {
+                const label u = order[head];
+                const size_t firstNbr = order.size();
+
+                for (label k = rowPtr[u]; k < rowPtr[u + 1]; ++k)
+                {
+                    const label v = colIdx[k];
+                    if (numbered[v] || zoneOf[v] != g)
+                        continue;
+                    numbered[v] = 1;
+                    order.push_back(v);
+                }
+
+                std::sort(order.begin() + firstNbr,
+                          order.end(),
+                          [&deg](const label a, const label b)
+                { return deg[a] < deg[b] || (deg[a] == deg[b] && a < b); });
+            }
+        }
+
+        // reverse this zone's segment only: RCM, and the zone stays contiguous
+        std::reverse(order.begin() + zoneStart, order.end());
+    }
+
+    assert(static_cast<label>(order.size()) == n);
+    for (label newID = 0; newID < n; ++newID)
+    {
+        perm[order[newID]] = newID;
+    }
+
+    // Report what the renumbering bought, over the owned rows. Rows are only
+    // re-ordered inside a zone, so the in-zone figures are what RCM controls;
+    // couplings across zones (zone interfaces) jump between two contiguous
+    // zone ranges and set a floor on the overall bandwidth
+    label bw[2] = {0, 0};        // in-zone: before, after
+    label bwAll[2] = {0, 0};     // including the cross-zone couplings
+    int64_t profile[2] = {0, 0}; // in-zone: before, after
+    bool anyCrossZone = false;
+
+    for (label i = 0; i < n; ++i)
+    {
+        label rowMax[2] = {0, 0};
+        for (label k = rowPtr[i]; k < rowPtr[i + 1]; ++k)
+        {
+            const label j = colIdx[k];
+            const label dOld = std::abs(i - j);
+            const label dNew = std::abs(perm[i] - perm[j]);
+
+            bwAll[0] = std::max(bwAll[0], dOld);
+            bwAll[1] = std::max(bwAll[1], dNew);
+
+            if (zoneOf[i] != zoneOf[j])
+            {
+                anyCrossZone = true;
+                continue;
+            }
+            rowMax[0] = std::max(rowMax[0], dOld);
+            rowMax[1] = std::max(rowMax[1], dNew);
+        }
+        bw[0] = std::max(bw[0], rowMax[0]);
+        bw[1] = std::max(bw[1], rowMax[1]);
+        profile[0] += rowMax[0];
+        profile[1] += rowMax[1];
+    }
+
+    if (messager::parallel())
+    {
+        int crossZone = anyCrossZone ? 1 : 0;
+        MPI_Allreduce(MPI_IN_PLACE,
+                      bw,
+                      2,
+                      ::linearSolver::MPIDataType<label>::type(),
+                      MPI_MAX,
+                      messager::comm());
+        MPI_Allreduce(MPI_IN_PLACE,
+                      bwAll,
+                      2,
+                      ::linearSolver::MPIDataType<label>::type(),
+                      MPI_MAX,
+                      messager::comm());
+        MPI_Allreduce(
+            MPI_IN_PLACE, &crossZone, 1, MPI_INT, MPI_MAX, messager::comm());
+        MPI_Allreduce(MPI_IN_PLACE,
+                      profile,
+                      2,
+                      ::linearSolver::MPIDataType<int64_t>::type(),
+                      MPI_SUM,
+                      messager::comm());
+        anyCrossZone = (crossZone == 1);
+    }
+
+    if (messager::master())
+    {
+        std::cout << "[node-ordering] reverse Cuthill-McKee (per zone):\n"
+                  << "  bandwidth " << bw[0] << " -> " << bw[1] << ", profile "
+                  << profile[0] << " -> " << profile[1] << std::endl;
+
+        if (anyCrossZone)
+        {
+            std::cout << "[node-ordering] zones are numbered contiguously;\n"
+                      << "  interface couplings across zones hold the overall "
+                      << "bandwidth at " << bwAll[1] << " (was " << bwAll[0]
+                      << ")" << std::endl;
+        }
+    }
+
+    return perm;
+}
+
+void mesh::applyOwnedNodePermutation_(const std::vector<label>& perm)
+{
+    auto& bulkData = this->bulkDataRef();
+    const label nOwned = nNodes_;
+
+    assert(static_cast<label>(perm.size()) == nOwned);
+    assert(static_cast<label>(localNodeIDToEntity_.size()) >= nOwned);
+
+    // snapshot first: the loop below invalidates the id it reads from
+    std::vector<stk::mesh::Entity> ownedNodes(
+        localNodeIDToEntity_.begin(), localNodeIDToEntity_.begin() + nOwned);
+
+    for (label oldID = 0; oldID < nOwned; ++oldID)
+    {
+        const stk::mesh::Entity node = ownedNodes[oldID];
+        const label newID = perm[oldID];
+        bulkData.set_local_id(node, newID);
+        localNodeIDToEntity_[newID] = node;
+    }
+
+    // the global id of an owned node must stay offset + local id: the linear
+    // system takes the row's own global index from it (see
+    // CRSNodeGraph::localToGlobalRow)
+    if (!messager::parallel())
+    {
+        for (label lid = 0; lid < nOwned; ++lid)
+        {
+            bulkData.set_global_id(localNodeIDToEntity_[lid], lid);
+        }
+        return;
+    }
+
+    label offset = 0;
+    label nOwnedNodes = nOwned;
+    MPI_Exscan(&nOwnedNodes,
+               &offset,
+               1,
+               ::linearSolver::MPIDataType<label>::type(),
+               MPI_SUM,
+               messager::comm());
+
+    for (label lid = 0; lid < nOwned; ++lid)
+    {
+        label* globalIdentity = stk::mesh::field_data(
+            *globalIdentityFieldPtr_, localNodeIDToEntity_[lid]);
+        *globalIdentity = offset + lid;
+    }
+
+    // push the new owner ids out to the shared and ghosted copies
+    stk::mesh::communicate_field_data(bulkData, {globalIdentityFieldPtr_});
+
+    for (const auto* bucket : bulkData.get_buckets(
+             stk::topology::NODE_RANK, this->universalInteriorPartsSelector()))
+    {
+        const label* globalIdentityb =
+            stk::mesh::field_data(*globalIdentityFieldPtr_, *bucket);
+        for (label i = 0; i < static_cast<label>(bucket->size()); ++i)
+        {
+            bulkData.set_global_id((*bucket)[i], globalIdentityb[i]);
+        }
+    }
+}
+
+void mesh::rebuildLocalNodeIDToEntity_()
+{
+    const auto& bulkData = this->bulkDataRef();
+
+    localNodeIDToEntity_.assign(nAllNodes_, stk::mesh::Entity::InvalidEntity);
+
+    for (const auto* bucket : bulkData.get_buckets(
+             stk::topology::NODE_RANK, this->universalInteriorPartsSelector()))
+    {
+        for (label i = 0; i < static_cast<label>(bucket->size()); ++i)
+        {
+            const stk::mesh::Entity node = (*bucket)[i];
+            localNodeIDToEntity_[bulkData.local_id(node)] = node;
+        }
     }
 }
 
@@ -514,6 +1068,17 @@ void mesh::initializeLocalNodeIDs_()
         }
 #endif /* NDEBUG */
     }
+
+    // Up to here the local id of a node is its position in the STK bucket
+    // order, i.e. whatever order the mesh file happened to use. Re-order the
+    // owned nodes (the matrix rows) with reverse Cuthill-McKee to shrink the
+    // bandwidth. Shared, ghosted and useless nodes keep the slots assigned
+    // above, so the | owned | shadow | useless | layout is untouched
+    if (this->controlsRef().isRenumbered())
+    {
+        ownedNodePermutation_ = computeOwnedNodePermutation_();
+        applyOwnedNodePermutation_(ownedNodePermutation_);
+    }
 }
 
 void mesh::updateLocalNodeIDs_()
@@ -782,6 +1347,32 @@ void mesh::updateLocalNodeIDs_()
 
     assert(k == nActiveNodes_);
     assert(l == nAllNodes_);
+
+    // the local ids just changed, and ghosting may have brought in new nodes
+    rebuildLocalNodeIDToEntity_();
+
+    // re-apply the bandwidth-reducing order, which the bucket-order pass above
+    // has just undone. Mesh motion does not change the topology, so the
+    // permutation is only recomputed if the owned node set itself changed.
+    // The decision is reduced: computeOwnedNodePermutation_ is collective
+    if (this->controlsRef().isRenumbered())
+    {
+        int staleOrdering =
+            (static_cast<label>(ownedNodePermutation_.size()) != nNodes_) ? 1
+                                                                          : 0;
+        MPI_Allreduce(MPI_IN_PLACE,
+                      &staleOrdering,
+                      1,
+                      MPI_INT,
+                      MPI_MAX,
+                      messager::comm());
+
+        if (staleOrdering)
+        {
+            ownedNodePermutation_ = computeOwnedNodePermutation_();
+        }
+        applyOwnedNodePermutation_(ownedNodePermutation_);
+    }
 }
 
 } // namespace accel

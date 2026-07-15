@@ -2986,16 +2986,33 @@ void flowModel::updateInterfaceMomentumImbalance_(
                 }
                 c_amag = std::sqrt(c_amag) * ip->areaFraction_;
 
+                // rotate slave flux to master frame for component-wise totals
+                scalar mom[SPATIAL_DIM];
+                for (label k = 0; k < SPATIAL_DIM; ++k)
+                    mom[k] =
+                        ncpDot[ip->currentGaussPointId_ * SPATIAL_DIM + k] *
+                        ip->areaFraction_;
+                if (!sideInfo.isMasterSide())
+                {
+                    const auto& R = sideInfo.rotationMatrix_;
+                    scalar tmp[SPATIAL_DIM];
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        tmp[i] = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                            tmp[i] += R(j, i) * mom[j];
+                    }
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                        mom[i] = tmp[i];
+                }
+
                 // bin each momentum component by its own sign
                 for (label k = 0; k < SPATIAL_DIM; ++k)
                 {
-                    const scalar mom_flow =
-                        ncpDot[ip->currentGaussPointId_ * SPATIAL_DIM + k] *
-                        ip->areaFraction_;
-                    if (mom_flow < 0.0)
-                        interfaceData.in[k] += mom_flow;
+                    if (mom[k] < 0.0)
+                        interfaceData.in[k] += mom[k];
                     else
-                        interfaceData.out[k] += mom_flow;
+                        interfaceData.out[k] += mom[k];
                 }
                 interfaceData.total_area += c_amag;
             }
@@ -5970,9 +5987,6 @@ void flowModel::updateMassFlowRateInterfaceSideField_(
 
     const std::vector<std::vector<ipInfo*>>& ipInfoVec =
         interfaceSideInfoPtr->ipInfoVec();
-
-    // GGI seams use one-sided mDot (current side, no average/penalty);
-    // DG keeps the half-and-half + DG-stab + penalty formula.
 
     // scale existing mDot by (1 - lambda) in-place
     for (const auto& faceIpInfoVec : ipInfoVec)

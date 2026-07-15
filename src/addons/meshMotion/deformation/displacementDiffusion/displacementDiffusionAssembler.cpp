@@ -74,9 +74,12 @@ void displacementDiffusionAssembler::applySymmetryConditions_(
         {
             stk::mesh::Entity node = sideNodeBucket[iNode];
 
-            const auto lid = bulkData.local_id(node);
+            const int64_t row = ctx->getAMatrix().getGraph()->localToRow(
+                bulkData.local_id(node));
+            if (row < 0) // node not part of this (subset) system
+                continue;
 
-            scalar* rhs_val = &b[BLOCKSIZE * lid];
+            scalar* rhs_val = &b[BLOCKSIZE * row];
 
             const scalar* aarea =
                 stk::mesh::field_data(assembledSymmSTKFieldRef, node);

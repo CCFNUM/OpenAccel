@@ -70,6 +70,16 @@ private:
 
     std::unique_ptr<nodeGraph> localOrderGraphPtr_ = nullptr;
 
+    // cached subset graphs keyed by zone-set; same-zones equations share one
+    struct customGraphEntry
+    {
+        std::vector<label> zoneKey; // sorted, unique zone indices
+        std::unique_ptr<nodeGraph> local = nullptr;
+        std::unique_ptr<nodeGraph> global = nullptr;
+    };
+
+    std::vector<customGraphEntry> customGraphCache_;
+
     bool anyZoneFrameRotating_ = false;
 
     bool anyZoneMeshTransforming_ = false;
@@ -79,6 +89,10 @@ private:
     // a container which maps the local node id (from STK) to the entity. This
     // is because we re-define the local id's of the nodes
     std::vector<stk::mesh::Entity> localNodeIDToEntity_;
+
+    // bandwidth-reducing ordering of the owned nodes: maps the STK bucket-order
+    // id to the new local id. Empty when the ordering is disabled
+    std::vector<label> ownedNodePermutation_;
 
     // Interfaces
 
@@ -151,11 +165,36 @@ private:
     std::unique_ptr<nodeGraph>
     createNodeGraph_(const ::linearSolver::GraphLayout layout);
 
+    // canonical sorted/unique zone-index key for a zone vector
+    std::vector<label> zoneKey_(const std::vector<const zone*>& zones) const;
+
+    // true when the zones span the whole mesh (use the full graph then)
+    bool useFullGraphForZones_(const std::vector<const zone*>& zones) const;
+
+    // find or lazily create the cache entry for this zone set
+    customGraphEntry&
+    findOrCreateCustomGraphEntry_(const std::vector<const zone*>& zones);
+
     void updateNodeGraph_();
 
     void initializeLocalNodeIDs_();
 
     void updateLocalNodeIDs_();
+
+    // CSR adjacency of the locally owned nodes, from the same element stencil
+    // (plus interface couplings) that the matrix graph is built from
+    void buildOwnedNodeAdjacency_(std::vector<label>& rowPtr,
+                                  std::vector<label>& colIdx) const;
+
+    // reverse Cuthill-McKee ordering of the owned nodes, swept zone by zone so
+    // that every zone keeps a contiguous range of local ids
+    std::vector<label> computeOwnedNodePermutation_() const;
+
+    // renumber the owned nodes with perm and re-derive the global ids from it
+    void applyOwnedNodePermutation_(const std::vector<label>& perm);
+
+    // refresh localNodeIDToEntity_ from the current STK local ids
+    void rebuildLocalNodeIDToEntity_();
 
     void reportLoadImbalance_() const;
 
@@ -501,6 +540,42 @@ public:
             localOrderGraphPtr_->buildGraph();
         }
         return localOrderGraphPtr_.get();
+    }
+
+    // local-order subset graph, shared across equations over the same zones
+    nodeGraph*
+    getCustomLocalOrderGraphPtr(const std::vector<const zone*>& zones)
+    {
+        if (useFullGraphForZones_(zones))
+            return getLocalOrderGraphPtr();
+        customGraphEntry& e = findOrCreateCustomGraphEntry_(zones);
+        if (!e.local)
+        {
+            e.local = createNodeGraph_(
+                ::linearSolver::GraphLayout::ColumnIndexOrder__Local);
+            assert(e.local);
+            e.local->setSubsetZones(zones);
+            e.local->buildGraph();
+        }
+        return e.local.get();
+    }
+
+    // global-order (PETSc/HYPRE) counterpart of getCustomLocalOrderGraphPtr
+    nodeGraph*
+    getCustomGlobalOrderGraphPtr(const std::vector<const zone*>& zones)
+    {
+        if (useFullGraphForZones_(zones))
+            return getGlobalOrderGraphPtr();
+        customGraphEntry& e = findOrCreateCustomGraphEntry_(zones);
+        if (!e.global)
+        {
+            e.global = createNodeGraph_(
+                ::linearSolver::GraphLayout::ColumnIndexOrder__Global);
+            assert(e.global);
+            e.global->setSubsetZones(zones);
+            e.global->buildGraph();
+        }
+        return e.global.get();
     }
 
     std::vector<stk::mesh::Entity>& localNodeIDToEntity()

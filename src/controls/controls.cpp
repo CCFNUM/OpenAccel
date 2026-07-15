@@ -47,6 +47,11 @@ bool controls::isReducedStencil() const
     return solver_.solverControl_.expertParameters_.bandwidthReduction_;
 }
 
+bool controls::isRenumbered() const
+{
+    return solver_.solverControl_.expertParameters_.bandwidthReduction_;
+}
+
 bool controls::isTransient() const
 {
     return analysisType_.transient_;

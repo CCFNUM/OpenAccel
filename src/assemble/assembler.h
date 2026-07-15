@@ -101,10 +101,13 @@ public:
             for (Bucket::size_type i_ent = 0; i_ent < n_entities; ++i_ent)
             {
                 const stk::mesh::Entity entity = bucket[i_ent];
-                const auto lid = bulkData.local_id(entity);
+                const int64_t row =
+                    A.getGraph()->localToRow(bulkData.local_id(entity));
+                if (row < 0) // node not part of this (subset) graph
+                    continue;
 
-                auto rowVals = A.rowVals(lid);
-                auto rowCols = A.rowCols(lid);
+                auto rowVals = A.rowVals(row);
+                auto rowCols = A.rowCols(row);
 
                 // zero the whole row
                 for (label icol = 0; icol < static_cast<label>(rowCols.size());
@@ -121,7 +124,7 @@ public:
                 }
 
                 // zero the rhs
-                scalar* rhs = &b[BLOCKSIZE * lid];
+                scalar* rhs = &b[BLOCKSIZE * row];
                 for (auto i : dofs)
                 {
                     rhs[i] = 0.0;
@@ -178,10 +181,13 @@ public:
             for (Bucket::size_type i_ent = 0; i_ent < n_entities; ++i_ent)
             {
                 const stk::mesh::Entity entity = bucket[i_ent];
-                const auto lid = bulkData.local_id(entity);
+                const int64_t row =
+                    A.getGraph()->localToRow(bulkData.local_id(entity));
+                if (row < 0) // inactive node absent from this (subset) graph
+                    continue;
 
-                auto rowVals = A.rowVals(lid);
-                auto rowCols = A.rowCols(lid);
+                auto rowVals = A.rowVals(row);
+                auto rowCols = A.rowCols(row);
 
                 // zero the whole row
                 for (auto icol = 0; icol < rowCols.size(); icol++)
@@ -197,14 +203,14 @@ public:
                 }
 
                 // set diagonal of diagonal block to 1
-                auto* diag = A.diag(lid);
+                auto* diag = A.diag(row);
                 for (auto i : dofs)
                 {
                     diag[BLOCKSIZE * i + i] = 1.0;
                 }
 
                 // zero the rhs
-                auto* rhs = &b[BLOCKSIZE * lid];
+                auto* rhs = &b[BLOCKSIZE * row];
                 for (auto i : dofs)
                 {
                     rhs[i] = 0.0;
@@ -252,7 +258,10 @@ public:
             for (Bucket::size_type i = 0; i < n_entities; ++i)
             {
                 const stk::mesh::Entity entity = bucket[i];
-                const auto lid = bulkData.local_id(entity);
+                const int64_t lid =
+                    A.getGraph()->localToRow(bulkData.local_id(entity));
+                if (lid < 0) // node not part of this (subset) system
+                    continue;
 
                 auto rowVals = A.rowVals(lid);
                 auto rowCols = A.rowCols(lid);
@@ -326,9 +335,11 @@ void assembler<N>::applyCoeff_(
     const auto& mesh = field_broker_->meshRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
+    const auto* graph = A.getGraph();
     const size_t nConnectedNodes = connectedNodes.size();
     const unsigned numRows = nConnectedNodes;
-    const label nOwnedRows = mesh.nNodes();
+    // rows are graph rows (mesh local-id for full graph, remapped for subset)
+    const label nOwnedRows = static_cast<label>(graph->nOwnedNodes());
 
     STK_ThrowAssert(BLOCKSIZE * numRows <= static_cast<unsigned>(rhs.size()));
     STK_ThrowAssert(BLOCKSIZE * BLOCKSIZE * numRows * numRows <=
@@ -338,13 +349,15 @@ void assembler<N>::applyCoeff_(
     matrixColumnIds_.resize(numRows);
     sortPermutation_.resize(numRows);
 
-    if (A.getGraph()->isLocalColumnOrder())
+    if (graph->isLocalColumnOrder())
     {
         for (size_t iNode = 0; iNode < connectedNodes.size(); iNode++)
         {
             stk::mesh::Entity node = connectedNodes[iNode];
-            matrixColumnIds_[iNode] = bulkData.local_id(node);
-            scratchIds[iNode] = bulkData.local_id(node);
+            const label row =
+                static_cast<label>(graph->localToRow(bulkData.local_id(node)));
+            matrixColumnIds_[iNode] = row;
+            scratchIds[iNode] = row;
         }
     }
     else
@@ -352,8 +365,14 @@ void assembler<N>::applyCoeff_(
         for (size_t iNode = 0; iNode < connectedNodes.size(); iNode++)
         {
             stk::mesh::Entity node = connectedNodes[iNode];
-            matrixColumnIds_[iNode] = bulkData.global_id(node);
-            scratchIds[iNode] = bulkData.local_id(node);
+            // global column: subset id for a subset graph, else STK global id
+            matrixColumnIds_[iNode] =
+                graph->hasRowRemap()
+                    ? static_cast<label>(
+                          graph->localToGlobalRow(bulkData.local_id(node)))
+                    : static_cast<label>(bulkData.global_id(node));
+            scratchIds[iNode] =
+                static_cast<label>(graph->localToRow(bulkData.local_id(node)));
         }
     }
 
@@ -380,8 +399,8 @@ void assembler<N>::applyCoeff_(
         }
 #endif /* NDEBUG */
 
-        // assemble only owned rows
-        if (rowID < nOwnedRows)
+        // assemble only owned rows (rowID < 0 => node not in this subset graph)
+        if (rowID >= 0 && rowID < nOwnedRows)
         {
             auto rowVals = A.rowVals(rowID);
             const auto rowCols = A.rowCols(rowID);
@@ -396,7 +415,11 @@ void assembler<N>::applyCoeff_(
                 const label permIndex = sortPermutation_[j];
                 const label curColumnIndex = matrixColumnIds_[permIndex];
 
-                while (rowCols[offset] != curColumnIndex && offset < length)
+                // column outside this subset graph (curColumnIndex < 0): skip
+                if (curColumnIndex < 0)
+                    continue;
+
+                while (offset < length && rowCols[offset] != curColumnIndex)
                 {
                     ++offset;
                 }
@@ -489,7 +512,10 @@ void assembler<N>::applyCrossRankFold(
     for (const auto& p : pairs)
         if (bulkData.parallel_owner_rank(p.second) == myProc)
         {
-            const GIdx g2 = A.localToGlobal(bulkData.local_id(p.second));
+            const int64_t row2 = graph->localToRow(bulkData.local_id(p.second));
+            if (row2 < 0) // pair not in this (subset) graph
+                continue;
+            const GIdx g2 = A.localToGlobal(row2);
             slaveGToNode2[g2] = p.second;
             slaveGToMasterEnt[g2] = bulkData.identifier(p.first);
         }
@@ -505,7 +531,10 @@ void assembler<N>::applyCrossRankFold(
             const label o2 = bulkData.parallel_owner_rank(p.second);
             if (o1 == o2 || o2 != myProc)
                 continue;
-            const label lid2 = bulkData.local_id(p.second);
+            const label lid2 = static_cast<label>(
+                graph->localToRow(bulkData.local_id(p.second)));
+            if (lid2 < 0) // pair not in this (subset) graph
+                continue;
             auto vals2 = A.rowVals(lid2);
             auto cg2 = graph->rowGlobalIndices(lid2);
             stk::CommBuffer& buf = comm1.send_buffer(o1);
@@ -555,7 +584,9 @@ void assembler<N>::applyCrossRankFold(
 
             const stk::mesh::Entity n1 =
                 bulkData.get_entity(stk::topology::NODE_RANK, masterEnt);
-            const label lid1 = bulkData.local_id(n1);
+            const label lid1 =
+                static_cast<label>(graph->localToRow(bulkData.local_id(n1)));
+            assert(lid1 >= 0); // master of a subset pair is in the subset
             const GIdx masterG = A.localToGlobal(lid1);
             auto vals1 = A.rowVals(lid1);
             auto cg1 = graph->rowGlobalIndices(lid1);
@@ -580,7 +611,12 @@ void assembler<N>::applyCrossRankFold(
                         bulkData.get_entity(stk::topology::NODE_RANK, mEnt);
                     if (bulkData.is_valid(nm) &&
                         bulkData.parallel_owner_rank(nm) == myProc)
-                        tg = A.localToGlobal(bulkData.local_id(nm));
+                    {
+                        const int64_t rm =
+                            graph->localToRow(bulkData.local_id(nm));
+                        if (rm >= 0)
+                            tg = A.localToGlobal(rm);
+                    }
                 }
                 auto pit = gToPos.find(tg);
                 if (pit == gToPos.end())

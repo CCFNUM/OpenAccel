@@ -693,8 +693,6 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
                                            &ws_o_duRhs[0],
                                            &oDuRhsBip[0]);
 
-            // GGI scatter: rho*du diffusion stencil + per-cs mass-flow source.
-
             // projected nodal gradient; zero-out first
             for (label i = 0; i < SPATIAL_DIM; i++)
             {

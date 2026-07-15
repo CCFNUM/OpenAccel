@@ -268,10 +268,6 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
         // rotation matrix (in case of rotational periodicity)
         const auto& rotMat = interfaceSideInfoPtr->rotationMatrix_;
 
-        // GGI path is not yet validated for the solid-displacement problem;
-        // preserve the original errorMsg behavior at the top of the function
-        // and run the unified loop for DG below.
-
         // Unified loop over per-IP info.  Storage is owned by the base
         // interfaceSideInfo; concrete side classes store derived records upcast
         // to ipInfo*, and ip->areaFraction_ is the default 1.0 so the math is

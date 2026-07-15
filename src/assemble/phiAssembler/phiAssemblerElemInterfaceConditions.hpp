@@ -110,17 +110,6 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
     std::vector<scalar> ws_c_general_shape_function;
     std::vector<scalar> ws_o_general_shape_function;
 
-    // GGI Schur kernel workspace. Mirrors the
-    // thermalEnergy assembler's pattern: declared here, resized in
-    // the per-IP block, accessed via raw pointers in the hot loop.
-    // faceMask / offFaceMask are 1.0 / 0.0 scalar masks that replace
-    // branching on face vs off-face node classification in the
-    // accumulation / scatter loops — the compiler can then vectorise
-    // those loops with SIMD/FMA. Constant-size augmented-block
-    // buffers (acvBlock, dBlock, rcsBlock) are sized once at
-    // declaration because their size is fixed by N for this
-    // assembler instance.
-
     // Get transport fields/side fields
     const auto& phiSTKFieldRef = phi_->stkFieldRef();
 
@@ -464,8 +453,6 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
                                                &opposingIsoParCoords[0],
                                                &ws_o_Gamma[0],
                                                &opposingGammaBip);
-
-                // GGI scatter (Laplacian-only)
 
                 // zero-out diffusion fluxes
                 for (label i = 0; i < N; ++i)

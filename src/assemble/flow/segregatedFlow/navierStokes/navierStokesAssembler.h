@@ -40,7 +40,6 @@ public:
 
     void preAssemble(const domain* domain, Context* ctx) override
     {
-        // Size GGI Schur storage (no-op otherwise; skips computeGamma_).
     }
 
     void postAssemble(const domain*, Context*) override;
@@ -49,13 +48,9 @@ public:
 
     void computeDUCoefficients(const domain* domain, Context* ctx);
 
-    void assembleNormalRelaxation(const domain* domain,
-                                  Context* ctx,
-                                  const scalar urf);
-
 protected:
     void assembleBoundaryRelaxation_(const domain* domain,
-                                     Vector& b,
+                                     Context* ctx,
                                      const scalar urf) override;
 
     void applySymmetryConditions_(const domain* domain, Context* ctx) override;

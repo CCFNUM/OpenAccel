@@ -310,6 +310,11 @@ public:
                             scalar extremaCoeff = 0.0,
                             scalar smoothLimiter = 0.0);
 
+private:
+    // combine min/max stencil bounds across conformal (row-merged) seams
+    void mergeMinMaxAtConformalInterfaces_(label iZone);
+
+public:
     void updateGradientField(label iZone);
 
     // Synchronize
