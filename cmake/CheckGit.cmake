@@ -44,7 +44,24 @@ function(CheckGitVersion)
     endif()
 
     # the following region is special, do not remove the marker comments below
-    set(GIT_TAG v0.2.0)
+    # %GIT_TAG%
+    # %EXTERNAL_REPLACE_START%
+    if (NOT GIT_REPO_BUILD)
+        message(FATAL_ERROR "Cannot determine version: this is not a proper release tarball, neither a Git repository/worktree")
+    endif()
+
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} describe --always
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_TAG
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE GIT_RESULT
+    )
+
+    if (NOT GIT_RESULT EQUAL 0)
+        message(FATAL_ERROR "Failed to get version from git tag")
+    endif()
+    # %EXTERNAL_REPLACE_END%
 
     string(REGEX REPLACE "^v-?" "" CLEAN_TAG "${GIT_TAG}")
     if(CLEAN_TAG MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)(-.*)?$")

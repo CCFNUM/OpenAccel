@@ -10,5 +10,6 @@ const int VERSION_PATCH = @PROJECT_VERSION_PATCH@;
 const char GIT_HASH[] = "@GIT_HASH@";
 const char GIT_DESCRIBE[] = "@GIT_DESCRIBE@";
 const char PROJECT_VERSION[] = "@PROJECT_VERSION@";
+const char PROJECT_NAME[] = "@PROJECT_NAME@";
 
 } // namespace accel

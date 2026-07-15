@@ -11,6 +11,7 @@ extern const int VERSION_PATCH;
 extern const char GIT_HASH[];
 extern const char GIT_DESCRIBE[];
 extern const char PROJECT_VERSION[];
+extern const char PROJECT_NAME[];
 
 } // namespace accel
 
