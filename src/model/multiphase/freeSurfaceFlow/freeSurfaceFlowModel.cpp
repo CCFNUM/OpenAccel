@@ -5517,7 +5517,7 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
                         case boundaryConditionType::specifiedValue:
                             {
                                 // <-- Specified Value Do not Update Alpha -->
-                                errorMsg("Must not reach here");
+                                //errorMsg("Must not reach here");
                             }
                             break;
 
