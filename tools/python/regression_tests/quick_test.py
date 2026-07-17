@@ -58,6 +58,8 @@ SELECTED_CASES = [
     {"name": "bump2D",        "dir": "examples/bump2D"},
     {"name": "flange",        "dir": "examples/flange"},
     {"name": "plateHole",     "dir": "examples/plateHole"},
+    {"name": "TaylorCouettePoiseuille", "dir": "examples/TaylorCouettePoiseuille"},
+    {"name": "cavity",        "dir": "examples/cavity"},
 ]
 
 # Files are NetCDF classic/64-bit (CDF-1/2/5) or NetCDF-4/HDF5.
@@ -537,7 +539,7 @@ def run_case(
         result.update(metrics)
 
         print(
-            f"[{result['status']:6s}] {name:14s} {dim}  ranks={nprocs:2d}  "
+            f"[{result['status']:6s}] {name:24s} {dim}  ranks={nprocs:2d}  "
             f"elapsed={elapsed:6.1f}s  log={log_file}"
         )
     except Exception as exc:
@@ -637,13 +639,13 @@ def print_plan(plan: list[dict]) -> None:
     """Print the execution plan to stdout."""
     print("\nExecution plan")
     print("-" * 70)
-    print(f"{'Case':<14s} {'Dim':>3s} {'Elements':>10s} {'Ranks':>5s}")
+    print(f"{'Case':<24s} {'Dim':>3s} {'Elements':>10s} {'Ranks':>5s}")
     print("-" * 70)
     for c in plan:
         elem_str = str(c["num_elem"]) if c["num_elem"] is not None else "unknown"
         dim_str = c["dim"] if c["dim"] else "N/A"
         ranks_str = str(c["nprocs"]) if not c.get("missing") else "N/A"
-        print(f"{c['name']:<14s} {dim_str:>3s} {elem_str:>10s} {ranks_str:>5s}")
+        print(f"{c['name']:<24s} {dim_str:>3s} {elem_str:>10s} {ranks_str:>5s}")
     print("-" * 70)
     print()
 
@@ -652,15 +654,15 @@ def print_report(results: list[dict]) -> None:
     """Print a report table with timing and convergence information."""
     print("\nResults report")
     print(
-        "-" * 107
+        "-" * 117
     )
     print(
-        f"{'Case':<14s} {'Dim':>3s} {'Ranks':>5s} {'Iters':>7s} "
+        f"{'Case':<24s} {'Dim':>3s} {'Ranks':>5s} {'Iters':>7s} "
         f"{'Avg CPU/iter':>14s} {'Wall [s]':>11s} {'Elapsed [s]':>11s} "
         f"{'Converged':>10s} {'Status':>7s}"
     )
     print(
-        "-" * 107
+        "-" * 117
     )
     for r in results:
         dim = r["dim"] if r["dim"] else "N/A"
@@ -681,11 +683,11 @@ def print_report(results: list[dict]) -> None:
         )
         status = r.get("status", "N/A")
         print(
-            f"{r['name']:<14s} {dim:>3s} {ranks:>5s} {iters:>7s} "
+            f"{r['name']:<24s} {dim:>3s} {ranks:>5s} {iters:>7s} "
             f"{avg:>14s} {wall:>11s} {elapsed:>11s} {conv:>10s} {status:>7s}"
         )
     print(
-        "-" * 107
+        "-" * 117
     )
 
 
