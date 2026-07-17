@@ -9,7 +9,9 @@ binary.  The number of MPI ranks for each case is calculated from the mesh
 size (number of elements) and the number of cores available on the machine.
 
 After each run the log is parsed to report:
-  - total number of iterations
+  - analysis type (steady-state or transient), read from input.i
+  - number of iterations (and, for steady-state cases, the max-iteration
+    cap set in input.i, shown as performed/max)
   - average CPU time per iteration
   - solver-reported total wall time (plus script-measured elapsed time)
   - whether the solver reported convergence ("Converged.")
@@ -116,6 +118,77 @@ def parse_input_dimension(case_dir: Path) -> str | None:
     if m:
         return f"{m.group(1)}D"
     return None
+
+
+def _regex_analysis_type(text: str) -> str | None:
+    """Fallback: read analysis_type.option from raw input.i text."""
+    m = re.search(r"analysis_type:\s*\n\s*option:\s*(\w+)", text)
+    return m.group(1) if m else None
+
+
+def _regex_max_iterations(text: str) -> int | None:
+    """Fallback: read the outer-solver max_iterations under convergence_controls.
+
+    Bounded to the convergence_controls block so it never picks up the
+    unrelated max_iterations under linear_solver_settings.
+    """
+    m = re.search(r"convergence_controls:\s*\n(.*)", text, re.DOTALL)
+    if not m:
+        return None
+    block = m.group(1)
+    stop = re.search(r"\n\s*convergence_criteria:", block)
+    if stop:
+        block = block[:stop.start()]
+    mm = re.search(r"max_iterations:\s*(\d+)", block)
+    return int(mm.group(1)) if mm else None
+
+
+def parse_case_config(case_dir: Path) -> tuple[str | None, int | None]:
+    """Read (analysis_type, max_iterations) from a case's input.i (YAML).
+
+    analysis_type is 'steady_state' or 'transient'.  max_iterations is the
+    outer solver iteration cap under convergence_controls (not the
+    linear-solver caps).  Uses PyYAML when available and falls back to a
+    targeted regex parse otherwise.
+    """
+    input_file = case_dir / "input.i"
+    if not input_file.is_file():
+        return None, None
+    text = input_file.read_text(errors="ignore")
+
+    analysis = None
+    max_iters = None
+    try:
+        import yaml  # type: ignore
+        data = yaml.safe_load(text)
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        try:
+            analysis = (
+                data["simulation"]["physical_analysis"]["analysis_type"]["option"]
+            )
+        except (KeyError, TypeError):
+            analysis = None
+        try:
+            max_iters = (
+                data["simulation"]["solver"]["solver_control"]
+                    ["basic_settings"]["convergence_controls"]["max_iterations"]
+            )
+        except (KeyError, TypeError):
+            max_iters = None
+
+    if analysis is None:
+        analysis = _regex_analysis_type(text)
+    if max_iters is None:
+        max_iters = _regex_max_iterations(text)
+
+    analysis = str(analysis) if analysis is not None else None
+    try:
+        max_iters = int(max_iters) if max_iters is not None else None
+    except (TypeError, ValueError):
+        max_iters = None
+    return analysis, max_iters
 
 
 def mesh_file_for_case(case_dir: Path) -> Path | None:
@@ -473,6 +546,8 @@ def run_case(
         "name": name,
         "dim": dim,
         "nprocs": nprocs,
+        "analysis_type": case.get("analysis_type"),
+        "max_iters": case.get("max_iters"),
         "log": str(log_file),
         "returncode": None,
         "elapsed": None,
@@ -621,6 +696,7 @@ def build_plan(args: argparse.Namespace, root: Path) -> tuple[list[dict], list[s
             args.target_per_rank_3d,
             args.max_ranks,
         )
+        analysis_type, max_iters = parse_case_config(case_dir)
 
         plan.append({
             "name": name,
@@ -628,6 +704,8 @@ def build_plan(args: argparse.Namespace, root: Path) -> tuple[list[dict], list[s
             "dim": dim,
             "num_elem": num_elem,
             "nprocs": nprocs,
+            "analysis_type": analysis_type,
+            "max_iters": max_iters,
             "missing": False,
             "missing_reason": None,
         })
@@ -650,45 +728,73 @@ def print_plan(plan: list[dict]) -> None:
     print()
 
 
-def print_report(results: list[dict]) -> None:
-    """Print a report table with timing and convergence information."""
-    print("\nResults report")
-    print(
-        "-" * 117
+_TYPE_LABELS = {"steady_state": "steady", "transient": "transient"}
+
+
+def _format_report_row(r: dict) -> str:
+    """Format a single results row for the report table."""
+    dim = r["dim"] if r["dim"] else "N/A"
+    atype = r.get("analysis_type")
+    type_str = _TYPE_LABELS.get(atype, "N/A")
+    ranks = f"{r['nprocs']}" if r["nprocs"] is not None else "N/A"
+
+    total_iters = r["total_iterations"]
+    max_iters = r.get("max_iters")
+    if total_iters is None:
+        iters = "N/A"
+    elif atype == "steady_state" and max_iters is not None:
+        # Outer iterations performed out of the yaml cap (steady-state only).
+        iters = f"{total_iters}/{max_iters}"
+    else:
+        iters = f"{total_iters}"
+
+    avg = (
+        f"{r['avg_iter_cpu_time']:.3e}"
+        if r["avg_iter_cpu_time"] is not None else "N/A"
     )
-    print(
-        f"{'Case':<24s} {'Dim':>3s} {'Ranks':>5s} {'Iters':>7s} "
+    wall = (
+        f"{r['total_wall_time']:.2f}"
+        if r.get("total_wall_time") is not None else "N/A"
+    )
+    elapsed = f"{r['elapsed']:.2f}" if r["elapsed"] is not None else "N/A"
+    conv = (
+        "yes" if r["converged"] else "no"
+        if r["converged"] is not None else "N/A"
+    )
+    status = r.get("status", "N/A")
+    return (
+        f"{r['name']:<24s} {dim:>3s} {type_str:>9s} {ranks:>5s} {iters:>11s} "
+        f"{avg:>14s} {wall:>11s} {elapsed:>11s} {conv:>10s} {status:>7s}"
+    )
+
+
+def print_report(results: list[dict]) -> None:
+    """Print a report table with timing and convergence information.
+
+    Steady-state cases are listed first (iterations shown as performed/max),
+    then transient cases below a horizontal divider.
+    """
+    header = (
+        f"{'Case':<24s} {'Dim':>3s} {'Type':>9s} {'Ranks':>5s} {'Iters/Max':>11s} "
         f"{'Avg CPU/iter':>14s} {'Wall [s]':>11s} {'Elapsed [s]':>11s} "
         f"{'Converged':>10s} {'Status':>7s}"
     )
-    print(
-        "-" * 117
-    )
-    for r in results:
-        dim = r["dim"] if r["dim"] else "N/A"
-        ranks = f"{r['nprocs']}" if r["nprocs"] is not None else "N/A"
-        iters = f"{r['total_iterations']}" if r["total_iterations"] is not None else "N/A"
-        avg = (
-            f"{r['avg_iter_cpu_time']:.3e}"
-            if r["avg_iter_cpu_time"] is not None else "N/A"
-        )
-        wall = (
-            f"{r['total_wall_time']:.2f}"
-            if r.get("total_wall_time") is not None else "N/A"
-        )
-        elapsed = f"{r['elapsed']:.2f}" if r["elapsed"] is not None else "N/A"
-        conv = (
-            "yes" if r["converged"] else "no"
-            if r["converged"] is not None else "N/A"
-        )
-        status = r.get("status", "N/A")
-        print(
-            f"{r['name']:<24s} {dim:>3s} {ranks:>5s} {iters:>7s} "
-            f"{avg:>14s} {wall:>11s} {elapsed:>11s} {conv:>10s} {status:>7s}"
-        )
-    print(
-        "-" * 117
-    )
+    rule = "-" * len(header)
+
+    steady = [r for r in results if r.get("analysis_type") == "steady_state"]
+    other = [r for r in results if r.get("analysis_type") != "steady_state"]
+
+    print("\nResults report")
+    print(rule)
+    print(header)
+    print(rule)
+    for r in steady:
+        print(_format_report_row(r))
+    if steady and other:
+        print(rule)
+    for r in other:
+        print(_format_report_row(r))
+    print(rule)
 
 
 # ---------------------------------------------------------------------------
