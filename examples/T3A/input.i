@@ -68,7 +68,7 @@ simulation:
                 turbulence_numerics: upwind
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 1000
+                    max_iterations: 500
                     physical_timescale: 1
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.9
