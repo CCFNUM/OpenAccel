@@ -65,15 +65,15 @@ simulation:
                     min_iterations: 1
                     max_iterations: 10
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.9
-                        pressure_relaxation_factor: 0.1
+                        velocity_relaxation_factor: 0.7
+                        pressure_relaxation_factor: 0.3
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-5
             advanced_options:
                 pressure_level_information:
                     option: cartesian_coordinates
-                    cartesian_coordinates: [0, 0, 0]
+                    cartesian_coordinates: [0, 0]
                     relative_pressure_level: 0
                 linear_solver_settings:
                     default:
