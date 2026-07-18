@@ -75,10 +75,10 @@ simulation:
     solver:
         solver_control:
             basic_settings:
-                advection_scheme: upwind
+                advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 100
+                    max_iterations: 250
                     physical_timescale: 1
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.9
