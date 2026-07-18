@@ -59,10 +59,10 @@ simulation:
                 advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 1000
+                    max_iterations: 5000
                     physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.75
+                        velocity_relaxation_factor: 0.5
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-8
@@ -98,7 +98,6 @@ simulation:
                                 trunc_factor: 0.3 # Keeps the solver lean
             expert_parameters:
                 consistent: true
-                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 10
