@@ -78,12 +78,25 @@ def repo_root() -> Path:
 
 
 def available_cores() -> int:
-    """Number of usable cores on this machine."""
-    try:
-        # If the process is pinned to a subset of cores, respect that.
-        return len(os.sched_getaffinity(0))
-    except AttributeError:
-        return os.cpu_count() or 1
+    """Number of physical cores usable for MPI ranks (respects CPU affinity).
+
+    Open MPI counts one slot per physical core by default, not per logical
+    CPU / hyperthread.  Sizing ranks from logical CPUs would request more
+    ranks than there are slots and the launch would be refused ("not enough
+    slots available").  Falls back to the logical CPU count if the CPU
+    topology cannot be read.
+    """
+    logical = allowed_cpu_ids()
+    cores: set[tuple[str, str]] = set()
+    for cpu in logical:
+        topo = Path(f"/sys/devices/system/cpu/cpu{cpu}/topology")
+        try:
+            pkg = (topo / "physical_package_id").read_text().strip()
+            core = (topo / "core_id").read_text().strip()
+        except OSError:
+            return len(logical)
+        cores.add((pkg, core))
+    return len(cores) if cores else len(logical)
 
 
 def allowed_cpu_ids() -> list[int]:
@@ -906,7 +919,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     total_cores = args.max_total_cores or available_cores()
-    print(f"Available cores: {total_cores}\n")
+    print(
+        f"Usable cores: {total_cores} physical (MPI slots); "
+        f"{len(allowed_cpu_ids())} logical CPUs\n"
+    )
     print_plan(plan)
 
     cpu_allocator = None
