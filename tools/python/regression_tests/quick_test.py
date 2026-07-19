@@ -16,21 +16,45 @@ After each run the log is parsed to report:
   - solver-reported total wall time (plus script-measured elapsed time)
   - whether the solver reported convergence ("Converged.")
 
-Usage example:
+The report is tagged with the current git commit and can optionally be
+written to a file (the report only, not the per-case solver logs).
+
+Each run's per-case metrics are stored as a JSON record under a results
+directory (one file per commit, default tools/python/regression_tests/
+results/).  On subsequent runs the most recent previous record is loaded as
+a baseline and the report gains a "vs base" column that reports, per case,
+whether the solver converged faster or slower than the baseline (fewer
+solver iterations == faster).  Use --baseline to compare against a specific
+stored record instead of the most recent one.
+
+Binaries default to the in-tree build directories relative to the repository
+root:
+  - 3D: build/openaccel-3D.exe
+  - 2D: build2D/openaccel-2D.exe
+Passing --exe-3d / --exe-2d overrides those defaults.
+
+Usage examples:
+    # Use the in-tree build/ and build2D/ binaries
+    python3 tools/python/regression_tests/quick_test.py
+
+    # Override binary locations and save the report to a file
     python3 tools/python/regression_tests/quick_test.py \
         --exe-2d=/path/to/openaccel-2D.exe \
-        --exe-3d=/path/to/openaccel-3D.exe
+        --exe-3d=/path/to/openaccel-3D.exe \
+        --report-file=run_report.txt
 
-The script is intended to be run from the repository root, but it will work
-from any directory as long as the example paths are reachable from the
-script's location.
+The script locates the repository (and hence the examples/ and build
+directories) from its own location, so it can be run from any directory
+inside the repository.
 """
 
 import argparse
 import concurrent.futures
+import json
 import os
 import re
 import shutil
+import socket
 import struct
 import subprocess
 import sys
@@ -73,8 +97,66 @@ HDF5_SIGNATURE = b"\x89HDF\r\n\x1a\n"
 # Utility helpers
 # ---------------------------------------------------------------------------
 def repo_root() -> Path:
-    """Return the repository root (three levels above this script)."""
+    """Return the repository root (three levels above this script).
+
+    The path is derived from the script's own location, so the examples/ and
+    build directories can be found no matter which directory the script is
+    invoked from inside the repository.
+    """
     return Path(__file__).resolve().parents[3]
+
+
+# Default in-tree binary locations, relative to the repository root.
+DEFAULT_EXE_3D_REL = Path("build") / "openaccel-3D.exe"
+DEFAULT_EXE_2D_REL = Path("build2D") / "openaccel-2D.exe"
+
+
+def default_exe_3d(root: Path) -> Path:
+    """Default 3D binary path (build/openaccel-3D.exe under the repo root)."""
+    return root / DEFAULT_EXE_3D_REL
+
+
+def default_exe_2d(root: Path) -> Path:
+    """Default 2D binary path (build2D/openaccel-2D.exe under the repo root)."""
+    return root / DEFAULT_EXE_2D_REL
+
+
+def git_commit(root: Path) -> str | None:
+    """Return the current git commit (short hash, with a '-dirty' suffix).
+
+    Returns None if git is unavailable or the repo can't be queried.
+    """
+    if not shutil.which("git"):
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    commit = proc.stdout.strip()
+    if not commit:
+        return None
+
+    try:
+        dirty = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if dirty.returncode == 0 and dirty.stdout.strip():
+            commit += "-dirty"
+    except Exception:
+        pass
+    return commit
 
 
 def available_cores() -> int:
@@ -741,10 +823,124 @@ def print_plan(plan: list[dict]) -> None:
     print()
 
 
+# ---------------------------------------------------------------------------
+# Result history / baselines
+#
+# Each run is stored as a JSON record (one file per commit) so that a later
+# run can load the most recent previous record and report, per case, whether
+# the solver converged faster or slower (measured by solver iteration count).
+# ---------------------------------------------------------------------------
+def commit_slug(commit: str | None) -> str:
+    """Turn a commit label into a filesystem-safe file stem."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", commit or "unknown")
+
+
+def build_run_record(
+    results: list[dict],
+    commit: str | None,
+    mpi_runner: str,
+    total_cores: int,
+) -> dict:
+    """Assemble a JSON-serialisable record of a run's per-case metrics."""
+    cases = []
+    for r in results:
+        cases.append({
+            "name": r.get("name"),
+            "dim": r.get("dim"),
+            "analysis_type": r.get("analysis_type"),
+            "nprocs": r.get("nprocs"),
+            "max_iters": r.get("max_iters"),
+            "total_iterations": r.get("total_iterations"),
+            "avg_iter_cpu_time": r.get("avg_iter_cpu_time"),
+            "total_wall_time": r.get("total_wall_time"),
+            "elapsed": r.get("elapsed"),
+            "converged": r.get("converged"),
+            "status": r.get("status"),
+        })
+    return {
+        "commit": commit,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "host": socket.gethostname(),
+        "mpi_runner": mpi_runner,
+        "usable_cores": total_cores,
+        "cases": cases,
+    }
+
+
+def save_run_record(history_dir: Path, record: dict) -> Path:
+    """Write a run record to <history_dir>/<commit>.json (pretty-printed)."""
+    history_dir.mkdir(parents=True, exist_ok=True)
+    path = history_dir / f"{commit_slug(record.get('commit'))}.json"
+    with open(path, "w") as fp:
+        json.dump(record, fp, indent=2)
+        fp.write("\n")
+    return path
+
+
+def load_record(path: Path) -> dict | None:
+    """Load a stored run record, returning None if it can't be read/parsed."""
+    try:
+        with open(path) as fp:
+            data = json.load(fp)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def find_baseline_record(
+    history_dir: Path, current_commit: str | None
+) -> tuple[dict | None, Path | None]:
+    """Return the most recent stored record for a *different* commit.
+
+    The current commit's own file is skipped so that re-running the same
+    commit compares against the previous distinct run rather than itself.
+    """
+    if not history_dir.is_dir():
+        return None, None
+    current_stem = commit_slug(current_commit)
+    candidates = [
+        p for p in history_dir.glob("*.json") if p.stem != current_stem
+    ]
+    if not candidates:
+        return None, None
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return load_record(latest), latest
+
+
+def cases_by_name(record: dict | None) -> dict[str, dict]:
+    """Index a record's case list by case name."""
+    if not record:
+        return {}
+    return {c.get("name"): c for c in record.get("cases", []) if c.get("name")}
+
+
+def compare_iterations(cur: dict, base_case: dict | None) -> str:
+    """Describe how a case's iteration count moved relative to the baseline.
+
+    Fewer solver iterations means the case converged faster.  Returns a short
+    label: "new" (no baseline), "n/a" (missing counts), "same", or
+    "faster -N" / "slower +N".
+    """
+    if base_case is None:
+        return "new"
+    base_iters = base_case.get("total_iterations")
+    cur_iters = cur.get("total_iterations")
+    if base_iters is None or cur_iters is None:
+        return "n/a"
+    delta = cur_iters - base_iters
+    if delta == 0:
+        return "same"
+    return f"{'faster' if delta < 0 else 'slower'} {delta:+d}"
+
+
 _TYPE_LABELS = {"steady_state": "steady", "transient": "transient"}
 
 
-def _format_report_row(r: dict) -> str:
+def _format_report_row(
+    r: dict,
+    base_case: dict | None = None,
+    show_compare: bool = False,
+) -> str:
     """Format a single results row for the report table."""
     dim = r["dim"] if r["dim"] else "N/A"
     atype = r.get("analysis_type")
@@ -775,39 +971,108 @@ def _format_report_row(r: dict) -> str:
         if r["converged"] is not None else "N/A"
     )
     status = r.get("status", "N/A")
-    return (
+    row = (
         f"{r['name']:<24s} {dim:>3s} {type_str:>9s} {ranks:>5s} {iters:>11s} "
         f"{avg:>14s} {wall:>11s} {elapsed:>11s} {conv:>10s} {status:>7s}"
     )
+    if show_compare:
+        row += f" {compare_iterations(r, base_case):>15s}"
+    return row
 
 
-def print_report(results: list[dict]) -> None:
-    """Print a report table with timing and convergence information.
+def format_report(
+    results: list[dict],
+    commit: str | None = None,
+    baseline_by_name: dict[str, dict] | None = None,
+    baseline_commit: str | None = None,
+) -> str:
+    """Build the report table with timing and convergence information.
 
     Steady-state cases are listed first (iterations shown as performed/max),
-    then transient cases below a horizontal divider.
+    then transient cases below a horizontal divider.  The current git commit,
+    when known, is shown in the report title.
+
+    When ``baseline_by_name`` is supplied, a "vs base" column is appended that
+    compares each case's solver-iteration count against the baseline (fewer
+    iterations == converged faster).
     """
+    show_compare = baseline_by_name is not None
     header = (
         f"{'Case':<24s} {'Dim':>3s} {'Type':>9s} {'Ranks':>5s} {'Iters/Max':>11s} "
         f"{'Avg CPU/iter':>14s} {'Wall [s]':>11s} {'Elapsed [s]':>11s} "
         f"{'Converged':>10s} {'Status':>7s}"
     )
+    if show_compare:
+        header += f" {'vs base':>15s}"
     rule = "-" * len(header)
 
     steady = [r for r in results if r.get("analysis_type") == "steady_state"]
     other = [r for r in results if r.get("analysis_type") != "steady_state"]
 
-    print("\nResults report")
-    print(rule)
-    print(header)
-    print(rule)
+    bits = []
+    if commit:
+        bits.append(f"commit {commit}")
+    if show_compare and baseline_commit:
+        bits.append(f"vs baseline {baseline_commit}")
+    title = "Results report"
+    if bits:
+        title += " (" + ", ".join(bits) + ")"
+
+    def row(r: dict) -> str:
+        base_case = baseline_by_name.get(r["name"]) if show_compare else None
+        return _format_report_row(r, base_case, show_compare)
+
+    lines = [title, rule, header, rule]
     for r in steady:
-        print(_format_report_row(r))
+        lines.append(row(r))
     if steady and other:
-        print(rule)
+        lines.append(rule)
     for r in other:
-        print(_format_report_row(r))
-    print(rule)
+        lines.append(row(r))
+    lines.append(rule)
+    if show_compare:
+        lines.append(
+            "vs base: change in solver iterations relative to the baseline "
+            "commit (fewer = converged faster)."
+        )
+    return "\n".join(lines)
+
+
+def format_summary(results: list[dict]) -> str:
+    """Build the pass/fail summary block (including per-category details)."""
+    passed = [r for r in results if r["status"] == "PASS"]
+    failed = [r for r in results if r["status"] == "FAIL"]
+    missing = [r for r in results if r["status"] == "MISSING"]
+    errors = [r for r in results if r["status"] == "ERROR"]
+
+    lines = [
+        "Summary",
+        "-" * 70,
+        f"Total cases:  {len(results)}",
+        f"Passed:       {len(passed)}",
+        f"Failed:       {len(failed)}",
+        f"Missing:      {len(missing)}",
+        f"Errors:       {len(errors)}",
+    ]
+
+    if failed:
+        lines.append("")
+        lines.append("Failed cases:")
+        for r in failed:
+            reason = r.get("error") or f"exit code {r['returncode']}"
+            lines.append(f"  - {r['name']}: {reason}  (log: {r['log']})")
+    if missing:
+        lines.append("")
+        lines.append("Missing cases:")
+        for r in missing:
+            lines.append(f"  - {r['name']}: {r.get('error')}")
+    if errors:
+        lines.append("")
+        lines.append("Cases with execution errors:")
+        for r in errors:
+            lines.append(f"  - {r['name']}: {r.get('error')}")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -820,13 +1085,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--exe-2d",
-        required=True,
-        help="Path to the 2D OpenAccel binary (e.g. /path/to/openaccel-2D.exe).",
+        default=None,
+        help=(
+            "Path to the 2D OpenAccel binary. Defaults to "
+            "build2D/openaccel-2D.exe under the repository root."
+        ),
     )
     parser.add_argument(
         "--exe-3d",
-        required=True,
-        help="Path to the 3D OpenAccel binary (e.g. /path/to/openaccel-3D.exe).",
+        default=None,
+        help=(
+            "Path to the 3D OpenAccel binary. Defaults to "
+            "build/openaccel-3D.exe under the repository root."
+        ),
     )
     parser.add_argument(
         "--mpi-runner",
@@ -877,6 +1148,44 @@ def main(argv: list[str] | None = None) -> int:
         help="Directory where per-case log files are written.",
     )
     parser.add_argument(
+        "--report-file",
+        nargs="?",
+        const="__DEFAULT__",
+        default=None,
+        help=(
+            "Write the run report (results table + summary, not the solver "
+            "logs) to a file. Give a path to choose the location, or pass the "
+            "flag with no value to write <log-dir>/report.txt."
+        ),
+    )
+    parser.add_argument(
+        "--results-dir",
+        default=None,
+        help=(
+            "Directory where per-commit JSON result records are stored and "
+            "read back as baselines "
+            "(default: tools/python/regression_tests/results)."
+        ),
+    )
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help=(
+            "Path to a stored JSON result record to compare against. "
+            "Overrides the automatic 'most recent previous commit' choice."
+        ),
+    )
+    parser.add_argument(
+        "--no-compare",
+        action="store_true",
+        help="Do not add the 'vs base' comparison column to the report.",
+    )
+    parser.add_argument(
+        "--no-store",
+        action="store_true",
+        help="Do not store this run's results in the results directory.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the commands that would be run without executing them.",
@@ -889,11 +1198,22 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    exe_2d = Path(args.exe_2d).resolve()
-    exe_3d = Path(args.exe_3d).resolve()
-    for label, exe in (("--exe-2d", exe_2d), ("--exe-3d", exe_3d)):
+    root = repo_root()
+
+    # Binaries default to the in-tree build directories; explicit paths override.
+    exe_3d = (
+        Path(args.exe_3d).resolve() if args.exe_3d else default_exe_3d(root)
+    )
+    exe_2d = (
+        Path(args.exe_2d).resolve() if args.exe_2d else default_exe_2d(root)
+    )
+    for label, exe, overridden in (
+        ("--exe-3d", exe_3d, bool(args.exe_3d)),
+        ("--exe-2d", exe_2d, bool(args.exe_2d)),
+    ):
         if not exe.is_file():
-            print(f"ERROR: {label} does not exist: {exe}", file=sys.stderr)
+            hint = "" if overridden else " (build it, or pass an explicit path)"
+            print(f"ERROR: {label} does not exist: {exe}{hint}", file=sys.stderr)
             return 1
         if not os.access(exe, os.X_OK):
             print(f"WARNING: {label} may not be executable: {exe}", file=sys.stderr)
@@ -903,10 +1223,14 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-
-    root = repo_root()
     log_dir = Path(args.log_dir).resolve()
     log_dir.mkdir(parents=True, exist_ok=True)
+
+    commit = git_commit(root)
+    print(f"Repository root: {root}")
+    print(f"Commit:          {commit or 'unknown'}")
+    print(f"3D binary:       {exe_3d}")
+    print(f"2D binary:       {exe_2d}")
 
     plan, warnings = build_plan(args, root)
 
@@ -982,35 +1306,71 @@ def main(argv: list[str] | None = None) -> int:
     order = {c["name"]: i for i, c in enumerate(SELECTED_CASES)}
     results.sort(key=lambda r: order.get(r["name"], 999))
 
-    print_report(results)
+    # Locate a baseline record to compare against (skipped for dry runs, which
+    # carry no real metrics).
+    results_dir = (
+        Path(args.results_dir).resolve() if args.results_dir
+        else Path(__file__).resolve().parent / "results"
+    )
+    baseline_by_name = None
+    baseline_commit = None
+    if not args.dry_run and not args.no_compare:
+        if args.baseline:
+            baseline_path = Path(args.baseline).resolve()
+            baseline_record = load_record(baseline_path)
+            if baseline_record is None:
+                print(f"WARNING: could not read baseline: {baseline_path}",
+                      file=sys.stderr)
+        else:
+            baseline_record, baseline_path = find_baseline_record(
+                results_dir, commit
+            )
+        if baseline_record:
+            baseline_by_name = cases_by_name(baseline_record)
+            baseline_commit = baseline_record.get("commit")
+            print(f"Comparing against baseline: {baseline_path} "
+                  f"(commit {baseline_commit or 'unknown'})")
 
-    # Summary
-    passed = [r for r in results if r["status"] == "PASS"]
+    report_text = format_report(
+        results, commit, baseline_by_name, baseline_commit
+    )
+    summary_text = format_summary(results)
+
+    print("\n" + report_text)
+    print("\n" + summary_text)
+
+    # Store this run's metrics for future comparisons (real runs only).
+    if not args.dry_run and not args.no_store:
+        record = build_run_record(results, commit, mpi_runner, total_cores)
+        try:
+            stored_path = save_run_record(results_dir, record)
+            print(f"\nResults stored: {stored_path}")
+        except OSError as exc:
+            print(f"WARNING: could not store results in {results_dir}: {exc}",
+                  file=sys.stderr)
+
+    if args.report_file is not None:
+        if args.report_file == "__DEFAULT__":
+            report_path = log_dir / "report.txt"
+        else:
+            report_path = Path(args.report_file).resolve()
+        try:
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(report_path, "w") as fp:
+                if commit:
+                    fp.write(f"# Commit: {commit}\n")
+                fp.write(report_text)
+                fp.write("\n\n")
+                fp.write(summary_text)
+                fp.write("\n")
+            print(f"\nReport written to: {report_path}")
+        except OSError as exc:
+            print(f"WARNING: could not write report to {report_path}: {exc}",
+                  file=sys.stderr)
+
     failed = [r for r in results if r["status"] == "FAIL"]
     missing = [r for r in results if r["status"] == "MISSING"]
     errors = [r for r in results if r["status"] == "ERROR"]
-
-    print("\nSummary")
-    print("-" * 70)
-    print(f"Total cases:  {len(results)}")
-    print(f"Passed:       {len(passed)}")
-    print(f"Failed:       {len(failed)}")
-    print(f"Missing:      {len(missing)}")
-    print(f"Errors:       {len(errors)}")
-
-    if failed:
-        print("\nFailed cases:")
-        for r in failed:
-            reason = r.get("error") or f"exit code {r['returncode']}"
-            print(f"  - {r['name']}: {reason}  (log: {r['log']})")
-    if missing:
-        print("\nMissing cases:")
-        for r in missing:
-            print(f"  - {r['name']}: {r.get('error')}")
-    if errors:
-        print("\nCases with execution errors:")
-        for r in errors:
-            print(f"  - {r['name']}: {r.get('error')}")
 
     if failed or missing or errors:
         return 1
