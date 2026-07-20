@@ -61,6 +61,33 @@ free surface flow (VoF + FCT/cMULES), and discretisation schemes.
   > `-DSIERRA_MIGRATION:BOOL=ON` set.  This dependency will be removed in the
   > future.  A convenient way to install dependencies is to use
   > [Spack](https://spack.io/) which is further explained below.
+
+  > **⚠️ Note on parallel netCDF (manual Trilinos builds):**
+  > When building Trilinos manually, it is **essential** that it is linked
+  > against the **PnetCDF-enabled netCDF**.  This is what allows SEACAS/Ioss to
+  > read a serial Exodus mesh collectively, and therefore what enables the
+  > **runtime automatic decomposition** used by STK (see [Parallel Execution
+  > with MPI](#parallel-execution-with-mpi)).  Without it, meshes must be
+  > decomposed offline with `decomp` instead.
+  >
+  > On Debian/Ubuntu the required flavour is provided by
+  > `libnetcdf-pnetcdf-dev`:
+  > ```sh
+  > sudo apt-get install libnetcdf-pnetcdf-dev
+  > ```
+  > This installs a *parallel* netCDF **side by side** with the serial
+  > `libnetcdf-dev`, under a separate prefix.  Trilinos' package prefind will
+  > otherwise pick up the serial build, so the parallel one has to be pointed
+  > to explicitly in the Trilinos configuration:
+  > ```sh
+  > -DNetcdf_ALLOW_PACKAGE_PREFIND:BOOL=OFF \
+  > -DTPL_Netcdf_INCLUDE_DIRS:PATH=/usr/lib/x86_64-linux-gnu/netcdf/pnetcdf/include \
+  > -DTPL_Netcdf_LIBRARIES:FILEPATH=/usr/lib/x86_64-linux-gnu/netcdf/pnetcdf/libnetcdf.so \
+  > -DTPL_Netcdf_PARALLEL:BOOL=ON \
+  > ```
+  > Adjust the paths to match your distribution's multiarch triplet.  The
+  > provided Spack environments already build a parallel netCDF, so this only
+  > concerns manual builds.
 * **YAML-cpp:** Required for input parsing and configuration.
 * **MPI:** Essential for parallel execution and distributed memory
   communication.  [MPICH](https://www.mpich.org/) and
@@ -196,6 +223,15 @@ Zoltan2):
 * `rcb_ignore_z`: Recursive coordinate bisection, ignoring the z-coordinate
   dimension
 * `rib`: Recursive intertial bisection
+
+> [!IMPORTANT]
+> The automatic decomposition is performed at runtime by STK/Ioss and requires
+> Trilinos to have been linked against the **PnetCDF-enabled netCDF**.  If
+> Trilinos was built manually against the serial netCDF, the automatic
+> decomposition is not available and the mesh must be decomposed beforehand
+> with `decomp` (see [Manual Mesh
+> Decomposition](#manual-mesh-decomposition)).  See the
+> [Dependencies](#required) section for how to configure this.
 
 Execute OpenAccel in parallel via `mpirun`:
 
