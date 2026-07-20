@@ -3,6 +3,14 @@ if (NOT DEFINED pre_configure_dir)
     set(pre_configure_dir ${CMAKE_CURRENT_LIST_DIR})
 endif()
 
+# Directory the git queries below must run in. This file is re-run in script
+# mode (cmake -P) from the build directory, where CMAKE_SOURCE_DIR is only the
+# working directory, not the project source. Git still finds the repo when the
+# build tree lives inside the checkout, but not when it sits outside it. Derive
+# the repo root from this file's own location, which is correct in both script
+# and configure mode.
+get_filename_component(GIT_WORK_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+
 if (NOT DEFINED post_configure_dir)
     set(post_configure_dir ${CMAKE_BINARY_DIR}/generated)
 endif()
@@ -28,13 +36,13 @@ function(CheckGitVersion)
         find_package(Git REQUIRED QUIET)
         execute_process(
             COMMAND ${GIT_EXECUTABLE} describe --tags --always --long --dirty --broken
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            WORKING_DIRECTORY ${GIT_WORK_DIR}
             OUTPUT_VARIABLE GIT_DESCRIBE
             OUTPUT_STRIP_TRAILING_WHITESPACE
             )
         execute_process(
             COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
-            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            WORKING_DIRECTORY ${GIT_WORK_DIR}
             OUTPUT_VARIABLE GIT_COMMIT_HASH
             OUTPUT_STRIP_TRAILING_WHITESPACE
         )
@@ -52,7 +60,7 @@ function(CheckGitVersion)
 
     execute_process(
         COMMAND ${GIT_EXECUTABLE} describe --always
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${GIT_WORK_DIR}
         OUTPUT_VARIABLE GIT_TAG
         OUTPUT_STRIP_TRAILING_WHITESPACE
         RESULT_VARIABLE GIT_RESULT
@@ -83,9 +91,11 @@ function(CheckGitVersion)
         file(MAKE_DIRECTORY ${post_configure_dir})
     endif()
 
-    if (NOT EXISTS ${post_configure_dir}/version.h)
-        file(COPY ${pre_configure_dir}/version.h DESTINATION ${post_configure_dir})
-    endif()
+    # Copy unconditionally: guarding this on "not exists" meant an existing build
+    # tree kept a stale copy forever, so declarations added to version.h later
+    # (e.g. PROJECT_NAME) were missing and the build failed until the build
+    # directory was wiped. configure_file/COPYONLY is a no-op when unchanged.
+    configure_file(${pre_configure_dir}/version.h ${post_configure_dir}/version.h COPYONLY)
 
     if (NOT DEFINED GIT_HASH_CACHE)
         set(GIT_HASH_CACHE "INVALID")
