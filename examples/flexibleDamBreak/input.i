@@ -186,7 +186,6 @@ simulation:
                                 max_levels: 25
                                 aggressive_levels: 0
                                 trunc_factor: 0.1
-        options:
             expert_parameters:
                 body_force_redistribution: false
         output_control:
