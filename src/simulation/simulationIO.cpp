@@ -680,7 +680,7 @@ void simulation::initializeOutput_()
 
     restart.propertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
     restart.fileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
-        restart_path,
+        restart_path.string(),
         stk::io::WRITE_RESTART,
         *restart.propertyManagerPtr_.get());
     std::set<std::string> sanitized_fields;

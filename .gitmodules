@@ -1,7 +1,7 @@
 [submodule "src/solver"]
 	path = src/solver
 	url = https://github.com/CCFNUM/LibLinSolve.git
-	branch = main
+	branch = windows-mingw-support
 [submodule "external/eigen"]
 	path = external/eigen
 	url = https://gitlab.com/libeigen/eigen.git
