@@ -689,7 +689,7 @@ void simulation::initializeOutput_()
     restart.propertyManagerPtr_->add(
         Ioss::Property("MAXIMUM_NAME_LENGTH", 256));
     restart.fileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
-        restart_path,
+        restart_path.string(),
         stk::io::WRITE_RESTART,
         *restart.propertyManagerPtr_.get());
     for (const auto& field_name : restart.fields_)

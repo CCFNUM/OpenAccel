@@ -58,7 +58,7 @@ probeObject::probeObject(postProcess* postProcessPtr,
         {
             fs::remove_all(postProcessPtr_->directory() / name_);
         }
-        std::string fileName(postProcessPtr_->directory() / name_);
+        std::string fileName((postProcessPtr_->directory() / name_).string());
         std::ofstream file(fileName);
 
         file << postProcessPtr_->instanceHeader();
@@ -256,7 +256,7 @@ void probeObject::update()
 
     if (messager::master() && writeToFile_)
     {
-        std::string fileName(postProcessPtr_->directory() / name_);
+        std::string fileName((postProcessPtr_->directory() / name_).string());
         std::ofstream file(fileName, std::ios::app);
 
         file << postProcessPtr_->instance();

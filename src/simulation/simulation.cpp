@@ -34,7 +34,7 @@ simulation::simulation(const int argc, const char* argv[]) : verbose_(0)
     printSolverHeader();
 
     inputFilePath_ = fs::path(inputFileName);
-    inputNode_ = YAML::LoadFile(inputFilePath_.c_str());
+    inputNode_ = YAML::LoadFile(inputFilePath_.string());
 
     if (getYAMLSimulationNode()["verbose"])
     {
