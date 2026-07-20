@@ -8,10 +8,18 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 0.5
+            total_time: 1
             time_steps:
-                option: constant
-                timestep: 5e-4
+                option: adaptive
+                initial_timestep: 0.001
+                timestep_update_frequency: 1
+                timestep_adaptation:
+                    option: max_courant
+                    courant_number: 1.0
+                    min_timestep: 1.0e-6
+                    max_timestep: 1
+                    timestep_decrease_factor: 0.8
+                    timestep_increase_factor: 1.06
         domains:
         - name: fluid
           location: [fluid]
@@ -45,7 +53,7 @@ simulation:
           - pair: [water, air]
             surface_tension:
                 option: continuum_surface_force
-                surface_tension_coefficient: 0
+                surface_tension_coefficient: 0.07
           boundaries:
           - name: walls
             type: wall
@@ -123,29 +131,21 @@ simulation:
         solver_control:
             basic_settings:
                 advection_scheme: high_resolution
-                transient_scheme: second_order_backward_euler
+                transient_scheme: first_order_backward_euler
                 convergence_controls:
-                    min_iterations: 10
-                    max_iterations: 25
+                    min_iterations: 1
+                    max_iterations: 5
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-8
-                    physics_convergence:
-                        enabled: true
-                        write_residuals: true
-                        criteria: [fsi_interface_residual]
-                        targets:
-                            fsi_interface_residual: 1e-3
+                    residual_target: 1e-6
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:
                 equation_controls:
                     volume_fraction_smoothing:
                         smooth_volume_fraction: true
-                        smoothing_iterations: 10
+                        smoothing_iterations: 3
                         fourier_number: 0.25
-                    sub_iterations:
-                        pressure_correction: 30
                     acceleration:
                         solid_displacement:
                             option: aitken
@@ -188,11 +188,12 @@ simulation:
                                 trunc_factor: 0.1
             expert_parameters:
                 body_force_redistribution: false
+                force_full_node_graph: false
         output_control:
             file_path: results.e
             output_frequency:
                 option: time_interval
-                time_interval: 0.001
+                time_interval: 0.05
             write_timestep_info: true
             output_fields: [velocity, pressure, volume_fraction.water, displacement_mesh, velocity_mesh, density, dynamic_viscosity]
             corrected_boundary_values: true
