@@ -107,7 +107,7 @@ void mesh::read(const YAML::Node& inputNode)
         }
 
         // Initialize meta data (from exodus file)
-        ioBrokerPtr_->add_mesh_database(meshFilePath,
+        ioBrokerPtr_->add_mesh_database(meshFilePath.string(),
                                         restart_ctrl.isRestart_
                                             ? stk::io::READ_RESTART
                                             : stk::io::READ_MESH);

@@ -38,7 +38,7 @@ reductionObject::reductionObject(postProcess* postProcessPtr,
             {
                 fs::remove_all(postProcessPtr->directory() / name_);
             }
-            std::string fileName(postProcessPtr->directory() / name_);
+            std::string fileName((postProcessPtr->directory() / name_).string());
             std::ofstream file(fileName);
 
             // Check if a node field
@@ -206,8 +206,8 @@ void reductionObject::update()
 
                         if (writeToFile_)
                         {
-                            std::string fileName(postProcessPtr_->directory() /
-                                                 name_);
+                            std::string fileName(
+                                (postProcessPtr_->directory() / name_).string());
                             std::ofstream file(fileName, std::ios_base::app);
                             file << postProcessPtr_->instance() << "\t";
                             for (label i = 0; i < fieldDim; i++)
@@ -341,7 +341,7 @@ void reductionObject::update()
                             if (writeToFile_)
                             {
                                 std::string fileName(
-                                    postProcessPtr_->directory() / name_);
+                                    (postProcessPtr_->directory() / name_).string());
                                 std::ofstream file(fileName,
                                                    std::ios_base::app);
 
@@ -600,8 +600,8 @@ void reductionObject::update()
 
                     if (writeToFile_)
                     {
-                        std::string fileName(postProcessPtr_->directory() /
-                                             name_);
+                        std::string fileName(
+                            (postProcessPtr_->directory() / name_).string());
                         std::ofstream file(fileName, std::ios_base::app);
                         file << postProcessPtr_->instance() << "\t";
                         for (label j = 0; j < fieldDim; ++j)
@@ -816,8 +816,8 @@ void reductionObject::update()
 
                         if (writeToFile_)
                         {
-                            std::string fileName(postProcessPtr_->directory() /
-                                                 name_);
+                            std::string fileName(
+                                (postProcessPtr_->directory() / name_).string());
                             std::ofstream file(fileName, std::ios_base::app);
                             file << postProcessPtr_->instance() << "\t";
                             for (label i = 0; i < fieldDim; i++)
@@ -1023,7 +1023,7 @@ void reductionObject::update()
                             if (writeToFile_)
                             {
                                 std::string fileName(
-                                    postProcessPtr_->directory() / name_);
+                                    (postProcessPtr_->directory() / name_).string());
                                 std::ofstream file(fileName,
                                                    std::ios_base::app);
 
@@ -1234,8 +1234,8 @@ void reductionObject::update()
 
                         if (writeToFile_)
                         {
-                            std::string fileName(postProcessPtr_->directory() /
-                                                 name_);
+                            std::string fileName(
+                                (postProcessPtr_->directory() / name_).string());
                             std::ofstream file(fileName, std::ios_base::app);
                             file << postProcessPtr_->instance() << "\t";
                             for (label i = 0; i < fieldDim; i++)
@@ -1380,7 +1380,7 @@ void reductionObject::update()
                             if (writeToFile_)
                             {
                                 std::string fileName(
-                                    postProcessPtr_->directory() / name_);
+                                    (postProcessPtr_->directory() / name_).string());
                                 std::ofstream file(fileName,
                                                    std::ios_base::app);
 

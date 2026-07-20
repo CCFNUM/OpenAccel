@@ -690,7 +690,7 @@ void simulation::initializeOutput_()
 
     restartPropertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
     restartFileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
-        restart_path,
+        restart_path.string(),
         stk::io::WRITE_RESTART,
         *restartPropertyManagerPtr_.get());
     for (const auto& field_name : restartFields_)

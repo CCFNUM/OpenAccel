@@ -23,6 +23,13 @@
 #include "macros.h"
 #include "simulation.h"
 
+#ifdef _WIN32
+// Included last so its macros do not pollute the STK/Trilinos headers above.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 namespace
 {
 // Global pointer used by the signal handler to trigger a clean shutdown.
@@ -89,8 +96,22 @@ int main(int argc, char* argv[])
 #ifdef HAS_PETSC
     // Finalize the Petsc environment.
     ErrorWrapPetscCall(PetscFinalize());
-#endif /* HAS_PETSC */    
+#endif /* HAS_PETSC */
     MPI_Finalize();
+
+#ifdef _WIN32
+    // The MSYS2 netcdf DLL bundles the AWS C++ SDK (S3/NCZarr support), whose
+    // process-exit handler deadlocks joining its event-loop threads during the
+    // Windows shutdown sequence (LdrShutdownProcess -> netcdf onexit table ->
+    // aws-c-common SleepConditionVariableSRW). All simulation output has
+    // already been written and closed by this point, and Kokkos/MPI have been
+    // finalized above, so terminate immediately to skip the deadlocking
+    // per-DLL teardown. TerminateProcess is the only exit path that bypasses
+    // the onexit tables entirely.
+    std::cout.flush();
+    std::cerr.flush();
+    ::TerminateProcess(::GetCurrentProcess(), 0);
+#endif
 
     return 0;
 }

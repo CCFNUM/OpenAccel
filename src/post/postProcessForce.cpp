@@ -33,7 +33,7 @@ forceObject::forceObject(postProcess* postProcessPtr,
         {
             fs::remove_all(postProcessPtr->directory() / name_);
         }
-        std::string fileName(postProcessPtr->directory() / name_);
+        std::string fileName((postProcessPtr->directory() / name_).string());
         std::ofstream file(fileName);
 
         file << postProcessPtr_->instanceHeader() + "\t";
@@ -324,7 +324,7 @@ void forceObject::update()
 
             if (writeToFile_)
             {
-                std::string fileName(postProcessPtr_->directory() / name_);
+                std::string fileName((postProcessPtr_->directory() / name_).string());
                 std::ofstream file(fileName, std::ios_base::app);
                 file << postProcessPtr_->instance() << "\t";
                 file << force[0] << "\t";
@@ -398,7 +398,7 @@ void forceObject::update()
 
             if (writeToFile_)
             {
-                std::string fileName(postProcessPtr_->directory() / name_);
+                std::string fileName((postProcessPtr_->directory() / name_).string());
                 std::ofstream file(fileName, std::ios_base::app);
                 file << postProcessPtr_->instance() << "\t";
 

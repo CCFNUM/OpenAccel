@@ -774,13 +774,15 @@ void linearSystem<N>::initializeHistory_()
         const auto ctx = lsolver_->getContext();
 
         residual_file_name_ = this->canonicalSystemName_();
-        residual_file_name_ = sim_.getResidualDirectory() / residual_file_name_;
+        // .string() is required on Windows, where fs::path's native type is
+        // wstring and has no implicit conversion to std::string.
+        residual_file_name_ = (sim_.getResidualDirectory() / residual_file_name_).string();
         const size_t len = residual_file_name_.size();
         int nfiles = 0;
         for (const auto& entry :
              fs::directory_iterator{sim_.getResidualDirectory()})
         {
-            if (residual_file_name_.compare(0, len, entry.path(), 0, len) == 0)
+            if (residual_file_name_.compare(0, len, entry.path().string(), 0, len) == 0)
             {
                 ++nfiles;
             }

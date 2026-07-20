@@ -560,7 +560,7 @@ fs::path controls::getRestartDirectory() const
         for (const auto& entry : fs::directory_iterator{dir})
         {
             if (restart_dir_name.compare(
-                    0, len, entry.path().filename(), 0, len) == 0)
+                    0, len, entry.path().filename().string(), 0, len) == 0)
             {
                 ++nrestart_dirs;
             }
