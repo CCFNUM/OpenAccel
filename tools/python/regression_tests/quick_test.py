@@ -33,9 +33,16 @@ root:
   - 2D: build2D/openaccel-2D.exe
 Passing --exe-3d / --exe-2d overrides those defaults.
 
+A single case can be forced by passing its name as a positional argument.
+Any directory under examples/ is accepted, not just the curated quick set,
+and the report then covers only that case.  An unknown name is an error.
+
 Usage examples:
     # Use the in-tree build/ and build2D/ binaries
     python3 tools/python/regression_tests/quick_test.py
+
+    # Run only one example case
+    python3 tools/python/regression_tests/quick_test.py pitzDaily
 
     # Override binary locations and save the report to a file
     python3 tools/python/regression_tests/quick_test.py \
@@ -87,6 +94,45 @@ SELECTED_CASES = [
     {"name": "TaylorCouettePoiseuille", "dir": "examples/TaylorCouettePoiseuille"},
     {"name": "cavity",        "dir": "examples/cavity"},
 ]
+
+EXAMPLES_DIR = "examples"
+
+
+def available_example_cases(root: Path) -> list[str]:
+    """Names of every case directory under examples/, sorted."""
+    examples = root / EXAMPLES_DIR
+    if not examples.is_dir():
+        return []
+    return sorted(p.name for p in examples.iterdir() if p.is_dir())
+
+
+def resolve_single_case(root: Path, requested: str) -> dict:
+    """Map a user-supplied case name to a test-matrix entry.
+
+    Any directory under examples/ is accepted, not just the curated quick
+    set, with or without an 'examples/' prefix and matched case-insensitively.
+    Raises ValueError if no such case exists.
+    """
+    name = requested.strip().strip("/")
+    if name.lower().startswith(EXAMPLES_DIR + "/"):
+        name = name[len(EXAMPLES_DIR) + 1:].strip("/")
+
+    if not name:
+        raise ValueError("no case name given")
+
+    names = available_example_cases(root)
+    match = next((n for n in names if n == name), None)
+    if match is None:
+        match = next((n for n in names if n.lower() == name.lower()), None)
+    if match is None:
+        raise ValueError(f"unknown case: {requested}")
+
+    for case in SELECTED_CASES:
+        if case["name"] == match:
+            return dict(case)
+    # Cases outside the curated quick set are still runnable.
+    return {"name": match, "dir": f"{EXAMPLES_DIR}/{match}"}
+
 
 # Files are NetCDF classic/64-bit (CDF-1/2/5) or NetCDF-4/HDF5.
 CDF_SIGNATURE = b"CDF"
@@ -726,13 +772,17 @@ def run_case(
     return result
 
 
-def build_plan(args: argparse.Namespace, root: Path) -> tuple[list[dict], list[str]]:
+def build_plan(
+    args: argparse.Namespace,
+    root: Path,
+    cases: list[dict] | None = None,
+) -> tuple[list[dict], list[str]]:
     """Inspect every selected case, warn about missing files, build a plan."""
     total_cores = args.max_total_cores or available_cores()
     plan = []
     warnings = []
 
-    for case in SELECTED_CASES:
+    for case in (cases if cases is not None else SELECTED_CASES):
         name = case["name"]
         case_dir = root / case["dir"]
         input_file = case_dir / "input.i"
@@ -875,6 +925,31 @@ def save_run_record(history_dir: Path, record: dict) -> Path:
         json.dump(record, fp, indent=2)
         fp.write("\n")
     return path
+
+
+def merge_run_record(history_dir: Path, record: dict) -> dict:
+    """Fold a partial run into the record already stored for the same commit.
+
+    Without this a single-case run would drop every other case from that
+    commit's record, ruining it as a baseline for the next run.
+    """
+    path = history_dir / f"{commit_slug(record.get('commit'))}.json"
+    existing = load_record(path) if path.is_file() else None
+    if not existing:
+        return record
+
+    cases = [c for c in existing.get("cases", []) if isinstance(c, dict)]
+    index = {c.get("name"): i for i, c in enumerate(cases)}
+    for case in record.get("cases", []):
+        i = index.get(case.get("name"))
+        if i is None:
+            cases.append(case)
+        else:
+            cases[i] = case
+
+    merged = dict(record)
+    merged["cases"] = cases
+    return merged
 
 
 def load_record(path: Path) -> dict | None:
@@ -1084,6 +1159,17 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
+        "case",
+        nargs="?",
+        default=None,
+        help=(
+            "Run only this example case (a directory name under examples/, "
+            "with or without the 'examples/' prefix). Any case in examples/ "
+            "is accepted, not just the curated quick set. Omit to run the "
+            "full quick-test matrix."
+        ),
+    )
+    parser.add_argument(
         "--exe-2d",
         default=None,
         help=(
@@ -1200,6 +1286,31 @@ def main(argv: list[str] | None = None) -> int:
 
     root = repo_root()
 
+    selected_cases = None
+    if args.case is not None:
+        try:
+            selected_cases = [resolve_single_case(root, args.case)]
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            names = available_example_cases(root)
+            if names:
+                print(f"Available cases under {root / EXAMPLES_DIR}:",
+                      file=sys.stderr)
+                for n in names:
+                    print(f"  - {n}", file=sys.stderr)
+            else:
+                print(f"ERROR: no case directories found under "
+                      f"{root / EXAMPLES_DIR}", file=sys.stderr)
+            return 2
+
+    # Only the binary a single selected case needs has to be present.
+    required_dims = {"2D", "3D"}
+    if selected_cases:
+        single_dir = root / selected_cases[0]["dir"]
+        single_dim = detect_dimension(single_dir) if single_dir.is_dir() else None
+        if single_dim:
+            required_dims = {single_dim}
+
     # Binaries default to the in-tree build directories; explicit paths override.
     exe_3d = (
         Path(args.exe_3d).resolve() if args.exe_3d else default_exe_3d(root)
@@ -1207,10 +1318,12 @@ def main(argv: list[str] | None = None) -> int:
     exe_2d = (
         Path(args.exe_2d).resolve() if args.exe_2d else default_exe_2d(root)
     )
-    for label, exe, overridden in (
-        ("--exe-3d", exe_3d, bool(args.exe_3d)),
-        ("--exe-2d", exe_2d, bool(args.exe_2d)),
+    for label, exe, overridden, dim_key in (
+        ("--exe-3d", exe_3d, bool(args.exe_3d), "3D"),
+        ("--exe-2d", exe_2d, bool(args.exe_2d), "2D"),
     ):
+        if dim_key not in required_dims:
+            continue
         if not exe.is_file():
             hint = "" if overridden else " (build it, or pass an explicit path)"
             print(f"ERROR: {label} does not exist: {exe}{hint}", file=sys.stderr)
@@ -1229,10 +1342,15 @@ def main(argv: list[str] | None = None) -> int:
     commit = git_commit(root)
     print(f"Repository root: {root}")
     print(f"Commit:          {commit or 'unknown'}")
-    print(f"3D binary:       {exe_3d}")
-    print(f"2D binary:       {exe_2d}")
+    if "3D" in required_dims:
+        print(f"3D binary:       {exe_3d}")
+    if "2D" in required_dims:
+        print(f"2D binary:       {exe_2d}")
+    if selected_cases:
+        print(f"Single case:     {selected_cases[0]['name']} "
+              f"({selected_cases[0]['dir']})")
 
-    plan, warnings = build_plan(args, root)
+    plan, warnings = build_plan(args, root, selected_cases)
 
     if warnings:
         print("\n".join(warnings), file=sys.stderr)
@@ -1342,6 +1460,8 @@ def main(argv: list[str] | None = None) -> int:
     # Store this run's metrics for future comparisons (real runs only).
     if not args.dry_run and not args.no_store:
         record = build_run_record(results, commit, mpi_runner, total_cores)
+        if selected_cases:
+            record = merge_run_record(results_dir, record)
         try:
             stored_path = save_run_record(results_dir, record)
             print(f"\nResults stored: {stored_path}")
