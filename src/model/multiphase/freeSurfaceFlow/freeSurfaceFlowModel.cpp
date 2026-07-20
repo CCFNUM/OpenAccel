@@ -3213,6 +3213,113 @@ void freeSurfaceFlowModel::computeFL_(const std::shared_ptr<domain> domain,
                             }
                             break;
 
+                        case boundaryConditionType::zeroGradient:
+                            {
+                                // zero-gradient inlet: low-order boundary flux
+                                // uses the nodal (interior) alpha, mirroring
+                                // the zero-gradient outlet treatment below
+                                const STKScalarField* mDotSideSTKFieldPtr =
+                                    this->mDotRef(iPhase)
+                                        .sideFieldRef()
+                                        .stkFieldPtr();
+                                const STKScalarField* alphaSTKFieldPtr =
+                                    this->alphaRef(iPhase).stkFieldPtr();
+
+                                std::vector<scalar> ws_alpha;
+
+                                // define some common selectors
+                                stk::mesh::Selector selAllSides =
+                                    metaData.universal_part() &
+                                    stk::mesh::selectUnion(boundary->parts());
+
+                                stk::mesh::BucketVector const& sideBuckets =
+                                    bulkData.get_buckets(metaData.side_rank(),
+                                                         selAllSides);
+
+                                for (stk::mesh::BucketVector::const_iterator
+                                         ib = sideBuckets.begin();
+                                     ib != sideBuckets.end();
+                                     ++ib)
+                                {
+                                    stk::mesh::Bucket& sideBucket = **ib;
+
+                                    const stk::mesh::Bucket::size_type
+                                        nSidesPerBucket = sideBucket.size();
+
+                                    const stk::topology theTopo =
+                                        sideBucket.topology();
+
+                                    // face master element
+                                    MasterElement* meFC = MasterElementRepo::
+                                        get_surface_master_element(theTopo);
+
+                                    const label numScsBip = meFC->numIntPoints_;
+
+                                    // extract master element specifics
+                                    const label numNodesPerSide =
+                                        meFC->nodesPerElement_;
+
+                                    // set sizes
+                                    ws_alpha.resize(numNodesPerSide);
+
+                                    // get pointers
+                                    scalar* p_alpha = &ws_alpha[0];
+
+                                    for (stk::mesh::Bucket::size_type iSide = 0;
+                                         iSide < nSidesPerBucket;
+                                         ++iSide)
+                                    {
+                                        const auto& side = sideBucket[iSide];
+
+                                        // mapping from ip to nodes for this
+                                        // ordinal
+                                        const label* ipNodeMap =
+                                            meFC->ipNodeMap();
+
+                                        stk::mesh::Entity const* sideRels =
+                                            bulkData.begin_nodes(side);
+
+                                        const scalar* mDot =
+                                            stk::mesh::field_data(
+                                                *mDotSideSTKFieldPtr,
+                                                sideBucket,
+                                                iSide);
+
+                                        // FCT Side Fields
+                                        scalar* sideFL = stk::mesh::field_data(
+                                            *sideFLSTKFieldPtr_,
+                                            sideBucket,
+                                            iSide);
+
+                                        // fill with nodal values
+                                        for (label iNode = 0;
+                                             iNode < numNodesPerSide;
+                                             iNode++)
+                                        {
+                                            stk::mesh::Entity node =
+                                                sideRels[iNode];
+
+                                            p_alpha[iNode] =
+                                                *stk::mesh::field_data(
+                                                    *alphaSTKFieldPtr, node);
+                                        }
+
+                                        for (label ip = 0; ip < numScsBip; ++ip)
+                                        {
+                                            const label nearestNode =
+                                                ipNodeMap[ip];
+
+                                            // save off mDot
+                                            const scalar tmDot = mDot[ip];
+
+                                            sideFL[ip] =
+                                                tmDot * p_alpha[nearestNode];
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+
                         default:
                             errorMsg("Must not reach here");
                     }
@@ -3825,6 +3932,114 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                             // compression factor not calculated
                                             // at the boundary
                                             sideFH[ip] = tmDot * alphaBc[ip];
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+
+                        case boundaryConditionType::zeroGradient:
+                            {
+                                // zero-gradient inlet: high-order boundary
+                                // flux equals the low-order one (nodal alpha,
+                                // no compression at the boundary), mirroring
+                                // the zero-gradient outlet treatment below
+                                const STKScalarField* mDotSideSTKFieldPtr =
+                                    this->mDotRef(iPhase)
+                                        .sideFieldRef()
+                                        .stkFieldPtr();
+                                const STKScalarField* alphaSTKFieldPtr =
+                                    this->alphaRef(iPhase).stkFieldPtr();
+
+                                std::vector<scalar> ws_alpha;
+
+                                // define some common selectors
+                                stk::mesh::Selector selAllSides =
+                                    metaData.universal_part() &
+                                    stk::mesh::selectUnion(boundary->parts());
+
+                                stk::mesh::BucketVector const& sideBuckets =
+                                    bulkData.get_buckets(metaData.side_rank(),
+                                                         selAllSides);
+
+                                for (stk::mesh::BucketVector::const_iterator
+                                         ib = sideBuckets.begin();
+                                     ib != sideBuckets.end();
+                                     ++ib)
+                                {
+                                    stk::mesh::Bucket& sideBucket = **ib;
+
+                                    const stk::mesh::Bucket::size_type
+                                        nSidesPerBucket = sideBucket.size();
+
+                                    const stk::topology theTopo =
+                                        sideBucket.topology();
+
+                                    // face master element
+                                    MasterElement* meFC = MasterElementRepo::
+                                        get_surface_master_element(theTopo);
+
+                                    const label numScsBip = meFC->numIntPoints_;
+
+                                    // extract master element specifics
+                                    const label numNodesPerSide =
+                                        meFC->nodesPerElement_;
+
+                                    // set sizes
+                                    ws_alpha.resize(numNodesPerSide);
+
+                                    // get pointers
+                                    scalar* p_alpha = &ws_alpha[0];
+
+                                    for (stk::mesh::Bucket::size_type iSide = 0;
+                                         iSide < nSidesPerBucket;
+                                         ++iSide)
+                                    {
+                                        const auto& side = sideBucket[iSide];
+
+                                        // mapping from ip to nodes for this
+                                        // ordinal
+                                        const label* ipNodeMap =
+                                            meFC->ipNodeMap();
+
+                                        stk::mesh::Entity const* sideRels =
+                                            bulkData.begin_nodes(side);
+
+                                        const scalar* mDot =
+                                            stk::mesh::field_data(
+                                                *mDotSideSTKFieldPtr,
+                                                sideBucket,
+                                                iSide);
+
+                                        // FCT Side Fields
+                                        scalar* sideFH = stk::mesh::field_data(
+                                            *sideFHSTKFieldPtr_,
+                                            sideBucket,
+                                            iSide);
+
+                                        // fill with nodal values
+                                        for (label iNode = 0;
+                                             iNode < numNodesPerSide;
+                                             iNode++)
+                                        {
+                                            stk::mesh::Entity node =
+                                                sideRels[iNode];
+
+                                            p_alpha[iNode] =
+                                                *stk::mesh::field_data(
+                                                    *alphaSTKFieldPtr, node);
+                                        }
+
+                                        for (label ip = 0; ip < numScsBip; ++ip)
+                                        {
+                                            const label nearestNode =
+                                                ipNodeMap[ip];
+
+                                            // save off mDot
+                                            const scalar tmDot = mDot[ip];
+
+                                            sideFH[ip] =
+                                                tmDot * p_alpha[nearestNode];
                                         }
                                     }
                                 }
@@ -5518,6 +5733,148 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
                             {
                                 // <-- Specified Value Do not Update Alpha -->
                                 //errorMsg("Must not reach here");
+                            }
+                            break;
+
+                        case boundaryConditionType::zeroGradient:
+                            {
+                                // zero-gradient inlet: boundary nodes are free
+                                // DOFs -- apply the limited antidiffusive side
+                                // correction exactly like the zero-gradient
+                                // outlet treatment below
+                                // Get fields
+                                STKScalarField* alphaSTKFieldPtr =
+                                    this->alphaRef(iPhase).stkFieldPtr();
+
+                                const STKScalarField* rhoSTKFieldPtr =
+                                    this->rhoRef(iPhase).stkFieldPtr();
+
+                                const auto* volSTKFieldPtr =
+                                    metaData.get_field<scalar>(
+                                        stk::topology::NODE_RANK,
+                                        mesh::dual_nodal_volume_ID);
+
+                                // Get user defined fields
+                                const bool is_transient =
+                                    this->controlsRef().isTransient();
+                                const scalar dt =
+                                    is_transient
+                                        ? this->controlsRef().getTimestep()
+                                        : this->controlsRef()
+                                              .getPhysicalTimescale();
+
+                                std::vector<scalar> ws_vol;
+                                std::vector<scalar> ws_rho;
+
+                                // define some common selectors
+                                stk::mesh::Selector selAllSides =
+                                    metaData.universal_part() &
+                                    stk::mesh::selectUnion(boundary->parts());
+
+                                stk::mesh::BucketVector const& sideBuckets =
+                                    bulkData.get_buckets(metaData.side_rank(),
+                                                         selAllSides);
+
+                                for (stk::mesh::BucketVector::const_iterator
+                                         ib = sideBuckets.begin();
+                                     ib != sideBuckets.end();
+                                     ++ib)
+                                {
+                                    stk::mesh::Bucket& sideBucket = **ib;
+
+                                    const stk::mesh::Bucket::size_type
+                                        nSidesPerBucket = sideBucket.size();
+
+                                    const stk::topology theTopo =
+                                        sideBucket.topology();
+
+                                    // face master element
+                                    MasterElement* meFC = MasterElementRepo::
+                                        get_surface_master_element(theTopo);
+
+                                    const label numScsBip = meFC->numIntPoints_;
+
+                                    // extract master element specifics
+                                    const label numNodesPerSide =
+                                        meFC->nodesPerElement_;
+
+                                    // set sizes
+                                    ws_vol.resize(numNodesPerSide);
+                                    ws_rho.resize(numNodesPerSide);
+
+                                    // get pointers
+                                    scalar* p_vol = &ws_vol[0];
+                                    scalar* p_rho = &ws_rho[0];
+
+                                    for (stk::mesh::Bucket::size_type iSide = 0;
+                                         iSide < nSidesPerBucket;
+                                         ++iSide)
+                                    {
+                                        const auto& side = sideBucket[iSide];
+
+                                        // mapping from ip to nodes for this
+                                        // ordinal
+                                        const label* ipNodeMap =
+                                            meFC->ipNodeMap();
+
+                                        stk::mesh::Entity const* sideRels =
+                                            bulkData.begin_nodes(side);
+
+                                        // FCT Side Fields
+                                        const scalar* sideA =
+                                            stk::mesh::field_data(
+                                                *sideASTKFieldPtr_,
+                                                sideBucket,
+                                                iSide);
+
+                                        // fill with nodal values
+                                        for (label iNode = 0;
+                                             iNode < numNodesPerSide;
+                                             iNode++)
+                                        {
+                                            stk::mesh::Entity node =
+                                                sideRels[iNode];
+
+                                            p_vol[iNode] =
+                                                *stk::mesh::field_data(
+                                                    *volSTKFieldPtr, node);
+
+                                            p_rho[iNode] =
+                                                *stk::mesh::field_data(
+                                                    *rhoSTKFieldPtr, node);
+                                        }
+
+                                        // Get side lambda field
+                                        const scalar* sideLambda =
+                                            stk::mesh::field_data(
+                                                *sideLambdaSTKFieldPtr_,
+                                                sideBucket,
+                                                iSide);
+
+                                        for (label ip = 0; ip < numScsBip; ++ip)
+                                        {
+                                            const label nearestNode =
+                                                ipNodeMap[ip];
+                                            stk::mesh::Entity node =
+                                                sideRels[nearestNode];
+
+                                            scalar* sideAlphaL =
+                                                stk::mesh::field_data(
+                                                    *alphaSTKFieldPtr, node);
+
+                                            // Apply LIMITED antidiffusive flux
+                                            // No under-relaxation (kappa=1.0)
+                                            const scalar limitedSideA =
+                                                sideLambda[ip] * sideA[ip];
+
+                                            sideAlphaL[0] -=
+                                                (dt / (p_rho[nearestNode] *
+                                                           p_vol[nearestNode] +
+                                                       SMALL)) *
+                                                limitedSideA;
+                                        }
+                                    }
+                                }
                             }
                             break;
 

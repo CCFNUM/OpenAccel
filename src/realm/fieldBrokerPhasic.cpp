@@ -85,6 +85,15 @@ void fieldBroker::setupVolumeFraction(const std::shared_ptr<domain> domain,
                                 alphaRef(iPhase).registerSideFields(
                                     domain->index(), iBoundary);
                             }
+                            else if (option == "zero_gradient")
+                            {
+                                // inlet volume fraction floats with the
+                                // interior solution; no value to query and no
+                                // side fields required (the generic side-field
+                                // update no-ops for inlet + zeroGradient)
+                                bc.setType(
+                                    boundaryConditionType::zeroGradient);
+                            }
                             else
                             {
                                 errorMsg("Unrecognized volume fraction option "
