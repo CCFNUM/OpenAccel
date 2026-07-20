@@ -229,7 +229,41 @@ if(PETSC_FOUND)
 else()
     if(DEFINED PETSC_DIR)
         if(DEFINED PETSC_ARCH)
-            target_link_libraries(main_obj PUBLIC ${PETSC_DIR}/${PETSC_ARCH}/lib/libpetsc.so)
+            # Find the library instead of assuming a platform's extension: PETSc
+            # is libpetsc.so on Linux, .dylib on macOS and a static .a for the
+            # MinGW build on Windows, where a hardcoded .so cannot exist.
+            find_library(PETSC_LIBRARY NAMES petsc
+                         PATHS "${PETSC_DIR}/${PETSC_ARCH}/lib" NO_DEFAULT_PATH)
+            if(NOT PETSC_LIBRARY)
+                message(FATAL_ERROR
+                        "No PETSc library in ${PETSC_DIR}/${PETSC_ARCH}/lib")
+            endif()
+            target_link_libraries(main_obj PUBLIC ${PETSC_LIBRARY})
+
+            # A static PETSc carries no dependency information, so its
+            # third-party libraries (BLAS, metis, hwloc, MPI, ...) have to be
+            # named. PETSc lists them as Libs.private in the pkg-config file it
+            # writes for the arch. Read that file directly instead of running
+            # pkg-config: PKG_CONFIG_PATH is colon-separated, which is
+            # ambiguous on Windows where paths start with a drive letter and a
+            # colon, and the lookup then silently finds nothing.
+            get_filename_component(_petsc_ext "${PETSC_LIBRARY}" EXT)
+            if(_petsc_ext STREQUAL ".a")
+                file(GLOB _petsc_pc "${PETSC_DIR}/${PETSC_ARCH}/lib/pkgconfig/*.pc")
+                if(_petsc_pc)
+                    list(GET _petsc_pc 0 _petsc_pc)
+                    file(STRINGS "${_petsc_pc}" _petsc_private REGEX "^Libs\\.private:")
+                    string(REGEX REPLACE "^Libs\\.private:[ \t]*" "" _petsc_private "${_petsc_private}")
+                    if(_petsc_private)
+                        separate_arguments(_petsc_private UNIX_COMMAND "${_petsc_private}")
+                        target_link_libraries(main_obj PUBLIC ${_petsc_private})
+                    endif()
+                else()
+                    message(WARNING
+                            "No PETSc pkg-config file under ${PETSC_DIR}/${PETSC_ARCH}/lib/pkgconfig; "
+                            "linking a static PETSc may fail on its dependencies.")
+                endif()
+            endif()
         else()
             target_link_libraries(main_obj PUBLIC petsc)
             target_link_directories(main_obj PUBLIC ${PETSC_DIR}/lib ${PETSC_DIR}/lib64)
