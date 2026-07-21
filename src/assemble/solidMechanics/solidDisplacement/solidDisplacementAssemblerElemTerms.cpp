@@ -6,6 +6,10 @@
 
 #include "solidDisplacementAssembler.h"
 
+#ifndef USE_CVFEM_SOLID_MECHANICS
+#include "linear_elasticity.hpp"
+#endif
+
 namespace accel
 {
 
@@ -495,7 +499,245 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         }
     }
 #else
-    errorMsg("FEM solid mechanics not implemented yet");
+    const auto& mesh = field_broker_->meshRef();
+    Matrix& A = ctx->getAMatrix();
+    Vector& b = ctx->getBVector();
+
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    STK_ThrowRequireMsg(
+        domain->solidMechanics_.option_ == solidMechanicsOption::linearElastic,
+        "The FEM solid assembler currently supports linear_elastic only");
+
+    const auto& DSTKFieldRef = phi_->stkFieldRef();
+    const auto& ESTKFieldRef = model_->ERef().stkFieldRef();
+    const auto& nuSTKFieldRef = model_->nuRef().stkFieldRef();
+    const auto& coordinatesRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+
+    const stk::mesh::Selector selAllElements =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
+
+    std::vector<scalar> lhs;
+    std::vector<scalar> rhs;
+    std::vector<label> scratchIds;
+    std::vector<scalar> scratchVals;
+    std::vector<stk::mesh::Entity> connectedNodes;
+
+    // Keep the FEM constitutive parameters aligned with the OpenAccel input
+    // switch so the lambda term follows the same plane_stress selection as the
+    // CVFEM solid path.
+    const bool usePlaneStressForFEM = domain->solidMechanics_.planeStress_;
+
+    for (const stk::mesh::Bucket* bucket : elementBuckets)
+    {
+        const stk::topology topology = bucket->topology();
+        smesh::ElemType sfemElementType = smesh::INVALID;
+
+#if SPATIAL_DIM == 3
+        if (topology == stk::topology::HEX_8)
+            sfemElementType = smesh::HEX8;
+        else if (topology == stk::topology::TET_4)
+            sfemElementType = smesh::TET4;
+        else if (topology == stk::topology::TET_10)
+            sfemElementType = smesh::TET10;
+#else
+        if (topology == stk::topology::TRI_3_2D)
+            sfemElementType = smesh::TRI3;
+#endif
+
+        STK_ThrowRequireMsg(
+            sfemElementType != smesh::INVALID,
+            "Unsupported FEM solid element topology: " << topology.name());
+
+        const label nodesPerElement = topology.num_nodes();
+        const label dofsPerElement = nodesPerElement * SPATIAL_DIM;
+        const label lhsSize = dofsPerElement * dofsPerElement;
+
+        lhs.resize(lhsSize);
+        rhs.resize(dofsPerElement);
+        scratchIds.resize(dofsPerElement);
+        scratchVals.resize(dofsPerElement);
+        connectedNodes.resize(nodesPerElement);
+
+        std::vector<idx_t> localNodeIds(nodesPerElement);
+        std::vector<idx_t*> elementConnectivity(nodesPerElement);
+        std::vector<std::vector<geom_t>> coordinates(
+            SPATIAL_DIM, std::vector<geom_t>(nodesPerElement));
+        std::vector<geom_t*> coordinatePointers(SPATIAL_DIM);
+        std::vector<real_t> basis(dofsPerElement, 0.0);
+        std::vector<real_t> column(dofsPerElement, 0.0);
+        std::vector<scalar> displacement(dofsPerElement, 0.0);
+
+        for (label node = 0; node < nodesPerElement; ++node)
+        {
+            localNodeIds[node] = node;
+            elementConnectivity[node] = &localNodeIds[node];
+        }
+        for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+            coordinatePointers[dim] = coordinates[dim].data();
+
+        for (stk::mesh::Entity elem : *bucket)
+        {
+            std::fill(lhs.begin(), lhs.end(), 0.0);
+            std::fill(rhs.begin(), rhs.end(), 0.0);
+            std::fill(displacement.begin(), displacement.end(), 0.0);
+
+            scalar mu = 0.0;
+            scalar lambda = 0.0;
+            const stk::mesh::Entity* nodeRels = bulkData.begin_nodes(elem);
+            STK_ThrowAssert(bulkData.num_nodes(elem) == nodesPerElement);
+
+            for (label node = 0; node < nodesPerElement; ++node)
+            {
+                connectedNodes[node] = nodeRels[node];
+                const scalar* xyz =
+                    stk::mesh::field_data(coordinatesRef, nodeRels[node]);
+                const scalar* D =
+                    stk::mesh::field_data(DSTKFieldRef, nodeRels[node]);
+                const scalar E =
+                    *stk::mesh::field_data(ESTKFieldRef, nodeRels[node]);
+                const scalar nu =
+                    *stk::mesh::field_data(nuSTKFieldRef, nodeRels[node]);
+
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                {
+                    coordinates[dim][node] = xyz[dim];
+                    displacement[node * SPATIAL_DIM + dim] = D[dim];
+                }
+
+                mu += E / (2.0 * (1.0 + nu));
+                lambda += usePlaneStressForFEM
+                              ? nu * E / ((1.0 + nu) * (1.0 - nu))
+                              : nu * E /
+                                    ((1.0 + nu) * (1.0 - 2.0 * nu));
+            }
+
+            mu /= nodesPerElement;
+            lambda /= nodesPerElement;
+
+            // sfem provides the isoparametric matrix-free operator. Applying
+            // it to each local basis vector recovers the element matrix while
+            // OpenAccel retains ownership of the global block matrix.
+            for (label col = 0; col < dofsPerElement; ++col)
+            {
+                std::fill(basis.begin(), basis.end(), 0.0);
+                std::fill(column.begin(), column.end(), 0.0);
+                basis[col] = 1.0;
+
+                const int status = linear_elasticity_apply_aos(
+                    sfemElementType,
+                    1,
+                    nodesPerElement,
+                    elementConnectivity.data(),
+                    coordinatePointers.data(),
+                    mu,
+                    lambda,
+                    basis.data(),
+                    column.data());
+                STK_ThrowRequireMsg(status == SFEM_SUCCESS,
+                                    "sfem linear elasticity kernel failed");
+
+                for (label row = 0; row < dofsPerElement; ++row)
+                    lhs[row * dofsPerElement + col] = column[row];
+            }
+
+            static bool femDebugPrinted = false;
+            const char* femDebug = std::getenv("OPENACCEL_FEM_DEBUG");
+            if (!femDebugPrinted && femDebug && std::atoi(femDebug) > 0 &&
+                messager::myProcNo() == 0)
+            {
+                femDebugPrinted = true;
+                scalar maxEntry = 0.0;
+                scalar maxAsymmetry = 0.0;
+                scalar maxTranslationResidual = 0.0;
+                scalar minDiagonal = std::numeric_limits<scalar>::max();
+                scalar maxDiagonal = -std::numeric_limits<scalar>::max();
+                scalar probeEnergy = 0.0;
+
+                std::vector<scalar> probe(dofsPerElement);
+                for (label row = 0; row < dofsPerElement; ++row)
+                    probe[row] = scalar((row * 17 + 3) % 11) - 5.0;
+
+                for (label row = 0; row < dofsPerElement; ++row)
+                {
+                    const scalar diagonal =
+                        lhs[row * dofsPerElement + row];
+                    minDiagonal = std::min(minDiagonal, diagonal);
+                    maxDiagonal = std::max(maxDiagonal, diagonal);
+
+                    scalar probeRow = 0.0;
+                    for (label col = 0; col < dofsPerElement; ++col)
+                    {
+                        const scalar value =
+                            lhs[row * dofsPerElement + col];
+                        maxEntry = std::max(maxEntry, std::abs(value));
+                        maxAsymmetry = std::max(
+                            maxAsymmetry,
+                            std::abs(value -
+                                     lhs[col * dofsPerElement + row]));
+                        probeRow += value * probe[col];
+                    }
+                    probeEnergy += probe[row] * probeRow;
+
+                    for (label component = 0; component < SPATIAL_DIM;
+                         ++component)
+                    {
+                        scalar translationResidual = 0.0;
+                        for (label node = 0; node < nodesPerElement; ++node)
+                        {
+                            translationResidual +=
+                                lhs[row * dofsPerElement +
+                                    node * SPATIAL_DIM + component];
+                        }
+                        maxTranslationResidual =
+                            std::max(maxTranslationResidual,
+                                     std::abs(translationResidual));
+                    }
+                }
+
+                std::cout << "\n[FEM DEBUG] First SFEM element\n"
+                          << "  topology: " << topology.name() << '\n'
+                          << "  nodes: " << nodesPerElement << '\n'
+                          << "  mu: " << mu << '\n'
+                          << "  lambda: " << lambda << '\n';
+                for (label node = 0; node < nodesPerElement; ++node)
+                {
+                    std::cout << "  x[" << node << "]:";
+                    for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                        std::cout << ' ' << coordinates[dim][node];
+                    std::cout << '\n';
+                }
+                std::cout << "  max_abs_K: " << maxEntry << '\n'
+                          << "  max_abs_K_minus_KT: " << maxAsymmetry << '\n'
+                          << "  max_translation_residual: "
+                          << maxTranslationResidual << '\n'
+                          << "  diagonal_min/max: " << minDiagonal << " / "
+                          << maxDiagonal << '\n'
+                          << "  probe_energy_vKv: " << probeEnergy << '\n'
+                          << std::endl;
+            }
+
+            // OpenAccel solves for an increment, not for the total field:
+            // K * deltaD = f_ext - K * D. Boundary assembly adds f_ext.
+            for (label row = 0; row < dofsPerElement; ++row)
+            {
+                for (label col = 0; col < dofsPerElement; ++col)
+                {
+                    rhs[row] -=
+                        lhs[row * dofsPerElement + col] * displacement[col];
+                }
+            }
+
+            Base::applyCoeff_(
+                A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+        }
+    }
+
 #endif
 }
 

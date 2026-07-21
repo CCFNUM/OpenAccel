@@ -11,6 +11,120 @@
 namespace accel
 {
 
+#ifndef USE_CVFEM_SOLID_MECHANICS
+namespace
+{
+
+bool assembleFEMInterfacePenalty(
+    const label currentNodes,
+    const label opposingNodes,
+    const scalar* currentShape,
+    const scalar* opposingShape,
+    const scalar* opposingToCurrent,
+    const scalar penaltyMeasure,
+    const scalar* currentDisplacement,
+    const scalar* opposingDisplacement,
+    scalar* currentResidual,
+    scalar* currentCurrentTangent,
+    scalar* currentOpposingTangent)
+{
+    if (currentNodes <= 0 || opposingNodes <= 0 || !currentShape ||
+        !opposingShape || !opposingToCurrent || !currentDisplacement ||
+        !opposingDisplacement || !currentResidual ||
+        !currentCurrentTangent || !currentOpposingTangent)
+    {
+        return false;
+    }
+
+    const label currentDofs = currentNodes * SPATIAL_DIM;
+    const label opposingDofs = opposingNodes * SPATIAL_DIM;
+    std::fill(currentResidual, currentResidual + currentDofs, 0.0);
+    std::fill(currentCurrentTangent,
+              currentCurrentTangent + currentDofs * currentDofs,
+              0.0);
+    std::fill(currentOpposingTangent,
+              currentOpposingTangent + currentDofs * opposingDofs,
+              0.0);
+
+    scalar currentValue[SPATIAL_DIM] = {};
+    scalar opposingValue[SPATIAL_DIM] = {};
+    scalar jump[SPATIAL_DIM] = {};
+
+    for (label node = 0; node < currentNodes; ++node)
+    {
+        for (label component = 0; component < SPATIAL_DIM; ++component)
+        {
+            currentValue[component] +=
+                currentShape[node] *
+                currentDisplacement[node * SPATIAL_DIM + component];
+        }
+    }
+
+    for (label node = 0; node < opposingNodes; ++node)
+    {
+        for (label component = 0; component < SPATIAL_DIM; ++component)
+        {
+            opposingValue[component] +=
+                opposingShape[node] *
+                opposingDisplacement[node * SPATIAL_DIM + component];
+        }
+    }
+
+    for (label row = 0; row < SPATIAL_DIM; ++row)
+    {
+        jump[row] = currentValue[row];
+        for (label column = 0; column < SPATIAL_DIM; ++column)
+        {
+            jump[row] -=
+                opposingToCurrent[row * SPATIAL_DIM + column] *
+                opposingValue[column];
+        }
+    }
+
+    for (label currentTest = 0; currentTest < currentNodes; ++currentTest)
+    {
+        for (label rowComponent = 0; rowComponent < SPATIAL_DIM;
+             ++rowComponent)
+        {
+            const label row =
+                currentTest * SPATIAL_DIM + rowComponent;
+            const scalar testMeasure =
+                penaltyMeasure * currentShape[currentTest];
+            currentResidual[row] = testMeasure * jump[rowComponent];
+
+            for (label currentTrial = 0; currentTrial < currentNodes;
+                 ++currentTrial)
+            {
+                const label column =
+                    currentTrial * SPATIAL_DIM + rowComponent;
+                currentCurrentTangent[row * currentDofs + column] =
+                    testMeasure * currentShape[currentTrial];
+            }
+
+            for (label opposingTrial = 0; opposingTrial < opposingNodes;
+                 ++opposingTrial)
+            {
+                for (label columnComponent = 0;
+                     columnComponent < SPATIAL_DIM;
+                     ++columnComponent)
+                {
+                    const label column =
+                        opposingTrial * SPATIAL_DIM + columnComponent;
+                    currentOpposingTangent[row * opposingDofs + column] =
+                        -testMeasure * opposingShape[opposingTrial] *
+                        opposingToCurrent[rowComponent * SPATIAL_DIM +
+                                          columnComponent];
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+} // namespace
+#endif
+
 void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
     const domain* domain,
     const interfaceSideInfo* interfaceSideInfoPtr,
@@ -267,6 +381,10 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
 
         // rotation matrix (in case of rotational periodicity)
         const auto& rotMat = interfaceSideInfoPtr->rotationMatrix_;
+
+        // GGI path is not yet validated for the solid-displacement problem;
+        // preserve the original errorMsg behavior at the top of the function
+        // and run the unified loop for DG below.
 
         // Unified loop over per-IP info.  Storage is owned by the base
         // interfaceSideInfo; concrete side classes store derived records upcast
@@ -819,7 +937,464 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
         }
     }
 #else
-    errorMsg("FEM solid mechanics not implemented yet");
+    const auto& mesh = field_broker_->meshRef();
+    Matrix& A = ctx->getAMatrix();
+    Vector& b = ctx->getBVector();
+
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const auto& displacementField = phi_->stkFieldRef();
+    const auto& areaVectorField = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    std::vector<scalar> lhs;
+    std::vector<scalar> rhs;
+    std::vector<label> scratchIds;
+    std::vector<scalar> scratchVals;
+    std::vector<stk::mesh::Entity> connectedNodes;
+
+    if (interfaceSideInfoPtr->interfPtr()->isFluidSolidType())
+    {
+        const auto& tractionField = phi_->sideFluxFieldRef().stkFieldRef();
+        const stk::mesh::Selector selectedSides =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(interfaceSideInfoPtr->currentPartVec_);
+        const auto& sideBuckets =
+            bulkData.get_buckets(metaData.side_rank(), selectedSides);
+
+        std::vector<scalar> shapeFunctions;
+        for (const stk::mesh::Bucket* bucket : sideBuckets)
+        {
+            MasterElement* faceMasterElement =
+                MasterElementRepo::get_surface_master_element(
+                    bucket->topology());
+            const label nodesPerSide = faceMasterElement->nodesPerElement_;
+            const label integrationPoints = faceMasterElement->numIntPoints_;
+            const label dofsPerSide = nodesPerSide * SPATIAL_DIM;
+
+            lhs.assign(dofsPerSide * dofsPerSide, 0.0);
+            rhs.resize(dofsPerSide);
+            scratchIds.resize(dofsPerSide);
+            scratchVals.resize(dofsPerSide);
+            connectedNodes.resize(nodesPerSide);
+            shapeFunctions.resize(integrationPoints * nodesPerSide);
+
+            if (phi_->isShifted())
+                faceMasterElement->shifted_shape_fcn(shapeFunctions.data());
+            else
+                faceMasterElement->shape_fcn(shapeFunctions.data());
+
+            for (stk::mesh::Entity side : *bucket)
+            {
+                std::fill(rhs.begin(), rhs.end(), 0.0);
+
+                const stk::mesh::Entity* sideNodes =
+                    bulkData.begin_nodes(side);
+                STK_ThrowAssert(bulkData.num_nodes(side) == nodesPerSide);
+                for (label node = 0; node < nodesPerSide; ++node)
+                    connectedNodes[node] = sideNodes[node];
+
+                const scalar* traction =
+                    stk::mesh::field_data(tractionField, side);
+                const scalar* areaVector =
+                    stk::mesh::field_data(areaVectorField, side);
+
+                for (label ip = 0; ip < integrationPoints; ++ip)
+                {
+                    scalar areaMagnitudeSquared = 0.0;
+                    for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                    {
+                        const scalar area =
+                            areaVector[ip * SPATIAL_DIM + dim];
+                        areaMagnitudeSquared += area * area;
+                    }
+                    const scalar areaMagnitude =
+                        std::sqrt(areaMagnitudeSquared);
+
+                    for (label node = 0; node < nodesPerSide; ++node)
+                    {
+                        const scalar weight =
+                            shapeFunctions[ip * nodesPerSide + node] *
+                            areaMagnitude;
+                        for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                        {
+                            rhs[node * SPATIAL_DIM + dim] +=
+                                weight *
+                                traction[ip * SPATIAL_DIM + dim];
+                        }
+                    }
+                }
+
+                Base::applyCoeff_(
+                    A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+            }
+        }
+        return;
+    }
+
+    STK_ThrowRequireMsg(
+        domain->solidMechanics_.option_ == solidMechanicsOption::linearElastic,
+        "The FEM solid interface currently supports linear_elastic only");
+
+    const auto& EField = model_->ERef().stkFieldRef();
+    const auto& nuField = model_->nuRef().stkFieldRef();
+    const auto& coordinatesField = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const bool planeStress = domain->solidMechanics_.planeStress_;
+    const scalar penaltyFactor =
+        interfaceSideInfoPtr->interfPtr()->penaltyFactor();
+    const scalar* opposingToCurrent =
+        interfaceSideInfoPtr->rotationMatrix_.data();
+
+    std::vector<scalar> currentFaceDisplacement;
+    std::vector<scalar> opposingFaceDisplacement;
+    std::vector<scalar> currentElementCoordinates;
+    std::vector<scalar> opposingElementCoordinates;
+    std::vector<scalar> currentDndx;
+    std::vector<scalar> opposingDndx;
+    std::vector<scalar> currentDetJ(1);
+    std::vector<scalar> opposingDetJ(1);
+    std::vector<scalar> currentShape;
+    std::vector<scalar> opposingShape;
+    std::vector<scalar> currentResidual;
+    std::vector<scalar> currentCurrentTangent;
+    std::vector<scalar> currentOpposingTangent;
+    std::vector<scalar> currentElementIsoParCoords(SPATIAL_DIM);
+    std::vector<scalar> opposingElementIsoParCoords(SPATIAL_DIM);
+
+    for (const auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
+    {
+        for (const ipInfo* ip : faceIpInfoVec)
+        {
+            if (ip->isExposed_)
+                continue;
+
+            MasterElement* currentFaceME = ip->meFCCurrent_;
+            MasterElement* opposingFaceME = ip->meFCOpposing_;
+            MasterElement* currentElementME = ip->meSCSCurrent_;
+            MasterElement* opposingElementME = ip->meSCSOpposing_;
+
+            const label currentFaceNodes = currentFaceME->nodesPerElement_;
+            const label opposingFaceNodes = opposingFaceME->nodesPerElement_;
+            const label currentElementNodes =
+                currentElementME->nodesPerElement_;
+            const label opposingElementNodes =
+                opposingElementME->nodesPerElement_;
+            const label totalNodes =
+                currentElementNodes + opposingElementNodes;
+            const label totalDofs = totalNodes * SPATIAL_DIM;
+
+            lhs.assign(totalDofs * totalDofs, 0.0);
+            rhs.assign(totalDofs, 0.0);
+            scratchIds.resize(totalDofs);
+            scratchVals.resize(totalDofs);
+            connectedNodes.resize(totalNodes);
+
+            currentFaceDisplacement.resize(currentFaceNodes * SPATIAL_DIM);
+            opposingFaceDisplacement.resize(opposingFaceNodes * SPATIAL_DIM);
+            currentElementCoordinates.resize(currentElementNodes *
+                                             SPATIAL_DIM);
+            opposingElementCoordinates.resize(opposingElementNodes *
+                                              SPATIAL_DIM);
+            currentDndx.resize(currentElementNodes * SPATIAL_DIM);
+            opposingDndx.resize(opposingElementNodes * SPATIAL_DIM);
+            currentShape.resize(currentFaceNodes);
+            opposingShape.resize(opposingFaceNodes);
+
+            const label currentFaceDofs = currentFaceNodes * SPATIAL_DIM;
+            const label opposingFaceDofs = opposingFaceNodes * SPATIAL_DIM;
+            currentResidual.resize(currentFaceDofs);
+            currentCurrentTangent.resize(currentFaceDofs * currentFaceDofs);
+            currentOpposingTangent.resize(currentFaceDofs *
+                                          opposingFaceDofs);
+
+            const stk::mesh::Entity* currentFaceNodeRels =
+                bulkData.begin_nodes(ip->currentFace_);
+            const stk::mesh::Entity* opposingFaceNodeRels =
+                bulkData.begin_nodes(ip->opposingFace_);
+            STK_ThrowAssert(bulkData.num_nodes(ip->currentFace_) ==
+                            currentFaceNodes);
+            STK_ThrowAssert(bulkData.num_nodes(ip->opposingFace_) ==
+                            opposingFaceNodes);
+
+            scalar currentMu = 0.0;
+            scalar currentLambda = 0.0;
+            for (label node = 0; node < currentFaceNodes; ++node)
+            {
+                const scalar* displacement = stk::mesh::field_data(
+                    displacementField, currentFaceNodeRels[node]);
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                {
+                    currentFaceDisplacement[node * SPATIAL_DIM + dim] =
+                        displacement[dim];
+                }
+            }
+
+            scalar opposingMu = 0.0;
+            scalar opposingLambda = 0.0;
+            for (label node = 0; node < opposingFaceNodes; ++node)
+            {
+                const scalar* displacement = stk::mesh::field_data(
+                    displacementField, opposingFaceNodeRels[node]);
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                {
+                    opposingFaceDisplacement[node * SPATIAL_DIM + dim] =
+                        displacement[dim];
+                }
+            }
+
+            currentFaceME->general_shape_fcn(
+                1, ip->currentIsoParCoords_.data(), currentShape.data());
+            opposingFaceME->general_shape_fcn(
+                1, ip->opposingIsoParCoords_.data(), opposingShape.data());
+
+            for (label node = 0; node < currentFaceNodes; ++node)
+            {
+                const scalar E =
+                    *stk::mesh::field_data(EField, currentFaceNodeRels[node]);
+                const scalar nu =
+                    *stk::mesh::field_data(nuField, currentFaceNodeRels[node]);
+                const scalar shape = currentShape[node];
+                currentMu += shape * E / (2.0 * (1.0 + nu));
+                currentLambda +=
+                    shape *
+                    (planeStress
+                         ? nu * E / ((1.0 + nu) * (1.0 - nu))
+                         : nu * E /
+                               ((1.0 + nu) * (1.0 - 2.0 * nu)));
+            }
+
+            for (label node = 0; node < opposingFaceNodes; ++node)
+            {
+                const scalar E =
+                    *stk::mesh::field_data(EField, opposingFaceNodeRels[node]);
+                const scalar nu =
+                    *stk::mesh::field_data(nuField,
+                                           opposingFaceNodeRels[node]);
+                const scalar shape = opposingShape[node];
+                opposingMu += shape * E / (2.0 * (1.0 + nu));
+                opposingLambda +=
+                    shape *
+                    (planeStress
+                         ? nu * E / ((1.0 + nu) * (1.0 - nu))
+                         : nu * E /
+                               ((1.0 + nu) * (1.0 - 2.0 * nu)));
+            }
+
+            const stk::mesh::Entity* currentElementNodeRels =
+                bulkData.begin_nodes(ip->currentElement_);
+            const stk::mesh::Entity* opposingElementNodeRels =
+                bulkData.begin_nodes(ip->opposingElement_);
+            STK_ThrowAssert(bulkData.num_nodes(ip->currentElement_) ==
+                            currentElementNodes);
+            STK_ThrowAssert(bulkData.num_nodes(ip->opposingElement_) ==
+                            opposingElementNodes);
+
+            for (label node = 0; node < currentElementNodes; ++node)
+            {
+                connectedNodes[node] = currentElementNodeRels[node];
+                const scalar* coordinates = stk::mesh::field_data(
+                    coordinatesField, currentElementNodeRels[node]);
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                {
+                    currentElementCoordinates[node * SPATIAL_DIM + dim] =
+                        coordinates[dim];
+                }
+            }
+
+            for (label node = 0; node < opposingElementNodes; ++node)
+            {
+                connectedNodes[currentElementNodes + node] =
+                    opposingElementNodeRels[node];
+                const scalar* coordinates = stk::mesh::field_data(
+                    coordinatesField, opposingElementNodeRels[node]);
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                {
+                    opposingElementCoordinates[node * SPATIAL_DIM + dim] =
+                        coordinates[dim];
+                }
+            }
+            interfaceSideInfoPtr->transformCoordinateList(
+                opposingElementCoordinates, opposingElementNodes);
+
+            currentElementME->sidePcoords_to_elemPcoords(
+                ip->currentFaceOrdinal_,
+                1,
+                ip->currentIsoParCoords_.data(),
+                currentElementIsoParCoords.data());
+            opposingElementME->sidePcoords_to_elemPcoords(
+                ip->opposingFaceOrdinal_,
+                1,
+                ip->opposingIsoParCoords_.data(),
+                opposingElementIsoParCoords.data());
+
+            scalar gradientError = 0.0;
+            currentElementME->general_face_grad_op(
+                ip->currentFaceOrdinal_,
+                currentElementIsoParCoords.data(),
+                currentElementCoordinates.data(),
+                currentDndx.data(),
+                currentDetJ.data(),
+                &gradientError);
+            opposingElementME->general_face_grad_op(
+                ip->opposingFaceOrdinal_,
+                opposingElementIsoParCoords.data(),
+                opposingElementCoordinates.data(),
+                opposingDndx.data(),
+                opposingDetJ.data(),
+                &gradientError);
+            STK_ThrowRequireMsg(
+                gradientError == 0.0,
+                "Invalid element geometry at FEM solid interface");
+
+            const scalar* areaVector =
+                stk::mesh::field_data(areaVectorField, ip->currentFace_);
+            scalar areaMagnitudeSquared = 0.0;
+            std::vector<scalar> currentNormal(SPATIAL_DIM);
+            for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+            {
+                const scalar area =
+                    areaVector[ip->currentGaussPointId_ * SPATIAL_DIM + dim];
+                areaMagnitudeSquared += area * area;
+                currentNormal[dim] = area;
+            }
+            const scalar areaMagnitude =
+                std::sqrt(areaMagnitudeSquared);
+            STK_ThrowRequireMsg(
+                areaMagnitude > std::numeric_limits<scalar>::epsilon(),
+                "Zero-area integration point at FEM solid interface");
+            for (scalar& component : currentNormal)
+                component /= areaMagnitude;
+
+            const label* currentFaceOrdinals =
+                currentElementME->side_node_ordinals(
+                    ip->currentFaceOrdinal_);
+            const label* opposingFaceOrdinals =
+                opposingElementME->side_node_ordinals(
+                    ip->opposingFaceOrdinal_);
+
+            scalar currentInverseLength = 0.0;
+            for (label node = 0; node < currentFaceNodes; ++node)
+            {
+                const label elementNode = currentFaceOrdinals[node];
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                {
+                    currentInverseLength +=
+                        currentDndx[elementNode * SPATIAL_DIM + dim] *
+                        currentNormal[dim];
+                }
+            }
+
+            std::vector<scalar> opposingNormal(currentNormal);
+            for (scalar& component : opposingNormal)
+                component = -component;
+
+            scalar opposingInverseLength = 0.0;
+            for (label node = 0; node < opposingFaceNodes; ++node)
+            {
+                const label elementNode = opposingFaceOrdinals[node];
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                {
+                    opposingInverseLength +=
+                        opposingDndx[elementNode * SPATIAL_DIM + dim] *
+                        opposingNormal[dim];
+                }
+            }
+
+            const scalar currentStiffness =
+                currentLambda + 2.0 * currentMu / 3.0;
+            const scalar opposingStiffness =
+                opposingLambda + 2.0 * opposingMu / 3.0;
+            const scalar penalty =
+                penaltyFactor *
+                (currentStiffness * currentInverseLength +
+                 opposingStiffness * opposingInverseLength) /
+                2.0;
+            const scalar penaltyMeasure =
+                penalty * areaMagnitude * ip->areaFraction_;
+
+            const bool interfaceStatus =
+                assembleFEMInterfacePenalty(
+                    currentFaceNodes,
+                    opposingFaceNodes,
+                    currentShape.data(),
+                    opposingShape.data(),
+                    opposingToCurrent,
+                    penaltyMeasure,
+                    currentFaceDisplacement.data(),
+                    opposingFaceDisplacement.data(),
+                    currentResidual.data(),
+                    currentCurrentTangent.data(),
+                    currentOpposingTangent.data());
+            STK_ThrowRequireMsg(
+                interfaceStatus,
+                "OpenAccel FEM solid interface kernel failed");
+
+            for (label currentTest = 0; currentTest < currentFaceNodes;
+                 ++currentTest)
+            {
+                const label currentTestElementNode =
+                    currentFaceOrdinals[currentTest];
+                for (label rowComponent = 0;
+                     rowComponent < SPATIAL_DIM;
+                     ++rowComponent)
+                {
+                    const label faceRow =
+                        currentTest * SPATIAL_DIM + rowComponent;
+                    const label elementRow =
+                        currentTestElementNode * SPATIAL_DIM + rowComponent;
+                    rhs[elementRow] -= currentResidual[faceRow];
+
+                    for (label currentTrial = 0;
+                         currentTrial < currentFaceNodes;
+                         ++currentTrial)
+                    {
+                        const label currentTrialElementNode =
+                            currentFaceOrdinals[currentTrial];
+                        for (label columnComponent = 0;
+                             columnComponent < SPATIAL_DIM;
+                             ++columnComponent)
+                        {
+                            const label faceColumn =
+                                currentTrial * SPATIAL_DIM + columnComponent;
+                            const label elementColumn =
+                                currentTrialElementNode * SPATIAL_DIM +
+                                columnComponent;
+                            lhs[elementRow * totalDofs + elementColumn] +=
+                                currentCurrentTangent
+                                    [faceRow * currentFaceDofs + faceColumn];
+                        }
+                    }
+
+                    for (label opposingTrial = 0;
+                         opposingTrial < opposingFaceNodes;
+                         ++opposingTrial)
+                    {
+                        const label opposingTrialElementNode =
+                            opposingFaceOrdinals[opposingTrial];
+                        for (label columnComponent = 0;
+                             columnComponent < SPATIAL_DIM;
+                             ++columnComponent)
+                        {
+                            const label faceColumn =
+                                opposingTrial * SPATIAL_DIM + columnComponent;
+                            const label elementColumn =
+                                (currentElementNodes +
+                                 opposingTrialElementNode) *
+                                    SPATIAL_DIM +
+                                columnComponent;
+                            lhs[elementRow * totalDofs + elementColumn] +=
+                                currentOpposingTangent
+                                    [faceRow * opposingFaceDofs + faceColumn];
+                        }
+                    }
+                }
+            }
+
+            Base::applyCoeff_(
+                A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+        }
+    }
 #endif
 }
 
