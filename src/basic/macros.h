@@ -83,14 +83,18 @@ void zero(stk::mesh::Field<T>* fldPtr, stk::mesh::PartVector parts = {})
     stk::mesh::BucketVector const& buckets =
         bulkData.get_buckets(fldPtr->entity_rank(), selAllEntities);
 
-    auto fldSize = fldPtr->max_size();
-
     for (stk::mesh::BucketVector::const_iterator ib = buckets.begin();
          ib != buckets.end();
          ++ib)
     {
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
+
+        // Field length can vary per bucket (e.g. per-topology integration-point
+        // fields on mixed hex/tet/pyr meshes), so use the size actually
+        // allocated for THIS bucket instead of the global max_size().
+        const unsigned fldSize =
+            stk::mesh::field_scalars_per_entity(*fldPtr, bucket);
 
         for (stk::mesh::Bucket::size_type iEntity = 0;
              iEntity < nEntitiesPerBucket;
@@ -100,7 +104,7 @@ void zero(stk::mesh::Field<T>* fldPtr, stk::mesh::PartVector parts = {})
 
             T* value = stk::mesh::field_data(*fldPtr, entity);
 
-            for (auto i = 0; i < fldSize; i++)
+            for (auto i = 0u; i < fldSize; i++)
             {
                 value[i] = static_cast<T>(0);
             }
@@ -125,14 +129,16 @@ void setValue(stk::mesh::Field<T>* fldPtr,
     stk::mesh::BucketVector const& buckets =
         bulkData.get_buckets(fldPtr->entity_rank(), selAllEntities);
 
-    auto fldSize = fldPtr->max_size();
-
     for (stk::mesh::BucketVector::const_iterator ib = buckets.begin();
          ib != buckets.end();
          ++ib)
     {
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
+
+        // Per-bucket allocated component count (see note in ops::zero).
+        const unsigned fldSize =
+            stk::mesh::field_scalars_per_entity(*fldPtr, bucket);
 
         for (stk::mesh::Bucket::size_type iEntity = 0;
              iEntity < nEntitiesPerBucket;
@@ -142,9 +148,57 @@ void setValue(stk::mesh::Field<T>* fldPtr,
 
             T* value = stk::mesh::field_data(*fldPtr, entity);
 
-            for (auto i = 0; i < fldSize; i++)
+            for (auto i = 0u; i < fldSize; i++)
             {
                 value[i] = val[i];
+            }
+        }
+    }
+}
+
+// Broadcast a single scalar into every component of every entity. Use this
+// (rather than setValue with the address of one scalar) for fields whose
+// component count varies per topology, where reading val[1..N-1] would be an
+// out-of-bounds read of the caller's scalar.
+template <class T>
+void fill(stk::mesh::Field<T>* fldPtr,
+          T val,
+          stk::mesh::PartVector parts = {})
+{
+    auto& metaData = fldPtr->mesh_meta_data();
+    auto& bulkData = fldPtr->mesh_meta_data().mesh_bulk_data();
+
+    stk::mesh::Selector selAllEntities =
+        parts.empty()
+            ? metaData.universal_part() & stk::mesh::selectField(*fldPtr)
+            : metaData.universal_part() & stk::mesh::selectField(*fldPtr) &
+                  stk::mesh::selectUnion(parts);
+
+    stk::mesh::BucketVector const& buckets =
+        bulkData.get_buckets(fldPtr->entity_rank(), selAllEntities);
+
+    for (stk::mesh::BucketVector::const_iterator ib = buckets.begin();
+         ib != buckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& bucket = **ib;
+        const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
+
+        // Per-bucket allocated component count (see note in ops::zero).
+        const unsigned fldSize =
+            stk::mesh::field_scalars_per_entity(*fldPtr, bucket);
+
+        for (stk::mesh::Bucket::size_type iEntity = 0;
+             iEntity < nEntitiesPerBucket;
+             ++iEntity)
+        {
+            stk::mesh::Entity entity = bucket[iEntity];
+
+            T* value = stk::mesh::field_data(*fldPtr, entity);
+
+            for (auto i = 0u; i < fldSize; i++)
+            {
+                value[i] = val;
             }
         }
     }
@@ -167,17 +221,22 @@ void copy(const stk::mesh::Field<T>* srcFldPtr,
     stk::mesh::BucketVector const& buckets =
         bulkData.get_buckets(srcFldPtr->entity_rank(), selAllEntities);
 
-    auto srcFldSize = srcFldPtr->max_size();
-    auto dstFldSize = dstFldPtr->max_size();
-
-    assert(srcFldSize == dstFldSize);
-
     for (stk::mesh::BucketVector::const_iterator ib = buckets.begin();
          ib != buckets.end();
          ++ib)
     {
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
+
+        // Per-bucket allocated component count (see note in ops::zero); src and
+        // dst must agree for this bucket.
+        const unsigned srcFldSize =
+            stk::mesh::field_scalars_per_entity(*srcFldPtr, bucket);
+        const unsigned dstFldSize =
+            stk::mesh::field_scalars_per_entity(*dstFldPtr, bucket);
+
+        assert(srcFldSize == dstFldSize);
+        (void)dstFldSize;
 
         for (stk::mesh::Bucket::size_type iEntity = 0;
              iEntity < nEntitiesPerBucket;
@@ -191,7 +250,7 @@ void copy(const stk::mesh::Field<T>* srcFldPtr,
             assert(srcValue);
             assert(dstValue);
 
-            for (auto i = 0; i < srcFldSize; i++)
+            for (auto i = 0u; i < srcFldSize; i++)
             {
                 dstValue[i] = srcValue[i];
             }
@@ -214,8 +273,6 @@ void print(const stk::mesh::Field<T>* fldPtr, stk::mesh::PartVector parts = {})
     stk::mesh::BucketVector const& buckets =
         bulkData.get_buckets(fldPtr->entity_rank(), selAllEntities);
 
-    auto fldSize = fldPtr->max_size();
-
     if (bulkData.parallel_rank() == 0)
     {
         std::cout << fldPtr->name() << std::endl;
@@ -228,6 +285,10 @@ void print(const stk::mesh::Field<T>* fldPtr, stk::mesh::PartVector parts = {})
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
 
+        // Per-bucket allocated component count (see note in ops::zero).
+        const unsigned fldSize =
+            stk::mesh::field_scalars_per_entity(*fldPtr, bucket);
+
         for (stk::mesh::Bucket::size_type iEntity = 0;
              iEntity < nEntitiesPerBucket;
              ++iEntity)
@@ -236,7 +297,7 @@ void print(const stk::mesh::Field<T>* fldPtr, stk::mesh::PartVector parts = {})
 
             const T* value = stk::mesh::field_data(*fldPtr, entity);
 
-            for (auto i = 0; i < fldSize; i++)
+            for (auto i = 0u; i < fldSize; i++)
             {
                 std::cout << value[i] << " ";
             }

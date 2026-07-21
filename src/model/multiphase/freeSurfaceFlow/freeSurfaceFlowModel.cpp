@@ -4428,17 +4428,21 @@ void freeSurfaceFlowModel::computeLambda_(const std::shared_ptr<domain> domain,
     // P- = sum of negative outgoing antidiffusive fluxes per node
     computeP_(domain, iPhase);
 
-    // Step 3: Initialize lambda fields to 1.0 (no limiting initially)
-    scalar one = 1.0;
-    ops::setValue(lambdaSTKFieldPtr_, &one, domain->zonePtr()->interiorParts());
-    ops::setValue(
-        sideLambdaSTKFieldPtr_, &one, domain->zonePtr()->interiorParts());
-    ops::setValue(cMULESLimiterMinusSTKFieldPtr_,
-                  &one,
-                  domain->zonePtr()->interiorParts());
-    ops::setValue(cMULESLimiterPlusSTKFieldPtr_,
-                  &one,
-                  domain->zonePtr()->interiorParts());
+    // Step 3: Initialize lambda fields to 1.0 (no limiting initially).
+    // Use ops::fill (scalar broadcast): lambda is a per-integration-point
+    // element field whose component count varies per topology (hex=12, tet=6,
+    // pyr=12), so a single scalar must be broadcast to every component.
+    ops::fill(
+        lambdaSTKFieldPtr_, scalar(1.0), domain->zonePtr()->interiorParts());
+    ops::fill(sideLambdaSTKFieldPtr_,
+              scalar(1.0),
+              domain->zonePtr()->interiorParts());
+    ops::fill(cMULESLimiterMinusSTKFieldPtr_,
+              scalar(1.0),
+              domain->zonePtr()->interiorParts());
+    ops::fill(cMULESLimiterPlusSTKFieldPtr_,
+              scalar(1.0),
+              domain->zonePtr()->interiorParts());
 
     // Step 4: Initialize sumA fields to zero for first iteration
     ops::zero(sumAMinusSTKFieldPtr_, domain->zonePtr()->interiorParts());
