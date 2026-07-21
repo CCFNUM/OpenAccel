@@ -12,12 +12,8 @@ namespace accel
 void solidDisplacementAssembler::postAssemble(const domain* domain,
                                               Context* ctx)
 {
-#ifdef USE_CVFEM_SOLID_MECHANICS
     phiAssembler<SPATIAL_DIM>::postAssemble(domain, ctx);
     applySymmetryConditions_(domain, ctx);
-#else
-    errorMsg("FEM solid mechanics not implemented yet");
-#endif
 }
 
 void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
@@ -134,7 +130,122 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
         }
     }
 #else
-    errorMsg("FEM solid mechanics not implemented yet");
+    const auto& mesh = model_->meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    const zone* zonePtr = domain->zonePtr();
+
+    Matrix& A = ctx->getAMatrix();
+    Vector& b = ctx->getBVector();
+
+    stk::mesh::PartVector partVec;
+    for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
+    {
+        const auto& bcType =
+            model_->DRef()
+                .boundaryConditionRef(domain->index(), iBoundary)
+                .type();
+
+        if (bcType != boundaryConditionType::symmetry)
+            continue;
+
+        for (auto* part : zonePtr->boundaryRef(iBoundary).parts())
+        {
+            partVec.push_back(part);
+        }
+    }
+
+    if (partVec.empty())
+        return;
+
+    const auto& exposedAreaVectorField = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+    const stk::mesh::Selector selectedSides =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+    const auto& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selectedSides);
+
+    std::unordered_map<label, std::array<scalar, SPATIAL_DIM>> assembledArea;
+
+    for (const stk::mesh::Bucket* bucket : sideBuckets)
+    {
+        MasterElement* faceMasterElement =
+            MasterElementRepo::get_surface_master_element(bucket->topology());
+        const label integrationPoints = faceMasterElement->numIntPoints_;
+
+        for (stk::mesh::Entity side : *bucket)
+        {
+            const scalar* areaVector =
+                stk::mesh::field_data(exposedAreaVectorField, side);
+            std::array<scalar, SPATIAL_DIM> area{};
+            for (label ip = 0; ip < integrationPoints; ++ip)
+            {
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                    area[dim] += areaVector[ip * SPATIAL_DIM + dim];
+            }
+
+            const stk::mesh::Entity* sideNodes = bulkData.begin_nodes(side);
+            const unsigned nodesPerSide = bulkData.num_nodes(side);
+            for (unsigned node = 0; node < nodesPerSide; ++node)
+            {
+                const label lid = bulkData.local_id(sideNodes[node]);
+                auto& nodalArea = assembledArea[lid];
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                    nodalArea[dim] += area[dim];
+            }
+        }
+    }
+
+    stk::mesh::Selector selOwnedNodes =
+        metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
+    const auto& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
+
+    for (const stk::mesh::Bucket* bucket : nodeBuckets)
+    {
+        for (size_t iNode = 0; iNode < bucket->size(); ++iNode)
+        {
+            stk::mesh::Entity node = (*bucket)[iNode];
+            const auto lid = bulkData.local_id(node);
+            const auto assembled = assembledArea.find(lid);
+            if (assembled == assembledArea.end())
+                continue;
+
+            scalar amagSq = 0.0;
+            for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                amagSq += assembled->second[dim] * assembled->second[dim];
+            if (amagSq < 1.0e-30)
+                continue;
+
+            std::array<scalar, SPATIAL_DIM> normal{};
+            const scalar amag = std::sqrt(amagSq);
+            for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                normal[dim] = assembled->second[dim] / amag;
+
+            scalar* const diag = A.diag(lid);
+            scalar scale = 0.0;
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+                scale = std::max(scale, std::abs(diag[BLOCKSIZE * j + j]));
+            if (scale == 0.0)
+                scale = 1.0;
+
+            scalar bDotN = 0.0;
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+                bDotN += b[BLOCKSIZE * lid + j] * normal[j];
+
+            for (label j = 0; j < SPATIAL_DIM; ++j)
+                b[BLOCKSIZE * lid + j] -= bDotN * normal[j];
+
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    diag[BLOCKSIZE * i + j] += scale * normal[i] * normal[j];
+                }
+            }
+        }
+    }
+
 #endif
 }
 
