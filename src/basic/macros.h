@@ -90,9 +90,6 @@ void zero(stk::mesh::Field<T>* fldPtr, stk::mesh::PartVector parts = {})
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
 
-        // Field length can vary per bucket (e.g. per-topology integration-point
-        // fields on mixed hex/tet/pyr meshes), so use the size actually
-        // allocated for THIS bucket instead of the global max_size().
         const unsigned fldSize =
             stk::mesh::field_scalars_per_entity(*fldPtr, bucket);
 
@@ -136,7 +133,6 @@ void setValue(stk::mesh::Field<T>* fldPtr,
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
 
-        // Per-bucket allocated component count (see note in ops::zero).
         const unsigned fldSize =
             stk::mesh::field_scalars_per_entity(*fldPtr, bucket);
 
@@ -156,14 +152,9 @@ void setValue(stk::mesh::Field<T>* fldPtr,
     }
 }
 
-// Broadcast a single scalar into every component of every entity. Use this
-// (rather than setValue with the address of one scalar) for fields whose
-// component count varies per topology, where reading val[1..N-1] would be an
-// out-of-bounds read of the caller's scalar.
+// Broadcast a single scalar into every component of every entity.
 template <class T>
-void fill(stk::mesh::Field<T>* fldPtr,
-          T val,
-          stk::mesh::PartVector parts = {})
+void fill(stk::mesh::Field<T>* fldPtr, T val, stk::mesh::PartVector parts = {})
 {
     auto& metaData = fldPtr->mesh_meta_data();
     auto& bulkData = fldPtr->mesh_meta_data().mesh_bulk_data();
@@ -184,7 +175,6 @@ void fill(stk::mesh::Field<T>* fldPtr,
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
 
-        // Per-bucket allocated component count (see note in ops::zero).
         const unsigned fldSize =
             stk::mesh::field_scalars_per_entity(*fldPtr, bucket);
 
@@ -228,8 +218,6 @@ void copy(const stk::mesh::Field<T>* srcFldPtr,
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
 
-        // Per-bucket allocated component count (see note in ops::zero); src and
-        // dst must agree for this bucket.
         const unsigned srcFldSize =
             stk::mesh::field_scalars_per_entity(*srcFldPtr, bucket);
         const unsigned dstFldSize =
@@ -285,7 +273,6 @@ void print(const stk::mesh::Field<T>* fldPtr, stk::mesh::PartVector parts = {})
         stk::mesh::Bucket& bucket = **ib;
         const stk::mesh::Bucket::size_type nEntitiesPerBucket = bucket.size();
 
-        // Per-bucket allocated component count (see note in ops::zero).
         const unsigned fldSize =
             stk::mesh::field_scalars_per_entity(*fldPtr, bucket);
 

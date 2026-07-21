@@ -4428,10 +4428,7 @@ void freeSurfaceFlowModel::computeLambda_(const std::shared_ptr<domain> domain,
     // P- = sum of negative outgoing antidiffusive fluxes per node
     computeP_(domain, iPhase);
 
-    // Step 3: Initialize lambda fields to 1.0 (no limiting initially).
-    // Use ops::fill (scalar broadcast): lambda is a per-integration-point
-    // element field whose component count varies per topology (hex=12, tet=6,
-    // pyr=12), so a single scalar must be broadcast to every component.
+    // Step 3: Initialize lambda fields to 1.0 (no limiting initially)
     ops::fill(
         lambdaSTKFieldPtr_, scalar(1.0), domain->zonePtr()->interiorParts());
     ops::fill(sideLambdaSTKFieldPtr_,
@@ -5736,7 +5733,7 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
                         case boundaryConditionType::specifiedValue:
                             {
                                 // <-- Specified Value Do not Update Alpha -->
-                                //errorMsg("Must not reach here");
+                                // errorMsg("Must not reach here");
                             }
                             break;
 
