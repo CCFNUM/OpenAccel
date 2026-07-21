@@ -3,6 +3,9 @@ cmake_policy(SET CMP0079 NEW)
 
 project(OpenAccel)
 
+# Export compilation database for IDEs (compile_commands.json)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Set C++ standard (optional but recommended)
 set(CMAKE_CXX_STANDARD 20)
 
