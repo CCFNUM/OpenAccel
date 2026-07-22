@@ -736,11 +736,13 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
             mu /= nodesPerElement;
             lambda /= nodesPerElement;
 
+#if SPATIAL_DIM == 2
             if (useOpenAccelQuad4)
             {
                 assembleQuad4LinearElasticity(coordinates, mu, lambda, lhs);
             }
             else
+#endif
             {
                 // sfem provides the isoparametric matrix-free operator. Applying
                 // it to each local basis vector recovers the element matrix while
