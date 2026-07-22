@@ -13,6 +13,119 @@
 namespace accel
 {
 
+#ifndef USE_CVFEM_SOLID_MECHANICS
+#if SPATIAL_DIM == 2
+namespace
+{
+
+void assembleQuad4LinearElasticity(
+    const std::vector<std::vector<geom_t>>& coordinates,
+    const scalar mu,
+    const scalar lambda,
+    std::vector<scalar>& lhs)
+{
+    constexpr scalar invSqrt3 = 0.57735026918962576451;
+    const scalar gaussPoints[2] = {-invSqrt3, invSqrt3};
+    const scalar c11 = lambda + 2.0 * mu;
+    const scalar c12 = lambda;
+    const scalar c33 = mu;
+
+    for (const scalar xi : gaussPoints)
+    {
+        for (const scalar eta : gaussPoints)
+        {
+            scalar dN_dxi[4] = {
+                -0.25 * (1.0 - eta),
+                0.25 * (1.0 - eta),
+                0.25 * (1.0 + eta),
+                -0.25 * (1.0 + eta)};
+            scalar dN_deta[4] = {
+                -0.25 * (1.0 - xi),
+                -0.25 * (1.0 + xi),
+                0.25 * (1.0 + xi),
+                0.25 * (1.0 - xi)};
+
+            scalar j00 = 0.0;
+            scalar j01 = 0.0;
+            scalar j10 = 0.0;
+            scalar j11 = 0.0;
+            for (label node = 0; node < 4; ++node)
+            {
+                const scalar x = coordinates[0][node];
+                const scalar y = coordinates[1][node];
+                j00 += dN_dxi[node] * x;
+                j01 += dN_deta[node] * x;
+                j10 += dN_dxi[node] * y;
+                j11 += dN_deta[node] * y;
+            }
+
+            const scalar detJ = j00 * j11 - j01 * j10;
+            STK_ThrowRequireMsg(
+                detJ > 0.0,
+                "Invalid QUAD4 FEM solid element: non-positive Jacobian");
+
+            const scalar invJ00 = j11 / detJ;
+            const scalar invJ01 = -j01 / detJ;
+            const scalar invJ10 = -j10 / detJ;
+            const scalar invJ11 = j00 / detJ;
+
+            scalar dN_dx[4];
+            scalar dN_dy[4];
+            for (label node = 0; node < 4; ++node)
+            {
+                dN_dx[node] = invJ00 * dN_dxi[node] +
+                              invJ10 * dN_deta[node];
+                dN_dy[node] = invJ01 * dN_dxi[node] +
+                              invJ11 * dN_deta[node];
+            }
+
+            for (label a = 0; a < 4; ++a)
+            {
+                const scalar Bax[3] = {dN_dx[a], 0.0, dN_dy[a]};
+                const scalar Bay[3] = {0.0, dN_dy[a], dN_dx[a]};
+
+                for (label b = 0; b < 4; ++b)
+                {
+                    const scalar Bbx[3] = {dN_dx[b], 0.0, dN_dy[b]};
+                    const scalar Bby[3] = {0.0, dN_dy[b], dN_dx[b]};
+
+                    const scalar kxx =
+                        Bax[0] * (c11 * Bbx[0] + c12 * Bbx[1]) +
+                        Bax[1] * (c12 * Bbx[0] + c11 * Bbx[1]) +
+                        Bax[2] * c33 * Bbx[2];
+                    const scalar kxy =
+                        Bax[0] * (c11 * Bby[0] + c12 * Bby[1]) +
+                        Bax[1] * (c12 * Bby[0] + c11 * Bby[1]) +
+                        Bax[2] * c33 * Bby[2];
+                    const scalar kyx =
+                        Bay[0] * (c11 * Bbx[0] + c12 * Bbx[1]) +
+                        Bay[1] * (c12 * Bbx[0] + c11 * Bbx[1]) +
+                        Bay[2] * c33 * Bbx[2];
+                    const scalar kyy =
+                        Bay[0] * (c11 * Bby[0] + c12 * Bby[1]) +
+                        Bay[1] * (c12 * Bby[0] + c11 * Bby[1]) +
+                        Bay[2] * c33 * Bby[2];
+
+                    const label rowX = a * SPATIAL_DIM;
+                    const label rowY = rowX + 1;
+                    const label colX = b * SPATIAL_DIM;
+                    const label colY = colX + 1;
+                    const scalar weight = detJ;
+
+                    lhs[rowX * 8 + colX] += weight * kxx;
+                    lhs[rowX * 8 + colY] += weight * kxy;
+                    lhs[rowY * 8 + colX] += weight * kyx;
+                    lhs[rowY * 8 + colY] += weight * kyy;
+                }
+            }
+        }
+    }
+}
+
+} // namespace
+#endif
+#endif
+
 void solidDisplacementAssembler::assembleElemTermsInterior_(
     const domain* domain,
     Context* ctx)
@@ -537,6 +650,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
     {
         const stk::topology topology = bucket->topology();
         smesh::ElemType sfemElementType = smesh::INVALID;
+        bool useOpenAccelQuad4 = false;
 
 #if SPATIAL_DIM == 3
         if (topology == stk::topology::HEX_8)
@@ -548,10 +662,12 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
 #else
         if (topology == stk::topology::TRI_3_2D)
             sfemElementType = smesh::TRI3;
+        else if (topology == stk::topology::QUAD_4_2D)
+            useOpenAccelQuad4 = true;
 #endif
 
         STK_ThrowRequireMsg(
-            sfemElementType != smesh::INVALID,
+            sfemElementType != smesh::INVALID || useOpenAccelQuad4,
             "Unsupported FEM solid element topology: " << topology.name());
 
         const label nodesPerElement = topology.num_nodes();
@@ -620,30 +736,37 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
             mu /= nodesPerElement;
             lambda /= nodesPerElement;
 
-            // sfem provides the isoparametric matrix-free operator. Applying
-            // it to each local basis vector recovers the element matrix while
-            // OpenAccel retains ownership of the global block matrix.
-            for (label col = 0; col < dofsPerElement; ++col)
+            if (useOpenAccelQuad4)
             {
-                std::fill(basis.begin(), basis.end(), 0.0);
-                std::fill(column.begin(), column.end(), 0.0);
-                basis[col] = 1.0;
+                assembleQuad4LinearElasticity(coordinates, mu, lambda, lhs);
+            }
+            else
+            {
+                // sfem provides the isoparametric matrix-free operator. Applying
+                // it to each local basis vector recovers the element matrix while
+                // OpenAccel retains ownership of the global block matrix.
+                for (label col = 0; col < dofsPerElement; ++col)
+                {
+                    std::fill(basis.begin(), basis.end(), 0.0);
+                    std::fill(column.begin(), column.end(), 0.0);
+                    basis[col] = 1.0;
 
-                const int status = linear_elasticity_apply_aos(
-                    sfemElementType,
-                    1,
-                    nodesPerElement,
-                    elementConnectivity.data(),
-                    coordinatePointers.data(),
-                    mu,
-                    lambda,
-                    basis.data(),
-                    column.data());
-                STK_ThrowRequireMsg(status == SFEM_SUCCESS,
-                                    "sfem linear elasticity kernel failed");
+                    const int status = linear_elasticity_apply_aos(
+                        sfemElementType,
+                        1,
+                        nodesPerElement,
+                        elementConnectivity.data(),
+                        coordinatePointers.data(),
+                        mu,
+                        lambda,
+                        basis.data(),
+                        column.data());
+                    STK_ThrowRequireMsg(status == SFEM_SUCCESS,
+                                        "sfem linear elasticity kernel failed");
 
-                for (label row = 0; row < dofsPerElement; ++row)
-                    lhs[row * dofsPerElement + col] = column[row];
+                    for (label row = 0; row < dofsPerElement; ++row)
+                        lhs[row * dofsPerElement + col] = column[row];
+                }
             }
 
             static bool femDebugPrinted = false;
@@ -700,7 +823,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                     }
                 }
 
-                std::cout << "\n[FEM DEBUG] First SFEM element\n"
+                std::cout << "\n[FEM DEBUG] First FEM element\n"
                           << "  topology: " << topology.name() << '\n'
                           << "  nodes: " << nodesPerElement << '\n'
                           << "  mu: " << mu << '\n'
