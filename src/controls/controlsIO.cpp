@@ -441,7 +441,7 @@ void controls::read(YAML::Node inputNode)
             }
             else
             {
-                errorMsg("convergence_controls block is not provided in the "
+                errorMsg("convergence_criteria block is not provided in the "
                          "yaml input file");
             }
 
