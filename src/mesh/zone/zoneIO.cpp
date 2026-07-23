@@ -161,7 +161,7 @@ void zone::read(const YAML::Node& domain)
                 domain["domain_models"]["mesh_deformation"]["stationary_parts"])
             {
                 std::vector<std::string> stationaryPartNames =
-                    domain["domain_models"]["domain_motion"]["stationary_parts"]
+                    domain["domain_models"]["mesh_deformation"]["stationary_parts"]
                         .template as<std::vector<std::string>>();
 
                 for (auto stationaryPartName : stationaryPartNames)
