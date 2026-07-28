@@ -60,3 +60,6 @@ test
 
 # Documentation files
 *.md
+
+# Sweep / study output directories
+runs/
