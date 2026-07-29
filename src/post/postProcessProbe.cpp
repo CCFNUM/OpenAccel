@@ -1,14 +1,13 @@
 // File       : postProcessProbe.cpp
 // Created    : Tue Aug 05 2025 19:49:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
-// Description: Point field probe. Samples a nodal field (scalar or vector) at
-//              a fixed material point. The owning element is located lazily on
-//              the first update() (the mesh is not populated at construction),
-//              and its isoparametric coordinates are cached. Under
-//              connectivity-preserving mesh motion the cached (element,
-//              isoParCoords) pair is invariant, so a moving probe simply
-//              re-reads the displaced nodal values every step. Parallel-safe:
-//              the owning rank samples, master writes the time history.
+// Description: Point field probe. The owning element is located lazily on the
+//              first update() (the mesh is not yet populated at construction),
+//              its isoparametric coordinates cached, and the requested nodal
+//              field interpolated to that point every update() thereafter.
+//              Parallel: all ranks search locally, then agree on the single
+//              owning rank by global argmin of the isInElement distance; only
+//              the owner samples, and its value is reduced to master to write.
 // Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "postProcess.h"
@@ -68,10 +67,8 @@ probeObject::probeObject(postProcess* postProcessPtr,
 
         file << postProcessPtr_->instanceHeader();
 
-        // Column headers. A scalar is labelled by the field name itself; a
-        // spatial vector by field_x/_y/_z; anything else (e.g. a tensor) falls
-        // back to numbered components, since no reliable per-component name
-        // metadata is available to query.
+        // Column headers: scalar -> field name; spatial vector -> field_x/_y/_z;
+        // otherwise numbered components.
         if (nComp_ == 1)
         {
             file << "\t" << field_;
@@ -105,10 +102,11 @@ void probeObject::update()
         postProcessPtr_->meshRef().bulkDataRef();
 
     // -----------------------------------------------------------------------
-    // Lazy one-time location: on first call, find the element containing the
-    // probe point and cache (element id, isoparametric coords). A probe locates
-    // a point in space and is not tied to a named region, so all locally-owned
-    // elements are searched. located_ stays false until this succeeds.
+    // Lazy one-time location. Each rank searches its locally-owned elements for
+    // the one containing the probe point (minimum isInElement distance). The
+    // ranks then agree, by global argmin, on the single owner. A rank that does
+    // not own the point is NOT an error: only a point owned by no rank at all
+    // (outside the whole mesh) is fatal, and that is decided globally below.
     // -----------------------------------------------------------------------
     if (!located_)
     {
@@ -181,21 +179,40 @@ void probeObject::update()
             }
         }
 
-        owner_ = (bestId != stk::mesh::InvalidEntityId);
-
-        bool inside = owner_;
-        if (owner_)
+        // This rank only counts as a candidate if its best element actually
+        // contains the point (iso-coords within [-1, 1] + tol). Otherwise its
+        // distance is pushed to +inf so it loses the global argmin.
+        bool localContains = (bestId != stk::mesh::InvalidEntityId);
+        if (localContains)
         {
             for (label j = 0; j < SPATIAL_DIM; ++j)
             {
                 if (std::abs(bestIso[j]) > 1.0 + isoTol)
                 {
-                    inside = false;
+                    localContains = false;
                 }
             }
         }
 
-        if (!inside)
+        // Global argmin over the containing candidates: (distance, rank).
+        stk::ParallelMachine comm = bulkData.parallel();
+        const int myRank = stk::parallel_machine_rank(comm);
+
+        struct DistRank
+        {
+            double dist;
+            int rank;
+        } locMin, glbMin;
+
+        locMin.dist = localContains ? static_cast<double>(bestDist)
+                                    : std::numeric_limits<double>::max();
+        locMin.rank = myRank;
+
+        MPI_Allreduce(&locMin, &glbMin, 1, MPI_DOUBLE_INT, MPI_MINLOC, comm);
+
+        // No rank contains the point -> genuinely outside the mesh. Fatal, and
+        // decided identically on every rank so the abort is collective.
+        if (glbMin.dist == std::numeric_limits<double>::max())
         {
             std::string ptStr;
             for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -207,14 +224,21 @@ void probeObject::update()
                      "domain).");
         }
 
-        encapsulatingElementIdent_ = bestId;
-        isoParCoords_ = bestIso;
+        owner_ = (myRank == glbMin.rank);
+
+        if (owner_)
+        {
+            encapsulatingElementIdent_ = bestId;
+            isoParCoords_ = bestIso;
+        }
+
         located_ = true;
     }
 
     // -----------------------------------------------------------------------
-    // Sample: the owning rank interpolates the field at the cached iso-coords;
-    // the single contribution is reduced to master, which writes one row.
+    // Sample: the owning rank interpolates at the cached iso-coords; the single
+    // contribution is reduced to master, which writes one row. Non-owners
+    // contribute zeros.
     // -----------------------------------------------------------------------
     std::vector<scalar> l_result(nComp_, 0.0);
     std::vector<scalar> g_result(nComp_, 0.0);
