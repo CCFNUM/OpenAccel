@@ -144,6 +144,24 @@ private:
 
     stk::mesh::EntityId encapsulatingElementIdent_ = stk::mesh::InvalidEntityId;
 
+    // Cached natural (isoparametric) coordinates of the probe point inside
+    // encapsulatingElementIdent_. A material point retains these under
+    // connectivity-preserving mesh motion, so they are computed once at
+    // construction and reused every update().
+    std::array<scalar, SPATIAL_DIM> isoParCoords_ = {0.0};
+
+    // Number of field components (1 for a scalar, SPATIAL_DIM for a vector,
+    // etc.), read once from the field's max_size() at construction.
+    label nComp_ = 1;
+
+    // True only on the single MPI rank whose locally-owned sub-domain contains
+    // the probe point. Only this rank samples; its contribution is reduced to
+    // master for writing.
+    bool owner_ = false;
+    // False until the owning element has been located on the first update().
+    // Location is deferred because the mesh is not populated at construction.
+    bool located_ = false;
+
 public:
     probeObject(postProcess* postProcessManagerPtr,
                 std::string name,
