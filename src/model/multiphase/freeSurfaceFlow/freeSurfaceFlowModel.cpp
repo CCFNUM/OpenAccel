@@ -1970,8 +1970,11 @@ void freeSurfaceFlowModel::applyVolumeConservation(
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
 
+    const label primaryPhaseIndex =
+        domain->localToGlobalMaterialIndex(domain->nMaterials() - 1);
+
     // Initialize primary volume fraction to 1.0
-    this->alphaRef(domain->nMaterials() - 1).setToValue({1.0}, partVec);
+    this->alphaRef(primaryPhaseIndex).setToValue({1.0}, partVec);
 
     // define some common selectors; select owned nodes
     stk::mesh::Selector selUniversalNodes =
@@ -1982,7 +1985,7 @@ void freeSurfaceFlowModel::applyVolumeConservation(
 
     // get primary volume fraction field
     const STKScalarField* palphaSTKFieldPtr =
-        this->alphaRef(domain->nMaterials() - 1).stkFieldPtr();
+        this->alphaRef(primaryPhaseIndex).stkFieldPtr();
 
     for (label iPhase = 0; iPhase < domain->nMaterials() - 1; iPhase++)
     {
