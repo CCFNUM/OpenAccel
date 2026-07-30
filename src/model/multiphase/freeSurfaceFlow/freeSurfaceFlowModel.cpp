@@ -1835,10 +1835,7 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
                                     alphaBip += r * alpha;
                                 }
 
-                                for (label j = 0; j < SPATIAL_DIM; ++j)
-                                {
-                                    mDot[ip] += alphaBip * pmDot[ip];
-                                }
+                                mDot[ip] += alphaBip * pmDot[ip];
                             }
                         }
                     }
