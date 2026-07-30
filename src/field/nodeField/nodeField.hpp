@@ -5968,7 +5968,8 @@ void nodeField<N, M>::transfer(label iInterface,
         dataTransferVector_[iInterface]->update();
 
         // sync in case of parallel over the interface
-        if (messager::parallel())
+        if (messager::parallel() &&
+            this->meshRef().interfaceRef(iInterface).interfaceGhosting_)
         {
             stk::mesh::communicate_field_data(
                 *(this->meshRef().interfaceRef(iInterface).interfaceGhosting_),
