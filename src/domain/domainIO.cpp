@@ -1,4 +1,4 @@
-// File       : domain.cpp
+// File       : domainIO.cpp
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
@@ -1018,6 +1018,27 @@ void domain::read_()
                 {
                     errorMsg("false lumped mass -> consistent mass appraoch is "
                              "not implemented");
+                }
+            }
+
+            // ================================================================
+            // Mass-proportional Rayleigh damping coefficient (alpha, units
+            // 1/s). Adds the term alpha*rho*d(D)/dt (BDF1 implicit) to the
+            // solid momentum equation. Matches solids4foam's "dampingCoeff"
+            // entry in the solidProperties dictionary. Default 0 = no damping,
+            // in which case the assembly reproduces the original undamped
+            // solver exactly (no contributions added to the LHS or RHS at the
+            // node-terms stage).
+            // ================================================================
+            if (solidMechanicsBlock["damping_coeff"])
+            {
+                solidMechanics_.dampingCoeff_ =
+                    solidMechanicsBlock["damping_coeff"]
+                        .template as<scalar>();
+
+                if (solidMechanics_.dampingCoeff_ < 0.0)
+                {
+                    errorMsg("damping_coeff must be non-negative");
                 }
             }
         }

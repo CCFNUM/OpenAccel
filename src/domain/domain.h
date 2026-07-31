@@ -67,6 +67,13 @@ struct solidMechanics
     bool planeStress_ = false;
     bool lumpedMass_ =
         true; // true = lumped (diagonal), false = consistent (full mass matrix)
+
+    // Mass-proportional Rayleigh damping coefficient [1/s].
+    // Adds the term alpha * rho * d(D)/dt to the solid momentum equation,
+    // implicit in the new displacement (BDF1 stencil on the first time
+    // derivative). Matches the "dampingCoeff" setting in solids4foam's solid
+    // models. Default 0.0 reproduces the undamped solver exactly.
+    scalar dampingCoeff_ = 0.0;
 };
 
 struct buoyancy
