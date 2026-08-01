@@ -96,3 +96,5 @@ simulation:
         dynamic_viscosity:
             option: value
             dynamic_viscosity: 1.831e-5
+turbulence:
+  model: smagorinsky
