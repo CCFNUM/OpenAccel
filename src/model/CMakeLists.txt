@@ -32,6 +32,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/turbulence/RANS/shearStressTransport/shearStressTransportModelWallFunctions.cpp
     ${DIR}/turbulence/RANS/shearStressTransport/transitionShearStressTransport/transitionShearStressTransportModel.cpp
     ${DIR}/turbulence/RANS/shearStressTransport/correlationTransitionShearStressTransport/correlationTransitionShearStressTransportModel.cpp
+    ${DIR}/turbulence/LES/Smagorinsky/SmagorinskyLESModel.cpp
     ${DIR}/turbulence/turbulenceModel.cpp
     ${DIR}/turbulence/turbulenceModelWallFunctions.cpp
 )
@@ -59,4 +60,5 @@ target_include_directories(main_obj PUBLIC
     ${DIR}/turbulence/RANS/shearStressTransport
     ${DIR}/turbulence/RANS/shearStressTransport/transitionShearStressTransport
     ${DIR}/turbulence/RANS/shearStressTransport/correlationTransitionShearStressTransport
+    ${DIR}/turbulence/LES/Smagorinsky
 )
