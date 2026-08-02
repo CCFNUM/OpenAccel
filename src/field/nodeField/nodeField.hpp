@@ -828,6 +828,8 @@ void nodeField<N, M>::initializeField(label iZone)
 
         if (mf.field_restored())
         {
+            stk::mesh::communicate_field_data(this->bulkDataRef(),
+                                              {this->stkFieldPtr_});
             initialize_field = false;
             if (messager::master())
             {
@@ -848,6 +850,8 @@ void nodeField<N, M>::initializeField(label iZone)
             // directed to the correct internal STK database and hence they all
             // produce the same value for mf.time_restored() and global
             // parameter fetch.
+            this->meshRef().controlsRef().deserializeRestartParam(
+                this->meshRef().ioBrokerRef());
             if (this->meshRef().controlsRef().isTransient())
             {
                 this->meshRef().controlsRef().time = mf.time_restored();
@@ -5968,8 +5972,7 @@ void nodeField<N, M>::transfer(label iInterface,
         dataTransferVector_[iInterface]->update();
 
         // sync in case of parallel over the interface
-        if (messager::parallel() &&
-            this->meshRef().interfaceRef(iInterface).interfaceGhosting_)
+        if (messager::parallel())
         {
             stk::mesh::communicate_field_data(
                 *(this->meshRef().interfaceRef(iInterface).interfaceGhosting_),

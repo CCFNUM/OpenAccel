@@ -685,22 +685,7 @@ void simulation::initializeOutput_()
     io_last_restart_ = -1;
 
     // compose restart path name
-    auto restart_path = this->getSimulationDirectory();
-    std::string restart_dir_name("restart."); // default restart dir name
-    const size_t len = restart_dir_name.size();
-    int nrestart_dirs = 0;
-    for (const auto& entry : fs::directory_iterator{restart_path})
-    {
-        if (restart_dir_name.compare(0, len, entry.path().filename(), 0, len) ==
-            0)
-        {
-            ++nrestart_dirs;
-        }
-    }
-    std::ostringstream oss;
-    oss << restart_dir_name << std::setfill('0') << std::setw(3)
-        << nrestart_dirs;
-    restart_path /= oss.str();
+    auto restart_path = controlsRef().getRestartDirectory();
     restart_path /= controlsRef().solverRef().outputControl_.restartFileName_;
 
     restartPropertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
@@ -748,6 +733,12 @@ void simulation::writeResults(const bool write_condition)
         // restore conservative boundary node values
         restoreBoundaryValues_();
 
+        // additional complement results registered externally
+        for (auto f : complement_results_)
+        {
+            f(io_write_counter_, io_write_time_);
+        }
+
         //
         io_last_results_ = io_write_counter_;
         io_last_results_time_ = io_write_time_;
@@ -770,6 +761,13 @@ void simulation::writeRestart(const bool write_condition)
                 restartFileIndex_, param.first, param.second);
         }
         meshRef().ioBrokerPtr()->end_output_step(restartFileIndex_);
+
+        // additional complement restart data registered externally
+        for (auto f : complement_restart_)
+        {
+            f(io_write_counter_, io_write_time_);
+        }
+
         io_last_restart_ = io_write_counter_;
     }
 }
@@ -976,6 +974,16 @@ void simulation::plotResiduals()
 void simulation::addPlotItem(const residualPlotItem& item)
 {
     plot_items_.push_back(item);
+}
+
+void simulation::registerComplementResult(complementFunc f)
+{
+    complement_results_.push_back(f);
+}
+
+void simulation::registerComplementRestart(complementFunc f)
+{
+    complement_restart_.push_back(f);
 }
 
 // number of characters for inner width of header/footer boxes

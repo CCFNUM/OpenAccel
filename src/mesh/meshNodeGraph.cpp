@@ -506,7 +506,7 @@ std::vector<label> mesh::computeOwnedNodePermutation_() const
 
     if (messager::master())
     {
-        std::cout << "[node-ordering] reverse Cuthill-McKee (per zone):\n"
+        std::cout << "\n[node-ordering] reverse Cuthill-McKee (per zone):\n"
                   << "  bandwidth " << bw[0] << " -> " << bw[1] << ", profile "
                   << profile[0] << " -> " << profile[1] << std::endl;
 

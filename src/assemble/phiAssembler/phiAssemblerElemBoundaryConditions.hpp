@@ -71,10 +71,8 @@ void phiAssembler<N>::assembleElemTermsBoundary_(const domain* domain,
                             break;
 
                         case boundaryConditionType::zeroGradient:
-                            // advected boundary value = interior (upwind) node
-                            // value; the zero-gradient kernel is sign-agnostic
-                            // (flux = mdot * phi_node), so it is valid for
-                            // inflow as well as outflow
+                            // sign-agnostic flux = mdot * phi_node; valid for
+                            // inflow too
                             assembleElemTermsBoundaryOutletZeroGradient_(
                                 domain, boundary, ctx);
                             break;

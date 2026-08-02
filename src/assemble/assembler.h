@@ -505,20 +505,27 @@ void assembler<N>::applyCrossRankFold(
     const auto* graph = A.getGraph();
     using GIdx = std::decay_t<decltype(A.localToGlobal(0))>;
 
-    // slave global row id -> slave node (phi2 reads) + master entity (col
-    // remap)
-    std::map<GIdx, stk::mesh::Entity> slaveGToNode2;
-    std::map<GIdx, stk::mesh::EntityId> slaveGToMasterEnt;
+    // Slave global row id -> slave node (phi2 reads) and slave column row ->
+    // master-entity remap.  The column map is keyed on the graph column index
+    // so it covers shared/ghost slave nodes as well as owned rows: a split row
+    // can contain interface columns owned by a third rank.
+    std::unordered_map<GIdx, stk::mesh::Entity> slaveGToNode2;
+    std::unordered_map<int64_t, stk::mesh::EntityId> slaveColToMasterEnt;
+    slaveGToNode2.reserve(pairs.size());
+    slaveColToMasterEnt.reserve(pairs.size());
     for (const auto& p : pairs)
+    {
+        const int64_t row2 = graph->localToRow(bulkData.local_id(p.second));
+        if (row2 < 0) // pair not in this (subset) graph
+            continue;
+        slaveColToMasterEnt[row2] = bulkData.identifier(p.first);
         if (bulkData.parallel_owner_rank(p.second) == myProc)
         {
-            const int64_t row2 = graph->localToRow(bulkData.local_id(p.second));
-            if (row2 < 0) // pair not in this (subset) graph
-                continue;
+            // The slave row is owned here, so this conversion is valid.
             const GIdx g2 = A.localToGlobal(row2);
             slaveGToNode2[g2] = p.second;
-            slaveGToMasterEnt[g2] = bulkData.identifier(p.first);
         }
+    }
 
     // ---- Round 1: slave owners send row 2 (global-id columns + NxN blocks +
     // rhs) to the master's owner, which folds T*row2*T^T into row 1 ----
@@ -536,6 +543,7 @@ void assembler<N>::applyCrossRankFold(
             if (lid2 < 0) // pair not in this (subset) graph
                 continue;
             auto vals2 = A.rowVals(lid2);
+            auto cl2 = graph->rowLocalIndices(lid2);
             auto cg2 = graph->rowGlobalIndices(lid2);
             stk::CommBuffer& buf = comm1.send_buffer(o1);
             buf.pack<stk::mesh::EntityId>(bulkData.identifier(p.first));
@@ -546,9 +554,11 @@ void assembler<N>::applyCrossRankFold(
             for (label c = 0; c < static_cast<label>(cg2.size()); ++c)
             {
                 buf.pack<GIdx>(cg2[c]);
-                auto mit = slaveGToMasterEnt.find(cg2[c]);
+                // cl2/cg2 are aligned: resolve the master partner straight
+                // from the local column index of this row.
+                const auto mit = slaveColToMasterEnt.find(cl2[c]);
                 buf.pack<stk::mesh::EntityId>(
-                    mit != slaveGToMasterEnt.end() ? mit->second : 0);
+                    mit != slaveColToMasterEnt.end() ? mit->second : 0);
                 for (label m = 0; m < BB; ++m)
                     buf.pack<scalar>(vals2[c * BB + m]);
             }
@@ -570,6 +580,10 @@ void assembler<N>::applyCrossRankFold(
                                [&](label fromProc)
     {
         stk::CommBuffer& buf = comm1.recv_buffer(fromProc);
+        // received column block and its column-transformed copy, row-major BxB;
+        // both are fully overwritten per column, so neither needs clearing
+        std::array<scalar, N * N> blk;
+        std::array<scalar, N * N> bt;
         while (buf.remaining())
         {
             stk::mesh::EntityId masterEnt;
@@ -589,10 +603,17 @@ void assembler<N>::applyCrossRankFold(
             assert(lid1 >= 0); // master of a subset pair is in the subset
             const GIdx masterG = A.localToGlobal(lid1);
             auto vals1 = A.rowVals(lid1);
+            auto cl1 = graph->rowLocalIndices(lid1);
             auto cg1 = graph->rowGlobalIndices(lid1);
-            std::map<GIdx, label> gToPos;
-            for (label c = 0; c < static_cast<label>(cg1.size()); ++c)
-                gToPos[cg1[c]] = c;
+            // Row stencils are short (~30-80); a linear scan over contiguous
+            // indices beats building a node-based map per received row.
+            const auto findPos = [](const auto& idx, const int64_t v) -> label
+            {
+                for (label c = 0; c < static_cast<label>(idx.size()); ++c)
+                    if (static_cast<int64_t>(idx[c]) == v)
+                        return c;
+                return -1;
+            };
 
             for (unsigned k = 0; k < nc; ++k)
             {
@@ -600,37 +621,70 @@ void assembler<N>::applyCrossRankFold(
                 stk::mesh::EntityId mEnt;
                 buf.unpack(cg);
                 buf.unpack(mEnt);
-                std::array<scalar, N * N> blk;
                 for (label m = 0; m < BB; ++m)
                     buf.unpack(blk[m]);
                 // full remap: interface-slave column -> its master column
-                GIdx tg = cg;
+                label pos = -1;
+                bool remappedColumn = false;
                 if (mEnt != 0)
                 {
                     const stk::mesh::Entity nm =
                         bulkData.get_entity(stk::topology::NODE_RANK, mEnt);
-                    if (bulkData.is_valid(nm) &&
-                        bulkData.parallel_owner_rank(nm) == myProc)
+                    if (bulkData.is_valid(nm))
                     {
                         const int64_t rm =
                             graph->localToRow(bulkData.local_id(nm));
                         if (rm >= 0)
-                            tg = A.localToGlobal(rm);
+                        {
+                            pos = findPos(cl1, rm);
+                            remappedColumn = pos >= 0;
+                        }
                     }
                 }
-                auto pit = gToPos.find(tg);
-                if (pit == gToPos.end())
+                if (pos < 0) // no remap: keep the original slave column
+                    pos = findPos(cg1, static_cast<int64_t>(cg));
+                if (pos < 0)
+                {
+                    // Pair-row graph equalization can leave structural zeros
+                    // that are absent from the receiving row. A nonzero
+                    // original slave column must always be present; when its
+                    // remapped master column is absent we deliberately retain
+                    // the slave column and let the explicit constraint enforce
+                    // equivalence.
+                    const bool nonzero =
+                        std::any_of(blk.begin(), blk.end(), [](const scalar v) {
+                        return v != 0.0;
+                    });
+                    if (nonzero)
+                        errorMsg("conformal row-merge: nonzero slave column is "
+                                 "missing from the master row stencil");
                     continue;
-                // row1[i in [r0,r1), all j] += (T blk T^T)[i,j]
-                const label off = pit->second * BB;
+                }
+                // Always transform the slave equation rows.  Transform a
+                // column as well only when that slave-interface unknown was
+                // remapped to its master partner.  Unmapped interior columns
+                // remain global-Cartesian unknowns.
+                const label off = pos * BB;
+                if (remappedColumn)
+                {
+                    // bt = blk * T^T first, so the fold stays O(B^3)
+                    for (label kk = 0; kk < B; ++kk)
+                        for (label j = 0; j < B; ++j)
+                        {
+                            scalar s = 0.0;
+                            for (label l = 0; l < B; ++l)
+                                s += blk[kk * B + l] * T[j * B + l];
+                            bt[kk * B + j] = s;
+                        }
+                }
+                // row1[i in [r0,r1), all j] += (T src)[i,j]
+                const scalar* src = remappedColumn ? bt.data() : blk.data();
                 for (label i = r0; i < r1; ++i)
                     for (label j = 0; j < B; ++j)
                     {
                         scalar s = 0.0;
                         for (label kk = 0; kk < B; ++kk)
-                            for (label l = 0; l < B; ++l)
-                                s += T[i * B + kk] * blk[kk * B + l] *
-                                     T[j * B + l];
+                            s += T[i * B + kk] * src[kk * B + j];
                         vals1[off + i * B + j] += s;
                     }
             }

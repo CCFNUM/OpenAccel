@@ -767,7 +767,8 @@ enum class reductionType
 {
     sum,
     average,
-    areaAverage
+    areaAverage,
+    massAverage
 };
 
 reductionType convertStatisticsTypeFromString(std::string s);

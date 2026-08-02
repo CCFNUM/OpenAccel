@@ -3215,9 +3215,8 @@ void freeSurfaceFlowModel::computeFL_(const std::shared_ptr<domain> domain,
 
                         case boundaryConditionType::zeroGradient:
                             {
-                                // zero-gradient inlet: low-order boundary flux
-                                // uses the nodal (interior) alpha, mirroring
-                                // the zero-gradient outlet treatment below
+                                // zero-gradient inlet: low-order flux uses the
+                                // nodal (interior) alpha, as at the outlet
                                 const STKScalarField* mDotSideSTKFieldPtr =
                                     this->mDotRef(iPhase)
                                         .sideFieldRef()
@@ -4416,10 +4415,8 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
 
                         case boundaryConditionType::zeroGradient:
                             {
-                                // zero-gradient inlet: high-order boundary
-                                // flux equals the low-order one (nodal alpha,
-                                // no compression at the boundary), mirroring
-                                // the zero-gradient outlet treatment below
+                                // zero-gradient inlet: high-order flux equals
+                                // the low-order one (no boundary compression)
                                 const STKScalarField* mDotSideSTKFieldPtr =
                                     this->mDotRef(iPhase)
                                         .sideFieldRef()
@@ -6216,10 +6213,6 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
                         case boundaryConditionType::zeroGradient:
                             {
                                 // zero-gradient inlet: boundary nodes are free
-                                // DOFs -- apply the limited antidiffusive side
-                                // correction exactly like the zero-gradient
-                                // outlet treatment below
-                                // Get fields
                                 STKScalarField* alphaSTKFieldPtr =
                                     this->alphaRef(iPhase).stkFieldPtr();
 

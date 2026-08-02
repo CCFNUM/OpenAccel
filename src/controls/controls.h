@@ -221,9 +221,16 @@ struct solverDictionary
                 meshMotionDictionary meshMotion_;
             };
 
+            struct domainDecompositionDictionary
+            {
+                std::string method_{""};
+                std::map<std::string, std::string> properties_;
+            };
+
             pressureLevelInformationDictionary pressureLevelInformation_;
             interfaceTransferDictionary interfaceTransfer_;
             equationControlsDictionary equationControls_;
+            domainDecompositionDictionary domainDecomposition_;
         };
 
         struct expertParametersDictionary
@@ -244,6 +251,7 @@ struct solverDictionary
             bool strongDirichletWallScale_ = false;
             scalar volumeFractionBlendingFactorMax_ = 2.0;
             bool bandwidthReduction_ = true;
+            bool nodeReordering_ = false;
             bool forceWallDistanceCalculation_ = false;
             bool disablePhysics_ = false;
             bool freezeFlow_ = false;
@@ -324,8 +332,12 @@ public:
         return solver_;
     };
 
-    // bandwidth_reduction drives two branches: a reduced matrix stencil, and a
-    // node renumbering that pulls neighbouring nodes close in the row order
+    solverDictionary& solverRefMutable()
+    {
+        return solver_;
+    };
+
+    // Matrix-stencil reduction and node renumbering are independent controls.
     bool isReducedStencil() const;
 
     bool isRenumbered() const;
@@ -337,6 +349,8 @@ public:
     bool isHighResolutionTurbulenceNumerics() const;
 
     bool isNSO() const;
+
+    bool useAutomaticDomainDecomposition() const;
 
     label getNumberOfStates() const;
 
@@ -375,6 +389,10 @@ public:
     fs::path getPostProcessingDirectory() const;
 
     fs::path getResidualDirectory() const;
+
+    fs::path getRestartDirectory() const;
+
+    fs::path getResultsDirectory() const;
 
     fs::path getAdaptiveTimesteppingDirectory() const;
 

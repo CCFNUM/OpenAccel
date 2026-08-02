@@ -41,6 +41,9 @@ private:
     friend class domain;
     friend class physicsConvergence;
 
+    using complementFunc =
+        std::function<void(const label /* step */, const scalar /* time */)>;
+
     // Primary members
 
     // analysis type, solver settings, etc.
@@ -83,6 +86,9 @@ private:
     label io_write_counter_;
     scalar io_write_time_;
     scalar io_last_results_time_{-1.0};
+
+    std::vector<complementFunc> complement_results_;
+    std::vector<complementFunc> complement_restart_;
 
     // path to input file: file contains all information of simulation
     fs::path inputFilePath_;
@@ -287,6 +293,10 @@ public:
                 registeredMaterialsMap_.size();
         }
     }
+
+    void registerComplementResult(complementFunc f);
+
+    void registerComplementRestart(complementFunc f);
 
     label materialIndex(const std::string& materialName) const
     {

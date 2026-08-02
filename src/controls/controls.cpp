@@ -25,15 +25,14 @@ controls::controls(fs::path cwd)
     : workingDirectory_(cwd), profiler_(messager::comm())
 {
     // required states for correct restart
-    restartParameter_.set_param(
-        "timeStepCount", analysisType_.timeStepCount_, false, true);
+    restartParameter_.set_param("timeStepCount",
+                                analysisType_.timeStepCount_,
+                                false, /* to output */
+                                true /* to restart */);
     restartParameter_.set_param("globalIter", globalIter, false, true);
-    for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
-    {
-        const std::string dt_id("dt_");
-        restartParameter_.set_param(
-            dt_id + std::to_string(i), getTimestep(-i), false, true);
-    }
+    std::vector<scalar> dt_history(analysisType_.timestep_.begin(),
+                                   analysisType_.timestep_.end());
+    restartParameter_.set_param("dt_history", dt_history, false, true);
 }
 
 // Destructor
@@ -49,7 +48,7 @@ bool controls::isReducedStencil() const
 
 bool controls::isRenumbered() const
 {
-    return solver_.solverControl_.expertParameters_.bandwidthReduction_;
+    return solver_.solverControl_.expertParameters_.nodeReordering_;
 }
 
 bool controls::isTransient() const
@@ -72,6 +71,12 @@ bool controls::isHighResolutionTurbulenceNumerics() const
 bool controls::isNSO() const
 {
     return solver_.solverControl_.expertParameters_.nso_;
+}
+
+bool controls::useAutomaticDomainDecomposition() const
+{
+    return !solver_.solverControl_.advancedOptions_.domainDecomposition_.method_
+                .empty();
 }
 
 label controls::getNumberOfStates() const
@@ -107,11 +112,9 @@ void controls::setRestartParam()
 {
     restartParameter_.set_value("timeStepCount", analysisType_.timeStepCount_);
     restartParameter_.set_value("globalIter", globalIter);
-    for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
-    {
-        const std::string dt_id("dt_");
-        restartParameter_.set_value(dt_id + std::to_string(i), getTimestep(-i));
-    }
+    std::vector<scalar> dt_history(analysisType_.timestep_.begin(),
+                                   analysisType_.timestep_.end());
+    restartParameter_.set_value("dt_history", dt_history);
 }
 
 void controls::deserializeRestartParam(
@@ -122,19 +125,17 @@ void controls::deserializeRestartParam(
         // For steady-state, globalIter is recovered from the field
         // time_restored() in nodeField::initialize(). The dt_* and
         // timeStepCount parameters are only relevant to transient runs.
-        io_broker.get_global("globalIter", globalIter, false);
+        io_broker.get_global("globalIter", globalIter);
         return;
     }
 
     io_broker.get_global("timeStepCount", analysisType_.timeStepCount_);
     io_broker.get_global("globalIter", globalIter);
-    for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
-    {
-        const std::string dt_id("dt_");
-        const int idx = timestepPosition_(-i);
-        io_broker.get_global(dt_id + std::to_string(i),
-                             analysisType_.timestep_[idx]);
-    }
+    std::vector<scalar> dt_history;
+    io_broker.get_global("dt_history", dt_history);
+    assert(dt_history.size() == analysisTypeDictionary::DT_ENTRIES);
+    std::copy(
+        dt_history.begin(), dt_history.end(), analysisType_.timestep_.begin());
 }
 
 scalar controls::getTotalTime() const
@@ -542,6 +543,56 @@ fs::path controls::getPostProcessingDirectory() const
 fs::path controls::getResidualDirectory() const
 {
     fs::path dir = getPostProcessingDirectory() / "0" / "residuals";
+    fs::create_directories(dir);
+    return dir;
+}
+
+fs::path controls::getRestartDirectory() const
+{
+    static int call_count = 0; // correction for multiple calls
+
+    int nrestart_dirs = 0;
+    fs::path dir = getWorkingDirectory();
+    std::string restart_dir_name("restart."); // default restart dir name
+    if (messager::master())
+    {
+        const size_t len = restart_dir_name.size();
+        for (const auto& entry : fs::directory_iterator{dir})
+        {
+            if (restart_dir_name.compare(
+                    0, len, entry.path().filename(), 0, len) == 0)
+            {
+                ++nrestart_dirs;
+            }
+        }
+        if (call_count > 0)
+        {
+            --nrestart_dirs;
+        }
+    }
+    ++call_count;
+
+    MPI_Bcast(&nrestart_dirs, 1, MPI_INT, 0, messager::comm());
+
+    std::ostringstream oss;
+    oss << restart_dir_name << std::setfill('0') << std::setw(3)
+        << nrestart_dirs;
+
+    dir /= oss.str();
+    if (call_count == 1 && messager::master())
+    {
+        fs::create_directories(dir);
+    }
+    MPI_Barrier(messager::comm());
+
+    return dir;
+}
+
+fs::path controls::getResultsDirectory() const
+{
+    fs::path res_file = solver_.outputControl_.filePath_;
+    assert(!res_file.empty());
+    fs::path dir = res_file.parent_path();
     fs::create_directories(dir);
     return dir;
 }
