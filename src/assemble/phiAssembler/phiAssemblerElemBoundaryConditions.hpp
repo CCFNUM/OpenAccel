@@ -70,6 +70,13 @@ void phiAssembler<N>::assembleElemTermsBoundary_(const domain* domain,
                                 domain, boundary, ctx);
                             break;
 
+                        case boundaryConditionType::zeroGradient:
+                            // sign-agnostic flux = mdot * phi_node; valid for
+                            // inflow too
+                            assembleElemTermsBoundaryOutletZeroGradient_(
+                                domain, boundary, ctx);
+                            break;
+
                         default:
                             errorMsg("boundary condition invalid");
                     }

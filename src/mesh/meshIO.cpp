@@ -32,23 +32,30 @@ void mesh::read(const YAML::Node& inputNode)
         fs::path meshFilePath =
             mesh_node["file_path"].template as<std::string>();
 
-        // check for restart
+        // automatic domain decomposition and restarts
+        auto& decomposition_ctrl =
+            this->controlsRef()
+                .solverRefMutable()
+                .solverControl_.advancedOptions_.domainDecomposition_;
+        if (mesh_node["automatic_decomposition_type"])
+        {
+            decomposition_ctrl.method_ =
+                mesh_node["automatic_decomposition_type"]
+                    .template as<std::string>();
+        }
+
         const auto& restart_ctrl =
             this->controlsRef().solverRef().restartControl_;
         if (restart_ctrl.isRestart_)
         {
             meshFilePath = restart_ctrl.inputFilePath_;
+            // restart databases are written one file per rank, automatic
+            // decomposition cannot be used in that case.
+            decomposition_ctrl.method_ = "";
         }
 
-        // automatic domain decomposition
-        std::string auto_decomp("None");
-        if (mesh_node["automatic_decomposition_type"])
-        {
-            auto_decomp = mesh_node["automatic_decomposition_type"]
-                              .template as<std::string>();
-        }
         if (messager::master() && messager::nProcs() > 1 &&
-            "None" != auto_decomp)
+            this->controlsRef().useAutomaticDomainDecomposition())
         {
             std::cout << "Automatic domain decomposition: input Exodus file "
                          "must be a serial file\n";
@@ -75,10 +82,10 @@ void mesh::read(const YAML::Node& inputNode)
         ioBrokerPtr_ = new stk::io::StkMeshIoBroker(pm);
         ioBrokerPtr_->set_bulk_data(bulkDataPtr_);
 
-        if ("None" != auto_decomp)
+        if (this->controlsRef().useAutomaticDomainDecomposition())
         {
-            ioBrokerPtr_->property_add(
-                Ioss::Property("DECOMPOSITION_METHOD", auto_decomp));
+            ioBrokerPtr_->property_add(Ioss::Property(
+                "DECOMPOSITION_METHOD", decomposition_ctrl.method_));
         }
 
         // extra Ioss properties (e.g. DECOMP_OMITTED_BLOCK_NAMES to balance
@@ -89,6 +96,7 @@ void mesh::read(const YAML::Node& inputNode)
             {
                 const auto name = prop["name"].template as<std::string>();
                 const auto value = prop["value"].template as<std::string>();
+                decomposition_ctrl.properties_[name] = value;
                 ioBrokerPtr_->property_add(Ioss::Property(name, value));
                 if (messager::master())
                 {
@@ -104,11 +112,6 @@ void mesh::read(const YAML::Node& inputNode)
                                             ? stk::io::READ_RESTART
                                             : stk::io::READ_MESH);
         ioBrokerPtr_->create_input_mesh();
-
-        if (restart_ctrl.isRestart_)
-        {
-            this->controlsRef().deserializeRestartParam(*ioBrokerPtr_);
-        }
 
         // Cache the mesh dimension
         const auto dim =

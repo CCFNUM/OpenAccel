@@ -144,6 +144,19 @@ private:
 
     stk::mesh::EntityId encapsulatingElementIdent_ = stk::mesh::InvalidEntityId;
 
+    // natural coordinates of the probe point inside encapsulatingElementIdent_;
+    // invariant under connectivity-preserving mesh motion, so cached once
+    std::array<scalar, SPATIAL_DIM> isoParCoords_ = {0.0};
+
+    // number of field components; read once from the field's max_size()
+    label nComp_ = 1;
+
+    // true only on the rank owning the element containing the probe point
+    bool owner_ = false;
+
+    // false until the owning element has been located on the first update()
+    bool located_ = false;
+
 public:
     probeObject(postProcess* postProcessManagerPtr,
                 std::string name,

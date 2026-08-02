@@ -1038,6 +1038,12 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["bandwidth_reduction"].template as<bool>();
             }
 
+            if (expertParameters["node_reordering"])
+            {
+                solver_.solverControl_.expertParameters_.nodeReordering_ =
+                    expertParameters["node_reordering"].template as<bool>();
+            }
+
             if (expertParameters["force_wall_distance_calculation"])
             {
                 solver_.solverControl_.expertParameters_

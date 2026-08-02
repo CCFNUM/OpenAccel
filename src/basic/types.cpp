@@ -1123,7 +1123,8 @@ postProcessType convertPostProcessTypeFromString(std::string s)
 std::unordered_map<std::string, reductionType> statisticsTypeMap{
     {"sum", reductionType::sum},
     {"average", reductionType::average},
-    {"area_average", reductionType::areaAverage}};
+    {"area_average", reductionType::areaAverage},
+    {"mass_average", reductionType::massAverage}};
 
 reductionType convertStatisticsTypeFromString(std::string s)
 {

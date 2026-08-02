@@ -183,9 +183,15 @@ void simulation::runSteadyState()
         io_write_time_ = io_write_counter_;
 
         if (messager::master())
-            std::cout << std::endl
-                      << "Iter = " << controlsRef().iter << std::endl
-                      << std::endl;
+        {
+            std::cout << std::endl << "Iter = " << controlsRef().iter;
+            if (controlsRef().solverRef().restartControl_.isRestart_)
+            {
+                std::cout << " (global iter = " << controlsRef().globalIter
+                          << ")";
+            }
+            std::cout << std::endl << std::endl;
+        }
 
         auto elapsedIterTimeStart = std::chrono::high_resolution_clock::now();
 
@@ -264,9 +270,16 @@ void simulation::runTransient()
              controlsRef().iter++)
         {
             if (messager::master())
+            {
                 std::cout << std::endl
-                          << "Iter = " << controlsRef().iter << std::endl
+                          << "Iter = "
+                          << controlsRef().iter
+                          // show global iterations unconditionally for
+                          // transient runs
+                          << " (global iter = " << controlsRef().globalIter + 1
+                          << ")" << std::endl
                           << std::endl;
+            }
 
             // update mesh in case of deforming/moving mesh
             if (this->meshRef().anyZoneMeshDeforming() ||

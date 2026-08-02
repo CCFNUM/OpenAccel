@@ -52,6 +52,9 @@ void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
     // RHS: ρ*V/dt² * (D - 2*D_old + D_old_old)
     //
     // Note: Uses reference volume V₀ for total Lagrangian formulation
+    //
+    // Optional mass-proportional Rayleigh damping adds α*ρ*dD/dt, discretized
+    // BDF1
     // ========================================================================
 
     auto& mesh = field_broker_->meshRef();
@@ -80,6 +83,10 @@ void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
     const STKScalarField* DSTKFieldPtrOldOld =
         phi_->prevTimeRef().prevTimeRef().stkFieldPtr();
 
+    // Rayleigh mass-proportional damping coefficient [1/s]
+    const scalar dampingCoeff = domain->solidMechanics_.dampingCoeff_;
+    const bool useDamping = (dampingCoeff > 0.0);
+
     // Get density field (constant for solid mechanics)
     const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
 
@@ -90,6 +97,7 @@ void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
     // Time step
     const scalar dt = mesh.controlsRef().getTimestep();
     const scalar rDeltaT2 = 1.0 / (dt * dt);
+    const scalar rDeltaT = 1.0 / dt; // first time derivative of the damping
 
     // Get interior parts
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -140,6 +148,10 @@ void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
             // LHS coefficient: ρ*V/dt²
             const scalar lhsfac = rho * vol * rDeltaT2;
 
+            // damping LHS coefficient: α*ρ*V/dt
+            const scalar lhsfacDamp =
+                useDamping ? (dampingCoeff * rho * vol * rDeltaT) : 0.0;
+
             for (label i = 0; i < SPATIAL_DIM; ++i)
             {
                 const scalar Di = Db[SPATIAL_DIM * iNode + i];
@@ -151,6 +163,14 @@ void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
 
                 // RHS: ρ*V/dt² * (D - 2*D_old + D_old_old)
                 p_rhs[i] -= lhsfac * (Di - 2.0 * DiOld + DiOldOld);
+
+                // damping: α*ρ*V/dt on the diagonal, α*ρ*V/dt * (D - D_old)
+                // on the residual
+                if (useDamping)
+                {
+                    p_lhs[i * SPATIAL_DIM + i] += lhsfacDamp;
+                    p_rhs[i] -= lhsfacDamp * (Di - DiOld);
+                }
             }
 
             Base::applyCoeff_(

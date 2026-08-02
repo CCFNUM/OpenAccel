@@ -2191,6 +2191,7 @@ void turbulenceModel::updateTPlusScalable_(const std::shared_ptr<domain> domain)
 
         ws_cp.resize(nodesPerSide);
         ws_mu.resize(nodesPerSide);
+        ws_lambda.resize(nodesPerSide);
         ws_face_shape_function.resize(numScsBip * nodesPerSide);
 
         // pointers

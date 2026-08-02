@@ -163,7 +163,7 @@ void interface::initializeGhostings_()
     {
         if (messager::master())
         {
-            std::cout << "  Non-conformal interface algorithm will ghost "
+            std::cout << "  \nInterface algorithm will ghost "
                       << nGlobalGhostedElements << " entities: " << std::endl;
         }
 
@@ -442,7 +442,7 @@ void interface::determineGeometricRelations_()
     }
 }
 
-const std::vector<std::vector<label>>&
+const interface::conformalGraphMap&
 interface::populateConformalRowToRowMapping_(
     const ::linearSolver::CRSNodeGraph* g)
 {
@@ -490,6 +490,7 @@ interface::populateConformalRowToRowMapping_(
 
     // set size
     entry.map.resize(matchingNodePairVector_.size());
+    entry.remapped.resize(matchingNodePairVector_.size());
 
     label iPair = 0;
     for (const auto& nodePair : matchingNodePairVector_)
@@ -519,6 +520,7 @@ interface::populateConformalRowToRowMapping_(
 
         // set size of the local mapper
         entry.map[iPair].resize(cols.size(), -1);
+        entry.remapped[iPair].assign(cols.size(), 0);
 
         // populate the mapper
         for (label iCol = 0; iCol < cols.size(); iCol++)
@@ -552,8 +554,10 @@ interface::populateConformalRowToRowMapping_(
                              "missing from the row stencil");
                 }
 
-                // store in the mapper
+                // store in the mapper; flag it so the column transform is
+                // applied even when iCol_s1 happens to equal iCol
                 entry.map[iPair][iCol] = iCol_s1;
+                entry.remapped[iPair][iCol] = 1;
             }
             else
             {
@@ -580,7 +584,7 @@ interface::populateConformalRowToRowMapping_(
         iPair++;
     }
 
-    return entry.map;
+    return entry;
 }
 
 void interface::populateConformalElemsToGhost_()

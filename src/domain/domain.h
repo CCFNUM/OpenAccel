@@ -67,6 +67,9 @@ struct solidMechanics
     bool planeStress_ = false;
     bool lumpedMass_ =
         true; // true = lumped (diagonal), false = consistent (full mass matrix)
+
+    // mass-proportional Rayleigh damping coefficient [1/s]; 0 = undamped
+    scalar dampingCoeff_ = 0.0;
 };
 
 struct buoyancy

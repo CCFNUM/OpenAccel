@@ -488,7 +488,7 @@ public:
                             // define a mapper from the stencil of node 2 to the
                             // stencil of node 1
                             const std::vector<label>& mapper =
-                                matchingNodePairConnectivityMap[iPair];
+                                matchingNodePairConnectivityMap.map[iPair];
 
                             // add vals2 to vals1
                             for (label iCol = 0; iCol < mapper.size(); iCol++)
@@ -566,6 +566,10 @@ public:
                                                       0.0);
                         std::vector<scalar> ws_srcRhs(SPATIAL_DIM, 0.0);
 
+                        // column block, row-major DIM x DIM; fully overwritten
+                        // for every column below, so it never needs clearing
+                        scalar blk[SPATIAL_DIM * SPATIAL_DIM];
+
                         label iPair = 0;
                         for (const auto& nodePair : nodePairs)
                         {
@@ -608,34 +612,56 @@ public:
                             // define a mapper from the stencil of node 2 to the
                             // stencil of node 1
                             const std::vector<label>& mapper =
-                                matchingNodePairConnectivityMap[iPair];
+                                matchingNodePairConnectivityMap.map[iPair];
+                            const std::vector<uint8_t>& isRemapped =
+                                matchingNodePairConnectivityMap.remapped[iPair];
 
                             // add vals2 to vals1 (rotate vals2 first)
                             for (label iCol = 0; iCol < mapper.size(); iCol++)
                             {
+                                const bool remappedColumn =
+                                    isRemapped[iCol] != 0;
+
+                                const label o2 =
+                                    iCol * SPATIAL_DIM * SPATIAL_DIM;
+                                const label o1 =
+                                    mapper[iCol] * SPATIAL_DIM * SPATIAL_DIM;
+
+                                // blk = A22 * R^T (remapped column) or A22
+                                // (interior); split to stay at O(DIM^3)
+                                if (remappedColumn)
+                                {
+                                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            scalar s = 0.0;
+                                            for (label l = 0; l < SPATIAL_DIM;
+                                                 ++l)
+                                                s +=
+                                                    vals2[o2 + k * SPATIAL_DIM +
+                                                          l] *
+                                                    rotMat(j, l);
+                                            blk[k * SPATIAL_DIM + j] = s;
+                                        }
+                                }
+                                else
+                                {
+                                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                            blk[k * SPATIAL_DIM + j] =
+                                                vals2[o2 + k * SPATIAL_DIM + j];
+                                }
+
                                 // apply for block (SPATIAL_DIM x SPATIAL_DIM)
                                 for (label i = 0; i < SPATIAL_DIM; ++i)
                                 {
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
+                                        scalar sum = 0.0;
                                         for (label k = 0; k < SPATIAL_DIM; ++k)
-                                        {
-                                            for (label l = 0; l < SPATIAL_DIM;
-                                                 ++l)
-                                            {
-                                                // sum += R(i,k) * T(k,l) *
-                                                // R(j,l)
-                                                vals1[mapper[iCol] *
-                                                          SPATIAL_DIM *
-                                                          SPATIAL_DIM +
-                                                      i * SPATIAL_DIM + j] +=
-                                                    rotMat(i, k) *
-                                                    vals2[iCol * SPATIAL_DIM *
-                                                              SPATIAL_DIM +
-                                                          k * SPATIAL_DIM + l] *
-                                                    rotMat(j, l);
-                                            }
-                                        }
+                                            sum += rotMat(i, k) *
+                                                   blk[k * SPATIAL_DIM + j];
+                                        vals1[o1 + i * SPATIAL_DIM + j] += sum;
                                     }
                                 }
                             }

@@ -1,4 +1,4 @@
-// File       : domain.cpp
+// File       : domainIO.cpp
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
@@ -1018,6 +1018,18 @@ void domain::read_()
                 {
                     errorMsg("false lumped mass -> consistent mass appraoch is "
                              "not implemented");
+                }
+            }
+
+            // mass-proportional Rayleigh damping coefficient [1/s]
+            if (solidMechanicsBlock["damping_coeff"])
+            {
+                solidMechanics_.dampingCoeff_ =
+                    solidMechanicsBlock["damping_coeff"].template as<scalar>();
+
+                if (solidMechanics_.dampingCoeff_ < 0.0)
+                {
+                    errorMsg("damping_coeff must be non-negative");
                 }
             }
         }
