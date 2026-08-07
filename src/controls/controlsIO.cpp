@@ -366,6 +366,22 @@ void controls::read(YAML::Node inputNode)
                                    .convergenceControl_.relaxationParameters_
                                    .solidDisplacementRelaxationFactor_ <= 1.0);
                     }
+                    if (rlxPars["volume_fraction_relaxation_factor"])
+                    {
+                        const scalar urf =
+                            rlxPars["volume_fraction_relaxation_factor"]
+                                .template as<scalar>();
+
+                        if (urf <= 0.0 || urf > 1.0)
+                        {
+                            errorMsg("volume_fraction_relaxation_factor must "
+                                     "be in (0, 1]");
+                        }
+
+                        solver_.solverControl_.basicSettings_
+                            .convergenceControl_.relaxationParameters_
+                            .volumeFractionRelaxationFactor_ = urf;
+                    }
                 }
             }
             else

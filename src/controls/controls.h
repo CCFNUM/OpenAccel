@@ -73,6 +73,7 @@ struct solverDictionary
                 scalar pressureRelaxationFactor_ = 1.0;
                 scalar turbulenceRelaxationFactor_ = 1.0;
                 scalar solidDisplacementRelaxationFactor_ = 1.0;
+                scalar volumeFractionRelaxationFactor_ = 1.0;
             };
 
             struct convergenceControlDictionary

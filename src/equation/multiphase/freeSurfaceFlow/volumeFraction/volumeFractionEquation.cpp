@@ -58,6 +58,12 @@ void volumeFractionEquation::setup()
     // setup assembler
     assembler_->setup(&model_->alphaRef(phaseIndex_), advection, domainVector_);
 
+    model_->alphaRef(phaseIndex_)
+        .setURF(model_->controlsRef()
+                    .solverRef()
+                    .solverControl_.basicSettings_.convergenceControl_
+                    .relaxationParameters_.volumeFractionRelaxationFactor_);
+
     // setup linear solver
     // FIXME: Consider passing mesh argument or
     // connectivity arrays passed to initialize() directly is more flexible
