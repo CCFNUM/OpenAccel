@@ -53,6 +53,10 @@ struct multiphase
         label interfaceCompressionLevel_ = 0;
         bool fluxCorrectedTransport_ = false;
         label nAlphaCorrections_ = 1; // FCT outer corrections
+        // advection scheme of the volume fraction equation; defaults to the
+        // one-sided Barth-Jespersen limiter
+        vofAdvectionSchemeType advectionScheme_ =
+            vofAdvectionSchemeType::barthJespersen;
     };
 
     bool homogeneous_ = true;

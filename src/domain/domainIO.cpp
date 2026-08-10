@@ -504,6 +504,18 @@ void domain::read_()
                                 freeSurfaceModelBlock["n_alpha_corrections"]
                                     .template as<label>();
                         }
+
+                        if (freeSurfaceModelBlock["advection_scheme"])
+                        {
+                            multiphase_.freeSurfaceModel_.advectionScheme_ =
+                                convertVofAdvectionSchemeTypeFromString(
+                                    freeSurfaceModelBlock["advection_scheme"]
+                                        .template as<std::string>());
+                        }
+
+                        infoMsg("Volume fraction advection scheme: " +
+                                toString(multiphase_.freeSurfaceModel_
+                                             .advectionScheme_));
                     }
                 }
                 else

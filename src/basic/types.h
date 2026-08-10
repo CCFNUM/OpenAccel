@@ -491,6 +491,18 @@ enum class advectionSchemeType
 
 advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s);
 
+// Advection schemes for the volume fraction equation. Selected per domain via
+// free_surface_model/advection_scheme; only meaningful when the global
+// advection scheme is high_resolution.
+enum class vofAdvectionSchemeType
+{
+    barthJespersen
+};
+
+vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s);
+
+std::string toString(vofAdvectionSchemeType type);
+
 // Physical bounadaries
 enum class boundaryPhysicalType
 {

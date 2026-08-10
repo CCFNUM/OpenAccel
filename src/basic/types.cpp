@@ -532,6 +532,44 @@ advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s)
     return advectionSchemeType::upwind; // useless
 }
 
+// Volume fraction advection scheme
+
+std::unordered_map<std::string, vofAdvectionSchemeType>
+    vofAdvectionSchemeTypeMap{
+        {"BarthJespersen", vofAdvectionSchemeType::barthJespersen}};
+
+vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s)
+{
+    auto it = vofAdvectionSchemeTypeMap.find(s);
+    if (it != vofAdvectionSchemeTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        std::string valid;
+        for (const auto& pair : vofAdvectionSchemeTypeMap)
+        {
+            valid += (valid.empty() ? "" : ", ") + pair.first;
+        }
+        errorMsg("Invalid volume fraction advection scheme type: " + s +
+                 ". Valid options: " + valid);
+    }
+
+    return vofAdvectionSchemeType::barthJespersen; // useless
+}
+
+std::string toString(vofAdvectionSchemeType type)
+{
+    switch (type)
+    {
+        case vofAdvectionSchemeType::barthJespersen:
+            return "BarthJespersen";
+    }
+
+    return ""; // useless
+}
+
 // Physical boundary type
 
 std::unordered_map<std::string, boundaryPhysicalType> physicalBoundaryTypeMap{
