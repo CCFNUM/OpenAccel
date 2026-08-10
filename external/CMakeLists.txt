@@ -85,3 +85,13 @@ target_sources(main_obj PRIVATE
 if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ssdf/CMakeLists.txt)
     message(FATAL_ERROR "SSDF submodule is missing, run: git submodule update --init --recursive")
 endif()
+
+# Build the pinned SSDF submodule so every checkout uses the same library.
+# Cache defaults remain overridable with -D options.
+set(SSDF_ENABLE_MPI ON CACHE BOOL "Enable MPI support in SSDF")
+set(SSDF_ENABLE_OPENMP ON CACHE BOOL "Enable OpenMP support in SSDF")
+set(SSDF_ENABLE_CUBIQL ON CACHE BOOL "Enable cuBQL for signed inside/outside classification")
+
+# Only the library is needed by OpenAccel, not SSDF drivers or tests.
+add_subdirectory(ssdf EXCLUDE_FROM_ALL)
+target_link_libraries(main_obj PUBLIC ssdf)

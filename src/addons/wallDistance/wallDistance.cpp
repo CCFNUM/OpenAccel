@@ -76,7 +76,7 @@ void wallDistance::reset()
         case wallDistanceMethod::signedDistanceFunction:
             assert(signedDistanceFunctionPtr_);
             break;
-    }
+            }
 }
 
 void wallDistance::initialize()
