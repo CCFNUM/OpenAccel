@@ -9,9 +9,10 @@
 #include "simulation.h"
 #include "wallDistance.h"
 
-#include <ssdf/ssdf.hpp>
+// paths are those exported by the in-tree ssdf target, not by an installed SSDF
+#include <ssdf.hpp>
 #ifdef SSDF_ENABLE_MPI
-#include <ssdf/distributed/psdf.hpp>
+#include <distributed/psdf.hpp>
 #endif
 
 #include <cstddef>
@@ -23,8 +24,7 @@
 namespace accel
 {
 
-signedDistanceFunction::signedDistanceFunction(
-    wallDistance* wallDistancePtr)
+signedDistanceFunction::signedDistanceFunction(wallDistance* wallDistancePtr)
     : wallDistancePtr_(wallDistancePtr)
 {
 }
@@ -104,8 +104,7 @@ void signedDistanceFunction::computeWallDistance_()
                     continue;
                 }
 
-                const scalar* xyz =
-                    stk::mesh::field_data(*coordinates, node);
+                const scalar* xyz = stk::mesh::field_data(*coordinates, node);
                 queryNodes.push_back(node);
                 x.push_back(xyz[0]);
                 y.push_back(xyz[1]);
@@ -213,8 +212,8 @@ void signedDistanceFunction::computeWallDistance_()
         errorMsg("SSDF wall distance found no active wall surface sides");
     }
 
-    std::vector<scalar> distance(
-        queryNodes.size(), std::numeric_limits<scalar>::max());
+    std::vector<scalar> distance(queryNodes.size(),
+                                 std::numeric_limits<scalar>::max());
 
     int result = 0;
 #ifdef SSDF_ENABLE_MPI

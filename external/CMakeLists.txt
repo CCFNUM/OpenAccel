@@ -55,3 +55,22 @@ target_sources(main_obj PRIVATE
 target_sources(main_obj PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/nalu/src/NaluEnv.C
 )
+
+# SSDF (signed distance function library used for wall distance)
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ssdf/CMakeLists.txt)
+    message(FATAL_ERROR "SSDF submodule is missing, run: git submodule update --init --recursive")
+endif()
+
+# SSDF defaults for OpenAccel (no FORCE, still overridable with -D on the command line)
+set(SSDF_ENABLE_MPI ON CACHE BOOL "Enable MPI support in SSDF")
+set(SSDF_ENABLE_OPENMP OFF CACHE BOOL "Enable OpenMP support in SSDF")
+set(SSDF_ENABLE_CUBIQL OFF CACHE BOOL "Enable cuBQL (CUDA BVH) support in SSDF")
+
+# SSDF would otherwise turn this ON for the whole project
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build libraries as shared libraries")
+
+# EXCLUDE_FROM_ALL drops the SSDF drivers and tests from the build, libssdf
+# itself is still built as a link dependency of main_obj. Header search paths
+# (serial/ and the generated ssdf_config.hpp) come with the target.
+add_subdirectory(ssdf EXCLUDE_FROM_ALL)
+target_link_libraries(main_obj PUBLIC ssdf)

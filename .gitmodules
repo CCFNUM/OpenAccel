@@ -14,3 +14,6 @@
 [submodule "external/gplotpp"]
 	path = external/gplotpp
 	url = https://github.com/ziotom78/gplotpp
+[submodule "external/ssdf"]
+	path = external/ssdf
+	url = https://github.com/zulianp/ssdf
