@@ -259,6 +259,9 @@ protected:
     updateInterfaceMomentumImbalance_(const std::shared_ptr<domain> domain);
 
 private:
+    // temperature level for the ideal-gas density estimate of the velocity seed
+    scalar initialTemperatureLevel_(const std::shared_ptr<domain> domain);
+
     // flow data for reporting
     struct FlowData
     {

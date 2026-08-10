@@ -666,6 +666,8 @@ void surfaceComparator::readNodeXYZ_(stk::mesh::Entity node, vector& out)
     out = vector(xyz[0], xyz[1], xyz[2]);
 }
 
+// Triangulate about the face centroid so the samples depend only on the node
+// cycle; a fan from node 0 picks a diagonal and biases the separation angle.
 void surfaceComparator::decomposeFaceToTries_(stk::mesh::Entity face,
                                               std::vector<faceTriCentroid>& out)
 {
@@ -675,21 +677,26 @@ void surfaceComparator::decomposeFaceToTries_(stk::mesh::Entity face,
     if (n < 3)
         return;
 
-    vector v0;
-    readNodeXYZ_(nodes[0], v0);
-
-    for (unsigned i = 1; i + 1 < n; ++i)
+    std::vector<vector> v(n);
+    vector centroid = vector::Zero();
+    for (unsigned i = 0; i < n; ++i)
     {
-        vector v1, v2;
-        readNodeXYZ_(nodes[i], v1);
-        readNodeXYZ_(nodes[i + 1], v2);
+        readNodeXYZ_(nodes[i], v[i]);
+        centroid += v[i];
+    }
+    centroid *= scalar(1.0) / static_cast<scalar>(n);
 
-        vector a = v1 - v0, b = v2 - v0;
+    for (unsigned i = 0; i < n; ++i)
+    {
+        const vector& v1 = v[i];
+        const vector& v2 = v[(i + 1) % n];
+
+        vector a = v1 - centroid, b = v2 - centroid;
         scalar area = scalar(0.5) * (a.cross(b)).norm();
         if (area <= 0.0)
             continue;
 
-        vector ctr = (v0 + v1 + v2) * scalar(1.0 / 3.0);
+        vector ctr = (centroid + v1 + v2) * scalar(1.0 / 3.0);
         out.push_back({ctr, area});
     }
 }

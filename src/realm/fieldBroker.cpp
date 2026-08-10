@@ -2886,8 +2886,9 @@ void fieldBroker::setupTransitionOnsetReynoldsNumber(
     {
         ReThetaRef().setZone(domain->index());
 
-        initialCondition::setupFieldInitializationOverDomainFromValues(
-            ReThetaRef(), domain->index(), {1.0});
+        // seeded from the onset correlation in the transition SST model
+        initialCondition::setupFieldInitializationOverDomainAsAutomatic(
+            ReThetaRef(), domain->index());
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)
@@ -2930,8 +2931,9 @@ void fieldBroker::setupTurbulentIntermittency(
     {
         gammaRef().setZone(domain->index());
 
-        initialCondition::setupFieldInitializationOverDomainFromValues(
-            gammaRef(), domain->index(), {1.0});
+        // falls back to fully turbulent in the turbulence model
+        initialCondition::setupFieldInitializationOverDomainAsAutomatic(
+            gammaRef(), domain->index());
 
         for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
              iBoundary++)

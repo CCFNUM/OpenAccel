@@ -934,9 +934,6 @@ void phiAssembler<N>::assembleElemTermsBoundaryInletFixedValue_(
     const auto& nodalSidePhiSTKFieldRef =
         phi_->nodeSideFieldRef().stkFieldRef();
     const auto& sidePhiSTKFieldRef = phi_->sideFieldRef().stkFieldRef();
-    const auto* reversalFlagSTKFieldPtr =
-        includeAdv ? field_broker_->URef().reversalFlagRef().stkFieldPtr()
-                   : nullptr;
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -1154,32 +1151,38 @@ void phiAssembler<N>::assembleElemTermsBoundaryInletFixedValue_(
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const label trfflag =
-                    includeAdv ? (stk::mesh::field_data(
-                                     *reversalFlagSTKFieldPtr, side))[ip]
-                               : 0;
+                const label nearestNode = ipNodeMap[ip];
 
-                if (trfflag == 1)
+                const label faceOffSet = ip * SPATIAL_DIM;
+                const label offSetSF_face = ip * nodesPerSide;
+
+                //================================
+                // Advection: entrainment; advect
+                // in from specified value
+                //================================
+                const scalar tmDot =
+                    includeAdv ? (stk::mesh::field_data(*mDotSideSTKFieldPtr_,
+                                                        side))[ip]
+                               : 0.0;
+
+                if (tmDot > 0.0)
                 {
-                    // reversed flow .. treat as slip wall, that is, no
-                    // advection and no diffusion
+                    // Local outflow at a pressure inlet: use the interior
+                    // scalar state and zero normal diffusion.
+                    stk::mesh::Entity nodeR = elemNodeRels[nearestNode];
+                    const scalar* phiIpUpw =
+                        stk::mesh::field_data(phiSTKFieldRef, nodeR);
+
+                    for (label i = 0; i < N; ++i)
+                    {
+                        const label indexR = nearestNode * N + i;
+                        const label rowR = indexR * nodesPerElement * N;
+                        p_rhs[indexR] -= tmDot * phiIpUpw[i];
+                        p_lhs[rowR + nearestNode * N + i] += tmDot;
+                    }
                 }
                 else
                 {
-                    const label nearestNode = ipNodeMap[ip];
-
-                    const label faceOffSet = ip * SPATIAL_DIM;
-                    const label offSetSF_face = ip * nodesPerSide;
-
-                    //================================
-                    // Advection: entrainment; advect
-                    // in from specified value
-                    //================================
-                    const scalar tmDot =
-                        includeAdv ? (stk::mesh::field_data(
-                                         *mDotSideSTKFieldPtr_, side))[ip]
-                                   : 0.0;
-
                     for (label i = 0; i < N; ++i)
                     {
                         const scalar aflux = tmDot * phibcVec[ip * N + i];
@@ -1261,9 +1264,6 @@ void phiAssembler<N>::assembleElemTermsBoundaryOutletZeroGradient_(
 
     // Get fields
     const auto& phiSTKFieldRef = phi_->stkFieldRef();
-    const auto* reversalFlagSTKFieldPtr =
-        includeAdv ? field_broker_->URef().reversalFlagRef().stkFieldPtr()
-                   : nullptr;
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -1388,51 +1388,38 @@ void phiAssembler<N>::assembleElemTermsBoundaryOutletZeroGradient_(
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const label trfflag =
-                    includeAdv ? (stk::mesh::field_data(
-                                     *reversalFlagSTKFieldPtr, side))[ip]
-                               : 0;
+                //================================
+                // Advection: only
+                //================================
 
-                if (trfflag == 0)
+                const scalar tmDot =
+                    includeAdv ? (stk::mesh::field_data(*mDotSideSTKFieldPtr_,
+                                                        side))[ip]
+                               : 0.0;
+
+                const label nearestNode = ipNodeMap[ip];
+
+                // right node; right is on the face
+                stk::mesh::Entity nodeR = elemNodeRels[nearestNode];
+
+                const scalar* phiIpUpw =
+                    stk::mesh::field_data(phiSTKFieldRef, nodeR);
+
+                for (label i = 0; i < N; ++i)
                 {
-                    //================================
-                    // Advection: only
-                    //================================
+                    const label indexR = nearestNode * N + i;
+                    const label rowR = indexR * nodesPerElement * N;
 
-                    const scalar tmDot =
-                        includeAdv ? (stk::mesh::field_data(
-                                         *mDotSideSTKFieldPtr_, side))[ip]
-                                   : 0.0;
+                    // total advection
+                    const scalar aflux = tmDot * phiIpUpw[i];
 
-                    const label nearestNode = ipNodeMap[ip];
+                    p_rhs[indexR] -= aflux;
 
-                    // right node; right is on the face
-                    stk::mesh::Entity nodeR = elemNodeRels[nearestNode];
-
-                    const scalar* phiIpUpw =
-                        stk::mesh::field_data(phiSTKFieldRef, nodeR);
-
-                    for (label i = 0; i < N; ++i)
-                    {
-                        const label indexR = nearestNode * N + i;
-                        const label rowR = indexR * nodesPerElement * N;
-
-                        // total advection
-                        const scalar aflux = tmDot * phiIpUpw[i];
-
-                        p_rhs[indexR] -= aflux;
-
-                        // upwind lhs
-                        p_lhs[rowR + nearestNode * N + i] += tmDot;
-                    }
-
-                    // no diffusion .. zero-gradient
+                    // upwind lhs
+                    p_lhs[rowR + nearestNode * N + i] += tmDot;
                 }
-                else
-                {
-                    // reversed flow .. treat as slip wall, that is,
-                    // zero-gradient
-                }
+
+                // no diffusion .. zero-gradient
             }
 
             Base::applyCoeff_(
@@ -1479,9 +1466,6 @@ void phiAssembler<N>::assembleElemTermsBoundaryOpening_(
     const auto& nodalSidePhiSTKFieldRef =
         phi_->nodeSideFieldRef().stkFieldRef();
     const auto& sidePhiSTKFieldRef = phi_->sideFieldRef().stkFieldRef();
-    const auto* reversalFlagSTKFieldPtr =
-        includeAdv ? field_broker_->URef().reversalFlagRef().stkFieldPtr()
-                   : nullptr;
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -1699,21 +1683,19 @@ void phiAssembler<N>::assembleElemTermsBoundaryOpening_(
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const label trfflag =
-                    includeAdv ? (stk::mesh::field_data(
-                                     *reversalFlagSTKFieldPtr, side))[ip]
-                               : 0;
+                // Openings permit bidirectional flow and do not update the
+                // outlet blocking flag. Use the same mass-flux sign as the
+                // opening momentum assembler to select outflow/entrainment.
+                const scalar tmDot =
+                    includeAdv ? (stk::mesh::field_data(*mDotSideSTKFieldPtr_,
+                                                        side))[ip]
+                               : 0.0;
 
-                if (trfflag == 0)
+                if (!includeAdv || tmDot > 0.0)
                 {
                     //================================
                     // Advection: only
                     //================================
-
-                    const scalar tmDot =
-                        includeAdv ? (stk::mesh::field_data(
-                                         *mDotSideSTKFieldPtr_, side))[ip]
-                                   : 0.0;
 
                     const label nearestNode = ipNodeMap[ip];
 
@@ -1750,11 +1732,6 @@ void phiAssembler<N>::assembleElemTermsBoundaryOpening_(
                     // Advection: entrainment; advect
                     // in from specified value
                     //================================
-                    const scalar tmDot =
-                        includeAdv ? (stk::mesh::field_data(
-                                         *mDotSideSTKFieldPtr_, side))[ip]
-                                   : 0.0;
-
                     for (label i = 0; i < N; ++i)
                     {
                         const scalar aflux = tmDot * phibcVec[ip * N + i];

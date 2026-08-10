@@ -165,6 +165,9 @@ protected:
     // flag to mark initialzed field at a zone
     std::vector<bool> isInitialized_;
 
+    // flag to mark a field whose content was imported from the mesh data base
+    std::vector<bool> isImportedFromDataBase_;
+
     void putFieldOnRegisteredParts_();
 
     // set the values given an array (scalar* arr): internal use only
@@ -489,6 +492,13 @@ public:
         assert(isInitialized_.size() > iZone);
         assert(this->isZoneSet(iZone));
         isInitialized_[iZone] = state;
+    }
+
+    // true when an automatic initialization restored it from the data base
+    bool isImportedFromDataBase(label iZone) const
+    {
+        assert(isImportedFromDataBase_.size() > iZone);
+        return isImportedFromDataBase_[iZone];
     }
 
     label interfaceTwoSided(label iZone) const

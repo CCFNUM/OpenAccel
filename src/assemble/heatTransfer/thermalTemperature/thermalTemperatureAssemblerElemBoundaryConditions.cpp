@@ -1105,8 +1105,6 @@ void thermalTemperatureAssembler::assembleElemTermsBoundaryInletFixedValue_(
     const auto& nodalSideTSTKFieldRef =
         model_->TRef().nodeSideFieldRef().stkFieldRef();
     const auto& sideTSTKFieldRef = model_->TRef().sideFieldRef().stkFieldRef();
-    const auto* reversalFlagSTKFieldPtr =
-        model_->URef().reversalFlagRef().stkFieldPtr();
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -1315,38 +1313,43 @@ void thermalTemperatureAssembler::assembleElemTermsBoundaryInletFixedValue_(
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const label trfflag =
-                    (stk::mesh::field_data(*reversalFlagSTKFieldPtr, side))[ip];
+                const label nearestNode = ipNodeMap[ip];
 
-                if (trfflag == 1)
+                const label faceOffSet = ip * SPATIAL_DIM;
+                const label offSetSF_face = ip * nodesPerSide;
+
+                scalar lambdaEffBip = 0.0;
+                scalar cpBip = 0.0;
+                for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
-                    // reversed flow .. treat as slip wall, that is, no
-                    // advection and no diffusion
+                    const scalar r = p_shape_function[offSetSF_face + ic];
+
+                    lambdaEffBip += r * p_lambdaEff[ic];
+                    cpBip += r * p_cp[ic];
+                }
+
+                //================================
+                // Advection: entrainment; advect
+                // in from specified value
+                //================================
+                const scalar tmDot =
+                    (stk::mesh::field_data(*mDotSideSTKFieldPtr_, side))[ip];
+
+                if (tmDot > 0.0)
+                {
+                    // Local outflow at a pressure inlet: upwind
+                    // temperature from the domain with zero normal
+                    // diffusion.
+                    stk::mesh::Entity nodeR = elemNodeRels[nearestNode];
+                    const scalar TIpUpw =
+                        *stk::mesh::field_data(TSTKFieldRef, nodeR);
+                    const label rowR = nearestNode * nodesPerElement;
+
+                    p_rhs[nearestNode] -= tmDot * cpBip * TIpUpw;
+                    p_lhs[rowR + nearestNode] += tmDot * cpBip;
                 }
                 else
                 {
-                    const label nearestNode = ipNodeMap[ip];
-
-                    const label faceOffSet = ip * SPATIAL_DIM;
-                    const label offSetSF_face = ip * nodesPerSide;
-
-                    scalar lambdaEffBip = 0.0;
-                    scalar cpBip = 0.0;
-                    for (label ic = 0; ic < nodesPerSide; ++ic)
-                    {
-                        const scalar r = p_shape_function[offSetSF_face + ic];
-
-                        lambdaEffBip += r * p_lambdaEff[ic];
-                        cpBip += r * p_cp[ic];
-                    }
-
-                    //================================
-                    // Advection: entrainment; advect
-                    // in from specified value
-                    //================================
-                    const scalar tmDot = (stk::mesh::field_data(
-                        *mDotSideSTKFieldPtr_, side))[ip];
-
                     const scalar aflux = tmDot * cpBip * Tbc[ip];
                     p_rhs[nearestNode] -= aflux;
 
@@ -1414,8 +1417,6 @@ void thermalTemperatureAssembler::assembleElemTermsBoundaryOutletZeroGradient_(
 
     const auto& TSTKFieldRef = phi_->stkFieldRef();
     const auto& cpSTKFieldRef = model_->cpRef().stkFieldRef();
-    const auto* reversalFlagSTKFieldPtr =
-        model_->URef().reversalFlagRef().stkFieldPtr();
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -1557,52 +1558,41 @@ void thermalTemperatureAssembler::assembleElemTermsBoundaryOutletZeroGradient_(
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const label trfflag =
-                    (stk::mesh::field_data(*reversalFlagSTKFieldPtr, side))[ip];
+                //================================
+                // Advection: only
+                //================================
 
-                if (trfflag == 0)
+                const scalar tmDot =
+                    (stk::mesh::field_data(*mDotSideSTKFieldPtr_, side))[ip];
+
+                const label nearestNode = ipNodeMap[ip];
+                const label offSetSF_face = ip * nodesPerSide;
+
+                scalar cpBip = 0.0;
+                for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
-                    //================================
-                    // Advection: only
-                    //================================
+                    const scalar r = p_shape_function[offSetSF_face + ic];
 
-                    const scalar tmDot = (stk::mesh::field_data(
-                        *mDotSideSTKFieldPtr_, side))[ip];
-
-                    const label nearestNode = ipNodeMap[ip];
-                    const label offSetSF_face = ip * nodesPerSide;
-
-                    scalar cpBip = 0.0;
-                    for (label ic = 0; ic < nodesPerSide; ++ic)
-                    {
-                        const scalar r = p_shape_function[offSetSF_face + ic];
-
-                        cpBip += r * p_cp[ic];
-                    }
-
-                    // right node; right is on the face
-                    stk::mesh::Entity nodeR = elemNodeRels[nearestNode];
-
-                    const scalar TIpUpw =
-                        *stk::mesh::field_data(TSTKFieldRef, nodeR);
-
-                    const label rowR = nearestNode * nodesPerElement;
-
-                    // total advection
-                    const scalar aflux = tmDot * cpBip * TIpUpw;
-
-                    p_rhs[nearestNode] -= aflux;
-
-                    // upwind lhs
-                    p_lhs[rowR + nearestNode] += tmDot * cpBip;
-
-                    // no diffusion .. zero-gradient
+                    cpBip += r * p_cp[ic];
                 }
-                else
-                {
-                    // reversed flow .. treat as slip wall, that is,
-                    // zero-gradient
-                }
+
+                // right node; right is on the face
+                stk::mesh::Entity nodeR = elemNodeRels[nearestNode];
+
+                const scalar TIpUpw =
+                    *stk::mesh::field_data(TSTKFieldRef, nodeR);
+
+                const label rowR = nearestNode * nodesPerElement;
+
+                // total advection
+                const scalar aflux = tmDot * cpBip * TIpUpw;
+
+                p_rhs[nearestNode] -= aflux;
+
+                // upwind lhs
+                p_lhs[rowR + nearestNode] += tmDot * cpBip;
+
+                // no diffusion .. zero-gradient
             }
 
             Base::applyCoeff_(
@@ -1647,8 +1637,6 @@ void thermalTemperatureAssembler::assembleElemTermsBoundaryOpening_(
     const auto& sideTSTKFieldRef = model_->TRef().sideFieldRef().stkFieldRef();
     const auto& TSTKFieldRef = model_->TRef().stkFieldRef();
     const auto& cpSTKFieldRef = model_->cpRef().stkFieldRef();
-    const auto* reversalFlagSTKFieldPtr =
-        model_->URef().reversalFlagRef().stkFieldPtr();
 
     // Get geometric fields
     const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -1859,17 +1847,17 @@ void thermalTemperatureAssembler::assembleElemTermsBoundaryOpening_(
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                const label trfflag =
-                    (stk::mesh::field_data(*reversalFlagSTKFieldPtr, side))[ip];
+                // Openings are bidirectional and do not use the outlet
+                // blocking flag. Match the momentum opening treatment by
+                // selecting the boundary state from the mass-flux sign.
+                const scalar tmDot =
+                    (stk::mesh::field_data(*mDotSideSTKFieldPtr_, side))[ip];
 
-                if (trfflag == 0)
+                if (tmDot > 0.0)
                 {
                     //================================
                     // Advection: only
                     //================================
-
-                    const scalar tmDot = (stk::mesh::field_data(
-                        *mDotSideSTKFieldPtr_, side))[ip];
 
                     const label nearestNode = ipNodeMap[ip];
                     const label offSetSF_face = ip * nodesPerSide;
@@ -1922,9 +1910,6 @@ void thermalTemperatureAssembler::assembleElemTermsBoundaryOpening_(
                     // Advection: entrainment; advect
                     // in from specified value
                     //================================
-                    const scalar tmDot = (stk::mesh::field_data(
-                        *mDotSideSTKFieldPtr_, side))[ip];
-
                     const scalar aflux = tmDot * cpBip * Tbc[ip];
                     p_rhs[nearestNode] -= aflux;
 

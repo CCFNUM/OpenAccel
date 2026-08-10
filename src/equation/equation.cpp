@@ -167,6 +167,12 @@ void equation::initializeAcceleration_()
     accelerationPtr_ = std::make_unique<convergenceAcceleration>(cfg);
 }
 
+void equation::disableAcceleration_()
+{
+    accelerationPtr_.reset();
+    accelerationInitialized_ = true;
+}
+
 const Vector& equation::applyAcceleration_(const Vector& correction,
                                            const scalar relaxValue,
                                            scalar& outRelaxValue)

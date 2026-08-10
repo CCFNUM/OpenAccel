@@ -255,6 +255,7 @@ struct solverDictionary
             bool disablePhysics_ = false;
             bool freezeFlow_ = false;
             bool freezePressure_ = false;
+            bool freezeEnergy_ = false;
             // disable subset node graphs (default): subsets are opt-in
             bool forceFullNodeGraph_ = true;
             bool nso_ = false;
@@ -262,6 +263,7 @@ struct solverDictionary
             bool highSpeedBlendDamping_ = false;
             nonconformalMethod nonconformalMethod_ =
                 nonconformalMethod::discontinuousGalerkin;
+            gradientAveragingType cvpgType_ = gradientAveragingType::arithAver;
         };
 
         basicSettingsDictionary basicSettings_;

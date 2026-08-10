@@ -739,6 +739,20 @@ void domain::read_()
                     break;
             }
 
+            // optional override of the default eddy length scale
+            if (turbulence_.option_ != turbulenceOption::laminar &&
+                turbulenceBlock["turbulent_eddy_length_scale"])
+            {
+                turbulence_.eddyLengthScale_ =
+                    turbulenceBlock["turbulent_eddy_length_scale"]
+                        .template as<scalar>();
+
+                if (turbulence_.eddyLengthScale_ <= 0.0)
+                {
+                    errorMsg("turbulent_eddy_length_scale must be positive");
+                }
+            }
+
             // if heat transfer model enabled, a turbulent flux closure for heat
             // transfer is required
             if (turbulence_.option_ != turbulenceOption::laminar &&

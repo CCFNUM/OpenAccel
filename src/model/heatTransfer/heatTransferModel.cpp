@@ -131,6 +131,11 @@ void heatTransferModel::updateTotalTemperatureField_(
     const STKScalarField* TSTKFieldPtr = TRef().stkFieldPtr();
     const STKScalarField* USTKFieldPtr = URef().stkFieldPtr();
     const STKScalarField* cpSTKFieldPtr = cpRef().stkFieldPtr();
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
 
     auto eosOption =
         domain->materialRef().thermodynamicProperties_.equationOfState_.option_;
@@ -157,6 +162,10 @@ void heatTransferModel::updateTotalTemperatureField_(
                         stk::mesh::field_data(*USTKFieldPtr, bucket);
                     const scalar* cpb =
                         stk::mesh::field_data(*cpSTKFieldPtr, bucket);
+                    const scalar* kb =
+                        includeTurbulentKineticEnergy
+                            ? stk::mesh::field_data(*kSTKFieldPtr, bucket)
+                            : nullptr;
 
                     for (size_t iNode = 0; iNode < n; ++iNode)
                     {
@@ -170,7 +179,11 @@ void heatTransferModel::updateTotalTemperatureField_(
                             UmagSqr += u * u;
                         }
 
-                        T0b[iNode] = T + 0.5 * UmagSqr / cp;
+                        T0b[iNode] =
+                            T + (0.5 * UmagSqr + (includeTurbulentKineticEnergy
+                                                      ? kb[iNode]
+                                                      : 0.0)) /
+                                    cp;
                     }
                 }
             }
@@ -209,6 +222,11 @@ void heatTransferModel::updateTotalTemperatureField_(
                                     *cpSTKFieldPtr, bucket);
                                 const scalar* Mab = stk::mesh::field_data(
                                     *MaSTKFieldPtr, bucket);
+                                const scalar* kb =
+                                    includeTurbulentKineticEnergy
+                                        ? stk::mesh::field_data(*kSTKFieldPtr,
+                                                                bucket)
+                                        : nullptr;
 
                                 for (size_t iNode = 0; iNode < n; ++iNode)
                                 {
@@ -218,7 +236,10 @@ void heatTransferModel::updateTotalTemperatureField_(
 
                                     scalar gamma = cp / (cp - Rs);
                                     T0b[iNode] = T * (1.0 + (gamma - 1.0) *
-                                                                0.5 * Ma * Ma);
+                                                                0.5 * Ma * Ma) +
+                                                 (includeTurbulentKineticEnergy
+                                                      ? kb[iNode] / cp
+                                                      : 0.0);
                                 }
                             }
                         }
@@ -255,6 +276,11 @@ void heatTransferModel::updateTotalTemperatureField_(
                                     *TSTKFieldPtr, bucket);
                                 const scalar* Ub = stk::mesh::field_data(
                                     *USTKFieldPtr, bucket);
+                                const scalar* kb =
+                                    includeTurbulentKineticEnergy
+                                        ? stk::mesh::field_data(*kSTKFieldPtr,
+                                                                bucket)
+                                        : nullptr;
 
                                 for (size_t iNode = 0; iNode < n; ++iNode)
                                 {
@@ -276,7 +302,10 @@ void heatTransferModel::updateTotalTemperatureField_(
                                         Ti *= T;
                                     }
 
-                                    scalar h0 = h + 0.5 * UmagSqr;
+                                    scalar h0 = h + 0.5 * UmagSqr +
+                                                (includeTurbulentKineticEnergy
+                                                     ? kb[iNode]
+                                                     : 0.0);
                                     T0b[iNode] = p8.solve(h0, T);
                                 }
                             }
@@ -349,6 +378,98 @@ void heatTransferModel::setupThermalConductivity(
     else
     {
         fieldBroker::setupThermalConductivity(domain);
+    }
+}
+
+scalar heatTransferModel::automaticTemperatureLevel_(
+    const std::shared_ptr<domain> domain,
+    bool& prescribed)
+{
+    // default when a domain prescribes no temperature
+    constexpr scalar defaultTemperature = 288.15;
+
+    scalar temperatureSum = 0.0;
+    label boundaryCount = 0;
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         ++iBoundary)
+    {
+        auto& temperatureBC =
+            TRef().boundaryConditionRef(domain->index(), iBoundary);
+
+        switch (temperatureBC.type())
+        {
+            case boundaryConditionType::staticTemperature:
+            case boundaryConditionType::totalTemperature:
+            case boundaryConditionType::specifiedValue:
+            // Robin closure: "value" carries the outside temperature
+            case boundaryConditionType::mixed:
+                break;
+
+            default:
+                continue;
+        }
+
+        if (!temperatureBC.isInputDataAdded("value"))
+        {
+            continue;
+        }
+
+        scalar boundaryTemperature = 0.0;
+        scalar boundaryArea = 0.0;
+        if (!boundaryInputAreaAverage_(domain,
+                                       iBoundary,
+                                       temperatureBC.data<1>("value"),
+                                       boundaryTemperature,
+                                       boundaryArea))
+        {
+            continue;
+        }
+
+        // average the patch levels, not the patch areas
+        temperatureSum += boundaryTemperature;
+        ++boundaryCount;
+    }
+
+    prescribed = boundaryCount > 0;
+
+    return prescribed ? temperatureSum / static_cast<scalar>(boundaryCount)
+                      : defaultTemperature;
+}
+
+void heatTransferModel::initializeTemperature(
+    const std::shared_ptr<domain> domain)
+{
+    // raw initialization
+    fieldBroker::initializeTemperature(domain);
+
+    // zero is not a usable absolute temperature: seed from the boundaries
+    if (TRef().isZoneUnset(domain->index()) ||
+        TRef().initialConditionRef(domain->index()).type() !=
+            initialConditionOption::automatic ||
+        TRef().isImportedFromDataBase(domain->index()))
+    {
+        return;
+    }
+
+    bool temperaturePrescribed = false;
+    const scalar temperatureLevel =
+        automaticTemperatureLevel_(domain, temperaturePrescribed);
+
+    TRef().setToValue(std::array<scalar, 1>{temperatureLevel},
+                      domain->zonePtr()->interiorParts());
+    TRef().synchronizeGhostedEntities(domain->index());
+    TRef().update(domain->index());
+
+    if (messager::master())
+    {
+        std::cout << "Field " + TRef().name() +
+                         (temperaturePrescribed
+                              ? " is automatically initialized from the "
+                                "prescribed boundary temperatures "
+                              : " has no prescribed boundary temperature and "
+                                "is initialized from the default level ")
+                  << std::scientific << temperatureLevel << std::endl;
     }
 }
 
@@ -507,6 +628,11 @@ void heatTransferModel::initializeSpecificTotalEnthalpy(
     STKScalarField* h0STKFieldPtr = h0Ref().stkFieldPtr();
     const STKScalarField* hSTKFieldPtr = hRef().stkFieldPtr();
     const STKScalarField* USTKFieldPtr = URef().stkFieldPtr();
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -528,6 +654,10 @@ void heatTransferModel::initializeSpecificTotalEnthalpy(
         // field chunks in bucket
         const scalar* Ub = stk::mesh::field_data(*USTKFieldPtr, nodeBucket);
         const scalar* hb = stk::mesh::field_data(*hSTKFieldPtr, nodeBucket);
+        const scalar* kb =
+            includeTurbulentKineticEnergy
+                ? stk::mesh::field_data(*kSTKFieldPtr, nodeBucket)
+                : nullptr;
         scalar* h0b = stk::mesh::field_data(*h0STKFieldPtr, nodeBucket);
 
         for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
@@ -541,7 +671,8 @@ void heatTransferModel::initializeSpecificTotalEnthalpy(
             }
 
             // calc h0
-            h0b[iNode] = hb[iNode] + 0.5 * UmagSqr;
+            h0b[iNode] = hb[iNode] + 0.5 * UmagSqr +
+                         (includeTurbulentKineticEnergy ? kb[iNode] : 0.0);
         }
     }
 
@@ -919,6 +1050,12 @@ void heatTransferModel::updateSpecificEnthalpy(
                 const STKScalarField* USTKFieldPtr = URef().stkFieldPtr();
                 const STKScalarField* h0STKFieldPtr = h0Ref().stkFieldPtr();
                 STKScalarField* hSTKFieldPtr = hRef().stkFieldPtr();
+                const bool includeTurbulentKineticEnergy =
+                    domain->type() == domainType::fluid &&
+                    domain->turbulence_.option_ != turbulenceOption::laminar;
+                const STKScalarField* kSTKFieldPtr =
+                    includeTurbulentKineticEnergy ? kRef().stkFieldPtr()
+                                                  : nullptr;
 
                 // get interior parts the domain is defined on
                 const stk::mesh::PartVector& partVec =
@@ -946,6 +1083,10 @@ void heatTransferModel::updateSpecificEnthalpy(
                         stk::mesh::field_data(*USTKFieldPtr, nodeBucket);
                     const scalar* h0b =
                         stk::mesh::field_data(*h0STKFieldPtr, nodeBucket);
+                    const scalar* kb =
+                        includeTurbulentKineticEnergy
+                            ? stk::mesh::field_data(*kSTKFieldPtr, nodeBucket)
+                            : nullptr;
                     scalar* hb =
                         stk::mesh::field_data(*hSTKFieldPtr, nodeBucket);
 
@@ -964,7 +1105,9 @@ void heatTransferModel::updateSpecificEnthalpy(
                         scalar h0 = h0b[iNode];
 
                         // calc h
-                        hb[iNode] = h0 - 0.5 * UmagSqr;
+                        hb[iNode] =
+                            h0 - 0.5 * UmagSqr -
+                            (includeTurbulentKineticEnergy ? kb[iNode] : 0.0);
                     }
                 }
             }
@@ -992,6 +1135,12 @@ void heatTransferModel::updateSpecificTotalEnthalpy(
                 const STKScalarField* USTKFieldPtr = URef().stkFieldPtr();
                 const STKScalarField* hSTKFieldPtr = hRef().stkFieldPtr();
                 STKScalarField* h0STKFieldPtr = h0Ref().stkFieldPtr();
+                const bool includeTurbulentKineticEnergy =
+                    domain->type() == domainType::fluid &&
+                    domain->turbulence_.option_ != turbulenceOption::laminar;
+                const STKScalarField* kSTKFieldPtr =
+                    includeTurbulentKineticEnergy ? kRef().stkFieldPtr()
+                                                  : nullptr;
 
                 // get interior parts the domain is defined on
                 const stk::mesh::PartVector& partVec =
@@ -1019,6 +1168,10 @@ void heatTransferModel::updateSpecificTotalEnthalpy(
                         stk::mesh::field_data(*USTKFieldPtr, nodeBucket);
                     const scalar* hb =
                         stk::mesh::field_data(*hSTKFieldPtr, nodeBucket);
+                    const scalar* kb =
+                        includeTurbulentKineticEnergy
+                            ? stk::mesh::field_data(*kSTKFieldPtr, nodeBucket)
+                            : nullptr;
                     scalar* h0b =
                         stk::mesh::field_data(*h0STKFieldPtr, nodeBucket);
 
@@ -1037,7 +1190,9 @@ void heatTransferModel::updateSpecificTotalEnthalpy(
                         scalar h = hb[iNode];
 
                         // calc h0
-                        h0b[iNode] = h + 0.5 * UmagSqr;
+                        h0b[iNode] =
+                            h + 0.5 * UmagSqr +
+                            (includeTurbulentKineticEnergy ? kb[iNode] : 0.0);
                     }
                 }
             }
@@ -1052,6 +1207,124 @@ void heatTransferModel::updateSpecificTotalEnthalpy(
 
         default:
             break;
+    }
+}
+
+void heatTransferModel::transformSpecificTotalEnthalpyToRothalpy(
+    const std::shared_ptr<domain> domain)
+{
+    transformSpecificTotalEnthalpyFrameWork_(domain, -1.0);
+}
+
+void heatTransferModel::transformRothalpyToSpecificTotalEnthalpy(
+    const std::shared_ptr<domain> domain)
+{
+    transformSpecificTotalEnthalpyFrameWork_(domain, 1.0);
+}
+
+void heatTransferModel::transformSpecificTotalEnthalpyFrameWork_(
+    const std::shared_ptr<domain> domain,
+    const scalar sign)
+{
+    if (domain->type() != domainType::fluid ||
+        !domain->zonePtr()->frameRotating() || controlsRef().isTransient())
+    {
+        return;
+    }
+
+    auto& mesh = this->meshRef();
+    auto& bulkData = mesh.bulkDataRef();
+    auto& metaData = mesh.metaDataRef();
+
+    const auto& coordinatesSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const auto& rotation = domain->zonePtr()->transformationRef().rotation();
+    const scalar* rotationMatrix = rotation.coriolisMatrix_.data();
+    const scalar* rotationOrigin = rotation.origin_.data();
+
+    const auto applyFrameWork = [&](const stk::mesh::Selector& selector,
+                                    STKScalarField& enthalpyField,
+                                    const STKScalarField& velocityField)
+    {
+        const auto& buckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selector);
+        for (const auto* bucketPtr : buckets)
+        {
+            const auto& bucket = *bucketPtr;
+            scalar* enthalpy = stk::mesh::field_data(enthalpyField, bucket);
+            const scalar* velocity =
+                stk::mesh::field_data(velocityField, bucket);
+
+            for (size_t iNode = 0; iNode < bucket.size(); ++iNode)
+            {
+                const scalar* coordinates = stk::mesh::field_data(
+                    coordinatesSTKFieldRef, bucket, iNode);
+                scalar velocityDotFrameVelocity = 0.0;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    scalar frameVelocity = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        frameVelocity += rotationMatrix[i * SPATIAL_DIM + j] *
+                                         (coordinates[j] - rotationOrigin[j]);
+                    }
+                    velocityDotFrameVelocity +=
+                        velocity[iNode * SPATIAL_DIM + i] * frameVelocity;
+                }
+
+                enthalpy[iNode] += sign * velocityDotFrameVelocity;
+            }
+        }
+    };
+
+    auto& h0STKFieldRef = h0Ref().stkFieldRef();
+    const auto& USTKFieldRef = URef().stkFieldRef();
+    const auto interiorSelector =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    applyFrameWork(interiorSelector, h0STKFieldRef, USTKFieldRef);
+    h0Ref().synchronizeGhostedEntities(domain->index());
+
+    stk::mesh::PartVector boundaryParts;
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         ++iBoundary)
+    {
+        const auto& parts = domain->zonePtr()->boundaryRef(iBoundary).parts();
+        boundaryParts.insert(boundaryParts.end(), parts.begin(), parts.end());
+    }
+
+    // Adiabatic/all-periodic configurations need no h0 side field. Side and
+    // node-side fields are registered together, so a null side pointer also
+    // means there is no boundary state to transform.
+    if (boundaryParts.empty() || h0Ref().sideFieldPtr() == nullptr ||
+        URef().sideFieldPtr() == nullptr)
+    {
+        return;
+    }
+
+    auto& nodeSideH0STKFieldRef = h0Ref().nodeSideFieldRef().stkFieldRef();
+    const auto& nodeSideUSTKFieldRef = URef().nodeSideFieldRef().stkFieldRef();
+    const auto boundarySelector =
+        metaData.universal_part() & stk::mesh::selectUnion(boundaryParts) &
+        stk::mesh::selectField(nodeSideH0STKFieldRef) &
+        stk::mesh::selectField(nodeSideUSTKFieldRef);
+    applyFrameWork(
+        boundarySelector, nodeSideH0STKFieldRef, nodeSideUSTKFieldRef);
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         ++iBoundary)
+    {
+        const auto& parts = domain->zonePtr()->boundaryRef(iBoundary).parts();
+        if (!h0Ref().sideFieldRef().definedOn(parts) ||
+            !h0Ref().nodeSideFieldRef().definedOn(parts))
+        {
+            continue;
+        }
+
+        h0Ref().sideFieldRef().interpolate(h0Ref().nodeSideFieldRef(),
+                                           domain->index(),
+                                           iBoundary,
+                                           h0Ref().isShifted());
     }
 }
 
@@ -1728,8 +2001,17 @@ void heatTransferModel::
 
     utils::polynomial<8> p8(hCoeffs);
 
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
+
     auto computeStaticTemperatureFromTotalEnthalpy =
-        [&](scalar T0, scalar UmagSqr, scalar Tinit) -> scalar
+        [&](scalar T0,
+            scalar UmagSqr,
+            scalar turbulentKineticEnergy,
+            scalar Tinit) -> scalar
     {
         scalar Ti = T0;
         scalar h0 = 0.0;
@@ -1738,7 +2020,7 @@ void heatTransferModel::
             h0 += hCoeffs[i] * Ti;
             Ti *= T0;
         }
-        scalar rhs = h0 - 0.5 * UmagSqr;
+        scalar rhs = h0 - 0.5 * UmagSqr - turbulentKineticEnergy;
         return p8.solve(rhs, Tinit);
     };
 
@@ -1778,6 +2060,10 @@ void heatTransferModel::
                         stk::mesh::field_data(nodeSideTSTKFieldRef, bucket);
                     const scalar* Ub =
                         stk::mesh::field_data(USTKFieldRef, bucket);
+                    const scalar* kb =
+                        includeTurbulentKineticEnergy
+                            ? stk::mesh::field_data(*kSTKFieldPtr, bucket)
+                            : nullptr;
                     const scalar* cpb =
                         (cpOption == specificHeatCapacityOption::value)
                             ? stk::mesh::field_data(cpSTKFieldRef, bucket)
@@ -1791,16 +2077,23 @@ void heatTransferModel::
                             scalar u = Ub[iNode * SPATIAL_DIM + d];
                             UmagSqr += u * u;
                         }
+                        const scalar turbulentKineticEnergy =
+                            includeTurbulentKineticEnergy ? kb[iNode] : 0.0;
 
                         if (cpOption == specificHeatCapacityOption::value)
                         {
-                            Tb[iNode] = T0Value - 0.5 * UmagSqr / cpb[iNode];
+                            Tb[iNode] = T0Value - (0.5 * UmagSqr +
+                                                   turbulentKineticEnergy) /
+                                                      cpb[iNode];
                         }
                         else
                         {
                             Tb[iNode] =
                                 computeStaticTemperatureFromTotalEnthalpy(
-                                    T0Value, UmagSqr, Tb[iNode]);
+                                    T0Value,
+                                    UmagSqr,
+                                    turbulentKineticEnergy,
+                                    Tb[iNode]);
                         }
                     }
                 }
@@ -1870,6 +2163,10 @@ void heatTransferModel::
                         stk::mesh::field_data(coordsSTKFieldRef, bucket);
                     const scalar* Ub =
                         stk::mesh::field_data(USTKFieldRef, bucket);
+                    const scalar* kb =
+                        includeTurbulentKineticEnergy
+                            ? stk::mesh::field_data(*kSTKFieldPtr, bucket)
+                            : nullptr;
                     const scalar* cpb =
                         (cpOption == specificHeatCapacityOption::value)
                             ? stk::mesh::field_data(cpSTKFieldRef, bucket)
@@ -1883,6 +2180,8 @@ void heatTransferModel::
                             scalar u = Ub[iNode * SPATIAL_DIM + d];
                             UmagSqr += u * u;
                         }
+                        const scalar turbulentKineticEnergy =
+                            includeTurbulentKineticEnergy ? kb[iNode] : 0.0;
 
 #if SPATIAL_DIM == 3
                         x = coordsb[iNode * SPATIAL_DIM + 0];
@@ -1897,13 +2196,18 @@ void heatTransferModel::
 
                         if (cpOption == specificHeatCapacityOption::value)
                         {
-                            Tb[iNode] = T0Value - 0.5 * UmagSqr / cpb[iNode];
+                            Tb[iNode] = T0Value - (0.5 * UmagSqr +
+                                                   turbulentKineticEnergy) /
+                                                      cpb[iNode];
                         }
                         else
                         {
                             Tb[iNode] =
                                 computeStaticTemperatureFromTotalEnthalpy(
-                                    T0Value, UmagSqr, Tb[iNode]);
+                                    T0Value,
+                                    UmagSqr,
+                                    turbulentKineticEnergy,
+                                    Tb[iNode]);
                         }
                     }
                 }
@@ -1957,8 +2261,17 @@ void heatTransferModel::updateTemperatureBoundarySideFieldOpening_(
 
     utils::polynomial<8> p8(hCoeffs);
 
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
+
     auto computeStaticTemperatureFromTotalEnthalpy =
-        [&](scalar T0, scalar UmagSqr, scalar Tinit) -> scalar
+        [&](scalar T0,
+            scalar UmagSqr,
+            scalar turbulentKineticEnergy,
+            scalar Tinit) -> scalar
     {
         scalar Ti = T0;
         scalar h0 = 0.0;
@@ -1967,7 +2280,7 @@ void heatTransferModel::updateTemperatureBoundarySideFieldOpening_(
             h0 += hCoeffs[i] * Ti;
             Ti *= T0;
         }
-        scalar rhs = h0 - 0.5 * UmagSqr;
+        scalar rhs = h0 - 0.5 * UmagSqr - turbulentKineticEnergy;
         return p8.solve(rhs, Tinit);
     };
 
@@ -2007,6 +2320,10 @@ void heatTransferModel::updateTemperatureBoundarySideFieldOpening_(
                         stk::mesh::field_data(nodeSideTSTKFieldRef, bucket);
                     const scalar* Ub =
                         stk::mesh::field_data(USTKFieldRef, bucket);
+                    const scalar* kb =
+                        includeTurbulentKineticEnergy
+                            ? stk::mesh::field_data(*kSTKFieldPtr, bucket)
+                            : nullptr;
                     const scalar* cpb =
                         (cpOption == specificHeatCapacityOption::value)
                             ? stk::mesh::field_data(cpSTKFieldRef, bucket)
@@ -2020,16 +2337,23 @@ void heatTransferModel::updateTemperatureBoundarySideFieldOpening_(
                             scalar u = Ub[iNode * SPATIAL_DIM + d];
                             UmagSqr += u * u;
                         }
+                        const scalar turbulentKineticEnergy =
+                            includeTurbulentKineticEnergy ? kb[iNode] : 0.0;
 
                         if (cpOption == specificHeatCapacityOption::value)
                         {
-                            Tb[iNode] = T0Value - 0.5 * UmagSqr / cpb[iNode];
+                            Tb[iNode] = T0Value - (0.5 * UmagSqr +
+                                                   turbulentKineticEnergy) /
+                                                      cpb[iNode];
                         }
                         else
                         {
                             Tb[iNode] =
                                 computeStaticTemperatureFromTotalEnthalpy(
-                                    T0Value, UmagSqr, Tb[iNode]);
+                                    T0Value,
+                                    UmagSqr,
+                                    turbulentKineticEnergy,
+                                    Tb[iNode]);
                         }
                     }
                 }
@@ -2099,6 +2423,10 @@ void heatTransferModel::updateTemperatureBoundarySideFieldOpening_(
                         stk::mesh::field_data(coordsSTKFieldRef, bucket);
                     const scalar* Ub =
                         stk::mesh::field_data(USTKFieldRef, bucket);
+                    const scalar* kb =
+                        includeTurbulentKineticEnergy
+                            ? stk::mesh::field_data(*kSTKFieldPtr, bucket)
+                            : nullptr;
                     const scalar* cpb =
                         (cpOption == specificHeatCapacityOption::value)
                             ? stk::mesh::field_data(cpSTKFieldRef, bucket)
@@ -2112,6 +2440,8 @@ void heatTransferModel::updateTemperatureBoundarySideFieldOpening_(
                             scalar u = Ub[iNode * SPATIAL_DIM + d];
                             UmagSqr += u * u;
                         }
+                        const scalar turbulentKineticEnergy =
+                            includeTurbulentKineticEnergy ? kb[iNode] : 0.0;
 
 #if SPATIAL_DIM == 3
                         x = coordsb[iNode * SPATIAL_DIM + 0];
@@ -2126,13 +2456,18 @@ void heatTransferModel::updateTemperatureBoundarySideFieldOpening_(
 
                         if (cpOption == specificHeatCapacityOption::value)
                         {
-                            Tb[iNode] = T0Value - 0.5 * UmagSqr / cpb[iNode];
+                            Tb[iNode] = T0Value - (0.5 * UmagSqr +
+                                                   turbulentKineticEnergy) /
+                                                      cpb[iNode];
                         }
                         else
                         {
                             Tb[iNode] =
                                 computeStaticTemperatureFromTotalEnthalpy(
-                                    T0Value, UmagSqr, Tb[iNode]);
+                                    T0Value,
+                                    UmagSqr,
+                                    turbulentKineticEnergy,
+                                    Tb[iNode]);
                         }
                     }
                 }
@@ -2452,6 +2787,11 @@ void heatTransferModel::
     const auto& USTKFieldRef = domain->type() == domainType::fluid
                                    ? URef().nodeSideFieldRef().stkFieldRef()
                                    : URef().stkFieldRef(); // for solid U is 0
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
     const auto& nodeSideTSTKFieldRef = TRef().nodeSideFieldRef().stkFieldRef();
     auto& nodeSideH0STKFieldRef = h0Ref().nodeSideFieldRef().stkFieldRef();
 
@@ -2468,6 +2808,9 @@ void heatTransferModel::
         scalar* h0b = stk::mesh::field_data(nodeSideH0STKFieldRef, bucket);
         const scalar* Tb = stk::mesh::field_data(nodeSideTSTKFieldRef, bucket);
         const scalar* Ub = stk::mesh::field_data(USTKFieldRef, bucket);
+        const scalar* kb = includeTurbulentKineticEnergy
+                               ? stk::mesh::field_data(*kSTKFieldPtr, bucket)
+                               : nullptr;
         const scalar* cpb = (cpOption == specificHeatCapacityOption::value)
                                 ? stk::mesh::field_data(cpSTKFieldRef, bucket)
                                 : nullptr;
@@ -2482,7 +2825,8 @@ void heatTransferModel::
             }
 
             scalar h = computeStaticEnthalpy(Tb[i], cpb ? cpb[i] : 0.0);
-            h0b[i] = h + 0.5 * UmagSqr;
+            h0b[i] = h + 0.5 * UmagSqr +
+                     (includeTurbulentKineticEnergy ? kb[i] : 0.0);
         }
     }
 
@@ -2544,6 +2888,11 @@ void heatTransferModel::
     // Access fields
     const auto& cpSTKFieldRef = cpRef().stkFieldRef();
     const auto& USTKFieldRef = URef().stkFieldRef();
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
     const auto& nodeSideTSTKFieldRef = TRef().nodeSideFieldRef().stkFieldRef();
     auto& nodeSideH0STKFieldRef = h0Ref().nodeSideFieldRef().stkFieldRef();
 
@@ -2560,6 +2909,9 @@ void heatTransferModel::
         scalar* h0b = stk::mesh::field_data(nodeSideH0STKFieldRef, bucket);
         const scalar* Tb = stk::mesh::field_data(nodeSideTSTKFieldRef, bucket);
         const scalar* Ub = stk::mesh::field_data(USTKFieldRef, bucket);
+        const scalar* kb = includeTurbulentKineticEnergy
+                               ? stk::mesh::field_data(*kSTKFieldPtr, bucket)
+                               : nullptr;
         const scalar* cpb = (cpOption == specificHeatCapacityOption::value)
                                 ? stk::mesh::field_data(cpSTKFieldRef, bucket)
                                 : nullptr;
@@ -2574,7 +2926,8 @@ void heatTransferModel::
             }
 
             scalar h = computeStaticEnthalpy(Tb[i], cpb ? cpb[i] : 0.0);
-            h0b[i] = h + 0.5 * UmagSqr;
+            h0b[i] = h + 0.5 * UmagSqr +
+                     (includeTurbulentKineticEnergy ? kb[i] : 0.0);
         }
     }
 
@@ -2635,6 +2988,11 @@ void heatTransferModel::updateSpecificTotalEnthalpyBoundarySideFieldOpening_(
     // Access fields
     const auto& cpSTKFieldRef = cpRef().stkFieldRef();
     const auto& USTKFieldRef = URef().stkFieldRef();
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
     const auto& nodeSideTSTKFieldRef = TRef().nodeSideFieldRef().stkFieldRef();
     auto& nodeSideH0STKFieldRef = h0Ref().nodeSideFieldRef().stkFieldRef();
 
@@ -2651,6 +3009,9 @@ void heatTransferModel::updateSpecificTotalEnthalpyBoundarySideFieldOpening_(
         scalar* h0b = stk::mesh::field_data(nodeSideH0STKFieldRef, bucket);
         const scalar* Tb = stk::mesh::field_data(nodeSideTSTKFieldRef, bucket);
         const scalar* Ub = stk::mesh::field_data(USTKFieldRef, bucket);
+        const scalar* kb = includeTurbulentKineticEnergy
+                               ? stk::mesh::field_data(*kSTKFieldPtr, bucket)
+                               : nullptr;
         const scalar* cpb = (cpOption == specificHeatCapacityOption::value)
                                 ? stk::mesh::field_data(cpSTKFieldRef, bucket)
                                 : nullptr;
@@ -2665,7 +3026,8 @@ void heatTransferModel::updateSpecificTotalEnthalpyBoundarySideFieldOpening_(
             }
 
             scalar h = computeStaticEnthalpy(Tb[i], cpb ? cpb[i] : 0.0);
-            h0b[i] = h + 0.5 * UmagSqr;
+            h0b[i] = h + 0.5 * UmagSqr +
+                     (includeTurbulentKineticEnergy ? kb[i] : 0.0);
         }
     }
 

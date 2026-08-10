@@ -359,6 +359,8 @@ void simulation::assembleAndSolveSystems()
 
         for (label subIter = 1; subIter <= equation->subIters(); subIter++)
         {
+            equation->setCurrentSubIter(subIter);
+
             // only print sub-iter if it is active (> 1)
             if (messager::master() && equation->subIters() > 1)
             {

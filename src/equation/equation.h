@@ -133,6 +133,22 @@ public:
         return subIters_;
     }
 
+    // Current sub-iteration, 1-based
+    label currentSubIter() const
+    {
+        return currentSubIter_;
+    }
+
+    void setCurrentSubIter(label subIter)
+    {
+        currentSubIter_ = subIter;
+    }
+
+    bool isLastSubIter() const
+    {
+        return currentSubIter_ >= subIters_;
+    }
+
     virtual void addDomain(std::shared_ptr<domain> domain)
     {
         checkDomain(domain);
@@ -216,6 +232,7 @@ protected:
 
     // sub-iterations within the coefficient loop
     label subIters_ = 1;
+    label currentSubIter_ = 1;
 
     std::vector<std::shared_ptr<domain>> domainVector_;
 
@@ -236,6 +253,10 @@ private:
                                      scalar& outRelaxValue);
 
 protected:
+    // Prevent this equation from modifying its solved correction through the
+    // optional Aitken/IQN convergence-acceleration path.
+    void disableAcceleration_();
+
     template <int BLOCKSIZE,
               int FIELD_DIM = 1,
               int STRIDE = 0,

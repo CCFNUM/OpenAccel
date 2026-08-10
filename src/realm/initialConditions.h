@@ -74,6 +74,15 @@ void setupFieldInitializationOverDomainFromValues(TField& field,
     initCond.setConstantValue<TField::NComponents>(field.name(), value);
 }
 
+// for model-owned fields: import when present, else the model seeds it
+template <class TField>
+void setupFieldInitializationOverDomainAsAutomatic(TField& field,
+                                                   const label domain_index)
+{
+    field.initialConditionRef(domain_index)
+        .setType(initialConditionOption::automatic);
+}
+
 template <class TField>
 void setupFieldInitializationOverDomainFromInput(
     TField& field,

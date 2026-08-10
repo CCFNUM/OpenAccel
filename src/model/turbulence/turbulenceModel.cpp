@@ -313,10 +313,126 @@ turbulenceModel::collectNoSlipWallParts_(const std::shared_ptr<domain> domain)
 
 // Initialize
 
+// turbulence intensity used by the default recipes
+static constexpr scalar automaticTurbulenceIntensity = 5.0e-2;
+
+// true when the field must be seeded rather than left at zero
+template <class TField>
+static bool automaticWithoutDatabaseField(TField& field, label iZone)
+{
+    return field.isZoneSet(iZone) &&
+           field.initialConditionRef(iZone).type() ==
+               initialConditionOption::automatic &&
+           !field.isImportedFromDataBase(iZone);
+}
+
+void turbulenceModel::automaticTurbulenceScales_(
+    const std::shared_ptr<domain> domain,
+    scalar& velocityScale,
+    scalar& lengthScale)
+{
+    // velocity-scale floor
+    constexpr scalar minimumVelocityScale = 1.0e-2;
+
+    const auto& mesh = this->meshRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& volumeField = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
+
+    // initialize velocity first when no flow equation has done so
+    if (URef().isZoneSet(domain->index()) &&
+        !URef().isInitialized(domain->index()))
+    {
+        fieldBroker::initializeVelocity(domain);
+    }
+
+    // absent when the realm has no velocity field: the floor stands in
+    const bool velocityAvailable = URef().isZoneSet(domain->index()) &&
+                                   URef().isInitialized(domain->index());
+
+    scalar localSpeedSquaredSum = 0.0;
+    scalar localVolume = 0.0;
+    scalar localNodeCount = 0.0;
+
+    const auto nodeSelector =
+        metaData.locally_owned_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, nodeSelector);
+    for (const auto* bucketPtr : nodeBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        const stk::mesh::Bucket::size_type nNodesPerBucket = bucket.size();
+
+        const scalar* Ub =
+            velocityAvailable
+                ? stk::mesh::field_data(URef().stkFieldRef(), bucket)
+                : nullptr;
+        const scalar* volumeb = stk::mesh::field_data(volumeField, bucket);
+
+        for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
+             ++iNode)
+        {
+            if (velocityAvailable)
+            {
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    const scalar component = Ub[SPATIAL_DIM * iNode + i];
+                    localSpeedSquaredSum += component * component;
+                }
+            }
+            localVolume += volumeb[iNode];
+            localNodeCount += 1.0;
+        }
+    }
+
+    scalar localReduction[3] = {
+        localSpeedSquaredSum, localVolume, localNodeCount};
+    scalar globalReduction[3] = {0.0, 0.0, 0.0};
+    stk::all_reduce_sum(
+        bulkData.parallel(), localReduction, globalReduction, 3);
+
+    // unweighted root mean square over the zone nodes
+    velocityScale = globalReduction[2] > 0.0
+                        ? std::sqrt(globalReduction[0] / globalReduction[2])
+                        : 0.0;
+    velocityScale = std::max(velocityScale, minimumVelocityScale);
+
+    // prescribed scale wins; default is (1/7) of the volume length scale
+    lengthScale = domain->turbulence_.eddyLengthScale_ > 0.0
+                      ? domain->turbulence_.eddyLengthScale_
+                      : std::cbrt(globalReduction[1]) / 7.0;
+}
+
 void turbulenceModel::initializeTurbulentKineticEnergy(
     const std::shared_ptr<domain> domain)
 {
     fieldBroker::initializeTurbulentKineticEnergy(domain);
+
+    // k = 1.5 * (TKI * velocity scale)^2
+    if (automaticWithoutDatabaseField(kRef(), domain->index()))
+    {
+        scalar velocityScale = 0.0;
+        scalar lengthScale = 0.0;
+        automaticTurbulenceScales_(domain, velocityScale, lengthScale);
+
+        const scalar k =
+            1.5 * std::pow(automaticTurbulenceIntensity * velocityScale, 2);
+
+        kRef().setToValue(std::array<scalar, 1>{k},
+                          domain->zonePtr()->interiorParts());
+        kRef().synchronizeGhostedEntities(domain->index());
+
+        if (messager::master())
+        {
+            std::cout << "Field " + kRef().name() +
+                             " is automatically initialized from the velocity "
+                             "scale "
+                      << std::scientific << velocityScale << " with value " << k
+                      << std::endl;
+        }
+    }
 
     updateTurbulentKineticEnergySideFields_(domain);
 }
@@ -326,6 +442,41 @@ void turbulenceModel::initializeTurbulentEddyFrequency(
 {
     fieldBroker::initializeTurbulentEddyFrequency(domain);
 
+    // omega = sqrt(1.5) * TKI * U / (0.1 * TLS * Cmu)
+    if (automaticWithoutDatabaseField(omegaRef(), domain->index()))
+    {
+        scalar velocityScale = 0.0;
+        scalar lengthScale = 0.0;
+        automaticTurbulenceScales_(domain, velocityScale, lengthScale);
+
+        if (lengthScale <= SMALL)
+        {
+            warningMsg("Field " + omegaRef().name() +
+                       " cannot be automatically initialized over zone " +
+                       domain->name() +
+                       ". Invalid turbulent length scale. Initializing from "
+                       "zero");
+            updateTurbulentEddyFrequencySideFields_(domain);
+            return;
+        }
+
+        const scalar omega = std::sqrt(1.5) * automaticTurbulenceIntensity *
+                             velocityScale / (0.1 * lengthScale * this->Cmu());
+
+        omegaRef().setToValue(std::array<scalar, 1>{omega},
+                              domain->zonePtr()->interiorParts());
+        omegaRef().synchronizeGhostedEntities(domain->index());
+
+        if (messager::master())
+        {
+            std::cout << "Field " + omegaRef().name() +
+                             " is automatically initialized from the "
+                             "turbulent length scale "
+                      << std::scientific << lengthScale << " with value "
+                      << omega << std::endl;
+        }
+    }
+
     updateTurbulentEddyFrequencySideFields_(domain);
 }
 
@@ -334,7 +485,66 @@ void turbulenceModel::initializeTurbulentDissipationRate(
 {
     fieldBroker::initializeTurbulentDissipationRate(domain);
 
+    // epsilon = 1.5^1.5 * (TKI * U)^3 / (0.1 * TLS)
+    if (automaticWithoutDatabaseField(epsilonRef(), domain->index()))
+    {
+        scalar velocityScale = 0.0;
+        scalar lengthScale = 0.0;
+        automaticTurbulenceScales_(domain, velocityScale, lengthScale);
+
+        if (lengthScale <= SMALL)
+        {
+            warningMsg("Field " + epsilonRef().name() +
+                       " cannot be automatically initialized over zone " +
+                       domain->name() +
+                       ". Invalid turbulent length scale. Initializing from "
+                       "zero");
+            updateTurbulentDissipationRateSideFields_(domain);
+            return;
+        }
+
+        const scalar epsilon =
+            std::pow(1.5, 1.5) *
+            std::pow(automaticTurbulenceIntensity * velocityScale, 3) /
+            (0.1 * lengthScale);
+
+        epsilonRef().setToValue(std::array<scalar, 1>{epsilon},
+                                domain->zonePtr()->interiorParts());
+        epsilonRef().synchronizeGhostedEntities(domain->index());
+
+        if (messager::master())
+        {
+            std::cout << "Field " + epsilonRef().name() +
+                             " is automatically initialized from the "
+                             "turbulent length scale "
+                      << std::scientific << lengthScale << " with value "
+                      << epsilon << std::endl;
+        }
+    }
+
     updateTurbulentDissipationRateSideFields_(domain);
+}
+
+void turbulenceModel::initializeTurbulentIntermittency(
+    const std::shared_ptr<domain> domain)
+{
+    fieldBroker::initializeTurbulentIntermittency(domain);
+
+    // no correlation to start from: begin fully turbulent, as at the inlet
+    if (automaticWithoutDatabaseField(gammaRef(), domain->index()))
+    {
+        gammaRef().setToValue(std::array<scalar, 1>{1.0},
+                              domain->zonePtr()->interiorParts());
+        gammaRef().synchronizeGhostedEntities(domain->index());
+        gammaRef().update(domain->index());
+
+        if (messager::master())
+        {
+            std::cout << "Field " + gammaRef().name() +
+                             " is automatically initialized fully turbulent"
+                      << std::endl;
+        }
+    }
 }
 
 // Update

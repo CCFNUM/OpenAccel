@@ -110,6 +110,11 @@ public:
         return ipInfoVec_;
     }
 
+    std::vector<std::vector<ipInfo*>>& ipInfoVecRef()
+    {
+        return ipInfoVec_;
+    }
+
     // For conformal interfaces only: match opposing gauss point ids.
     // Only DG needs this and overrides it; the default is a no-op.
     virtual void determineOpposingGaussPointIds()

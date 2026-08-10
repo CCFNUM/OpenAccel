@@ -316,7 +316,7 @@ void controls::read(YAML::Node inputNode)
 
                         assert(solver_.solverControl_.basicSettings_
                                    .convergenceControl_.relaxationParameters_
-                                   .wallScaleRelaxationFactor_ <= 1.0);
+                                   .energyRelaxationFactor_ <= 1.0);
                     }
                     if (rlxPars["velocity_relaxation_factor"])
                     {
@@ -963,6 +963,13 @@ void controls::read(YAML::Node inputNode)
                         .template as<bool>();
             }
 
+            if (expertParameters["cvpg_type"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .cvpgType_ = convertGradientAveragingTypeFromString(
+                    expertParameters["cvpg_type"].template as<std::string>());
+            }
+
             if (expertParameters["false_mass_accumulation"])
             {
                 solver_.solverControl_.expertParameters_
@@ -1068,6 +1075,12 @@ void controls::read(YAML::Node inputNode)
             {
                 solver_.solverControl_.expertParameters_.freezePressure_ =
                     expertParameters["freeze_pressure"].template as<bool>();
+            }
+
+            if (expertParameters["freeze_energy"])
+            {
+                solver_.solverControl_.expertParameters_.freezeEnergy_ =
+                    expertParameters["freeze_energy"].template as<bool>();
             }
 
             if (expertParameters["force_full_node_graph"])

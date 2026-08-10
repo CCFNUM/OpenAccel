@@ -756,6 +756,22 @@ nonconformalMethod convertNonconformalMethodFromString(std::string s)
     return it->second;
 }
 
+// Gradient averaging type
+
+std::unordered_map<std::string, gradientAveragingType> gradientAveragingTypeMap{
+    {"arith_aver", gradientAveragingType::arithAver},
+    {"harm_aver", gradientAveragingType::harmAver},
+};
+
+gradientAveragingType convertGradientAveragingTypeFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = gradientAveragingTypeMap.find(s);
+    if (it == gradientAveragingTypeMap.end())
+        errorMsg("gradient averaging type '" + s + "' not available");
+    return it->second;
+}
+
 // Wall-function type
 
 std::unordered_map<std::string, wallFunctionType> wallFunctionTypeMap{
