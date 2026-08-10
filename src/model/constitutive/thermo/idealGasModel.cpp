@@ -125,6 +125,11 @@ void idealGasModel::initializeSpecificTotalEnthalpy(
     const STKScalarField* USTKFieldPtr = URef().stkFieldPtr();
     const STKScalarField* hSTKFieldPtr = hRef().stkFieldPtr();
     STKScalarField* h0STKFieldPtr = h0Ref().stkFieldPtr();
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -146,6 +151,10 @@ void idealGasModel::initializeSpecificTotalEnthalpy(
         // field chunks in bucket
         const scalar* Ub = stk::mesh::field_data(*USTKFieldPtr, nodeBucket);
         const scalar* hb = stk::mesh::field_data(*hSTKFieldPtr, nodeBucket);
+        const scalar* kb =
+            includeTurbulentKineticEnergy
+                ? stk::mesh::field_data(*kSTKFieldPtr, nodeBucket)
+                : nullptr;
         scalar* h0b = stk::mesh::field_data(*h0STKFieldPtr, nodeBucket);
 
         for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
@@ -161,7 +170,8 @@ void idealGasModel::initializeSpecificTotalEnthalpy(
 
             scalar h = hb[iNode];
 
-            h0b[iNode] = h + 0.5 * UmagSqr;
+            h0b[iNode] = h + 0.5 * UmagSqr +
+                         (includeTurbulentKineticEnergy ? kb[iNode] : 0.0);
         }
     }
 }
@@ -618,6 +628,11 @@ void idealGasModel::updateSpecificEnthalpy(const std::shared_ptr<domain> domain)
     const STKScalarField* USTKFieldPtr = URef().stkFieldPtr();
     const STKScalarField* h0STKFieldPtr = h0Ref().stkFieldPtr();
     STKScalarField* hSTKFieldPtr = hRef().stkFieldPtr();
+    const bool includeTurbulentKineticEnergy =
+        domain->type() == domainType::fluid &&
+        domain->turbulence_.option_ != turbulenceOption::laminar;
+    const STKScalarField* kSTKFieldPtr =
+        includeTurbulentKineticEnergy ? kRef().stkFieldPtr() : nullptr;
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -639,6 +654,10 @@ void idealGasModel::updateSpecificEnthalpy(const std::shared_ptr<domain> domain)
         // field chunks in bucket
         const scalar* Ub = stk::mesh::field_data(*USTKFieldPtr, nodeBucket);
         const scalar* h0b = stk::mesh::field_data(*h0STKFieldPtr, nodeBucket);
+        const scalar* kb =
+            includeTurbulentKineticEnergy
+                ? stk::mesh::field_data(*kSTKFieldPtr, nodeBucket)
+                : nullptr;
         scalar* hb = stk::mesh::field_data(*hSTKFieldPtr, nodeBucket);
 
         for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
@@ -655,7 +674,8 @@ void idealGasModel::updateSpecificEnthalpy(const std::shared_ptr<domain> domain)
             scalar h0 = h0b[iNode];
 
             // calc h
-            hb[iNode] = h0 - 0.5 * UmagSqr;
+            hb[iNode] = h0 - 0.5 * UmagSqr -
+                        (includeTurbulentKineticEnergy ? kb[iNode] : 0.0);
         }
     }
 }

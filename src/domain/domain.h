@@ -43,6 +43,9 @@ struct turbulence
     bool transitional_ = false;
     wallFunctionType wallFunctionType_ = wallFunctionType::standard;
     turbulentFluxClosureForHeatTransfer turbulentFluxClosureForHeatTransfer_;
+
+    // prescribed eddy length scale; zero selects the default
+    scalar eddyLengthScale_ = 0.0;
 };
 
 struct multiphase

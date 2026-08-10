@@ -23,11 +23,79 @@ transitionShearStressTransportModel::transitionShearStressTransportModel(
     ReThetaRef();
 }
 
+scalar transitionShearStressTransportModel::onsetReynoldsNumberFromIntensity_(
+    scalar Tu)
+{
+    Tu = std::max(Tu, 0.027);
+
+    return Tu > 1.3 ? 331.50 * std::pow((Tu - 0.5658), -0.671)
+                    : 1173.51 - 589.428 * Tu + 0.2196 / (Tu * Tu + SMALL);
+}
+
 void transitionShearStressTransportModel::
     initializeTransitionOnsetReynoldsNumber(
         const std::shared_ptr<domain> domain)
 {
-    updateTransitionOnsetReynoldsNumber(domain);
+    // raw initialization: previously skipped, leaving the interior at zero
+    fieldBroker::initializeTransitionOnsetReynoldsNumber(domain);
+
+    // seed the interior with the same correlation the inlet uses
+    if (ReThetaRef().isZoneSet(domain->index()) &&
+        ReThetaRef().initialConditionRef(domain->index()).type() ==
+            initialConditionOption::automatic &&
+        !ReThetaRef().isImportedFromDataBase(domain->index()))
+    {
+        const auto& bulkData = this->meshRef().bulkDataRef();
+        const auto& metaData = this->meshRef().metaDataRef();
+
+        const STKScalarField* USTKFieldPtr = this->URef().stkFieldPtr();
+        const STKScalarField* kSTKFieldPtr = this->kRef().stkFieldPtr();
+        STKScalarField* ReThetaSTKFieldPtr = this->ReThetaRef().stkFieldPtr();
+
+        const stk::mesh::Selector selAllNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+
+        for (const auto* bucketPtr :
+             bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes))
+        {
+            const auto& nodeBucket = *bucketPtr;
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
+
+            const scalar* Ub = stk::mesh::field_data(*USTKFieldPtr, nodeBucket);
+            const scalar* kb = stk::mesh::field_data(*kSTKFieldPtr, nodeBucket);
+            scalar* ReThetab =
+                stk::mesh::field_data(*ReThetaSTKFieldPtr, nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
+            {
+                scalar UmagSqr = 0.0;
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    UmagSqr += Ub[SPATIAL_DIM * iNode + i] *
+                               Ub[SPATIAL_DIM * iNode + i];
+                }
+
+                const scalar Tu = 100.0 * std::sqrt(2.0 * kb[iNode] / 3.0) /
+                                  (std::sqrt(UmagSqr) + SMALL);
+
+                ReThetab[iNode] = onsetReynoldsNumberFromIntensity_(Tu);
+            }
+        }
+
+        if (messager::master())
+        {
+            std::cout << "Field " + ReThetaRef().name() +
+                             " is automatically initialized from the onset "
+                             "correlation"
+                      << std::endl;
+        }
+    }
+
+    updateTransitionOnsetReynoldsNumberSideFields_(domain);
 }
 
 void transitionShearStressTransportModel::updateTransitionOnsetReynoldsNumber(
@@ -117,23 +185,12 @@ void transitionShearStressTransportModel::
                             }
                             Umag = std::sqrt(Umag);
 
-                            scalar TuInfty = 100.0 *
-                                             std::sqrt(2 * kb[iNode] / 3.0) /
-                                             (Umag + SMALL);
-                            TuInfty = std::max(TuInfty, 0.027);
+                            const scalar TuInfty =
+                                100.0 * std::sqrt(2 * kb[iNode] / 3.0) /
+                                (Umag + SMALL);
 
-                            if (TuInfty > 1.3)
-                            {
-                                ReThetab[iNode] =
-                                    331.50 *
-                                    std::pow((TuInfty - 0.5658), -0.671);
-                            }
-                            else
-                            {
-                                ReThetab[iNode] =
-                                    1173.51 - 589.428 * TuInfty +
-                                    0.2196 * 1.0 / (TuInfty * TuInfty + SMALL);
-                            }
+                            ReThetab[iNode] =
+                                onsetReynoldsNumberFromIntensity_(TuInfty);
                         }
                     }
 

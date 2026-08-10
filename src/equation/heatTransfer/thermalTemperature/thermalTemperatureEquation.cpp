@@ -28,6 +28,12 @@ thermalTemperatureEquation::thermalTemperatureEquation(realm* realm)
 
 bool thermalTemperatureEquation::isConverged() const
 {
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezeEnergy_)
+    {
+        return true;
+    }
     return linearSystem::isConverged();
 }
 
@@ -140,6 +146,13 @@ void thermalTemperatureEquation::postInitialize()
 
 void thermalTemperatureEquation::preSolve()
 {
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezeEnergy_)
+    {
+        return;
+    }
+
     // temperature updates: temperature field must be updated with a raw update
     // because we are solving for it and we only intend to update its side
     // fields
@@ -160,6 +173,13 @@ void thermalTemperatureEquation::preSolve()
 
 void thermalTemperatureEquation::solve()
 {
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezeEnergy_)
+    {
+        return;
+    }
+
     auto ctx = linearSystem::getContext();
     ctx->zeroSystemStorage();
 
@@ -244,6 +264,13 @@ void thermalTemperatureEquation::preTimeStep()
 
 void thermalTemperatureEquation::postSolve()
 {
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezeEnergy_)
+    {
+        return;
+    }
+
     this->reportHeatData_();
 
     FOREACH_DOMAIN_IF(updateCompressibility,

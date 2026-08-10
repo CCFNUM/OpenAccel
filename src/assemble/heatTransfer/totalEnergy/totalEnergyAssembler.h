@@ -81,6 +81,20 @@ public:
     }
 
 protected:
+    bool usesSteadyRotatingEnergyForm_(const domain* domain,
+                                       const bool includeAdv) const
+    {
+        return includeAdv && domain->zonePtr()->frameRotating() &&
+               !model_->controlsRef().isTransient();
+    }
+
+    bool includesRotatingPressureWork_(const domain* domain,
+                                       const bool includeAdv) const
+    {
+        return includeAdv && domain->zonePtr()->frameRotating() &&
+               !usesSteadyRotatingEnergyForm_(domain, includeAdv);
+    }
+
     void assembleNodeTermsFusedSteady_(const domain* domain,
                                        Context* ctx) override;
 

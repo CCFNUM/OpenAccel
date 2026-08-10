@@ -66,6 +66,10 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
         const bool includeAdv =
             domain->type() == domainType::fluid &&
             !interfaceSideInfoPtr->interfPtr()->isFluidSolidType();
+        const bool steadyRotatingEnergyForm =
+            usesSteadyRotatingEnergyForm_(domain, includeAdv);
+        const bool includeRotationWork =
+            includesRotatingPressureWork_(domain, includeAdv);
 
         const auto& mesh = field_broker_->meshRef();
 
@@ -95,6 +99,12 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
         std::vector<scalar> oNx(SPATIAL_DIM);
         std::vector<scalar> cvwBip(SPATIAL_DIM);
         std::vector<scalar> ovwBip(SPATIAL_DIM);
+        std::vector<scalar> currentUBip(SPATIAL_DIM);
+        std::vector<scalar> opposingUBip(SPATIAL_DIM);
+        std::vector<scalar> currentGradUBip(SPATIAL_DIM * SPATIAL_DIM);
+        std::vector<scalar> opposingGradUBip(SPATIAL_DIM * SPATIAL_DIM);
+        std::vector<scalar> currentCoordBip(SPATIAL_DIM);
+        std::vector<scalar> omegaCrossRadius(SPATIAL_DIM);
 
         // mapping for -1:1 -> -0.5:0.5 volume element
         std::vector<scalar> currentElementIsoParCoords(SPATIAL_DIM);
@@ -103,18 +113,27 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
         // pointers to fixed values
         scalar* p_cNx = &cNx[0];
         scalar* p_oNx = &oNx[0];
+        scalar* p_currentCoordBip = &currentCoordBip[0];
+        scalar* p_omegaCrossRadius = &omegaCrossRadius[0];
 
         // nodal fields to gather
         std::vector<scalar> ws_c_face_h0;
         std::vector<scalar> ws_o_face_h0;
+        std::vector<scalar> ws_c_face_p;
+        std::vector<scalar> ws_o_face_p;
+        std::vector<scalar> ws_c_face_coordinates;
         std::vector<scalar> ws_c_elem_h0;
         std::vector<scalar> ws_o_elem_h0;
         std::vector<scalar> ws_c_face_T;
         std::vector<scalar> ws_o_face_T;
-        std::vector<scalar> ws_c_vw;
-        std::vector<scalar> ws_o_vw;
+        std::vector<scalar> ws_c_face_U;
+        std::vector<scalar> ws_o_face_U;
+        std::vector<scalar> ws_c_face_muEff;
+        std::vector<scalar> ws_o_face_muEff;
         std::vector<scalar> ws_c_elem_T;
         std::vector<scalar> ws_o_elem_T;
+        std::vector<scalar> ws_c_elem_U;
+        std::vector<scalar> ws_o_elem_U;
         std::vector<scalar> ws_c_elem_coordinates;
         std::vector<scalar> ws_o_elem_coordinates;
         std::vector<scalar> ws_c_lambdaEff;
@@ -132,15 +151,13 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
         // Get transport fields/side fields
         const auto& h0STKFieldRef = phi_->stkFieldRef();
+        const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
         const auto& TSTKFieldRef = model_->TRef().stkFieldRef();
         const auto& cpSTKFieldRef = model_->cpRef().stkFieldRef();
         auto& qDotSideSTKFieldRef =
             model_->qDotRef().sideFieldRef().stkFieldRef();
         const auto* USTKFieldPtr =
             includeViscousWork ? model_->URef().stkFieldPtr() : nullptr;
-        const auto* gradUSTKFieldPtr =
-            includeViscousWork ? model_->URef().gradRef().stkFieldPtr()
-                               : nullptr;
         const auto* muEffSTKFieldPtr =
             includeViscousWork ? model_->muEffRef().stkFieldPtr() : nullptr;
 
@@ -149,6 +166,23 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
             stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
         const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
             metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+        const auto rotationMatrix =
+            includeRotationWork || steadyRotatingEnergyForm
+                ? domain->zonePtr()
+                      ->transformationRef()
+                      .rotation()
+                      .coriolisMatrix_
+                : utils::matrix::Zero();
+        const scalar* p_rotationMatrix = rotationMatrix.data();
+        const auto rotationOrigin =
+            includeRotationWork || steadyRotatingEnergyForm
+                ? domain->zonePtr()->transformationRef().rotation().origin_
+                : utils::vector::Zero();
+        const scalar* p_rotationOrigin = rotationOrigin.data();
+        const auto viscousWorkFrameMatrix =
+            steadyRotatingEnergyForm ? rotationMatrix : utils::matrix::Zero();
+        const scalar* p_viscousWorkFrameMatrix = viscousWorkFrameMatrix.data();
 
         // extract vector of interface IP info
         const scalar multiplier = 0.5;
@@ -218,6 +252,8 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 ws_o_elem_h0.resize(opposingNodesPerElement);
                 ws_c_elem_T.resize(currentNodesPerElement);
                 ws_o_elem_T.resize(opposingNodesPerElement);
+                ws_c_elem_U.resize(currentNodesPerElement * SPATIAL_DIM);
+                ws_o_elem_U.resize(opposingNodesPerElement * SPATIAL_DIM);
                 ws_c_elem_coordinates.resize(currentNodesPerElement *
                                              SPATIAL_DIM);
                 ws_o_elem_coordinates.resize(opposingNodesPerElement *
@@ -230,10 +266,15 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // algorithm related; face
                 ws_c_face_h0.resize(currentNodesPerFace);
                 ws_o_face_h0.resize(opposingNodesPerFace);
+                ws_c_face_p.resize(currentNodesPerFace);
+                ws_o_face_p.resize(opposingNodesPerFace);
+                ws_c_face_coordinates.resize(currentNodesPerFace * SPATIAL_DIM);
                 ws_c_face_T.resize(currentNodesPerFace);
                 ws_o_face_T.resize(opposingNodesPerFace);
-                ws_c_vw.resize(currentNodesPerFace * SPATIAL_DIM);
-                ws_o_vw.resize(opposingNodesPerFace * SPATIAL_DIM);
+                ws_c_face_U.resize(currentNodesPerFace * SPATIAL_DIM);
+                ws_o_face_U.resize(opposingNodesPerFace * SPATIAL_DIM);
+                ws_c_face_muEff.resize(currentNodesPerFace);
+                ws_o_face_muEff.resize(opposingNodesPerFace);
                 ws_c_lambdaEff.resize(currentNodesPerFace);
                 ws_o_lambdaEff.resize(opposingNodesPerFace);
                 ws_c_cp.resize(currentNodesPerFace);
@@ -247,14 +288,21 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
                 scalar* p_c_face_h0 = &ws_c_face_h0[0];
                 scalar* p_o_face_h0 = &ws_o_face_h0[0];
+                scalar* p_c_face_p = &ws_c_face_p[0];
+                scalar* p_o_face_p = &ws_o_face_p[0];
+                scalar* p_c_face_coordinates = &ws_c_face_coordinates[0];
                 scalar* p_c_elem_h0 = &ws_c_elem_h0[0];
                 scalar* p_o_elem_h0 = &ws_o_elem_h0[0];
                 scalar* p_c_face_T = &ws_c_face_T[0];
                 scalar* p_o_face_T = &ws_o_face_T[0];
-                scalar* p_c_vw = &ws_c_vw[0];
-                scalar* p_o_vw = &ws_o_vw[0];
+                scalar* p_c_face_U = &ws_c_face_U[0];
+                scalar* p_o_face_U = &ws_o_face_U[0];
+                scalar* p_c_face_muEff = &ws_c_face_muEff[0];
+                scalar* p_o_face_muEff = &ws_o_face_muEff[0];
                 scalar* p_c_elem_T = &ws_c_elem_T[0];
                 scalar* p_o_elem_T = &ws_o_elem_T[0];
+                scalar* p_c_elem_U = &ws_c_elem_U[0];
+                scalar* p_o_elem_U = &ws_o_elem_U[0];
                 scalar* p_c_elem_coordinates = &ws_c_elem_coordinates[0];
                 scalar* p_o_elem_coordinates = &ws_o_elem_coordinates[0];
                 scalar* p_c_lambdaEff = &ws_c_lambdaEff[0];
@@ -286,50 +334,29 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     // gather; scalar
                     p_c_face_h0[ni] =
                         *stk::mesh::field_data(h0STKFieldRef, node);
+                    p_c_face_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
                     p_c_face_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
                     p_c_lambdaEff[ni] =
                         *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
                     p_c_cp[ni] = *stk::mesh::field_data(cpSTKFieldRef, node);
 
+                    const scalar* coordinates =
+                        stk::mesh::field_data(coordsSTKFieldRef, node);
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_c_face_coordinates[i * currentNodesPerFace + ni] =
+                            coordinates[i];
+                    }
+
                     if (includeViscousWork)
                     {
-                        const scalar muEff =
+                        p_c_face_muEff[ni] =
                             *stk::mesh::field_data(*muEffSTKFieldPtr, node);
                         const scalar* U =
                             stk::mesh::field_data(*USTKFieldPtr, node);
-                        const scalar* dudx =
-                            stk::mesh::field_data(*gradUSTKFieldPtr, node);
-
-                        // calculate divergence of velocity
-                        scalar divU = 0;
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            divU += dudx[i * SPATIAL_DIM + i];
-                        }
-
-                        // calculate viscous work: VW_i = Σⱼ τ_ji
-                        // U_j where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j
-                        // - 2/3 δ_ji ∇·U)
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_c_vw[ni * SPATIAL_DIM + i] =
-                                -2.0 / 3.0 * muEff * divU * U[i];
-                            for (label j = 0; j < SPATIAL_DIM; ++j)
-                            {
-                                p_c_vw[ni * SPATIAL_DIM + i] +=
-                                    muEff *
-                                    (dudx[i * SPATIAL_DIM + j] +
-                                     dudx[j * SPATIAL_DIM + i]) *
-                                    U[j];
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // set viscous work to 0
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_c_vw[ni * SPATIAL_DIM + i] = 0;
+                            p_c_face_U[i * currentNodesPerFace + ni] = U[i];
                         }
                     }
                 }
@@ -350,6 +377,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     // gather; scalar
                     p_o_face_h0[ni] =
                         *stk::mesh::field_data(h0STKFieldRef, node);
+                    p_o_face_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
                     p_o_face_T[ni] = *stk::mesh::field_data(TSTKFieldRef, node);
                     p_o_lambdaEff[ni] =
                         *stk::mesh::field_data(*GammaSTKFieldPtr_, node);
@@ -358,43 +386,13 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     // gather; vector
                     if (includeViscousWork)
                     {
-                        const scalar muEff =
+                        p_o_face_muEff[ni] =
                             *stk::mesh::field_data(*muEffSTKFieldPtr, node);
                         const scalar* U =
                             stk::mesh::field_data(*USTKFieldPtr, node);
-                        const scalar* dudx =
-                            stk::mesh::field_data(*gradUSTKFieldPtr, node);
-
-                        // calculate divergence of velocity
-                        scalar divU = 0;
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            divU += dudx[i * SPATIAL_DIM + i];
-                        }
-
-                        // calculate viscous work: VW_i = Σⱼ τ_ji
-                        // U_j where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j
-                        // - 2/3 δ_ji ∇·U)
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_o_vw[ni * SPATIAL_DIM + i] =
-                                -2.0 / 3.0 * muEff * divU * U[i];
-                            for (label j = 0; j < SPATIAL_DIM; ++j)
-                            {
-                                p_o_vw[ni * SPATIAL_DIM + i] +=
-                                    muEff *
-                                    (dudx[i * SPATIAL_DIM + j] +
-                                     dudx[j * SPATIAL_DIM + i]) *
-                                    U[j];
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // set viscous work to 0
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_o_vw[ni * SPATIAL_DIM + i] = 0;
+                            p_o_face_U[i * opposingNodesPerFace + ni] = U[i];
                         }
                     }
                 }
@@ -420,9 +418,17 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     // gather; vector
                     const scalar* coords =
                         stk::mesh::field_data(coordsSTKFieldRef, node);
+                    const scalar* U =
+                        includeViscousWork
+                            ? stk::mesh::field_data(*USTKFieldPtr, node)
+                            : nullptr;
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
                         p_c_elem_coordinates[ni * SPATIAL_DIM + i] = coords[i];
+                        if (includeViscousWork)
+                        {
+                            p_c_elem_U[ni * SPATIAL_DIM + i] = U[i];
+                        }
                     }
                 }
 
@@ -447,13 +453,28 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     // gather; vector
                     const scalar* coords =
                         stk::mesh::field_data(coordsSTKFieldRef, node);
+                    const scalar* U =
+                        includeViscousWork
+                            ? stk::mesh::field_data(*USTKFieldPtr, node)
+                            : nullptr;
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
                         p_o_elem_coordinates[ni * SPATIAL_DIM + i] = coords[i];
+                        if (includeViscousWork)
+                        {
+                            p_o_elem_U[ni * SPATIAL_DIM + i] = U[i];
+                        }
                     }
                 }
 
                 // apply transformations
+                if (includeViscousWork)
+                {
+                    interfaceSideInfoPtr->rotateVectorListCompact<SPATIAL_DIM>(
+                        ws_o_face_U, opposing_num_face_nodes);
+                    interfaceSideInfoPtr->rotateVectorList<SPATIAL_DIM>(
+                        ws_o_elem_U, opposing_num_elem_nodes);
+                }
                 interfaceSideInfoPtr->transformCoordinateList(
                     ws_o_elem_coordinates, opposing_num_elem_nodes);
 
@@ -566,6 +587,22 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                                                &opposingIsoParCoords[0],
                                                &ws_o_face_h0[0],
                                                &opposingH0Bip);
+
+                scalar currentPBip = 0.0;
+                meFCCurrent->interpolatePoint(
+                    1, &currentIsoParCoords[0], &ws_c_face_p[0], &currentPBip);
+
+                scalar opposingPBip = 0.0;
+                meFCOpposing->interpolatePoint(1,
+                                               &opposingIsoParCoords[0],
+                                               &ws_o_face_p[0],
+                                               &opposingPBip);
+
+                meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                              &currentIsoParCoords[0],
+                                              &ws_c_face_coordinates[0],
+                                              &currentCoordBip[0]);
+
                 scalar currentTBip = 0.0;
                 meFCCurrent->interpolatePoint(
                     1, &currentIsoParCoords[0], &ws_c_face_T[0], &currentTBip);
@@ -595,6 +632,141 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 scalar opposingCpBip = 0.0;
                 meFCOpposing->interpolatePoint(
                     1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
+
+                // Form tau.U on both sides from element-consistent gradients.
+                // Opposing velocities and coordinates have already been
+                // transformed into the current-side coordinate system.
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    cvwBip[i] = 0.0;
+                    ovwBip[i] = 0.0;
+                    currentUBip[i] = 0.0;
+                    opposingUBip[i] = 0.0;
+                }
+                for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; ++i)
+                {
+                    currentGradUBip[i] = 0.0;
+                    opposingGradUBip[i] = 0.0;
+                }
+
+                if (includeViscousWork)
+                {
+                    scalar currentMuEffBip = 0.0;
+                    scalar opposingMuEffBip = 0.0;
+                    meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                                  &currentIsoParCoords[0],
+                                                  &ws_c_face_U[0],
+                                                  &currentUBip[0]);
+                    meFCOpposing->interpolatePoint(SPATIAL_DIM,
+                                                   &opposingIsoParCoords[0],
+                                                   &ws_o_face_U[0],
+                                                   &opposingUBip[0]);
+                    meFCCurrent->interpolatePoint(1,
+                                                  &currentIsoParCoords[0],
+                                                  &ws_c_face_muEff[0],
+                                                  &currentMuEffBip);
+                    meFCOpposing->interpolatePoint(1,
+                                                   &opposingIsoParCoords[0],
+                                                   &ws_o_face_muEff[0],
+                                                   &opposingMuEffBip);
+
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_omegaCrossRadius[i] = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_omegaCrossRadius[i] +=
+                                p_viscousWorkFrameMatrix[i * SPATIAL_DIM + j] *
+                                (p_currentCoordBip[j] - p_rotationOrigin[j]);
+                        }
+                    }
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        currentUBip[i] -= p_omegaCrossRadius[i];
+                        opposingUBip[i] -= p_omegaCrossRadius[i];
+                    }
+
+                    for (label ic = 0; ic < currentNodesPerElement; ++ic)
+                    {
+                        const label offSetDnDx = ic * SPATIAL_DIM;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                currentGradUBip[i * SPATIAL_DIM + j] +=
+                                    p_c_elem_U[ic * SPATIAL_DIM + i] *
+                                    p_c_dndx[offSetDnDx + j];
+                            }
+                        }
+                    }
+                    for (label ic = 0; ic < opposingNodesPerElement; ++ic)
+                    {
+                        const label offSetDnDx = ic * SPATIAL_DIM;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                opposingGradUBip[i * SPATIAL_DIM + j] +=
+                                    p_o_elem_U[ic * SPATIAL_DIM + i] *
+                                    p_o_dndx[offSetDnDx + j];
+                            }
+                        }
+                    }
+
+                    scalar currentDivU = 0.0;
+                    scalar opposingDivU = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        currentDivU += currentGradUBip[i * SPATIAL_DIM + i];
+                        opposingDivU += opposingGradUBip[i * SPATIAL_DIM + i];
+                    }
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        cvwBip[i] = -2.0 / 3.0 * currentMuEffBip * currentDivU *
+                                    currentUBip[i];
+                        ovwBip[i] = -2.0 / 3.0 * opposingMuEffBip *
+                                    opposingDivU * opposingUBip[i];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            cvwBip[i] +=
+                                currentMuEffBip *
+                                (currentGradUBip[i * SPATIAL_DIM + j] +
+                                 currentGradUBip[j * SPATIAL_DIM + i]) *
+                                currentUBip[j];
+                            ovwBip[i] +=
+                                opposingMuEffBip *
+                                (opposingGradUBip[i * SPATIAL_DIM + j] +
+                                 opposingGradUBip[j * SPATIAL_DIM + i]) *
+                                opposingUBip[j];
+                        }
+                    }
+                }
+
+                // Terms introduced with the MRF total-energy formulation must
+                // also pass through the GGI constraint path below. Compute
+                // them before the GGI/DG split.
+                scalar rotationWorkFlux = 0.0;
+                if (includeRotationWork)
+                {
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_omegaCrossRadius[i] = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_omegaCrossRadius[i] +=
+                                p_rotationMatrix[i * SPATIAL_DIM + j] *
+                                (p_currentCoordBip[j] - p_rotationOrigin[j]);
+                        }
+                    }
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        rotationWorkFlux +=
+                            0.5 * (currentPBip + opposingPBip) *
+                            p_omegaCrossRadius[i] *
+                            c_areaVec[currentGaussPointId * SPATIAL_DIM + i] *
+                            fcs;
+                    }
+                }
 
                 // compute diffusion vector; current
                 scalar currentDiffFluxBip = 0;
@@ -635,17 +807,6 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                             -opposingLambdaEffBip * dndxj * nxj * T;
                     }
                 }
-
-                // interpolate pressure diffusivity
-                meFCCurrent->interpolatePoint(SPATIAL_DIM,
-                                              &currentIsoParCoords[0],
-                                              &ws_c_vw[0],
-                                              &cvwBip[0]);
-
-                meFCOpposing->interpolatePoint(SPATIAL_DIM,
-                                               &opposingIsoParCoords[0],
-                                               &ws_o_vw[0],
-                                               &ovwBip[0]);
 
                 // zero lhs/rhs
                 for (label p = 0; p < lhsSize; ++p)
@@ -704,14 +865,14 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                     ((ncDiffFlux + penaltyIp * penaltyMultiplier *
                                        (currentTBip - opposingTBip)) *
                          fcs * c_amag +
-                     fcs * ncAdv);
+                     fcs * ncAdv + rotationWorkFlux);
 
                 // fill the nc-heat flow rate
                 qDot[currentGaussPointId] =
                     ((ncDiffFlux + penaltyIp * penaltyMultiplier *
                                        (currentTBip - opposingTBip)) *
                          fcs * c_amag +
-                     fcs * ncAdv);
+                     fcs * ncAdv + rotationWorkFlux);
 
                 // set-up row for matrix
                 const label rowR = indexR * totalNodes;
@@ -783,7 +944,13 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 {
                     const scalar c_axj =
                         c_areaVec[currentGaussPointId * SPATIAL_DIM + j];
-                    p_rhs[indexR] += (cvwBip[j] + ovwBip[j]) / 2.0 * c_axj;
+                    const scalar viscousWorkFlux =
+                        (cvwBip[j] + ovwBip[j]) / 2.0 * c_axj;
+                    p_rhs[indexR] += viscousWorkFlux;
+                    // qDot stores the outward equation flux. Viscous work is
+                    // added to the RHS, so it enters qDot with the opposite
+                    // sign.
+                    qDot[currentGaussPointId] -= viscousWorkFlux;
                 }
 
                 Base::applyCoeff_(

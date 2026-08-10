@@ -789,10 +789,97 @@ void flowModel::updateRelativeVelocityField_(
     }
 }
 
+// Data key holding the prescribed pressure level; empty when there is none
+static std::string pressureInputKey_(boundaryConditionType type)
+{
+    switch (type)
+    {
+        case boundaryConditionType::staticPressure:
+        case boundaryConditionType::totalPressure:
+            return "value";
+
+        case boundaryConditionType::averageStaticPressure:
+            return "average_static_pressure";
+
+        default:
+            return "";
+    }
+}
+
 void flowModel::initializePressure(const std::shared_ptr<domain> domain)
 {
     // raw initialization
     fieldBroker::initializePressure(domain);
+
+    // area-weighted boundary average; zero absolute pressure is singular
+    const bool automaticWithoutDatabaseField =
+        domain->isMaterialCompressible() &&
+        pRef().initialConditionRef(domain->index()).type() ==
+            initialConditionOption::automatic &&
+        !pRef().isImportedFromDataBase(domain->index());
+    if (automaticWithoutDatabaseField)
+    {
+        scalar pressureAreaSum = 0.0;
+        scalar totalArea = 0.0;
+
+        for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+             ++iBoundary)
+        {
+            const auto boundaryType =
+                domain->zonePtr()->boundaryRef(iBoundary).type();
+            if (boundaryType != boundaryPhysicalType::inlet &&
+                boundaryType != boundaryPhysicalType::outlet &&
+                boundaryType != boundaryPhysicalType::opening)
+            {
+                continue;
+            }
+
+            auto& pressureBC =
+                pRef().boundaryConditionRef(domain->index(), iBoundary);
+            const std::string inputKey = pressureInputKey_(pressureBC.type());
+            if (inputKey.empty() || !pressureBC.isInputDataAdded(inputKey))
+            {
+                continue;
+            }
+
+            scalar boundaryPressure = 0.0;
+            scalar boundaryArea = 0.0;
+            if (!boundaryInputAreaAverage_(domain,
+                                           iBoundary,
+                                           pressureBC.data<1>(inputKey),
+                                           boundaryPressure,
+                                           boundaryArea))
+            {
+                continue;
+            }
+
+            pressureAreaSum += boundaryPressure * boundaryArea;
+            totalArea += boundaryArea;
+        }
+
+        if (totalArea <= SMALL)
+        {
+            errorMsg("Automatic pressure initialization for compressible "
+                     "domain `" +
+                     domain->name() +
+                     "` requires either a pressure field in the mesh or a "
+                     "prescribed pressure boundary");
+        }
+
+        const scalar pressureLevel = pressureAreaSum / totalArea;
+
+        pRef().setToValue(std::array<scalar, 1>{pressureLevel},
+                          domain->zonePtr()->interiorParts());
+        pRef().synchronizeGhostedEntities(domain->index());
+
+        if (messager::master())
+        {
+            std::cout << "Field " + pRef().name() +
+                             " is automatically initialized from the "
+                             "prescribed pressure level "
+                      << std::scientific << pressureLevel << std::endl;
+        }
+    }
 
     // Pressure Field Initialization and Storage Logic
     //
@@ -1516,10 +1603,269 @@ void flowModel::initializePressure(const std::shared_ptr<domain> domain)
     }
 }
 
+// Temperature level backing the ideal-gas density estimate of the velocity seed
+scalar flowModel::initialTemperatureLevel_(const std::shared_ptr<domain> domain)
+{
+    auto& temperatureInitialization =
+        TRef().initialConditionRef(domain->index());
+
+    // a uniform initial condition already carries the level
+    if (temperatureInitialization.type() == initialConditionOption::value &&
+        temperatureInitialization.isInputDataAdded(TRef().name()))
+    {
+        auto& data = temperatureInitialization.data<1>(TRef().name());
+
+        if (data.type() == inputDataType::constant)
+        {
+            return data.value()[0];
+        }
+        if (data.type() == inputDataType::timeTable)
+        {
+            return data.interpolate(this->controlsRef().time)[0];
+        }
+    }
+
+    // otherwise average whatever the boundaries prescribe
+    scalar temperatureSum = 0.0;
+    label boundaryCount = 0;
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         ++iBoundary)
+    {
+        auto& bc = TRef().boundaryConditionRef(domain->index(), iBoundary);
+
+        switch (bc.type())
+        {
+            case boundaryConditionType::staticTemperature:
+            case boundaryConditionType::totalTemperature:
+            case boundaryConditionType::specifiedValue:
+            case boundaryConditionType::mixed:
+                break;
+
+            default:
+                continue;
+        }
+
+        if (!bc.isInputDataAdded("value"))
+        {
+            continue;
+        }
+
+        scalar boundaryTemperature = 0.0;
+        scalar boundaryArea = 0.0;
+        if (!boundaryInputAreaAverage_(domain,
+                                       iBoundary,
+                                       bc.data<1>("value"),
+                                       boundaryTemperature,
+                                       boundaryArea))
+        {
+            continue;
+        }
+
+        temperatureSum += boundaryTemperature;
+        ++boundaryCount;
+    }
+
+    return boundaryCount > 0
+               ? temperatureSum / static_cast<scalar>(boundaryCount)
+               : 0.0;
+}
+
 void flowModel::initializeVelocity(const std::shared_ptr<domain> domain)
 {
     // raw initialization
     fieldBroker::initializeVelocity(domain);
+
+    // A geometry-only database gives "automatic" no velocity field to import.
+    // Starting a compressible pressure-driven case from exactly zero velocity
+    // can select a stagnant operating branch, particularly in an MRF rotor.
+    // Seed the through-flow from the prescribed total-to-static pressure drop.
+    const bool automaticWithoutDatabaseField =
+        domain->isMaterialCompressible() &&
+        domain->materialRef()
+                .thermodynamicProperties_.equationOfState_.option_ ==
+            equationOfStateOption::idealGas &&
+        URef().initialConditionRef(domain->index()).type() ==
+            initialConditionOption::automatic &&
+        !URef().isImportedFromDataBase(domain->index());
+    if (!automaticWithoutDatabaseField)
+    {
+        return;
+    }
+
+    scalar totalPressure = 0.0;
+    scalar staticPressure = 0.0;
+    bool totalPressureFound = false;
+    bool staticPressureFound = false;
+    std::array<scalar, SPATIAL_DIM> localDirection{};
+
+    const auto& mesh = this->meshRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& areaField = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         ++iBoundary)
+    {
+        const auto* boundary = domain->zonePtr()->boundaryPtr(iBoundary);
+        auto& pressureBC =
+            pRef().boundaryConditionRef(domain->index(), iBoundary);
+        const auto pressureType = pressureBC.type();
+        const std::string inputKey = pressureInputKey_(pressureType);
+        if (inputKey.empty() || !pressureBC.isInputDataAdded(inputKey))
+        {
+            continue;
+        }
+
+        scalar pressureValue = 0.0;
+        scalar boundaryArea = 0.0;
+        if (!boundaryInputAreaAverage_(domain,
+                                       iBoundary,
+                                       pressureBC.data<1>(inputKey),
+                                       pressureValue,
+                                       boundaryArea))
+        {
+            continue;
+        }
+
+        if (pressureType == boundaryConditionType::totalPressure &&
+            boundary->type() == boundaryPhysicalType::inlet)
+        {
+            if (!totalPressureFound || pressureValue > totalPressure)
+            {
+                totalPressure = pressureValue;
+                totalPressureFound = true;
+            }
+
+            const auto& directionField =
+                URef().sideFlowDirectionFieldRef().stkFieldRef();
+            const auto sideSelector = metaData.locally_owned_part() &
+                                      stk::mesh::selectUnion(boundary->parts());
+            const auto& sideBuckets =
+                bulkData.get_buckets(metaData.side_rank(), sideSelector);
+            for (const auto* bucketPtr : sideBuckets)
+            {
+                const auto& bucket = *bucketPtr;
+                const auto* meFC =
+                    MasterElementRepo::get_surface_master_element(
+                        bucket.topology());
+                const label numScsBip = meFC->numIntPoints_;
+                for (const auto side : bucket)
+                {
+                    const scalar* area = stk::mesh::field_data(areaField, side);
+                    const scalar* direction =
+                        stk::mesh::field_data(directionField, side);
+                    for (label ip = 0; ip < numScsBip; ++ip)
+                    {
+                        scalar areaMagnitudeSquared = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            const scalar component = area[ip * SPATIAL_DIM + i];
+                            areaMagnitudeSquared += component * component;
+                        }
+                        const scalar areaMagnitude =
+                            std::sqrt(areaMagnitudeSquared);
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            localDirection[i] +=
+                                direction[ip * SPATIAL_DIM + i] * areaMagnitude;
+                        }
+                    }
+                }
+            }
+        }
+        else if (boundary->type() == boundaryPhysicalType::outlet ||
+                 boundary->type() == boundaryPhysicalType::opening)
+        {
+            if (!staticPressureFound || pressureValue < staticPressure)
+            {
+                staticPressure = pressureValue;
+                staticPressureFound = true;
+            }
+        }
+    }
+
+    const scalar initialTemperature = initialTemperatureLevel_(domain);
+    const bool initialTemperatureFound = initialTemperature > 0.0;
+
+    std::array<scalar, SPATIAL_DIM> direction{};
+    stk::all_reduce_sum(bulkData.parallel(),
+                        localDirection.data(),
+                        direction.data(),
+                        SPATIAL_DIM);
+    scalar directionMagnitudeSquared = 0.0;
+    for (label i = 0; i < SPATIAL_DIM; ++i)
+    {
+        directionMagnitudeSquared += direction[i] * direction[i];
+    }
+
+    const scalar pressureDrop = totalPressure - staticPressure;
+    if (!totalPressureFound || !staticPressureFound ||
+        !initialTemperatureFound || pressureDrop <= 0.0 ||
+        directionMagnitudeSquared <= SMALL)
+    {
+        if (messager::master())
+        {
+            warningMsg("Field " + URef().name() +
+                       " cannot be pressure-seeded automatically over zone " +
+                       domain->name() + ". Initializing from zero");
+        }
+        return;
+    }
+
+    const scalar molarMass =
+        domain->materialRef()
+            .thermodynamicProperties_.equationOfState_.molarMass_;
+    const scalar absoluteStaticPressure =
+        staticPressure + domain->referencePressure();
+    if (molarMass <= SMALL || absoluteStaticPressure <= SMALL)
+    {
+        if (messager::master())
+        {
+            warningMsg("Field " + URef().name() +
+                       " cannot be pressure-seeded automatically over zone " +
+                       domain->name() +
+                       ". Invalid ideal-gas pressure or molar mass");
+        }
+        return;
+    }
+
+    const scalar specificGasConstant =
+        thermoModel::universalGasConstant_ / molarMass;
+    const scalar densityEstimate =
+        absoluteStaticPressure / (specificGasConstant * initialTemperature);
+    if (!std::isfinite(densityEstimate) || densityEstimate <= SMALL)
+    {
+        if (messager::master())
+        {
+            warningMsg("Field " + URef().name() +
+                       " cannot be pressure-seeded automatically over zone " +
+                       domain->name() + ". Invalid ideal-gas density estimate");
+        }
+        return;
+    }
+
+    const scalar speed = std::sqrt(2.0 * pressureDrop / densityEstimate);
+    const scalar inverseDirectionMagnitude =
+        1.0 / std::sqrt(directionMagnitudeSquared);
+
+    std::array<scalar, SPATIAL_DIM> velocity{};
+    for (label i = 0; i < SPATIAL_DIM; ++i)
+    {
+        velocity[i] = speed * direction[i] * inverseDirectionMagnitude;
+    }
+    URef().setToValue(velocity, domain->zonePtr()->interiorParts());
+    URef().synchronizeGhostedEntities(domain->index());
+    URef().update(domain->index());
+
+    if (messager::master())
+    {
+        std::cout << "Field " << URef().name()
+                  << " is automatically initialized from the pressure drop "
+                  << std::scientific << pressureDrop << " with speed " << speed
+                  << std::endl;
+    }
 }
 
 void flowModel::initializeDensity(const std::shared_ptr<domain> domain)
@@ -5560,8 +5906,13 @@ void flowModel::updateMassFlowRateInterior_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = this->pRef().isGradientShifted();
 
-    // compressibility switch: 1 for compressible, 0 for incompressible
-    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+    // harmonic blend limits the Rhie-Chow term at shocks; see cvpg_type
+    const scalar cvpgHarm =
+        (domain->isMaterialCompressible() &&
+         controlsRef().solverRef().solverControl_.expertParameters_.cvpgType_ ==
+             gradientAveragingType::harmAver)
+            ? 1.0
+            : 0.0;
 
     BucketVector const& elementBuckets =
         bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
@@ -5770,24 +6121,25 @@ void flowModel::updateMassFlowRateInterior_(
                     p_duIp[j] = 0.0;
                     p_FOrigIp[j] = B_el[j];
 
-                    // pressure gradient interpolation: arithmetic (comp=0)
-                    // or harmonic (comp=1) between the two adjacent nodes
+                    // Vector interpolation must be frame invariant.  A
+                    // component-wise harmonic mean creates a false
+                    // Rhie-Chow defect when a component changes sign.
                     const scalar gL = p_Gpdx[il * SPATIAL_DIM + j];
                     const scalar gR = p_Gpdx[ir * SPATIAL_DIM + j];
                     const scalar gArith = 0.5 * (gL + gR);
                     const scalar gHarm =
                         (std::abs(gL) * gR + gL * std::abs(gR)) /
                         (std::abs(gL) + std::abs(gR) + SMALL);
-                    p_GpdxIp[j] = (1.0 - comp) * gArith + comp * gHarm;
+                    p_GpdxIp[j] = (1.0 - cvpgHarm) * gArith + cvpgHarm * gHarm;
 
-                    // body force interpolation: same blend as pressure gradient
+                    // Body-force stabilization uses the same interpolation.
                     const scalar fL = p_F[il * SPATIAL_DIM + j];
                     const scalar fR = p_F[ir * SPATIAL_DIM + j];
                     const scalar fArith = 0.5 * (fL + fR);
                     const scalar fHarm =
                         (std::abs(fL) * fR + fL * std::abs(fR)) /
                         (std::abs(fL) + std::abs(fR) + SMALL);
-                    p_FIp[j] = (1.0 - comp) * fArith + comp * fHarm;
+                    p_FIp[j] = (1.0 - cvpgHarm) * fArith + cvpgHarm * fHarm;
                 }
 
                 scalar rhoIp = 0.0;
@@ -6915,7 +7267,13 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = this->pRef().isGradientShifted();
 
-    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+    // harmonic blend limits the Rhie-Chow term at shocks; see cvpg_type
+    const scalar cvpgHarm =
+        (domain->isMaterialCompressible() &&
+         controlsRef().solverRef().solverControl_.expertParameters_.cvpgType_ ==
+             gradientAveragingType::harmAver)
+            ? 1.0
+            : 0.0;
 
     BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -7177,7 +7535,7 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
                     const scalar gHarm =
                         (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
                         (std::abs(gFace) + std::abs(gOpp) + SMALL);
-                    p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
+                    p_GpdxBip[j] = (1.0 - cvpgHarm) * gArith + cvpgHarm * gHarm;
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
                     const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
@@ -7187,7 +7545,7 @@ void flowModel::updateMassFlowRateBoundaryFieldInletSpecifiedPressure_(
                     const scalar fHarm =
                         (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
                         (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                    p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                    p_FBip[j] = (1.0 - cvpgHarm) * fArith + cvpgHarm * fHarm;
                     p_FOrigBip[j] = B_el[j];
                 }
 
@@ -7712,7 +8070,13 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = this->pRef().isGradientShifted();
 
-    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+    // harmonic blend limits the Rhie-Chow term at shocks; see cvpg_type
+    const scalar cvpgHarm =
+        (domain->isMaterialCompressible() &&
+         controlsRef().solverRef().solverControl_.expertParameters_.cvpgType_ ==
+             gradientAveragingType::harmAver)
+            ? 1.0
+            : 0.0;
 
     BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -7981,7 +8345,7 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
                     const scalar gHarm =
                         (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
                         (std::abs(gFace) + std::abs(gOpp) + SMALL);
-                    p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
+                    p_GpdxBip[j] = (1.0 - cvpgHarm) * gArith + cvpgHarm * gHarm;
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
                     const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
@@ -7991,7 +8355,7 @@ void flowModel::updateMassFlowRateBoundaryFieldOutletSpecifiedPressure_(
                     const scalar fHarm =
                         (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
                         (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                    p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                    p_FBip[j] = (1.0 - cvpgHarm) * fArith + cvpgHarm * fHarm;
                     p_FOrigBip[j] = B_el[j];
                 }
 
@@ -8550,7 +8914,13 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = this->pRef().isGradientShifted();
 
-    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+    // harmonic blend limits the Rhie-Chow term at shocks; see cvpg_type
+    const scalar cvpgHarm =
+        (domain->isMaterialCompressible() &&
+         controlsRef().solverRef().solverControl_.expertParameters_.cvpgType_ ==
+             gradientAveragingType::harmAver)
+            ? 1.0
+            : 0.0;
 
     BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -8808,7 +9178,7 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                     const scalar gHarm =
                         (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
                         (std::abs(gFace) + std::abs(gOpp) + SMALL);
-                    p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
+                    p_GpdxBip[j] = (1.0 - cvpgHarm) * gArith + cvpgHarm * gHarm;
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
                     const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
@@ -8818,7 +9188,7 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                     const scalar fHarm =
                         (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
                         (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                    p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                    p_FBip[j] = (1.0 - cvpgHarm) * fArith + cvpgHarm * fHarm;
                     p_FOrigBip[j] = B_el[j];
                 }
 
@@ -14607,6 +14977,14 @@ void flowModel::updateMassDivergenceField_(
                                                             i];
                                             }
 
+                                            // A no-slip wall is impermeable in
+                                            // its own frame.  Enforce zero
+                                            // relative mass flux exactly
+                                            // instead of retaining geometric
+                                            // leakage from a faceted curved
+                                            // wall.
+                                            tmDot = 0.0;
+
                                             scalar& divL =
                                                 *stk::mesh::field_data(
                                                     *divSTKFieldPtr, node);
@@ -14779,11 +15157,13 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                         metaData.side_rank(),
                                         this->getExposedAreaVectorID_(domain));
 
-                                // ip values; both boundary and opposing surface
+                                // face values
                                 std::vector<scalar> uBip(SPATIAL_DIM);
+                                std::vector<scalar> faceAreaVec(SPATIAL_DIM);
 
                                 // pointers to fixed values
                                 scalar* p_uBip = &uBip[0];
+                                scalar* p_faceAreaVec = &faceAreaVec[0];
 
                                 // nodal fields to gather
                                 std::vector<scalar> ws_U;
@@ -14906,6 +15286,7 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                         }
 
                                         // calculate net mass flow for the face
+                                        // and keep only inflow at each ip
                                         scalar mDotSide = 0.0;
                                         for (label ip = 0; ip < numScsBip; ++ip)
                                         {
@@ -14913,55 +15294,70 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                             mDot[ip] = std::min(mDot[ip], 0.0);
                                         }
 
-                                        // loop over boundary ips
+                                        // The artificial wall lives on the
+                                        // mesh face: build and remove it once
+                                        // per face from the face normal, the
+                                        // face averaged velocity/pressure and
+                                        // the face boundary pressure.
+                                        scalar asq = 0.0;
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            p_uBip[j] = 0.0;
+                                            p_faceAreaVec[j] = 0.0;
+                                            for (label ip = 0; ip < numScsBip;
+                                                 ++ip)
+                                            {
+                                                p_faceAreaVec[j] +=
+                                                    areaVec[ip * SPATIAL_DIM +
+                                                            j];
+                                            }
+                                            asq += p_faceAreaVec[j] *
+                                                   p_faceAreaVec[j];
+                                        }
+                                        const scalar amag = std::sqrt(asq);
+
+                                        // arithmetic interpolation
+                                        scalar pAvg = 0.0;
+                                        for (label ic = 0; ic < nodesPerSide;
+                                             ++ic)
+                                        {
+                                            pAvg += f * p_p[ic];
+
+                                            const label icNdim =
+                                                ic * SPATIAL_DIM;
+                                            for (label j = 0; j < SPATIAL_DIM;
+                                                 ++j)
+                                            {
+                                                p_uBip[j] +=
+                                                    f * p_U[icNdim + j];
+                                            }
+                                        }
+
+                                        // calculate vel . n
+                                        scalar vnorm = 0.0;
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            vnorm += p_uBip[j] *
+                                                     p_faceAreaVec[j] / amag;
+                                        }
+
+                                        // face boundary pressure
+                                        scalar pFace = 0.0;
                                         for (label ip = 0; ip < numScsBip; ++ip)
                                         {
-                                            scalar asq = 0.0;
-                                            for (label j = 0; j < SPATIAL_DIM;
-                                                 ++j)
+                                            pFace += pbc[ip];
+                                        }
+                                        pFace /= static_cast<scalar>(numScsBip);
+
+                                        if (revf_val[0] == 0)
+                                        {
+                                            // build a wall when the net face
+                                            // flow leaves through the inlet
+                                            if (mDotSide > SMALL)
                                             {
-                                                p_uBip[j] = 0.0;
-
-                                                const scalar axj =
-                                                    areaVec[ip * SPATIAL_DIM +
-                                                            j];
-                                                asq += axj * axj;
-                                            }
-                                            const scalar amag = std::sqrt(asq);
-
-                                            // interpolate to bip
-                                            scalar pAvg = 0.0;
-                                            for (label ic = 0;
-                                                 ic < nodesPerSide;
-                                                 ++ic)
-                                            {
-                                                pAvg += f * p_p[ic];
-
-                                                const label icNdim =
-                                                    ic * SPATIAL_DIM;
-                                                for (label j = 0;
-                                                     j < SPATIAL_DIM;
-                                                     ++j)
-                                                {
-                                                    p_uBip[j] +=
-                                                        f * p_U[icNdim + j];
-                                                }
-                                            }
-
-                                            // calculate vel . n
-                                            scalar vnorm = 0.0;
-                                            for (label j = 0; j < SPATIAL_DIM;
-                                                 ++j)
-                                            {
-                                                const scalar axj =
-                                                    areaVec[ip * SPATIAL_DIM +
-                                                            j];
-                                                vnorm += p_uBip[j] * axj / amag;
-                                            }
-
-                                            if (revf_val[ip] == 0)
-                                            {
-                                                if (mDotSide > SMALL)
+                                                for (label ip = 0;
+                                                     ip < numScsBip;
+                                                     ++ip)
                                                 {
                                                     if (!ignoreFlagUpdate)
                                                     {
@@ -14970,20 +15366,30 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                                     mDot[ip] = 0.0;
                                                 }
                                             }
-                                            else
+                                        }
+                                        else if (vnorm <= 0.0 && pFace >= pAvg)
+                                        {
+                                            // remove the wall
+                                            if (!ignoreFlagUpdate)
                                             {
-                                                if (vnorm <= 0.0 &&
-                                                    pbc[ip] >= pAvg)
+                                                for (label ip = 0;
+                                                     ip < numScsBip;
+                                                     ++ip)
                                                 {
-                                                    if (!ignoreFlagUpdate)
-                                                    {
-                                                        revf_val[ip] = 0;
-                                                    }
+                                                    revf_val[ip] = 0;
                                                 }
-                                                else
-                                                {
-                                                    // do nothing .. wall kept
-                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // The boundary assemblers treat a
+                                            // flagged face as a slip wall.
+                                            // Keep its mass flux consistent
+                                            // with that wall treatment.
+                                            for (label ip = 0; ip < numScsBip;
+                                                 ++ip)
+                                            {
+                                                mDot[ip] = 0.0;
                                             }
                                         }
                                     }
@@ -15031,11 +15437,13 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                         metaData.side_rank(),
                                         this->getExposedAreaVectorID_(domain));
 
-                                // ip values; both boundary and opposing surface
+                                // face values
                                 std::vector<scalar> uAvg(SPATIAL_DIM);
+                                std::vector<scalar> faceAreaVec(SPATIAL_DIM);
 
                                 // pointers to fixed values
                                 scalar* p_uAvg = &uAvg[0];
+                                scalar* p_faceAreaVec = &faceAreaVec[0];
 
                                 // nodal fields to gather
                                 std::vector<scalar> ws_U;
@@ -15158,6 +15566,7 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                         }
 
                                         // calculate net mass flow for the side
+                                        // and keep only outflow at each ip
                                         scalar mDotSide = 0.0;
                                         for (label ip = 0; ip < numScsBip; ++ip)
                                         {
@@ -15165,55 +15574,70 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                             mDot[ip] = std::max(mDot[ip], 0.0);
                                         }
 
-                                        // loop over boundary ips
+                                        // The artificial wall lives on the
+                                        // mesh face: build and remove it once
+                                        // per face from the face normal, the
+                                        // face averaged velocity/pressure and
+                                        // the face boundary pressure.
+                                        scalar asq = 0.0;
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            p_uAvg[j] = 0.0;
+                                            p_faceAreaVec[j] = 0.0;
+                                            for (label ip = 0; ip < numScsBip;
+                                                 ++ip)
+                                            {
+                                                p_faceAreaVec[j] +=
+                                                    areaVec[ip * SPATIAL_DIM +
+                                                            j];
+                                            }
+                                            asq += p_faceAreaVec[j] *
+                                                   p_faceAreaVec[j];
+                                        }
+                                        const scalar amag = std::sqrt(asq);
+
+                                        // arithmetic interpolation
+                                        scalar pAvg = 0.0;
+                                        for (label ic = 0; ic < nodesPerSide;
+                                             ++ic)
+                                        {
+                                            pAvg += f * p_p[ic];
+
+                                            const label icNdim =
+                                                ic * SPATIAL_DIM;
+                                            for (label j = 0; j < SPATIAL_DIM;
+                                                 ++j)
+                                            {
+                                                p_uAvg[j] +=
+                                                    f * p_U[icNdim + j];
+                                            }
+                                        }
+
+                                        // calculate vel . n
+                                        scalar vnorm = 0.0;
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            vnorm += p_uAvg[j] *
+                                                     p_faceAreaVec[j] / amag;
+                                        }
+
+                                        // face boundary pressure
+                                        scalar pFace = 0.0;
                                         for (label ip = 0; ip < numScsBip; ++ip)
                                         {
-                                            scalar asq = 0.0;
-                                            for (label j = 0; j < SPATIAL_DIM;
-                                                 ++j)
+                                            pFace += pbc[ip];
+                                        }
+                                        pFace /= static_cast<scalar>(numScsBip);
+
+                                        if (revf_val[0] == 0)
+                                        {
+                                            // build a wall when the net face
+                                            // flow enters through the outlet
+                                            if (mDotSide < -SMALL)
                                             {
-                                                p_uAvg[j] = 0.0;
-
-                                                const scalar axj =
-                                                    areaVec[ip * SPATIAL_DIM +
-                                                            j];
-                                                asq += axj * axj;
-                                            }
-                                            const scalar amag = std::sqrt(asq);
-
-                                            // arithmetic interpolation
-                                            scalar pAvg = 0.0;
-                                            for (label ic = 0;
-                                                 ic < nodesPerSide;
-                                                 ++ic)
-                                            {
-                                                pAvg += f * p_p[ic];
-
-                                                const label icNdim =
-                                                    ic * SPATIAL_DIM;
-                                                for (label j = 0;
-                                                     j < SPATIAL_DIM;
-                                                     ++j)
-                                                {
-                                                    p_uAvg[j] +=
-                                                        f * p_U[icNdim + j];
-                                                }
-                                            }
-
-                                            // calculate vel . n
-                                            scalar vnorm = 0.0;
-                                            for (label j = 0; j < SPATIAL_DIM;
-                                                 ++j)
-                                            {
-                                                const scalar axj =
-                                                    areaVec[ip * SPATIAL_DIM +
-                                                            j];
-                                                vnorm += p_uAvg[j] * axj / amag;
-                                            }
-
-                                            if (revf_val[ip] == 0)
-                                            {
-                                                if (mDotSide < -SMALL)
+                                                for (label ip = 0;
+                                                     ip < numScsBip;
+                                                     ++ip)
                                                 {
                                                     if (!ignoreFlagUpdate)
                                                     {
@@ -15222,21 +15646,30 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                                     mDot[ip] = 0.0;
                                                 }
                                             }
-                                            else
+                                        }
+                                        else if (vnorm >= 0.0 && pFace <= pAvg)
+                                        {
+                                            // remove the wall
+                                            if (!ignoreFlagUpdate)
                                             {
-                                                if (vnorm >= 0.0 &&
-                                                    pbc[ip] <= pAvg)
+                                                for (label ip = 0;
+                                                     ip < numScsBip;
+                                                     ++ip)
                                                 {
-                                                    if (!ignoreFlagUpdate)
-                                                    {
-                                                        revf_val[ip] = 0;
-                                                    }
+                                                    revf_val[ip] = 0;
                                                 }
-                                                else
-                                                {
-                                                    // do nothing .. wall
-                                                    // kept
-                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // The boundary assemblers treat a
+                                            // flagged face as a slip wall.
+                                            // Keep its mass flux consistent
+                                            // with that wall treatment.
+                                            for (label ip = 0; ip < numScsBip;
+                                                 ++ip)
+                                            {
+                                                mDot[ip] = 0.0;
                                             }
                                         }
                                     }

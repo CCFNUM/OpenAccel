@@ -50,6 +50,16 @@ public:
     void initializeTurbulentDissipationRate(
         const std::shared_ptr<domain> domain) override;
 
+    void initializeTurbulentIntermittency(
+        const std::shared_ptr<domain> domain) override;
+
+protected:
+    // RMS nodal velocity magnitude and eddy length scale over the zone
+    void automaticTurbulenceScales_(const std::shared_ptr<domain> domain,
+                                    scalar& velocityScale,
+                                    scalar& lengthScale);
+
+public:
     // Update
 
     void

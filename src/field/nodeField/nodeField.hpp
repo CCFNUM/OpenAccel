@@ -18,6 +18,7 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
                            bool correctedBoundaryNodeValues)
     : field<scalar, N>(meshPtr, stk::topology::NODE_RANK, name, numberOfStates),
       isInitialized_(this->meshPtr()->nZones(), false),
+      isImportedFromDataBase_(this->meshPtr()->nZones(), false),
       correctedBoundaryNodeValues_(correctedBoundaryNodeValues)
 {
     // Put the stk field on interior mesh parts
@@ -130,7 +131,8 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
 template <size_t N, size_t M>
 nodeField<N, M>::nodeField(mesh* meshPtr, STKScalarField* stkFieldPtr)
     : field<scalar, N>(meshPtr, stkFieldPtr),
-      isInitialized_(this->meshPtr()->nZones(), false)
+      isInitialized_(this->meshPtr()->nZones(), false),
+      isImportedFromDataBase_(this->meshPtr()->nZones(), false)
 {
     if (stkFieldPtr->number_of_states() - int(stkFieldPtr->state()) > 1)
     {
@@ -774,6 +776,12 @@ void nodeField<N, M>::initialize(label iZone, bool force)
 
     this->initializeField(iZone);
 
+    // Restart input restores owned/shared nodal data, while derived-field
+    // initialization below may immediately traverse aura elements. Populate
+    // ghost values before side fields, EOS updates, or gradients can consume
+    // them.
+    this->synchronizeGhostedEntities(iZone);
+
     this->initializeSideFields(iZone);
 
     this->setIsInitialized(iZone);
@@ -1013,24 +1021,35 @@ void nodeField<N, M>::initializeField(label iZone)
         }
         else if (initCond.type() == initialConditionOption::automatic)
         {
-            stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
-                this->name(), this->meshRef().metaDataRef());
-            stk::io::MeshField mf(theField, theField->name());
-            mf.set_read_time(this->meshRef().ioBrokerRef().get_max_time());
+            auto& ioBroker = this->meshRef().ioBrokerRef();
+            const auto timeSteps = ioBroker.get_time_steps();
+            bool fieldRestored = false;
 
-            // limit initialized parts to current zone's
-            for (const stk::mesh::Part* part :
-                 this->meshPtr()->zonePtr(iZone)->interiorParts())
+            // STK throws when read_input_field() is called on a mesh database
+            // with no transient states.  "automatic" is also used for
+            // geometry-only meshes, so only attempt an import when a state is
+            // actually available.
+            if (!timeSteps.empty())
             {
-                mf.add_subset(*part);
-            }
+                stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
+                    this->name(), this->meshRef().metaDataRef());
+                stk::io::MeshField mf(theField, theField->name());
+                mf.set_read_time(ioBroker.get_max_time());
 
-            // restore
-            this->meshRef().ioBrokerRef().read_input_field(mf);
+                // limit initialized parts to current zone's
+                for (const stk::mesh::Part* part :
+                     this->meshPtr()->zonePtr(iZone)->interiorParts())
+                {
+                    mf.add_subset(*part);
+                }
 
-            if (mf.field_restored())
-            {
-                if (messager::master())
+                ioBroker.read_input_field(mf);
+                fieldRestored = mf.field_restored();
+
+                // let models tell an imported field from a zero fallback
+                isImportedFromDataBase_[iZone] = fieldRestored;
+
+                if (fieldRestored && messager::master())
                 {
                     std::cout << "Field " + this->name() +
                                      " is imported from the data base at time "
@@ -1038,13 +1057,21 @@ void nodeField<N, M>::initializeField(label iZone)
                               << std::endl;
                 }
             }
-            else
+
+            if (!fieldRestored)
             {
+                this->setToValue(
+                    std::vector<scalar>(N, 0.0),
+                    this->meshPtr()->zonePtr(iZone)->interiorParts());
+
                 if (messager::master())
                 {
-                    warningMsg("Field " + this->name() +
-                               " is not found in the data base. "
-                               "Initializing from Zero");
+                    const std::string reason =
+                        timeSteps.empty()
+                            ? "the data base has no transient states"
+                            : "the field is not found in the data base";
+                    warningMsg("Field " + this->name() + " is not imported: " +
+                               reason + ". Initializing from zero");
                 }
             }
         }
@@ -3416,8 +3443,27 @@ void nodeField<N, M>::updateGradientField(label iZone)
     const auto& bulkData = this->meshRef().bulkDataRef();
     const auto& metaData = this->meshRef().metaDataRef();
 
-    // relax the existing gradient
-    this->gradRef().relax(iZone, 1.0 - gradURF_);
+    // A gradient is a derived field and is not restored from a restart.
+    // Explicitly initialize its first reconstruction instead of relaxing
+    // storage that may not yet contain valid values (notably aura/shared
+    // entities created while reading a decomposed restart).
+    const bool firstGradientReconstruction =
+        !this->gradRef().isInitialized(iZone);
+    const scalar gradientAssemblyFactor =
+        firstGradientReconstruction ? 1.0 : gradURF_;
+
+    if (firstGradientReconstruction)
+    {
+        this->gradRef().setToValue(
+            std::vector<scalar>(M, 0.0),
+            this->meshPtr()->zonePtr(iZone)->interiorParts());
+        this->gradRef().setIsInitialized(iZone);
+    }
+    else
+    {
+        // retain the previous gradient for normal outer-iteration relaxation
+        this->gradRef().relax(iZone, 1.0 - gradURF_);
+    }
 
     // use incremental gradient change?
     scalar incMult = incrementalGradientChange_ ? 1.0 : 0.0;
@@ -3581,11 +3627,11 @@ void nodeField<N, M>::updateGradientField(label iZone)
                         for (label j = 0; j < SPATIAL_DIM; ++j)
                         {
                             gradPhiL[i * N + j] +=
-                                gradURF_ *
+                                gradientAssemblyFactor *
                                 (p_phiIp[i] - incMult * p_phi[il * N + i]) *
                                 p_scs_areav[ip * SPATIAL_DIM + j] * inv_volL;
                             gradPhiR[i * N + j] -=
-                                gradURF_ *
+                                gradientAssemblyFactor *
                                 (p_phiIp[i] - incMult * p_phi[ir * N + i]) *
                                 p_scs_areav[ip * SPATIAL_DIM + j] * inv_volR;
                         }
@@ -3745,7 +3791,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                                SPATIAL_DIM +
                                                            j];
                                     gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -3877,7 +3924,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                                SPATIAL_DIM +
                                                            j];
                                     gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -3994,7 +4042,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                                SPATIAL_DIM +
                                                            j];
                                     gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4126,7 +4175,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                                SPATIAL_DIM +
                                                            j];
                                     gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4280,7 +4330,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                                SPATIAL_DIM +
                                                            j];
                                     gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4414,7 +4465,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                                SPATIAL_DIM +
                                                            j];
                                     gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4579,7 +4631,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                     scalar fac = (phiip - incMult * phic) *
                                                  areaVec[ip * SPATIAL_DIM + j];
                                     gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_vol;
+                                        gradientAssemblyFactor * fac * inv_vol;
                                 }
                             }
                         }
@@ -4759,7 +4811,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                         for (label j = 0; j < SPATIAL_DIM; ++j)
                                         {
                                             gradPhi[i * N + j] +=
-                                                gradURF_ *
+                                                gradientAssemblyFactor *
                                                 (p_phiIp[i] -
                                                  incMult * p_phi[nn * N + i]) *
                                                 areaVec[ip * SPATIAL_DIM + j] *

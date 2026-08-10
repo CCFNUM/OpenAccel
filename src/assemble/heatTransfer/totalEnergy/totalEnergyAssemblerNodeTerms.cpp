@@ -124,38 +124,9 @@ void totalEnergyAssembler::assembleNodeTermsFusedSteady_(const domain* domain,
         const STKScalarField* h0STKFieldPtr = phi_->stkFieldPtr();
         const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
 
-        const STKScalarField* gradPSTKFieldPtr =
-            model_->pRef().gradRef().stkFieldPtr();
-
         // Geometric fields
         const auto* volSTKFieldPtr = metaData.get_field<scalar>(
             stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
-
-        const auto* coordinatesPtr = metaData.get_field<scalar>(
-            stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
-
-        // required for frame motion (MFR)
-        const auto coriolisMatrix = domain->zonePtr()->frameRotating()
-                                        ? domain->zonePtr()
-                                              ->transformationRef()
-                                              .rotation()
-                                              .coriolisMatrix_
-                                        : utils::matrix::Zero();
-        const scalar* p_mat = coriolisMatrix.data();
-
-        const auto origin =
-            domain->zonePtr()->frameRotating()
-                ? domain->zonePtr()->transformationRef().rotation().origin_
-                : utils::vector::Zero();
-        const scalar* p_ori = origin.data();
-
-        // Preallocate arrays for rotation work computation
-        std::vector<scalar> r_vec(SPATIAL_DIM);
-        std::vector<scalar> omega_cross_r(SPATIAL_DIM);
-
-        // pointers
-        scalar* p_r_vec = &r_vec[0];
-        scalar* p_omega_cross_r = &omega_cross_r[0];
 
         // other
         scalar dt = field_broker_->controlsRef().getPhysicalTimescale();
@@ -218,40 +189,6 @@ void totalEnergyAssembler::assembleNodeTermsFusedSteady_(const domain* domain,
                     lhs[0] += -div;
                 }
                 rhs[0] -= -div * h0;
-
-                // Rotation work term: (ω×r)·∇p
-                // From equation: ∇·[p(ω×r)] = (ω×r)·∇p (since ∇·(ω×r) = 0)
-                const scalar* coords =
-                    stk::mesh::field_data(*coordinatesPtr, node);
-                const scalar* gradP =
-                    stk::mesh::field_data(*gradPSTKFieldPtr, node);
-
-                // Compute r = coords - origin
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    p_r_vec[i] = coords[i] - p_ori[i];
-                }
-
-                // Compute ω×r using Coriolis matrix
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    p_omega_cross_r[i] = 0.0;
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        p_omega_cross_r[i] +=
-                            p_mat[i * SPATIAL_DIM + j] * p_r_vec[j];
-                    }
-                }
-
-                // Compute (ω×r)·∇p
-                scalar rotationWorkSource = 0.0;
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    rotationWorkSource += p_omega_cross_r[i] * gradP[i];
-                }
-
-                // Add to RHS
-                rhs[0] -= rotationWorkSource * vol;
 
                 // energy source
                 rhs[0] += energySourceValue * vol;

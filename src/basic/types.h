@@ -605,6 +605,16 @@ enum class nonconformalMethod
 
 nonconformalMethod convertNonconformalMethodFromString(std::string s);
 
+// Averaging used to interpolate the pressure gradient and body force to an
+// integration point for the Rhie-Chow correction
+enum class gradientAveragingType
+{
+    arithAver,
+    harmAver
+};
+
+gradientAveragingType convertGradientAveragingTypeFromString(std::string s);
+
 // Wall-function type
 enum class wallFunctionType
 {

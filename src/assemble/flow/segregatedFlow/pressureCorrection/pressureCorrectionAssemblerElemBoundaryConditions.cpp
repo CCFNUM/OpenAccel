@@ -2026,6 +2026,14 @@ void pressureCorrectionAssembler::
     // shifted ip's for gradients?
     const bool isPGradientShifted = model_->pRef().isGradientShifted();
     const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+    // harmonic blend limits the Rhie-Chow term at shocks; see cvpg_type
+    const scalar cvpgHarm =
+        (comp > 0.0 && model_->controlsRef()
+                               .solverRef()
+                               .solverControl_.expertParameters_.cvpgType_ ==
+                           gradientAveragingType::harmAver)
+            ? 1.0
+            : 0.0;
 
     stk::mesh::BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -2392,7 +2400,8 @@ void pressureCorrectionAssembler::
                                 (std::abs(gFace) * gOpp +
                                  gFace * std::abs(gOpp)) /
                                 (std::abs(gFace) + std::abs(gOpp) + SMALL);
-                            p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
+                            p_GpdxBip[j] =
+                                (1.0 - cvpgHarm) * gArith + cvpgHarm * gHarm;
 
                             const scalar fFace =
                                 p_F[localFaceNode * SPATIAL_DIM + j];
@@ -2403,7 +2412,8 @@ void pressureCorrectionAssembler::
                                 (std::abs(fFace) * fOpp +
                                  fFace * std::abs(fOpp)) /
                                 (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                            p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                            p_FBip[j] =
+                                (1.0 - cvpgHarm) * fArith + cvpgHarm * fHarm;
 
                             p_FOrigBip[j] = B_el[j];
                         }
@@ -3228,6 +3238,14 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     // shifted ip's for gradients?
     const bool isPGradientShifted = model_->pRef().isGradientShifted();
     const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+    // harmonic blend limits the Rhie-Chow term at shocks; see cvpg_type
+    const scalar cvpgHarm =
+        (comp > 0.0 && model_->controlsRef()
+                               .solverRef()
+                               .solverControl_.expertParameters_.cvpgType_ ==
+                           gradientAveragingType::harmAver)
+            ? 1.0
+            : 0.0;
 
     stk::mesh::BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -3584,7 +3602,8 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                         const scalar gHarm =
                             (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
                             (std::abs(gFace) + std::abs(gOpp) + SMALL);
-                        p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
+                        p_GpdxBip[j] =
+                            (1.0 - cvpgHarm) * gArith + cvpgHarm * gHarm;
 
                         const scalar fFace =
                             p_F[localFaceNode * SPATIAL_DIM + j];
@@ -3594,7 +3613,8 @@ void pressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                         const scalar fHarm =
                             (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
                             (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                        p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                        p_FBip[j] =
+                            (1.0 - cvpgHarm) * fArith + cvpgHarm * fHarm;
 
                         p_FOrigBip[j] = B_el[j];
                     }
@@ -3846,6 +3866,14 @@ void pressureCorrectionAssembler::
     // shifted ip's for gradients?
     const bool isPGradientShifted = model_->pRef().isGradientShifted();
     const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+    // harmonic blend limits the Rhie-Chow term at shocks; see cvpg_type
+    const scalar cvpgHarm =
+        (comp > 0.0 && model_->controlsRef()
+                               .solverRef()
+                               .solverControl_.expertParameters_.cvpgType_ ==
+                           gradientAveragingType::harmAver)
+            ? 1.0
+            : 0.0;
 
     stk::mesh::BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -4208,7 +4236,8 @@ void pressureCorrectionAssembler::
                                 (std::abs(gFace) * gOpp +
                                  gFace * std::abs(gOpp)) /
                                 (std::abs(gFace) + std::abs(gOpp) + SMALL);
-                            p_GpdxBip[j] = (1.0 - comp) * gArith + comp * gHarm;
+                            p_GpdxBip[j] =
+                                (1.0 - cvpgHarm) * gArith + cvpgHarm * gHarm;
 
                             const scalar fFace =
                                 p_F[localFaceNode * SPATIAL_DIM + j];
@@ -4219,7 +4248,8 @@ void pressureCorrectionAssembler::
                                 (std::abs(fFace) * fOpp +
                                  fFace * std::abs(fOpp)) /
                                 (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                            p_FBip[j] = (1.0 - comp) * fArith + comp * fHarm;
+                            p_FBip[j] =
+                                (1.0 - cvpgHarm) * fArith + cvpgHarm * fHarm;
 
                             p_FOrigBip[j] = B_el[j];
                         }

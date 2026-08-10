@@ -1261,7 +1261,8 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
             }
         }
 
-        // helper: is a sideset referenced anywhere (boundary or interface)?
+        // helper: is a sideset referenced anywhere in the YAML input?
+        // (a domain boundary or an interface region)
         auto isReferencedAnywhere =
             [&domainBoundarySidesets,
              &interfaceSidesets](const std::string& sidesetName) -> bool
@@ -1357,18 +1358,23 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
             else
             {
                 // exterior boundary of a single domain (any neighbour is
-                // ignored): must be declared as a boundary or interface
-                if (!referenced)
+                // ignored): must be consumed by that domain or an interface
+                const std::string owningDomain = *touchedDomains.begin();
+                bool isDeclared = domainBoundarySidesets[owningDomain].count(
+                                      sidesetName) > 0 ||
+                                  interfaceSidesets.count(sidesetName) > 0;
+                const std::string declarableAs =
+                    "a boundary of that domain nor as an interface";
+
+                if (!isDeclared)
                 {
-                    const std::string owningDomain = *touchedDomains.begin();
                     errorMsg(
                         "Sideset '" + sidesetName +
                         "' touches active element block(s) [" +
                         joinNames(activeBlocks) + "] of domain '" +
-                        owningDomain +
-                        "' but is not declared as a boundary of that domain "
-                        "nor "
-                        "as an interface. The YAML input must be "
+                        owningDomain + "' but is not declared as " +
+                        declarableAs +
+                        ". The YAML input must be "
                         "self-contained: declare this sideset, or it is an "
                         "unintended omission.");
                 }
