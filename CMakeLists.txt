@@ -168,6 +168,11 @@ if(WITH_FSI)
         message(FATAL_ERROR "FSI: cannot find UtopiaFE requirement!")
     endif()
 endif()
+# SSDF
+find_package(ssdf CONFIG REQUIRED)
+message(STATUS "SSDF found")
+message(STATUS "SSDF_DIR = ${ssdf_DIR}")
+
 # SFEM: FEM solid mechanics backend (solid_assembler_type: sfem)
 if(WITH_SFEM)
     add_compile_definitions(HAS_SFEM)
@@ -222,6 +227,9 @@ target_link_libraries(main_obj PUBLIC ${Trilinos_LIBRARIES})
 
 # Link your executable with MPI libraries
 target_link_libraries(main_obj PUBLIC MPI::MPI_C)
+
+# Link your executable with SSDF libraries
+target_link_libraries(main_obj PUBLIC ssdf::ssdf)
 
 # Link to Git version object and various dependencies for external/
 target_link_libraries(main_obj PRIVATE git_version)
