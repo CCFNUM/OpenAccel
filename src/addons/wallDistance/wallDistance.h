@@ -13,6 +13,7 @@
 #include "fieldBroker.h"
 #include "meshWave.h"
 #include "wallScale.h"
+#include "signedDistanceFunction.h"
 
 namespace accel
 {
@@ -22,6 +23,8 @@ class wallDistance : public fieldBroker
 private:
     std::unique_ptr<wallScale> wallScalePtr_ = nullptr;
     std::unique_ptr<meshWave> meshWavePtr_ = nullptr;
+    std::unique_ptr<signedDistanceFunction>
+    signedDistanceFunctionPtr_ = nullptr;
 
 public:
     // Constructors

@@ -28,8 +28,7 @@ wallDistance::wallDistance(realm* realm) : fieldBroker(realm)
             meshWavePtr_ = std::make_unique<meshWave>(this);
             break;
         case wallDistanceMethod::signedDistanceFunction:
-            errorMsg("Signed distance function wall distance method not "
-                     "implemented yet");
+            signedDistanceFunctionPtr_ = std::make_unique<signedDistanceFunction>(this);
             break;
     }
 }
@@ -52,8 +51,8 @@ void wallDistance::setup()
             meshWavePtr_->setup();
             break;
         case wallDistanceMethod::signedDistanceFunction:
-            errorMsg("Signed distance function wall distance method not "
-                     "implemented yet");
+            assert(signedDistanceFunctionPtr_);
+            signedDistanceFunctionPtr_->setup();
             break;
     }
 }
@@ -74,10 +73,9 @@ void wallDistance::reset()
             assert(meshWavePtr_);
             break;
         case wallDistanceMethod::signedDistanceFunction:
-            errorMsg("Signed distance function wall distance method not "
-                     "implemented yet");
+            assert(signedDistanceFunctionPtr_);
             break;
-    }
+            }
 }
 
 void wallDistance::initialize()
@@ -98,8 +96,8 @@ void wallDistance::initialize()
             meshWavePtr_->initialize();
             break;
         case wallDistanceMethod::signedDistanceFunction:
-            errorMsg("Signed distance function wall distance method not "
-                     "implemented yet");
+            assert(signedDistanceFunctionPtr_);
+            signedDistanceFunctionPtr_->initialize();
             break;
     }
 }
@@ -122,8 +120,8 @@ void wallDistance::update()
             meshWavePtr_->update();
             break;
         case wallDistanceMethod::signedDistanceFunction:
-            errorMsg("Signed distance function wall distance method not "
-                     "implemented yet");
+            assert(signedDistanceFunctionPtr_);
+            signedDistanceFunctionPtr_->update();
             break;
     }
 }
