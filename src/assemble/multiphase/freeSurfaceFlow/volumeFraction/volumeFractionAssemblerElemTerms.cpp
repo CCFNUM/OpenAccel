@@ -23,6 +23,11 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         domain->multiphase_.freeSurfaceModel_.fluxCorrectedTransport_ ? 0.0
                                                                       : 1.0;
 
+    // volume fraction advection scheme; resolved once per assembly so that the
+    // ip loop below only ever compares an integer
+    const vofAdvectionSchemeType vofScheme =
+        domain->multiphase_.freeSurfaceModel_.advectionScheme_;
+
     // NSO active only when not using FCT and enabled in expert params
     const bool NSO =
         (fct > 0.0) &&
@@ -369,26 +374,42 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                 {
                     phiUpwind = p_alpha[il];
 
-                    // deferred correction
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    switch (vofScheme)
                     {
-                        const scalar dxj =
-                            p_coordIp[j] - p_coordinates[il * SPATIAL_DIM + j];
-                        dcorr += p_beta[il] * dxj *
-                                 p_gradAlpha[il * SPATIAL_DIM + j];
+                        case vofAdvectionSchemeType::barthJespersen:
+                        {
+                            // deferred correction
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar dxj =
+                                    p_coordIp[j] -
+                                    p_coordinates[il * SPATIAL_DIM + j];
+                                dcorr += p_beta[il] * dxj *
+                                         p_gradAlpha[il * SPATIAL_DIM + j];
+                            }
+                            break;
+                        }
                     }
                 }
                 else
                 {
                     phiUpwind = p_alpha[ir];
 
-                    // deferred correction
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    switch (vofScheme)
                     {
-                        const scalar dxj =
-                            p_coordIp[j] - p_coordinates[ir * SPATIAL_DIM + j];
-                        dcorr += p_beta[ir] * dxj *
-                                 p_gradAlpha[ir * SPATIAL_DIM + j];
+                        case vofAdvectionSchemeType::barthJespersen:
+                        {
+                            // deferred correction
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar dxj =
+                                    p_coordIp[j] -
+                                    p_coordinates[ir * SPATIAL_DIM + j];
+                                dcorr += p_beta[ir] * dxj *
+                                         p_gradAlpha[ir * SPATIAL_DIM + j];
+                            }
+                            break;
+                        }
                     }
                 }
 
