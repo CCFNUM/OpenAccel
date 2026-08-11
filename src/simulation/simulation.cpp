@@ -79,6 +79,13 @@ void simulation::initialize_()
     // Initialize mesh
     meshPtr_->initialize();
 
+    // classify the fluid nodes against the masking before anything
+    // consumes the classification (wall distance, equations)
+    if (overridesPtr_)
+    {
+        overridesPtr_->initialize();
+    }
+
     // Setup domains
     for (auto& domain : domainVector_)
     {
@@ -460,6 +467,15 @@ void simulation::postWork()
 {
     // 1. always required for steady and transient simulations
     postProcessPtr_->update();
+
+    // force the masking exert on the fluid, at output cadence
+    if (overridesPtr_ && overridesPtr_->maskingPtr() &&
+        writeNow(controlsRef()
+                     .solverRef()
+                     .outputControl_.outputFrequency_.timestepInterval_))
+    {
+        overridesPtr_->maskingPtr()->reportForces();
+    }
 
     // IO
     {

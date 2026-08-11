@@ -171,6 +171,9 @@ void navierStokesEquation::solve()
     // fix system in domains where the model is not active
     assembler_->fix(this->collectInactiveInteriorParts(), {}, ctx.get(), {});
 
+    // overrides of a plain simulation act on the assembled system
+    this->applyOverrides();
+
     if (!model_->controlsRef()
              .solverRef()
              .solverControl_.expertParameters_.disableMomentumPredictor_)
@@ -249,6 +252,40 @@ void navierStokesEquation::printScales()
         std::cout << "\tscale: " << std::scientific << std::setprecision(8)
                   << model_->URef().scale() << std::endl
                   << std::endl;
+    }
+}
+
+void navierStokesEquation::applyOverrides()
+{
+    masking* masks = this->maskingPtr();
+    if (!masks)
+    {
+        return;
+    }
+
+    auto ctx = linearSystem::getContext();
+
+    auto& U = model_->URef().stkFieldRef();
+    const auto& rho = model_->rhoRef().stkFieldRef();
+    const auto& mu = model_->muRef().stkFieldRef();
+
+    // the momentum the constraints absorb is the force on each region, so it
+    // has to be read before the rows are overwritten
+    assembler_->collectMaskForces(*masks, ctx.get());
+
+    for (label r = 0; r < masks->regionCount(); ++r)
+    {
+        maskedRegion& region = masks->regionRef(r);
+
+        // the fluid a region covers is at rest
+        const std::vector<scalar> atRest(
+            SPATIAL_DIM * region.coveredNodes().size(), 0.0);
+        assembler_->constrain(region.coveredNodes(), atRest, U, ctx.get());
+
+        // the first ring outside it is driven onto the wall law
+        region.computeRingVelocities(U, rho, mu, masks->kappa(), masks->B());
+        assembler_->constrain(
+            region.ringNodes(), region.ringVelocities(), U, ctx.get());
     }
 }
 

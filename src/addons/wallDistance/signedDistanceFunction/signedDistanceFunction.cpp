@@ -199,6 +199,35 @@ void signedDistanceFunction::computeWallDistance_()
         }
     }
 
+    // an maskedRegion is a wall the mesh does not carry: only one rank adds
+    // its facets, since all ranks hold the same copy of them
+    const auto* overridesPtr =
+        wallDistancePtr_->realmRef().simulationRef().overridesPtr();
+    const masking* solidsPtr =
+        overridesPtr ? overridesPtr->maskingPtr() : nullptr;
+
+    if (solidsPtr && messager::master())
+    {
+        const label offset = static_cast<label>(sx.size());
+
+        sx.insert(sx.end(),
+                  solidsPtr->surfaceX().begin(),
+                  solidsPtr->surfaceX().end());
+        sy.insert(sy.end(),
+                  solidsPtr->surfaceY().begin(),
+                  solidsPtr->surfaceY().end());
+        sz.insert(sz.end(),
+                  solidsPtr->surfaceZ().begin(),
+                  solidsPtr->surfaceZ().end());
+
+        for (label f = 0; f < solidsPtr->facetCount(); ++f)
+        {
+            s0.push_back(offset + solidsPtr->facetNode0()[f]);
+            s1.push_back(offset + solidsPtr->facetNode1()[f]);
+            s2.push_back(offset + solidsPtr->facetNode2()[f]);
+        }
+    }
+
     long long globalTriangleCount = static_cast<long long>(s0.size());
     MPI_Allreduce(MPI_IN_PLACE,
                   &globalTriangleCount,
@@ -269,6 +298,68 @@ void signedDistanceFunction::computeWallDistance_()
     if (messager::parallel())
     {
         stk::mesh::communicate_field_data(bulkData, {yMinField});
+    }
+
+    if (solidsPtr)
+    {
+        computeImmersedSolidDistance_(*solidsPtr, queryNodes, x, y, z);
+    }
+}
+
+void signedDistanceFunction::computeImmersedSolidDistance_(
+    const masking& masks,
+    const std::vector<stk::mesh::Entity>& queryNodes,
+    const std::vector<scalar>& x,
+    const std::vector<scalar>& y,
+    const std::vector<scalar>& z)
+{
+    auto& mesh = wallDistancePtr_->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    STKScalarField* solidDistanceField = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, masking::distance_ID);
+
+    if (!solidDistanceField)
+    {
+        return;
+    }
+
+    // the body surface is replicated on every rank, so the serial kernel is
+    // enough and no communication is needed
+    std::vector<scalar> distance(queryNodes.size(),
+                                 std::numeric_limits<scalar>::max());
+
+    const int result = ssdf::edf_select<scalar, scalar, label>(
+        static_cast<std::ptrdiff_t>(queryNodes.size()),
+        x.data(),
+        y.data(),
+        z.data(),
+        static_cast<std::ptrdiff_t>(masks.facetCount()),
+        masks.facetNode0().data(),
+        masks.facetNode1().data(),
+        masks.facetNode2().data(),
+        static_cast<std::ptrdiff_t>(masks.surfaceNodeCount()),
+        masks.surfaceX().data(),
+        masks.surfaceY().data(),
+        masks.surfaceZ().data(),
+        distance.data());
+
+    if (result != 0)
+    {
+        errorMsg("SSDF maskedRegion distance computation failed");
+    }
+
+    for (std::size_t i = 0; i < queryNodes.size(); ++i)
+    {
+        scalar* solidDistance =
+            stk::mesh::field_data(*solidDistanceField, queryNodes[i]);
+        *solidDistance = distance[i];
+    }
+
+    if (messager::parallel())
+    {
+        stk::mesh::communicate_field_data(bulkData, {solidDistanceField});
     }
 }
 

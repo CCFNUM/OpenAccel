@@ -617,6 +617,27 @@ enum class wallDistanceMethod
 
 wallDistanceMethod convertWallDistanceMethodFromString(std::string s);
 
+// How the geometry of a masked region is given
+enum class maskShape
+{
+    mesh,
+    box,
+    sphere,
+    cylinder
+};
+
+maskShape convertMaskShapeFromString(std::string s);
+
+// Treatment of the fluid nodes surrounding a masked region
+enum class maskWallTreatment
+{
+    none,
+    noSlip,
+    wallFunction
+};
+
+maskWallTreatment convertMaskWallTreatmentFromString(std::string s);
+
 // Zone type
 enum class domainType
 {

@@ -816,6 +816,51 @@ wallDistanceMethod convertWallDistanceMethodFromString(std::string s)
     return wallDistanceMethod::poisson; // useless
 }
 
+// Immersed-solid wall treatment
+
+// Masked-region shape
+
+std::unordered_map<std::string, maskShape> maskShapeMap{
+    {"mesh", maskShape::mesh},
+    {"box", maskShape::box},
+    {"sphere", maskShape::sphere},
+    {"cylinder", maskShape::cylinder}};
+
+maskShape convertMaskShapeFromString(std::string s)
+{
+    auto it = maskShapeMap.find(s);
+    if (it != maskShapeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid masked-region shape: " + s);
+    }
+
+    return maskShape::mesh; // useless
+}
+
+std::unordered_map<std::string, maskWallTreatment> maskWallTreatmentMap{
+    {"none", maskWallTreatment::none},
+    {"no_slip", maskWallTreatment::noSlip},
+    {"wall_function", maskWallTreatment::wallFunction}};
+
+maskWallTreatment convertMaskWallTreatmentFromString(std::string s)
+{
+    auto it = maskWallTreatmentMap.find(s);
+    if (it != maskWallTreatmentMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid immersed-solid wall treatment: " + s);
+    }
+
+    return maskWallTreatment::none; // useless
+}
+
 // Domain type
 
 std::unordered_map<std::string, domainType> domainTypeMap{

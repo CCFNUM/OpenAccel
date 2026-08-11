@@ -14,6 +14,13 @@
 namespace accel
 {
 
+masking* equation::maskingPtr() const
+{
+    auto* overridesPtr = domainVector_[0].get()->simulationRef().overridesPtr();
+
+    return overridesPtr ? overridesPtr->maskingPtr() : nullptr;
+}
+
 stk::mesh::PartVector equation::collectInactiveInteriorParts()
 {
     // get mesh

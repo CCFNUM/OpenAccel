@@ -210,6 +210,13 @@ void segregatedFlowEquations::solve()
                 }
             });
 
+            // the correction above runs over every node, so the velocity an
+            // maskedRegion owns has to be put back
+            if (masking* masks = this->maskingPtr())
+            {
+                masks->reapplyVelocity();
+            }
+
             // update pressure gradient for the next momentum solve (now free to
             // use the default relaxation factor)
             FOREACH_DOMAIN(updatePressureGradientField);

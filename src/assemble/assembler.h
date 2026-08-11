@@ -10,6 +10,7 @@
 #include "coefficients.h"
 #include "fieldBroker.h"
 #include "linearSolverContext.h"
+#include "masking.h"
 #include "scaling.h"
 #include "types.h"
 
@@ -222,6 +223,158 @@ public:
         {
             linearSolver::normalize(ctx->getCoefficients().getAMatrix(),
                                     ctx->getCoefficients().getBVector());
+        }
+    }
+
+    // overloaded for an explicit node list: an maskedRegion covers nodes that
+    // belong to no part of its own
+    virtual void fix(const std::vector<stk::mesh::Entity>& nodes,
+                     Context* ctx,
+                     std::vector<label> ignoreDofs = {})
+    {
+        const auto& mesh = field_broker_->meshRef();
+        const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+        Matrix& A = ctx->getAMatrix();
+        Vector& b = ctx->getBVector();
+
+        // create target dof's first
+        std::vector<label> dofs;
+        {
+            std::unordered_set<label> ignore(ignoreDofs.begin(),
+                                             ignoreDofs.end());
+            dofs.reserve(BLOCKSIZE - ignoreDofs.size());
+
+            for (int i = 0; i < BLOCKSIZE; ++i)
+            {
+                if (ignore.find(i) == ignore.end())
+                {
+                    dofs.push_back(i);
+                }
+            }
+        }
+
+        for (const stk::mesh::Entity entity : nodes)
+        {
+            const int64_t row =
+                A.getGraph()->localToRow(bulkData.local_id(entity));
+            if (row < 0) // inactive node absent from this (subset) graph
+                continue;
+
+            auto rowVals = A.rowVals(row);
+            auto rowCols = A.rowCols(row);
+
+            // zero the whole row
+            for (auto icol = 0; icol < rowCols.size(); icol++)
+            {
+                for (auto i : dofs)
+                {
+                    for (auto j = 0; j < BLOCKSIZE; j++)
+                    {
+                        rowVals[BLOCKSIZE * BLOCKSIZE * icol + BLOCKSIZE * i +
+                                j] = 0.0;
+                    }
+                }
+            }
+
+            // set diagonal of diagonal block to 1
+            auto* diag = A.diag(row);
+            for (auto i : dofs)
+            {
+                diag[BLOCKSIZE * i + i] = 1.0;
+            }
+
+            // zero the rhs: the equations solve for a correction, so the field
+            // keeps the value the body imposed on it
+            auto* rhs = &b[BLOCKSIZE * row];
+            for (auto i : dofs)
+            {
+                rhs[i] = 0.0;
+            }
+        }
+    }
+
+    // Dirichlet constraint on a node set known only at run time. The equations
+    // solve for a correction, so the row is reduced to 1 * dphi = target -
+    // current and the solve drives the node onto the target. Assumes the
+    // correction is applied with a relaxation factor of one.
+    virtual void constrain(const std::vector<stk::mesh::Entity>& nodes,
+                           const std::vector<scalar>& targets,
+                           const STKScalarField& current,
+                           Context* ctx)
+    {
+        const auto& bulkData = field_broker_->meshRef().bulkDataRef();
+
+        Matrix& A = ctx->getAMatrix();
+        Vector& b = ctx->getBVector();
+
+        for (size_t n = 0; n < nodes.size(); ++n)
+        {
+            const stk::mesh::Entity entity = nodes[n];
+            const int64_t row =
+                A.getGraph()->localToRow(bulkData.local_id(entity));
+            if (row < 0) // inactive node absent from this (subset) graph
+                continue;
+
+            auto rowVals = A.rowVals(row);
+            auto rowCols = A.rowCols(row);
+
+            for (auto icol = 0; icol < rowCols.size(); icol++)
+            {
+                for (auto i = 0; i < BLOCKSIZE; ++i)
+                {
+                    for (auto j = 0; j < BLOCKSIZE; j++)
+                    {
+                        rowVals[BLOCKSIZE * BLOCKSIZE * icol + BLOCKSIZE * i +
+                                j] = 0.0;
+                    }
+                }
+            }
+
+            auto* diag = A.diag(row);
+            const scalar* value = stk::mesh::field_data(current, entity);
+            auto* rhs = &b[BLOCKSIZE * row];
+
+            for (auto i = 0; i < BLOCKSIZE; ++i)
+            {
+                diag[BLOCKSIZE * i + i] = 1.0;
+                rhs[i] = targets[BLOCKSIZE * n + i] - value[i];
+            }
+        }
+    }
+
+    // the residual left at the constrained rows is the momentum the masking
+    // absorbs, i.e. what the region exchanges with the fluid. Must run before
+    // constrain() overwrites those rows
+    virtual void collectMaskForces(masking& masks, Context* ctx)
+    {
+        const auto& bulkData = field_broker_->meshRef().bulkDataRef();
+
+        Matrix& A = ctx->getAMatrix();
+        Vector& b = ctx->getBVector();
+
+        for (label i = 0; i < masks.size(); ++i)
+        {
+            maskedRegion& region = masks.regionRef(i);
+            region.resetForce();
+
+            for (const auto* nodes :
+                 {&region.coveredNodes(), &region.ringNodes()})
+            {
+                for (const stk::mesh::Entity entity : *nodes)
+                {
+                    const int64_t row =
+                        A.getGraph()->localToRow(bulkData.local_id(entity));
+                    if (row < 0)
+                    {
+                        continue;
+                    }
+
+                    region.accumulateForce(&b[BLOCKSIZE * row]);
+                }
+            }
+
+            region.reduceForce();
         }
     }
 

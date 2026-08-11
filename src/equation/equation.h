@@ -11,6 +11,7 @@
 #include "coefficients.h"
 #include "convergenceAcceleration.h"
 #include "domain.h"
+#include "masking.h"
 #include "mesh.h"
 #include "types.h"
 #include "zone.h"
@@ -192,8 +193,16 @@ public:
     {
     }
 
+    // Overrides of a plain simulation
+    virtual void applyOverrides()
+    {
+    }
+
     // operation necessary for matrix manipulation purposes
     virtual stk::mesh::PartVector collectInactiveInteriorParts();
+
+    // bodies immersed in the fluid mesh, nullptr when none is declared
+    masking* maskingPtr() const;
 
     virtual stk::mesh::PartVector collectInteriorParts();
 

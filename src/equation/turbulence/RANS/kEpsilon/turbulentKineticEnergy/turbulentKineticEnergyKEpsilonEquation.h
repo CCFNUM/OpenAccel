@@ -33,6 +33,8 @@ public:
 
     void solve() override;
 
+    void applyOverrides() override;
+
 private:
     std::unique_ptr<Assembler> assembler_;
 };

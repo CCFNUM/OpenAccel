@@ -1189,6 +1189,108 @@ Element fields are quantities associated with the integration points (IPs) of ea
     \item \texttt{heat\_flow\_rate} -- Scalar. Thermal energy flux at each element integration point, in \si{\watt}. Used during assembly of the thermal energy equation.
 \end{itemize}
 
+\section{Masking}
+
+A region of the fluid mesh may be masked out of the solution and treated as a
+wall, without the mesh conforming to it. It is
+declared under \texttt{physical\_analysis: overrides: masking:}, and its geometry
+comes either from its own exodus mesh, which is skinned into surface facets, or
+from an analytic region (\texttt{box}, \texttt{sphere}, \texttt{cylinder}), which
+is tessellated into the same facet representation. The fluid mesh is left
+untouched; the masked region only acts on the fluid state through the nodes it covers.
+
+An analytic region is tested for covering exactly, so its masking does not depend
+on how finely it was tessellated; the facets are what the wall distance and the
+wall treatment see, and their count follows \texttt{resolution}.
+
+\subsection{Classification}
+
+Every node of the masked domains is first tested against the region geometry,
+which gives the seeds of a layer walk. The walk itself is SSDF's
+\texttt{layers()}, a multi-source breadth-first search on the node-to-element
+graph built by \texttt{create\_n2e()}, so that the node field
+\texttt{mask\_layer} holds
+\begin{equation}
+    \ell_i =
+    \begin{cases}
+        0 & \text{node inside the region},\\
+        n & \text{node reachable from a covered node through } n \text{ elements},\\
+        255 & \text{node the walk did not reach},
+    \end{cases}
+\end{equation}
+with the owning region in \texttt{mask\_id}. Layer $1$ is therefore the first
+ring of fluid nodes around the region, the immersed-boundary analogue of the
+wall-adjacent node, and it follows the mesh: on a graded mesh it hugs the
+surface where the cells are small.
+
+Across ranks the walk is completed the way SSDF's own layer demo does it: the
+layer field is exchanged with a parallel minimum, the nodes whose layer dropped
+seed a queue, and \texttt{layers\_iterative()} continues from there until no
+rank changes any more. A single \texttt{layers()} call cannot be repeated for
+this, because it resets every non-seed node before walking.
+
+The wall treatment is imposed on \texttt{forced\_layers} layers, one by default:
+a wall function is a condition at the wall-adjacent node, and forcing further
+layers would prescribe the profile into the boundary layer instead of solving
+it. One more layer is still needed as information, \texttt{reference\_layer},
+because the friction velocity has to be anchored on a node the equations still
+solve freely.
+
+\subsection{Wall distance}
+
+The facets of every masked region are appended to the mesh wall sides handed to SSDF, so
+that
+\begin{equation}
+    y_{min,i} = \min\left(y^{\text{mesh}}_{min,i},\ d_i^{\text{mask}}\right),
+\end{equation}
+where $d_i^{\text{mask}}$ is also written on its own as
+\texttt{mask\_distance}. A masked region is therefore a wall as far as the
+turbulence models are concerned. This requires
+\texttt{wall\_distance\_method: signed\_distance\_function}; the mesh-wave method
+only sees mesh walls.
+
+\subsection{Masking and wall treatment}
+
+Inside a masked region the fluid is held at rest: $\mathbf{u} = \mathbf{0}$, $p = 0$,
+$\mu_t = 0$ and the transported turbulence quantities vanish. The equations solve
+for a correction, so each masked row is reduced to $1 \cdot \delta\phi_i = 0$ and
+the imposed value survives the solve.
+
+The first ring outside it carries the wall treatment selected by
+\texttt{wall\_treatment}. For \texttt{wall\_function}, the friction velocity is
+obtained from a reference node further out in the fluid, whose tangential
+velocity $u_{t,\text{ref}}$ at distance $d_\text{ref}$ satisfies
+\begin{equation}
+    u_{t,\text{ref}} = \frac{u_\tau}{\kappa} \ln\left(E\, y^+_\text{ref}\right),
+    \qquad y^+_\text{ref} = \frac{u_\tau d_\text{ref}}{\nu},
+    \qquad E = e^{\kappa B},
+\end{equation}
+solved by Newton iteration. The first-ring node is then placed on the same
+profile at its own distance $d_i$, its wall-normal component removed, and the
+turbulence quantities take their equilibrium log-layer values
+\begin{equation}
+    k_i = \frac{u_\tau^2}{\sqrt{C_\mu}},
+    \qquad
+    \omega_i = \frac{u_\tau}{\sqrt{C_\mu}\,\kappa\, d_i},
+    \qquad
+    \varepsilon_i = \frac{u_\tau^3}{\kappa\, d_i}.
+\end{equation}
+Anchoring on a node further out rather than on the ring node itself is what makes
+the treatment well posed: a friction velocity built from the ring node's own
+state would only reproduce that state.
+
+\subsection{Force on a masked region}
+
+The masked rows absorb the momentum that the region exchanges with the fluid. Since
+the assembled right-hand side of a masked row is the momentum imbalance left at
+that node, the force on a region follows from
+\begin{equation}
+    \mathbf{F} = \sum_{i \in \text{covered} \cup \text{first ring}} \mathbf{b}_i,
+\end{equation}
+evaluated before the rows are held. It is the direct-forcing estimate of the
+force and is reported per region.
+
+
 \section{Mesh Quality and Element Correction}
 
 The quality of the computational mesh significantly affects the accuracy, stability, and convergence of the CVFEM solution. Poor quality elements can lead to numerical errors, convergence issues, and unphysical results. This section describes the mesh quality assessment and element correction algorithms implemented in OpenAccel, which are based on methodologies ported from the flash CVFEM framework.

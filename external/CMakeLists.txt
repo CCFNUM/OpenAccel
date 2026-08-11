@@ -66,8 +66,7 @@ set(SSDF_ENABLE_MPI ON CACHE BOOL "Enable MPI support in SSDF")
 set(SSDF_ENABLE_OPENMP OFF CACHE BOOL "Enable OpenMP support in SSDF")
 set(SSDF_ENABLE_CUBIQL OFF CACHE BOOL "Enable cuBQL (CUDA BVH) support in SSDF")
 
-# SSDF would otherwise turn this ON for the whole project
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build libraries as shared libraries")
+# libssdf follows the project-wide BUILD_SHARED_LIBS, which src/solver sets to ON
 
 # EXCLUDE_FROM_ALL drops the SSDF drivers and tests from the build, libssdf
 # itself is still built as a link dependency of main_obj. Header search paths

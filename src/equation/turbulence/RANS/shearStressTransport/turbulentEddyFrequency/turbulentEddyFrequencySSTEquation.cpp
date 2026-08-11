@@ -112,6 +112,9 @@ void turbulentEddyFrequencySSTEquation::solve()
 
     linearSystem::simulationRef().getProfiler().pop();
 
+    // overrides of a plain simulation act on the assembled system
+    this->applyOverrides();
+
     // solve linear system
     if (ctx->getGraph()->isGraphMember())
     {
@@ -148,6 +151,52 @@ void turbulentEddyFrequencySSTEquation::solve()
 
     // update scale
     omega.updateScale();
+}
+
+void turbulentEddyFrequencySSTEquation::applyOverrides()
+{
+    masking* masks = this->maskingPtr();
+    if (!masks)
+    {
+        return;
+    }
+
+    auto ctx = linearSystem::getContext();
+
+    auto& phi = model_->omegaRef().stkFieldRef();
+    const auto& U = model_->URef().stkFieldRef();
+    const auto& rho = model_->rhoRef().stkFieldRef();
+    const auto& mu = model_->muRef().stkFieldRef();
+
+    for (label r = 0; r < masks->regionCount(); ++r)
+    {
+        maskedRegion& region = masks->regionRef(r);
+
+        // no turbulence inside a region
+        const std::vector<scalar> zero(region.coveredNodes().size(), 0.0);
+        assembler_->constrain(region.coveredNodes(), zero, phi, ctx.get());
+
+        if (region.wallTreatment() != maskWallTreatment::wallFunction)
+        {
+            continue;
+        }
+
+        // equilibrium log-layer state of the first ring outside it
+        std::vector<scalar> ring(region.ringNodes().size(), 0.0);
+        for (size_t n = 0; n < region.ringNodes().size(); ++n)
+        {
+            const scalar uTau = region.frictionVelocity(
+                n, U, rho, mu, masks->kappa(), masks->B());
+            const scalar distance = std::max(region.ringDistance(n), SMALL);
+            const scalar sqrtCmu = std::sqrt(masks->Cmu());
+            (void)distance;
+            (void)sqrtCmu;
+
+            ring[n] = uTau / (sqrtCmu * masks->kappa() * distance);
+        }
+
+        assembler_->constrain(region.ringNodes(), ring, phi, ctx.get());
+    }
 }
 
 } /* namespace accel */

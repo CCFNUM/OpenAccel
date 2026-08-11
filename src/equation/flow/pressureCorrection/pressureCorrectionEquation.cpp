@@ -116,6 +116,9 @@ void pressureCorrectionEquation::solve()
     // fix system in domains where the model is not active
     assembler_->fix(this->collectInactiveInteriorParts(), {}, ctx.get(), {});
 
+    // overrides of a plain simulation act on the assembled system
+    this->applyOverrides();
+
     // solve linear system
     if (ctx->getGraph()->isGraphMember())
     {
@@ -192,6 +195,31 @@ void pressureCorrectionEquation::printScales()
                   << model_->pRef().scale() << std::endl
                   << std::endl;
     }
+}
+
+void pressureCorrectionEquation::applyOverrides()
+{
+    masking* masks = this->maskingPtr();
+    if (!masks)
+    {
+        return;
+    }
+
+    auto ctx = linearSystem::getContext();
+
+    auto& p = model_->pRef().stkFieldRef();
+
+    for (label r = 0; r < masks->regionCount(); ++r)
+    {
+        maskedRegion& region = masks->regionRef(r);
+
+        // no pressure level inside a region; the first ring stays free, a wall
+        // imposes no pressure either
+        const std::vector<scalar> zero(region.coveredNodes().size(), 0.0);
+        assembler_->constrain(region.coveredNodes(), zero, p, ctx.get());
+    }
+
+    masks->setAtCovered(p, 0.0);
 }
 
 } /* namespace accel */
