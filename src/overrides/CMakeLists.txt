@@ -9,10 +9,13 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 # project sources
 target_sources(main_obj PRIVATE
     ${DIR}/overrides.cpp
+    ${DIR}/masking/maskedRegion.cpp
+    ${DIR}/masking/masking.cpp
 )
 
 # define header directories (required since #include statements do not quote
 # full path and location of headers is inside src)
 target_include_directories(main_obj PUBLIC
     ${DIR}
+    ${DIR}/masking
 )

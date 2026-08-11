@@ -42,6 +42,8 @@ public:
 
     void solve() override;
 
+    void applyOverrides() override;
+
     void postSolve() override;
 
     void preTimeStep() override;
