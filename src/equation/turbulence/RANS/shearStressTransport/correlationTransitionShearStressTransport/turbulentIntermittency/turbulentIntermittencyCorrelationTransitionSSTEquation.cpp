@@ -150,6 +150,9 @@ void turbulentIntermittencyCorrelationTransitionSSTEquation::solve()
 
     linearSystem::simulationRef().getProfiler().pop();
 
+    // overrides of a plain simulation act on the assembled system
+    this->applyOverrides();
+
     // solve linear system
     if (ctx->getGraph()->isGraphMember())
     {
@@ -228,6 +231,26 @@ void turbulentIntermittencyCorrelationTransitionSSTEquation::printScales()
         std::cout << "\tscale: " << std::scientific << std::setprecision(8)
                   << model_->gammaRef().scale() << std::endl
                   << std::endl;
+    }
+}
+
+void turbulentIntermittencyCorrelationTransitionSSTEquation::applyOverrides()
+{
+    masking* masks = this->maskingPtr();
+    if (!masks)
+    {
+        return;
+    }
+
+    auto ctx = linearSystem::getContext();
+    auto& phi = model_->gammaRef().stkFieldRef();
+
+    for (label r = 0; r < masks->regionCount(); ++r)
+    {
+        maskedRegion& region = masks->regionRef(r);
+
+        const std::vector<scalar> zero(region.coveredNodes().size(), 0.0);
+        assembler_->constrain(region.coveredNodes(), zero, phi, ctx.get());
     }
 }
 

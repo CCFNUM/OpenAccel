@@ -6,6 +6,9 @@
 
 // code
 #include "overrides.h"
+#include "controls.h"
+#include "macros.h"
+#include "messager.h"
 #include "realm.h"
 #include "simulation.h"
 
@@ -18,19 +21,46 @@ overrides::overrides(realm* realm) : realmPtr_(realm)
 
 void overrides::read(const YAML::Node& inputNode)
 {
-#ifdef HAS_UTOPIA
     const auto& physicalAnalysisNode = inputNode["physical_analysis"];
 
-    if (physicalAnalysisNode["overrides"])
+    if (!physicalAnalysisNode["overrides"])
     {
-        const auto& overridesNode = physicalAnalysisNode["overrides"];
+        return;
+    }
 
-        if (overridesNode["fsi"])
-        {
-            fsi_ = true;
-        }
+    const auto& overridesNode = physicalAnalysisNode["overrides"];
+
+#ifdef HAS_UTOPIA
+    if (overridesNode["fsi"])
+    {
+        fsi_ = true;
     }
 #endif /* HAS_UTOPIA */
+
+    if (overridesNode["masking"])
+    {
+        maskingPtr_ = std::make_unique<masking>(realmPtr_);
+        maskingPtr_->read(overridesNode["masking"]);
+
+        // the fields have to exist before the mesh is populated
+        maskingPtr_->setup();
+    }
+}
+
+void overrides::initialize()
+{
+    if (maskingPtr_)
+    {
+        maskingPtr_->initialize();
+    }
+}
+
+YAML::Node overrides::getFSINode() const
+{
+    assert(fsi_);
+
+    return realmPtr_->simulationRef()
+        .getYAMLPhysicalAnalysisNode()["overrides"]["fsi"];
 }
 
 #ifdef HAS_UTOPIA

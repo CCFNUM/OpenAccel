@@ -35,6 +35,8 @@ public:
 
     void solve() override;
 
+    void applyOverrides() override;
+
 protected:
     std::unique_ptr<Assembler> assembler_;
 };

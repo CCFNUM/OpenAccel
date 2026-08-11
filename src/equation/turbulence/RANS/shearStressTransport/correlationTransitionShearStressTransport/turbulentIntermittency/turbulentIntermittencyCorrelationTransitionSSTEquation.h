@@ -49,6 +49,8 @@ public:
 
     void solve() override;
 
+    void applyOverrides() override;
+
     void preTimeStep() override;
 
     void printScales() override;

@@ -9,7 +9,10 @@
 #define OVERRIDES_H
 
 // code
+#include "masking.h"
 #include "types.h"
+
+#include <memory>
 
 namespace accel
 {
@@ -24,6 +27,11 @@ private:
 #ifdef HAS_UTOPIA
     bool fsi_ = false;
 #endif /* HAS_UTOPIA */
+    bool fsi_ = false;
+
+    // masking a region of the mesh is an override of what the solver would
+    // otherwise do there, so the bodies live with the other overrides
+    std::unique_ptr<masking> maskingPtr_ = nullptr;
 
 public:
     overrides(realm* realm);
@@ -32,6 +40,9 @@ public:
 
     void read(const YAML::Node& inputNode);
 
+
+    void initialize();
+    
 #ifdef HAS_UTOPIA
     // access
 
@@ -42,6 +53,16 @@ public:
 
     YAML::Node getFSINode() const;
 #endif /* HAS_UTOPIA */
+
+    masking* maskingPtr()
+    {
+        return maskingPtr_.get();
+    }
+
+    const masking* maskingPtr() const
+    {
+        return maskingPtr_.get();
+    }
 };
 
 } // namespace accel
