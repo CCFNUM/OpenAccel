@@ -480,8 +480,28 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
     const bool includeAdv = domain->type() == domainType::fluid;
-    const bool includeViscousWork =
+
+    // only no-slip walls register a U side field; a slip wall does no viscous
+    // work
+    const stk::mesh::Field<scalar>* sideUSTKFieldPtr = nullptr;
+    bool includeViscousWork =
         domain->heatTransfer_.includeViscousWork_ && includeAdv;
+    if (includeViscousWork)
+    {
+        const auto& U = model_->URef();
+        const auto* sideU = U.sideFieldPtr();
+
+        includeViscousWork =
+            sideU != nullptr &&
+            U.boundaryConditionRef(domain->index(), boundary->index()).type() ==
+                boundaryConditionType::noSlip;
+
+        if (includeViscousWork)
+        {
+            sideUSTKFieldPtr = sideU->stkFieldPtr();
+            includeViscousWork = sideUSTKFieldPtr != nullptr;
+        }
+    }
 
     // space for LHS/RHS; nodesPerElement*nodesPerElement and
     // nodesPerElement
@@ -521,9 +541,6 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
 
     const auto* USTKFieldPtr =
         includeViscousWork ? model_->URef().stkFieldPtr() : nullptr;
-    const auto* sideUSTKFieldPtr =
-        includeViscousWork ? model_->URef().sideFieldRef().stkFieldPtr()
-                           : nullptr;
     const auto* muEffSTKFieldPtr =
         includeViscousWork ? model_->muEffRef().stkFieldPtr() : nullptr;
     const bool steadyRotatingEnergyForm =
@@ -762,6 +779,14 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
                                     &scs_error);
             }
 
+            // null if this face does not carry the side field
+            const scalar* boundaryVelocity =
+                includeViscousWork
+                    ? stk::mesh::field_data(*sideUSTKFieldPtr, side)
+                    : nullptr;
+            const bool faceViscousWork =
+                includeViscousWork && boundaryVelocity != nullptr;
+
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
             {
@@ -769,15 +794,11 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
 
                 const label faceOffSet = ip * SPATIAL_DIM;
                 const label offSetSF_face = ip * nodesPerSide;
-                const scalar* boundaryVelocity =
-                    includeViscousWork
-                        ? stk::mesh::field_data(*sideUSTKFieldPtr, side)
-                        : nullptr;
 
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_vwBip[j] = 0.0;
-                    p_velocityBip[j] = includeViscousWork
+                    p_velocityBip[j] = faceViscousWork
                                            ? boundaryVelocity[faceOffSet + j]
                                            : 0.0;
                     p_coordinateBip[j] = 0.0;
@@ -796,7 +817,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
                     const scalar r = p_shape_function[offSetSF_face + ic];
                     const label elemNode = faceNodeOrdinals[ic];
 
-                    if (includeViscousWork)
+                    if (faceViscousWork)
                     {
                         muEffBip += r * p_muEff[elemNode];
                         for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -815,7 +836,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
                     }
                 }
 
-                if (includeViscousWork)
+                if (faceViscousWork)
                 {
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
