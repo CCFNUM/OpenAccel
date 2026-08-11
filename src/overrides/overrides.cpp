@@ -55,14 +55,6 @@ void overrides::initialize()
     }
 }
 
-YAML::Node overrides::getFSINode() const
-{
-    assert(fsi_);
-
-    return realmPtr_->simulationRef()
-        .getYAMLPhysicalAnalysisNode()["overrides"]["fsi"];
-}
-
 #ifdef HAS_UTOPIA
 YAML::Node overrides::getFSINode() const
 {

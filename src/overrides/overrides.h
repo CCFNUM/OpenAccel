@@ -27,7 +27,6 @@ private:
 #ifdef HAS_UTOPIA
     bool fsi_ = false;
 #endif /* HAS_UTOPIA */
-    bool fsi_ = false;
 
     // masking a region of the mesh is an override of what the solver would
     // otherwise do there, so the bodies live with the other overrides
@@ -42,7 +41,7 @@ public:
 
 
     void initialize();
-    
+
 #ifdef HAS_UTOPIA
     // access
 
