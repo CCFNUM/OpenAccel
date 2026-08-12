@@ -949,6 +949,9 @@ void domain::read_()
                 {
                     case kinematicFormulationType::totalLagrangian:
                         {
+                            equations_[static_cast<int>(
+                                equationID::solidDisplacement)] = true;
+
                             if (this->zonePtr()
                                     ->meshPtr()
                                     ->controlsRef()
@@ -972,9 +975,6 @@ void domain::read_()
                                 deformation
                                     .setDisplacementRelativeToPreviousMesh(
                                         false);
-
-                                equations_[static_cast<int>(
-                                    equationID::solidDisplacement)] = true;
                             }
                         }
                         break;

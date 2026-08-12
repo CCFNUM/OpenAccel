@@ -12,7 +12,14 @@ namespace accel
 void solidDisplacementAssembler::postAssemble(const domain* domain,
                                               Context* ctx)
 {
+#ifdef USE_CVFEM_SOLID_MECHANICS
     phiAssembler<SPATIAL_DIM>::postAssemble(domain, ctx);
+#else
+    // FEM solid mechanics assembles a consistent Newton tangent. Relaxing only
+    // its diagonal destroys rigid-body consistency and, together with the
+    // relaxed field correction, applies the displacement URF twice.
+    this->applyConstraints(domain, ctx);
+#endif
     applySymmetryConditions_(domain, ctx);
 }
 

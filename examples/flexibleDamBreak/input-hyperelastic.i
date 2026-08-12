@@ -1,5 +1,5 @@
 # vim: ft=yaml
-# This is a 2D case and must be run with a 2D-compiled binary.
+# This is a 2D FEM case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -102,7 +102,8 @@ simulation:
           type: solid
           solid_models:
             solid_mechanics:
-                option: linear_elastic
+                # Compressible Neo-Hookean internal force and tangent from SFEM.
+                option: neo_hookean
                 formulation: total_lagrangian
                 plane_stress: false
           boundaries:
@@ -134,14 +135,16 @@ simulation:
                 transient_scheme: second_order_backward_euler
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 10
+                    max_iterations: 5
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-6
+                    residual_target: 1e-4
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:
                 equation_controls:
+                    sub_iterations:
+                        solid_displacement: 10
                     volume_fraction_smoothing:
                         smooth_volume_fraction: true
                         smoothing_iterations: 3
@@ -151,7 +154,7 @@ simulation:
                             option: aitken
                             initial_omega: 0.05
                             omega_min: 0.01
-                            omega_max: 0.6
+                            omega_max: 0.4
                     mesh_motion:
                         freeze_per_timestep: false
                         max_smoothing_iters: 25
@@ -178,9 +181,9 @@ simulation:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-                                coarsen_type: 6 # Falgout — robust for jumps
+                                coarsen_type: 6
                                 interp_type: 6
-                                relax_type: 18 # Symmetric hybrid SOR
+                                relax_type: 18
                                 strong_threshold: 0.5
                                 num_sweeps: 3
                                 max_levels: 25
@@ -190,12 +193,12 @@ simulation:
                 body_force_redistribution: false
                 force_full_node_graph: false
         output_control:
-            file_path: results.e
+            file_path: results-hyperelastic.e
             output_frequency:
                 option: time_interval
                 time_interval: 0.05
             write_timestep_info: true
-            output_fields: [velocity, pressure, volume_fraction.water, displacement_mesh, velocity_mesh, density, dynamic_viscosity]
+            output_fields: [velocity, pressure, volume_fraction.water, displacement, displacement_mesh, velocity_mesh, density, dynamic_viscosity]
             corrected_boundary_values: true
     material_library:
     - name: water

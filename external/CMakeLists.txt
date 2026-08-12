@@ -57,6 +57,8 @@ if(NOT WITH_CVFEM_SOLID_MECHANICS)
         ${CMAKE_CURRENT_SOURCE_DIR}/sfem/operators/tet10
         ${CMAKE_CURRENT_SOURCE_DIR}/sfem/operators/tet4
         ${CMAKE_CURRENT_SOURCE_DIR}/sfem/operators/tri3
+        ${CMAKE_CURRENT_SOURCE_DIR}/sfem/frontend/ops/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/sfem/frontend/ops/generated/neohookean_ogden/op
         $<TARGET_PROPERTY:smesh,INTERFACE_INCLUDE_DIRECTORIES>
     )
     target_link_libraries(openaccel_sfem_elasticity PUBLIC MPI::MPI_C)
