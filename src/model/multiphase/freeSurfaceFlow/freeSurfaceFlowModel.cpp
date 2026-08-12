@@ -3590,6 +3590,9 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
         // Interface compression coefficient
         const scalar gamma = this->gamma(domain.get());
 
+        const vofAdvectionSchemeType vofScheme =
+            domain->multiphase_.freeSurfaceModel_.advectionScheme_;
+
         // Define Scratch Spaces
         std::vector<scalar> ws_alpha;
         std::vector<scalar> ws_rho;
@@ -3774,28 +3777,42 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                     {
                         alphaUpwind = p_alpha[il];
 
-                        // deferred correction
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        switch (vofScheme)
                         {
-                            const scalar dxj =
-                                p_coordIp[j] -
-                                p_coordinates[il * SPATIAL_DIM + j];
-                            dcorr += p_beta[il] * dxj *
-                                     p_gradAlpha[il * SPATIAL_DIM + j];
+                            case vofAdvectionSchemeType::barthJespersen:
+                            {
+                                // deferred correction
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const scalar dxj =
+                                        p_coordIp[j] -
+                                        p_coordinates[il * SPATIAL_DIM + j];
+                                    dcorr += p_beta[il] * dxj *
+                                             p_gradAlpha[il * SPATIAL_DIM + j];
+                                }
+                                break;
+                            }
                         }
                     }
                     else
                     {
                         alphaUpwind = p_alpha[ir];
 
-                        // deferred correction
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        switch (vofScheme)
                         {
-                            const scalar dxj =
-                                p_coordIp[j] -
-                                p_coordinates[ir * SPATIAL_DIM + j];
-                            dcorr += p_beta[ir] * dxj *
-                                     p_gradAlpha[ir * SPATIAL_DIM + j];
+                            case vofAdvectionSchemeType::barthJespersen:
+                            {
+                                // deferred correction
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const scalar dxj =
+                                        p_coordIp[j] -
+                                        p_coordinates[ir * SPATIAL_DIM + j];
+                                    dcorr += p_beta[ir] * dxj *
+                                             p_gradAlpha[ir * SPATIAL_DIM + j];
+                                }
+                                break;
+                            }
                         }
                     }
 
