@@ -36,6 +36,8 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
     std::vector<scalar> scratchVals;
     std::vector<stk::mesh::Entity> connectedNodes;
     std::vector<scalar> shapeFunctions;
+    std::array<scalar, SPATIAL_DIM> integratedForce{};
+    label assembledFaces = 0;
 
     for (const stk::mesh::Bucket* bucket : sideBuckets)
     {
@@ -59,6 +61,7 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
 
         for (stk::mesh::Entity side : *bucket)
         {
+            ++assembledFaces;
             std::fill(rhs.begin(), rhs.end(), 0.0);
 
             const stk::mesh::Entity* sideNodes = bulkData.begin_nodes(side);
@@ -90,14 +93,41 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
                         areaMagnitude;
                     for (label dim = 0; dim < SPATIAL_DIM; ++dim)
                     {
-                        rhs[node * SPATIAL_DIM + dim] +=
+                        const scalar force =
                             weight * traction[ip * SPATIAL_DIM + dim];
+                        rhs[node * SPATIAL_DIM + dim] += force;
+                        integratedForce[dim] += force;
                     }
                 }
             }
 
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+        }
+    }
+
+    const char* femDebug = std::getenv("OPENACCEL_FEM_DEBUG");
+    if (femDebug && std::atoi(femDebug) > 0)
+    {
+        std::array<scalar, SPATIAL_DIM> globalIntegratedForce{};
+        label globalAssembledFaces = 0;
+        stk::all_reduce_sum(bulkData.parallel(),
+                            integratedForce.data(),
+                            globalIntegratedForce.data(),
+                            SPATIAL_DIM);
+        stk::all_reduce_sum(bulkData.parallel(),
+                            &assembledFaces,
+                            &globalAssembledFaces,
+                            1);
+
+        if (messager::myProcNo() == 0)
+        {
+            std::cout << "[FEM DEBUG] Boundary `" << boundary->name()
+                      << "`: faces=" << globalAssembledFaces << ", force=";
+            for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                std::cout << (dim == 0 ? " [" : ", ")
+                          << globalIntegratedForce[dim];
+            std::cout << "]\n";
         }
     }
 }

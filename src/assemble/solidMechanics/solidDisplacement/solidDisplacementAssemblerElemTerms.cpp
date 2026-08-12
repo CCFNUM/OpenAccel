@@ -8,6 +8,7 @@
 
 #ifndef USE_CVFEM_SOLID_MECHANICS
 #include "linear_elasticity.hpp"
+#include "sfem_GeneratedNeoHookeanOgden_element_api.hpp"
 #endif
 
 namespace accel
@@ -123,7 +124,100 @@ void assembleQuad4LinearElasticity(
 }
 
 } // namespace
+
 #endif
+
+namespace
+{
+
+void assembleSfemNeoHookeanElement(
+    const smesh::ElemType sfemElementType,
+    const label nodesPerElement,
+    const scalar lambda,
+    const scalar mu,
+    const std::vector<std::vector<scalar>>& coordinates,
+    const std::vector<scalar>& displacement,
+    std::vector<scalar>& rhs,
+    std::vector<scalar>& lhs)
+{
+    const label dofsPerElement = nodesPerElement * SPATIAL_DIM;
+    const label lhsSize = dofsPerElement * dofsPerElement;
+
+    std::vector<scalar> gradient(dofsPerElement, 0.0);
+    std::vector<scalar> hessian(lhsSize, 0.0);
+    std::vector<const scalar*> coordinateStreams(dofsPerElement);
+    std::vector<const scalar*> displacementStreams(dofsPerElement);
+    std::vector<scalar*> gradientStreams(dofsPerElement);
+    std::vector<scalar*> hessianStreams(lhsSize);
+
+    // The generated SFEM kernels expect a structure-of-arrays interface.
+    // We pass a single element batch here so OpenAccel keeps the same
+    // element-wise assemble -> insert-to-global workflow as the linear FEM
+    // path.
+    for (label node = 0; node < nodesPerElement; ++node)
+    {
+        for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+        {
+            const label dof = node * SPATIAL_DIM + dim;
+            coordinateStreams[dof] = &coordinates[dim][node];
+            displacementStreams[dof] = &displacement[dof];
+            gradientStreams[dof] = &gradient[dof];
+        }
+    }
+
+    for (label entry = 0; entry < lhsSize; ++entry)
+        hessianStreams[entry] = &hessian[entry];
+
+#if SPATIAL_DIM == 2
+    const int gradientStatus =
+        sfem::codegen::neohookean_ogden_gradient_2d_element_soa<scalar, 1>(
+            sfemElementType,
+            1,
+            coordinateStreams.data(),
+            lambda,
+            mu,
+            displacementStreams.data(),
+            gradientStreams.data());
+    const int hessianStatus =
+        sfem::codegen::neohookean_ogden_hessian_2d_element_soa<scalar, 1>(
+            sfemElementType,
+            1,
+            coordinateStreams.data(),
+            lambda,
+            mu,
+            displacementStreams.data(),
+            hessianStreams.data());
+#else
+    const int gradientStatus =
+        sfem::codegen::neohookean_ogden_gradient_3d_element_soa<scalar, 1>(
+            sfemElementType,
+            1,
+            coordinateStreams.data(),
+            lambda,
+            mu,
+            displacementStreams.data(),
+            gradientStreams.data());
+    const int hessianStatus =
+        sfem::codegen::neohookean_ogden_hessian_3d_element_soa<scalar, 1>(
+            sfemElementType,
+            1,
+            coordinateStreams.data(),
+            lambda,
+            mu,
+            displacementStreams.data(),
+            hessianStreams.data());
+#endif
+
+    STK_ThrowRequireMsg(
+        gradientStatus == SFEM_SUCCESS && hessianStatus == SFEM_SUCCESS,
+        "sfem Neo-Hookean elemental kernel failed");
+
+    lhs = std::move(hessian);
+    for (label row = 0; row < dofsPerElement; ++row)
+        rhs[row] = -gradient[row];
+}
+
+} // namespace
 #endif
 
 void solidDisplacementAssembler::assembleElemTermsInterior_(
@@ -619,9 +713,12 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
+    const solidMechanicsOption solidMechOption =
+        domain->solidMechanics_.option_;
     STK_ThrowRequireMsg(
-        domain->solidMechanics_.option_ == solidMechanicsOption::linearElastic,
-        "The FEM solid assembler currently supports linear_elastic only");
+        solidMechOption == solidMechanicsOption::linearElastic ||
+            solidMechOption == solidMechanicsOption::simplifiedNeoHookean,
+        "Unsupported FEM solid mechanics option");
 
     const auto& DSTKFieldRef = phi_->stkFieldRef();
     const auto& ESTKFieldRef = model_->ERef().stkFieldRef();
@@ -663,7 +760,10 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         if (topology == stk::topology::TRI_3_2D)
             sfemElementType = smesh::TRI3;
         else if (topology == stk::topology::QUAD_4_2D)
+        {
+            sfemElementType = smesh::QUAD4;
             useOpenAccelQuad4 = true;
+        }
 #endif
 
         STK_ThrowRequireMsg(
@@ -684,6 +784,8 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         std::vector<idx_t*> elementConnectivity(nodesPerElement);
         std::vector<std::vector<geom_t>> coordinates(
             SPATIAL_DIM, std::vector<geom_t>(nodesPerElement));
+        std::vector<std::vector<scalar>> hyperCoordinates(
+            SPATIAL_DIM, std::vector<scalar>(nodesPerElement));
         std::vector<geom_t*> coordinatePointers(SPATIAL_DIM);
         std::vector<real_t> basis(dofsPerElement, 0.0);
         std::vector<real_t> column(dofsPerElement, 0.0);
@@ -723,6 +825,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                 for (label dim = 0; dim < SPATIAL_DIM; ++dim)
                 {
                     coordinates[dim][node] = xyz[dim];
+                    hyperCoordinates[dim][node] = xyz[dim];
                     displacement[node * SPATIAL_DIM + dim] = D[dim];
                 }
 
@@ -736,17 +839,30 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
             mu /= nodesPerElement;
             lambda /= nodesPerElement;
 
+            if (solidMechOption == solidMechanicsOption::simplifiedNeoHookean)
+            {
+                assembleSfemNeoHookeanElement(sfemElementType,
+                                              nodesPerElement,
+                                              lambda,
+                                              mu,
+                                              hyperCoordinates,
+                                              displacement,
+                                              rhs,
+                                              lhs);
+            }
 #if SPATIAL_DIM == 2
-            if (useOpenAccelQuad4)
+            else if (useOpenAccelQuad4)
             {
                 assembleQuad4LinearElasticity(coordinates, mu, lambda, lhs);
             }
-            else
 #endif
+            else
             {
+#if SPATIAL_DIM == 2
                 // sfem provides the isoparametric matrix-free operator. Applying
                 // it to each local basis vector recovers the element matrix while
                 // OpenAccel retains ownership of the global block matrix.
+#endif
                 for (label col = 0; col < dofsPerElement; ++col)
                 {
                     std::fill(basis.begin(), basis.end(), 0.0);
@@ -849,12 +965,15 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
 
             // OpenAccel solves for an increment, not for the total field:
             // K * deltaD = f_ext - K * D. Boundary assembly adds f_ext.
-            for (label row = 0; row < dofsPerElement; ++row)
+            if (solidMechOption == solidMechanicsOption::linearElastic)
             {
-                for (label col = 0; col < dofsPerElement; ++col)
+                for (label row = 0; row < dofsPerElement; ++row)
                 {
-                    rhs[row] -=
-                        lhs[row * dofsPerElement + col] * displacement[col];
+                    for (label col = 0; col < dofsPerElement; ++col)
+                    {
+                        rhs[row] -= lhs[row * dofsPerElement + col] *
+                                    displacement[col];
+                    }
                 }
             }
 

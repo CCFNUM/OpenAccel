@@ -45,7 +45,7 @@ simulation:
                     physical_timescale: 1 # dummy
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-8
+                    residual_target: 1e-20
             advanced_options:
                 linear_solver_settings:
                     default:
