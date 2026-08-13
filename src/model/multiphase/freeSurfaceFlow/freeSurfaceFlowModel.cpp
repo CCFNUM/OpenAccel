@@ -3597,6 +3597,7 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
         std::vector<scalar> ws_rho;
         std::vector<scalar> ws_beta;
         std::vector<scalar> ws_shape_function;
+        std::vector<scalar> ws_coordinate_shape_function;
         std::vector<scalar> ws_U;
         std::vector<scalar> ws_gradAlpha;
         std::vector<scalar> ws_nHat;
@@ -3647,6 +3648,7 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             ws_rho.resize(nodesPerElement);
             ws_beta.resize(nodesPerElement);
             ws_shape_function.resize(numScsIp * nodesPerElement);
+            ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
             ws_U.resize(nodesPerElement * SPATIAL_DIM);
             ws_gradAlpha.resize(nodesPerElement * SPATIAL_DIM);
             ws_nHat.resize(nodesPerElement * SPATIAL_DIM);
@@ -3658,6 +3660,8 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             scalar* p_rho = &ws_rho[0];
             scalar* p_beta = &ws_beta[0];
             scalar* p_shape_function = &ws_shape_function[0];
+            scalar* p_coordinate_shape_function =
+                &ws_coordinate_shape_function[0];
             scalar* p_U = &ws_U[0];
             scalar* p_gradAlpha = &ws_gradAlpha[0];
             scalar* p_nHat = &ws_nHat[0];
@@ -3672,6 +3676,9 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             {
                 meSCS->shape_fcn(&p_shape_function[0]);
             }
+
+            // Always use trilinear (standard) shape functions for coordinates
+            meSCS->shape_fcn(&p_coordinate_shape_function[0]);
 
             // Element Loop
             for (stk::mesh::Bucket::size_type iElement = 0;
@@ -3750,6 +3757,8 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                     for (label ic = 0; ic < nodesPerElement; ++ic)
                     {
                         const scalar r = p_shape_function[offSetSF + ic];
+                        const scalar r_coord =
+                            p_coordinate_shape_function[offSetSF + ic];
 
                         // compute scs ip value
                         alphaIp += r * p_alpha[ic];
@@ -3763,7 +3772,7 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                             const scalar nHatj = p_nHat[ic * SPATIAL_DIM + j];
                             p_uIp[j] += r * uj;
                             p_coordIp[j] +=
-                                r * p_coordinates[ic * SPATIAL_DIM + j];
+                                r_coord * p_coordinates[ic * SPATIAL_DIM + j];
                             p_gradAlphaIp[j] += r * gradAlphaj;
                             p_nHatIp[j] += r * nHatj;
                         }
