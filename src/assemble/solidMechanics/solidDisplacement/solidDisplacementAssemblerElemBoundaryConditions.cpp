@@ -3,6 +3,7 @@
 // Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "solidDisplacementAssembler.h"
+#include "types.h"
 
 namespace accel
 {
@@ -23,6 +24,20 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
     const auto& sideTractionField = phi_->sideFluxFieldRef().stkFieldRef();
     const auto& exposedAreaVectorField = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    // Follower-pressure load-stiffness tangent (Bonet & Wood, Nonlinear
+    // Continuum Mechanics for Finite Element Analysis, 2nd ed. 2008, §8.5,
+    // eq. 8.65): a physical (constant Cauchy) pressure BC makes the external
+    // force a function of the current displacement, so a fully consistent
+    // Newton tangent needs an extra "pressure stiffness" contribution here,
+    // in addition to the interior material/geometric stiffness. See the
+    // guarded TODO below -- not yet implemented (Picard for now).
+    auto& bc = model_->DRef().boundaryConditionRef(domain->index(),
+                                                    boundary->index());
+    auto& followerPressureData = bc.template data<1>("follower_pressure");
+    const bool followerPressure =
+        (followerPressureData.type() == inputDataType::constant) &&
+        (*followerPressureData.value() > 0.5);
 
     const stk::mesh::Selector selectedSides =
         metaData.universal_part() &
@@ -99,6 +114,42 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
                         integratedForce[dim] += force;
                     }
                 }
+            }
+
+            if (followerPressure)
+            {
+                // TODO: pressure load-stiffness tangent (Bonet & Wood 2008
+                // §8.5) -- Picard for now.
+                //
+                // `lhs` is intentionally left at zero (as in the dead-load
+                // case above): the RHS just computed already carries the
+                // correct follower-load force, because
+                // solidMechanicsModel::updateDisplacementBoundarySideFieldTr
+                // action_ recomputes the deformed exposed-area vector from
+                // `coordinates + displacement` on every call, i.e. every
+                // nonlinear iteration -- so the *converged* solution is
+                // physically correct. What is missing here is only the
+                // consistent Newton tangent contribution: since the applied
+                // load itself depends on displacement (through the current
+                // normal and current area), the exact Jacobian of this
+                // boundary's residual acquires an extra "pressure/load
+                // stiffness" term, on top of the interior material and
+                // geometric stiffness already assembled elsewhere. Omitting
+                // it degrades this boundary's contribution to Newton's
+                // convergence rate to linear/Picard instead of quadratic;
+                // it does not change the converged answer.
+                //
+                // Filling this in requires, per face/integration point: the
+                // current unit normal n and current unit tangent t (both
+                // derivable from the same deformed coordinates gathered in
+                // updateDisplacementBoundarySideFieldTraction_, e.g. via a
+                // second call to mesh::computeDeformedExposedAreaVector()
+                // from here, or by having that data passed through), plus
+                // the edge shape-function parametric derivative dN/ds; then
+                // K_ab^ij = p * (N^a dN^b/ds t_i n_j - N^a dN^b/ds n_i t_j)
+                // written into lhs[dofsPerSide*dofsPerSide] before the call
+                // below, guarded by this same `followerPressure` flag so the
+                // dead-load path (lhs left at zero) is unaffected.
             }
 
             Base::applyCoeff_(
