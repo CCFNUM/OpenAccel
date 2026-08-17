@@ -1293,11 +1293,7 @@ void solidMechanicsModel::updateStressAndStrain_(
     const bool planeStress = domain->solidMechanics_.planeStress_;
 
     // FEM path: the post-processed strain/stress measure must match the
-    // constitutive option actually used for the nonlinear solve (see
-    // assembleSfemNeoHookeanElement() in
-    // solidDisplacementAssemblerElemTerms.cpp). For neoHookean we
-    // report the finite-strain Cauchy stress and Green-Lagrange strain
-    // instead of the infinitesimal-strain linear-elastic measures below.
+    // constitutive option used for the nonlinear solve (hyperelastic vs. linear-elastic).
     // CVFEM has no finite-strain post-processing path, so these stay false
     // and the infinitesimal-strain/linear-elastic measures below are always
     // used in that case.
@@ -1442,9 +1438,7 @@ void solidMechanicsModel::updateStressAndStrain_(
                     lambda = nu * E / ((1.0 + nu) * (1.0 - 2.0 * nu));
                 }
 
-                // Compute strain (and, for neo-Hookean, stress) at this node,
-                // average over integration points
-                // Zero strain/stress accumulators
+                // Compute strain (and, for neo-Hookean, stress) at this node, average over integration points
                 for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; ++i)
                 {
                     p_strain[i] = 0.0;
@@ -1501,11 +1495,8 @@ void solidMechanicsModel::updateStressAndStrain_(
 #endif
                         const scalar lnJ = std::log(J);
 
-                        // Cauchy stress:
-                        //   b = F * F^T
-                        //   σ = (μ/J) * (b - I) + (λ/J) * ln(J) * I
-                        // Green-Lagrange strain:
-                        //   E = 0.5 * (F^T * F - I)
+                        // Cauchy stress: b = F * F^T, σ = (μ/J)(b - I) + (λ/J) ln(J) I
+                        // Green-Lagrange strain: E = 0.5*(F^T*F - I)
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
                             for (label j = 0; j < SPATIAL_DIM; ++j)
