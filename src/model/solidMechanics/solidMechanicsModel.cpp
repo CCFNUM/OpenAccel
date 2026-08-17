@@ -280,6 +280,31 @@ void solidMechanicsModel::setupDisplacement(
                                     boundaryConditionType::specifiedFlux);
                                 bc.query<1>(node, "pressure", "pressure");
                                 bc.query<SPATIAL_DIM>(node, "shear", "shear");
+
+                                // Optional pressure_type: "dead" (default,
+                                // backward compatible) integrates the
+                                // pressure keyword as a constant force per
+                                // unit *reference* area; "follower" treats it
+                                // as a physical (constant Cauchy) pressure on
+                                // the *deformed* surface.
+                                bool followerPressure = false;
+                                if (node["pressure_type"])
+                                {
+                                    std::string pt =
+                                        node["pressure_type"]
+                                            .template as<std::string>();
+                                    if (pt == "follower")
+                                        followerPressure = true;
+                                    else if (pt == "dead")
+                                        followerPressure = false;
+                                    else
+                                        errorMsg("pressure_type must be "
+                                                 "'follower' or 'dead'");
+                                }
+                                bc.setConstantValue<1>(
+                                    "follower_pressure",
+                                    {followerPressure ? 1.0 : 0.0});
+
                                 DRef().registerSideFluxField(domain->index(),
                                                              iBoundary);
                             }
@@ -1054,6 +1079,16 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
     auto& pressureData = bc.template data<1>("pressure");
     auto& shearData = bc.template data<SPATIAL_DIM>("shear");
 
+    // follower_pressure is always set by the "traction" option parser
+    // (defaults to dead load if pressure_type is not given -- see
+    // setupDisplacement()); guard the lookup defensively anyway so any other
+    // caller that reaches specifiedFlux without setting it still gets the
+    // backward-compatible dead-load behaviour.
+    auto& followerPressureData = bc.template data<1>("follower_pressure");
+    const bool followerPressure =
+        (followerPressureData.type() == inputDataType::constant) &&
+        (*followerPressureData.value() > 0.5);
+
     // Determine which contributions are active
     const bool hasPressure = (pressureData.type() == inputDataType::constant ||
                               pressureData.type() == inputDataType::timeTable);
@@ -1132,6 +1167,21 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                       : mesh::original_exposed_area_vector_ID))
             : exposedAreaVecSTKFieldPtr;
 
+    // Follower (physical Cauchy) pressure: recompute the exposed area vector
+    // on the *current* (coordinates + displacement) configuration every call
+    // -- i.e. every nonlinear iteration -- instead of relying on the frozen
+    // reference-configuration exposed_area_vector field used by the dead-load
+    // path above. Laid out in the same bucket/side/ip order as `sideBuckets`
+    // (both are built from the identical selector), so `ipOffset` below
+    // tracks the matching entry.
+    std::vector<scalar> deformedAreaVec;
+    if (followerPressure && hasPressure)
+    {
+        this->meshRef().computeDeformedExposedAreaVector(
+            boundary->parts(), *this->DRef().stkFieldPtr(), deformedAreaVec);
+    }
+    label ipOffset = 0;
+
     for (const stk::mesh::Bucket* bucket : sideBuckets)
     {
         const MasterElement* meFC =
@@ -1149,12 +1199,16 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 stk::mesh::field_data(*exposedAreaVecSTKFieldPtr, side);
             const scalar* orgAreaVec =
                 stk::mesh::field_data(*originalExposedAreaVecSTKFieldPtr, side);
+            const scalar* deformedAreaVecForSide =
+                (followerPressure && hasPressure) ? &deformedAreaVec[ipOffset]
+                                                   : nullptr;
 
             // Loop over integration points
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                // Apply pressure contribution (normal traction)
-                // Traction = -p * n, where n is the unit normal vector
+                // Reference area magnitude dA0 (needed both for the dead-load
+                // unit normal below, and, for the follower-load branch, as
+                // the pullback denominator -- see comment there).
                 scalar aMag0 = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -1165,12 +1219,43 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 // Inverse of area magnitude for normalization
                 const scalar invAMag0 = 1.0 / std::sqrt(aMag0);
 
-                // Set traction as pressure * unit normal
-                for (label j = 0; j < SPATIAL_DIM; ++j)
+                if (followerPressure)
                 {
-                    tractionValues[SPATIAL_DIM * ip + j] =
-                        -pressureValue * areaVec[SPATIAL_DIM * ip + j] *
-                        invAMag0;
+                    // Physical fluid pressure: constant Cauchy traction
+                    // t = -p * n_current on the *deformed* surface. The FEM
+                    // boundary-residual assembly
+                    // (assembleElemTermsBoundaryWallSpecifiedFlux_ in
+                    // solidDisplacementAssemblerElemBoundaryConditions.cpp)
+                    // still integrates whatever we store here against the
+                    // frozen reference-configuration area magnitude dA0 (it
+                    // is unmodified by this change), so what must be stored
+                    // is the first Piola-Kirchhoff pullback of the traction,
+                    // t0 = t * (dA_current / dA0) = -p * a_current / dA0,
+                    // where a_current = n_current * dA_current is the raw
+                    // (unnormalized) deformed area vector -- i.e. Nanson's
+                    // formula. Dividing by dA0 (invAMag0, unchanged from the
+                    // dead-load branch) rather than by |a_current| is what
+                    // makes assembler_rhs = dA0 * t0 equal the correct
+                    // physical force -p * n_current * dA_current.
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        tractionValues[SPATIAL_DIM * ip + j] =
+                            -pressureValue *
+                            deformedAreaVecForSide[SPATIAL_DIM * ip + j] *
+                            invAMag0;
+                    }
+                }
+                else
+                {
+                    // Dead load (default): traction = -p * n_0, where n_0 is
+                    // the reference-configuration unit outward normal, held
+                    // constant per unit *reference* area for the whole solve.
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        tractionValues[SPATIAL_DIM * ip + j] =
+                            -pressureValue * areaVec[SPATIAL_DIM * ip + j] *
+                            invAMag0;
+                    }
                 }
 
                 // Accumulate shear contribution (tangential traction)
@@ -1180,6 +1265,8 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                     tractionValues[SPATIAL_DIM * ip + j] += shearValue[j];
                 }
             }
+
+            ipOffset += numScsBip * SPATIAL_DIM;
         }
     }
 }
