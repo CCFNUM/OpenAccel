@@ -312,22 +312,10 @@ public:
     }
 
     // Stateless companion to updateExposedAreaVectorField_(): computes the
-    // exposed area vector (outward normal times area, per integration point)
-    // on the *deformed* configuration (coordinates + displacementField)
-    // instead of the mesh's stored coordinates, without writing to any STK
-    // field. Used by follower-load (physical Cauchy pressure) boundary
-    // conditions, which need the current-configuration surface normal/area
-    // every nonlinear iteration but must not perturb the frozen
-    // reference-configuration geometry fields that dead-load BCs and the
-    // Total-Lagrangian interior kernels rely on.
-    //
-    // On return, deformedAreaVec is sized to
-    // (total integration points over all sides selected by `parts`) *
-    // SPATIAL_DIM, laid out in the same bucket/side/integration-point order
-    // that stk::mesh::get_buckets(side_rank(), universal_part() &
-    // selectUnion(parts)) yields -- i.e. the same order a caller iterating
-    // that identical selector will see, so per-side offsets can be tracked
-    // in lockstep between the two.
+    // exposed area vector on the *deformed* configuration (coordinates +
+    // displacementField), without writing to any STK field. Used by
+    // follower-load BCs; output layout matches the identical
+    // universal_part() & selectUnion(parts) selector, so callers can track offsets in lockstep.
     void
     computeDeformedExposedAreaVector(const stk::mesh::PartVector& parts,
                                      const STKScalarField& displacementField,

@@ -1510,15 +1510,12 @@ void mesh::computeDeformedExposedAreaVector(
     stk::mesh::BulkData& bulkData = this->bulkDataRef();
     stk::mesh::MetaData& metaData = this->metaDataRef();
 
-    // extract coordinates field (reference/undeformed for a solid-mechanics,
-    // Total-Lagrangian zone -- displacementField is added on top below)
+    // extract coordinates field (reference/undeformed; displacement added on top below)
     STKScalarField* coordinates = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, this->getCoordinateFieldName());
 
-    // setup for buckets; union parts and ask for universal part -- same
-    // selector construction as updateExposedAreaVectorField_(), so a caller
-    // that builds this exact selector over the same `parts` sees sides in
-    // the same order and can track offsets into deformedAreaVec in lockstep
+    // setup for buckets; same selector construction as
+    // updateExposedAreaVectorField_(), so offsets track in lockstep
     stk::mesh::Selector selAllSides =
         metaData.universal_part() & stk::mesh::selectUnion(parts);
     stk::mesh::BucketVector const& sideBuckets =
