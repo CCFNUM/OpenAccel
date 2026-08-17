@@ -1205,6 +1205,18 @@ void solidMechanicsModel::updateStressAndStrain_(
     // Check if plane stress or plane strain
     const bool planeStress = domain->solidMechanics_.planeStress_;
 
+#ifndef USE_CVFEM_SOLID_MECHANICS
+    // FEM path: the post-processed strain/stress measure must match the
+    // constitutive option actually used for the nonlinear solve (see
+    // assembleSfemNeoHookeanElement() in
+    // solidDisplacementAssemblerElemTerms.cpp). For simplifiedNeoHookean we
+    // report the finite-strain Cauchy stress and Green-Lagrange strain
+    // instead of the infinitesimal-strain linear-elastic measures below.
+    const bool useNeoHookeanStress =
+        (domain->solidMechanics_.option_ ==
+         solidMechanicsOption::simplifiedNeoHookean);
+#endif
+
     // Get interior parts
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
     stk::mesh::Selector selAllElements =
@@ -1315,11 +1327,13 @@ void solidMechanicsModel::updateStressAndStrain_(
                     lambda = nu * E / ((1.0 + nu) * (1.0 - 2.0 * nu));
                 }
 
-                // Compute strain at this node (average over integration points)
-                // Zero strain
+                // Compute strain (and, for neo-Hookean, stress) at this node,
+                // average over integration points
+                // Zero strain/stress accumulators
                 for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; ++i)
                 {
                     p_strain[i] = 0.0;
+                    p_stress[i] = 0.0;
                 }
 
                 for (label ip = 0; ip < numScvIp; ++ip)
@@ -1348,41 +1362,104 @@ void solidMechanicsModel::updateStressAndStrain_(
                         }
                     }
 
-                    // Compute strain: ε_ij = 0.5 * (∂u_i/∂x_j + ∂u_j/∂x_i)
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+#ifndef USE_CVFEM_SOLID_MECHANICS
+                    if (useNeoHookeanStress)
                     {
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        // Deformation gradient: F = I + grad_X(u)
+                        scalar F[SPATIAL_DIM * SPATIAL_DIM];
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_strain[i * SPATIAL_DIM + j] +=
-                                0.5 *
-                                (p_grad_u[i * SPATIAL_DIM + j] +
-                                 p_grad_u[j * SPATIAL_DIM + i]) /
-                                numScvIp;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                                F[i * SPATIAL_DIM + j] =
+                                    delta_ij + p_grad_u[i * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // J = det(F)
+#if SPATIAL_DIM == 2
+                        const scalar J = F[0] * F[3] - F[1] * F[2];
+#elif SPATIAL_DIM == 3
+                        const scalar J =
+                            F[0] * (F[4] * F[8] - F[5] * F[7]) -
+                            F[1] * (F[3] * F[8] - F[5] * F[6]) +
+                            F[2] * (F[3] * F[7] - F[4] * F[6]);
+#endif
+                        const scalar lnJ = std::log(J);
+
+                        // Cauchy stress:
+                        //   b = F * F^T
+                        //   σ = (μ/J) * (b - I) + (λ/J) * ln(J) * I
+                        // Green-Lagrange strain:
+                        //   E = 0.5 * (F^T * F - I)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+
+                                scalar b_ij = 0.0;
+                                scalar c_ij = 0.0; // (F^T * F)_ij
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    b_ij += F[i * SPATIAL_DIM + kk] *
+                                           F[j * SPATIAL_DIM + kk];
+                                    c_ij += F[kk * SPATIAL_DIM + i] *
+                                           F[kk * SPATIAL_DIM + j];
+                                }
+
+                                p_stress[i * SPATIAL_DIM + j] +=
+                                    ((mu / J) * (b_ij - delta_ij) +
+                                     (lambda / J) * lnJ * delta_ij) /
+                                    numScvIp;
+
+                                p_strain[i * SPATIAL_DIM + j] +=
+                                    0.5 * (c_ij - delta_ij) / numScvIp;
+                            }
+                        }
+                    }
+                    else
+#endif
+                    {
+                        // Infinitesimal strain:
+                        // ε_ij = 0.5 * (∂u_i/∂x_j + ∂u_j/∂x_i)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_strain[i * SPATIAL_DIM + j] +=
+                                    0.5 *
+                                    (p_grad_u[i * SPATIAL_DIM + j] +
+                                     p_grad_u[j * SPATIAL_DIM + i]) /
+                                    numScvIp;
+                            }
                         }
                     }
                 }
 
-                // Compute stress: σ_ij = λ * ε_kk * δ_ij + 2μ * ε_ij
-                // Zero stress
-                for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; ++i)
+#ifndef USE_CVFEM_SOLID_MECHANICS
+                if (!useNeoHookeanStress)
+#endif
                 {
-                    p_stress[i] = 0.0;
-                }
-
-                scalar trace_strain = 0.0;
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    trace_strain += p_strain[i * SPATIAL_DIM + i];
-                }
-
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    // Linear elastic constitutive law (default for
+                    // linearElastic and any other non-neo-Hookean option):
+                    // σ_ij = λ * ε_kk * δ_ij + 2μ * ε_ij
+                    scalar trace_strain = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        scalar delta_ij = (i == j) ? 1.0 : 0.0;
-                        p_stress[i * SPATIAL_DIM + j] =
-                            lambda * trace_strain * delta_ij +
-                            2.0 * mu * p_strain[i * SPATIAL_DIM + j];
+                        trace_strain += p_strain[i * SPATIAL_DIM + i];
+                    }
+
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                            p_stress[i * SPATIAL_DIM + j] =
+                                lambda * trace_strain * delta_ij +
+                                2.0 * mu * p_strain[i * SPATIAL_DIM + j];
+                        }
                     }
                 }
 
