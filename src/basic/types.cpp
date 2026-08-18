@@ -538,7 +538,13 @@ advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s)
 
 std::unordered_map<std::string, vofAdvectionSchemeType>
     vofAdvectionSchemeTypeMap{
-        {"BarthJespersen", vofAdvectionSchemeType::barthJespersen}};
+        {"BarthJespersen", vofAdvectionSchemeType::barthJespersen},
+        {"VanLeer", vofAdvectionSchemeType::vanLeer},
+        {"MSTOIC", vofAdvectionSchemeType::mstoic},
+        {"MSUPERBEE", vofAdvectionSchemeType::msuperbee},
+        {"HYPERC", vofAdvectionSchemeType::hyperC},
+        {"STACS", vofAdvectionSchemeType::stacs},
+        {"CICSAM", vofAdvectionSchemeType::cicsam}};
 
 vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s)
 {
@@ -567,6 +573,18 @@ std::string toString(vofAdvectionSchemeType type)
     {
         case vofAdvectionSchemeType::barthJespersen:
             return "BarthJespersen";
+        case vofAdvectionSchemeType::vanLeer:
+            return "VanLeer";
+        case vofAdvectionSchemeType::mstoic:
+            return "MSTOIC";
+        case vofAdvectionSchemeType::msuperbee:
+            return "MSUPERBEE";
+        case vofAdvectionSchemeType::hyperC:
+            return "HYPERC";
+        case vofAdvectionSchemeType::stacs:
+            return "STACS";
+        case vofAdvectionSchemeType::cicsam:
+            return "CICSAM";
     }
 
     return ""; // useless

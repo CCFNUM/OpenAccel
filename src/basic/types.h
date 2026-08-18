@@ -499,7 +499,13 @@ advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s);
 // advection scheme is high_resolution.
 enum class vofAdvectionSchemeType
 {
-    barthJespersen
+    barthJespersen,
+    vanLeer,
+    mstoic,
+    msuperbee,
+    hyperC,
+    stacs,
+    cicsam
 };
 
 vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s);
