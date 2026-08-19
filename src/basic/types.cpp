@@ -35,6 +35,7 @@ std::unordered_map<std::string, equationID> equationIDMap{
     {"segregated_flow", equationID::segregatedFlow},
     {"segregated_free_surface_flow", equationID::segregatedFreeSurfaceFlow},
     {"segregated_k_epsilon", equationID::segregatedKEpsilon},
+    {"smagorinsky_les", equationID::smagorinskyLES},
     {"segregated_shear_stress_transport",
      equationID::segregatedShearStressTransport},
     {"segregated_transition_shear_stress_transport",
@@ -140,6 +141,7 @@ solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s)
 // Turbulence option
 std::unordered_map<std::string, turbulenceOption> turbulenceOptionMap{
     {"laminar", turbulenceOption::laminar},
+    {"smagorinsky", turbulenceOption::smagorinsky},
     {"shear_stress_transport", turbulenceOption::shearStressTransport},
     {"k_epsilon", turbulenceOption::kEpsilon}};
 

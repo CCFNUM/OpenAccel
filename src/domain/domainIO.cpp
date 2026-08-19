@@ -624,6 +624,13 @@ void domain::read_()
                 case turbulenceOption::laminar:
                     break;
 
+                case turbulenceOption::smagorinsky:
+                    {
+                        equations_[static_cast<int>(
+                            equationID::smagorinskyLES)] = true;
+                    }
+                    break;
+
                 case turbulenceOption::kEpsilon:
                     {
                         equations_[static_cast<int>(

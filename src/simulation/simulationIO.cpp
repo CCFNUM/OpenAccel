@@ -544,6 +544,17 @@ void simulation::collectEquations_()
             }
         }
 
+        // Smagorinsky LES model
+        if (domain->hasEquation(equationID::smagorinskyLES))
+        {
+            if (!findEquation_(equationID::smagorinskyLES))
+            {
+                equationVector_.push_back(
+                    std::make_unique<smagorinskyLESEquations>(
+                        realmPtr_.get()));
+            }
+        }
+
         // thermal energy equation
         if (domain->hasEquation(equationID::thermalEnergy))
         {
