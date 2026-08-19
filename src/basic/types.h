@@ -281,7 +281,8 @@ enum class solidMechanicsOption
 {
     none,
     linearElastic,
-    simplifiedNeoHookean
+    neoHookean,
+    modifiedMooneyRivlin
 };
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s);

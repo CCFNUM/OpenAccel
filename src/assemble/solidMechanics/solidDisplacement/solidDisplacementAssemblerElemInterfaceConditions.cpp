@@ -762,7 +762,7 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                         opposingLambdaBip + 2.0 * opposingMuBip / 3.0;
                 }
                 else if (solidMechOption ==
-                         solidMechanicsOption::simplifiedNeoHookean)
+                         solidMechanicsOption::neoHookean)
                 {
                     // Gradient tensor F = I + grad(u) at interface
                     // BIP, current side. Layout from
