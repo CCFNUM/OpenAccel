@@ -1,5 +1,5 @@
 # vim: ft=yaml
-# This is a 3D case and must be run with a 3D-compiled binary.
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -39,7 +39,6 @@ simulation:
                     option: velocity_components
                     u: 10
                     v: 0
-                    w: 0
           - name: outlet
             type: outlet
             location: [fluid_outlet]
@@ -50,13 +49,10 @@ simulation:
           - name: walls
             type: wall
             location: [fluid_lowerwall, fluid_upperwall]
-          - name: fluid_symmetry
-            type: symmetry
-            location: [fluid_frontandback]
           initialization:
             velocity:
                 option: value
-                velocity: [10, 0, 0]
+                velocity: [10, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -76,13 +72,10 @@ simulation:
             boundary_details:
                 solid_mechanics:
                     option: fixed
-          - name: solid_symmetry
-            type: symmetry
-            location: [solid_frontandback]
           initialization:
             displacement:
                 option: value
-                displacement: [0, 0, 0]
+                displacement: [0, 0]
         interfaces:
         - name: interface
           option: general_connection
