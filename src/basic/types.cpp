@@ -122,9 +122,9 @@ heatTransferOption convertHeatTransferOptionFromString(std::string s)
 std::unordered_map<std::string, solidMechanicsOption> solidMechanicsOptionMap{
     {"none", solidMechanicsOption::none},
     {"linear_elastic", solidMechanicsOption::linearElastic},
-    {"simplified_new_hookean", solidMechanicsOption::simplifiedNeoHookean},
-    {"simplified_neo_hookean", solidMechanicsOption::simplifiedNeoHookean},
-    {"neo_hookean", solidMechanicsOption::simplifiedNeoHookean}};
+    {"neo_hookean", solidMechanicsOption::neoHookean},
+    {"mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin},
+    {"modified_mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin}};
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s)
 {

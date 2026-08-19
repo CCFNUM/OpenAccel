@@ -9,6 +9,7 @@
 #ifndef USE_CVFEM_SOLID_MECHANICS
 #include "linear_elasticity.hpp"
 #include "sfem_GeneratedNeoHookeanOgden_element_api.hpp"
+#include "sfem_GeneratedModifiedMooneyRivlin_c_abi.hpp"
 #endif
 
 namespace accel
@@ -217,6 +218,132 @@ void assembleSfemNeoHookeanElement(
         rhs[row] = -gradient[row];
 }
 
+#if SPATIAL_DIM == 2
+// Unlike the Neo-Hookean kernels, the generated modified Mooney-Rivlin
+// kernels only expose the mesh-level C ABI (*_isoparametric_mesh_soa,
+// declared in sfem_GeneratedModifiedMooneyRivlin_c_abi.hpp) -- there is no
+// single-element "element_soa" convenience wrapper to mirror
+// assembleSfemNeoHookeanElement's call above. We therefore present this one
+// element as a trivial local "mesh" of `nodesPerElement` nodes, using the
+// same self-referential local connectivity already built for the
+// linear_elasticity_apply_aos fallback below (elementConnectivity[node] =
+// &localNodeIds[node], localNodeIds[node] = node).
+//
+// The hessian is BSR (block sparse row) over that local node graph: it needs
+// an explicit CSR (rowptr, colidx) pattern, and writes DIM x DIM,
+// row-major blocks into `values` at each (row, col) graph entry via
+// atomic += (so `values` must be pre-zeroed). For our local 1-element
+// "mesh" every node is coupled to every other node, so the graph is fully
+// dense: rowptr[i] = i * nodesPerElement, colidx lists 0..nodesPerElement-1
+// for every row. The block for local nodes (i, j) then lands at
+// values[(i * nodesPerElement + j) * SPATIAL_DIM * SPATIAL_DIM + bi *
+// SPATIAL_DIM + bj], which we scatter into the dense, node-major
+// `lhs[dofsPerElement * dofsPerElement]` OpenAccel expects.
+void assembleSfemModifiedMooneyRivlinElement(
+    const smesh::ElemType sfemElementType,
+    const label nodesPerElement,
+    const scalar c1,
+    const scalar c2,
+    const scalar kappa,
+    const std::vector<std::vector<geom_t>>& coordinates,
+    std::vector<idx_t*>& elementConnectivity,
+    const std::vector<scalar>& displacement,
+    std::vector<scalar>& rhs,
+    std::vector<scalar>& lhs)
+{
+    const label dofsPerElement = nodesPerElement * SPATIAL_DIM;
+
+    // SoA displacement/gradient-output views into the existing node-major
+    // `displacement`/`gradient` buffers: component d of node `n` lives at
+    // offset n * SPATIAL_DIM + d, i.e. exactly a stride-SPATIAL_DIM SoA
+    // array starting at offset d -- no separate copy needed.
+    std::vector<scalar> gradient(dofsPerElement, 0.0);
+    const scalar* ux = displacement.data() + 0;
+    const scalar* uy = displacement.data() + 1;
+    scalar* outx = gradient.data() + 0;
+    scalar* outy = gradient.data() + 1;
+
+    std::vector<const geom_t*> pointStreams(SPATIAL_DIM);
+    for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+        pointStreams[dim] = coordinates[dim].data();
+
+    const int gradientStatus = modified_mooney_rivlin_gradient_2d_isoparametric_mesh_soa(
+        sfemElementType,
+        1,
+        nodesPerElement,
+        elementConnectivity.data(),
+        pointStreams.data(),
+        c1,
+        c2,
+        kappa,
+        SPATIAL_DIM,
+        ux,
+        uy,
+        SPATIAL_DIM,
+        outx,
+        outy);
+
+    // Dense CSR graph over the local pseudo-mesh's `nodesPerElement` nodes
+    // (see comment above): every node coupled to every other node.
+    std::vector<count_t> rowptr(nodesPerElement + 1);
+    std::vector<idx_t> colidx(nodesPerElement * nodesPerElement);
+    for (label i = 0; i < nodesPerElement; ++i)
+    {
+        rowptr[i] = i * nodesPerElement;
+        for (label j = 0; j < nodesPerElement; ++j)
+            colidx[i * nodesPerElement + j] = j;
+    }
+    rowptr[nodesPerElement] = nodesPerElement * nodesPerElement;
+
+    std::vector<scalar> values(
+        nodesPerElement * nodesPerElement * SPATIAL_DIM * SPATIAL_DIM, 0.0);
+
+    const int hessianStatus = modified_mooney_rivlin_hessian_bsr_2d_isoparametric_mesh_soa(
+        sfemElementType,
+        1,
+        nodesPerElement,
+        elementConnectivity.data(),
+        pointStreams.data(),
+        c1,
+        c2,
+        kappa,
+        SPATIAL_DIM,
+        ux,
+        uy,
+        rowptr.data(),
+        colidx.data(),
+        values.data());
+
+    STK_ThrowRequireMsg(
+        gradientStatus == SFEM_SUCCESS && hessianStatus == SFEM_SUCCESS,
+        "sfem modified Mooney-Rivlin elemental kernel failed");
+
+    // Scatter the dense BSR blocks into OpenAccel's dense, node-major lhs.
+    lhs.assign(dofsPerElement * dofsPerElement, 0.0);
+    for (label i = 0; i < nodesPerElement; ++i)
+    {
+        for (label j = 0; j < nodesPerElement; ++j)
+        {
+            const scalar* block =
+                &values[(i * nodesPerElement + j) * SPATIAL_DIM * SPATIAL_DIM];
+            for (label bi = 0; bi < SPATIAL_DIM; ++bi)
+            {
+                const label row = i * SPATIAL_DIM + bi;
+                for (label bj = 0; bj < SPATIAL_DIM; ++bj)
+                {
+                    const label col = j * SPATIAL_DIM + bj;
+                    lhs[row * dofsPerElement + col] =
+                        block[bi * SPATIAL_DIM + bj];
+                }
+            }
+        }
+    }
+
+    for (label row = 0; row < dofsPerElement; ++row)
+        rhs[row] = -gradient[row];
+}
+#endif // SPATIAL_DIM == 2
+
 } // namespace
 #endif
 
@@ -252,7 +379,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_det_j;
     std::vector<scalar> ws_shape_function;
 
-    // Workspace for neo-hookean model (only used if simplifiedNeoHookean)
+    // Workspace for neo-hookean model (only used if neoHookean)
     std::vector<scalar> ws_gradTens;
 
     // const-size containers
@@ -333,7 +460,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         ws_shape_function.resize(numScsIp * nodesPerElement);
 
         // Resize workspace for neo-hookean model if needed
-        if (solidMechOption == solidMechanicsOption::simplifiedNeoHookean)
+        if (solidMechOption == solidMechanicsOption::neoHookean)
         {
             ws_gradTens.resize(SPATIAL_DIM * SPATIAL_DIM);
         }
@@ -349,7 +476,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         scalar* p_dndx = &ws_dndx[0];
         scalar* p_shape_function = &ws_shape_function[0];
         scalar* p_gradTens =
-            solidMechOption == solidMechanicsOption::simplifiedNeoHookean
+            solidMechOption == solidMechanicsOption::neoHookean
                 ? &ws_gradTens[0]
                 : nullptr;
 
@@ -532,7 +659,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                     }
                 }
                 else if (solidMechOption ==
-                         solidMechanicsOption::simplifiedNeoHookean)
+                         solidMechanicsOption::neoHookean)
                 {
                     // Zero out gradient tensor
                     for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; ++i)
@@ -717,8 +844,14 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         domain->solidMechanics_.option_;
     STK_ThrowRequireMsg(
         solidMechOption == solidMechanicsOption::linearElastic ||
-            solidMechOption == solidMechanicsOption::simplifiedNeoHookean,
+            solidMechOption == solidMechanicsOption::neoHookean ||
+            solidMechOption == solidMechanicsOption::modifiedMooneyRivlin,
         "Unsupported FEM solid mechanics option");
+#if SPATIAL_DIM == 3
+    STK_ThrowRequireMsg(
+        solidMechOption != solidMechanicsOption::modifiedMooneyRivlin,
+        "modified_mooney_rivlin is only wired for the 2D FEM path");
+#endif
 
     const auto& DSTKFieldRef = phi_->stkFieldRef();
     const auto& ESTKFieldRef = model_->ERef().stkFieldRef();
@@ -839,7 +972,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
             mu /= nodesPerElement;
             lambda /= nodesPerElement;
 
-            if (solidMechOption == solidMechanicsOption::simplifiedNeoHookean)
+            if (solidMechOption == solidMechanicsOption::neoHookean)
             {
                 assembleSfemNeoHookeanElement(sfemElementType,
                                               nodesPerElement,
@@ -851,6 +984,26 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                                               lhs);
             }
 #if SPATIAL_DIM == 2
+            else if (solidMechOption ==
+                     solidMechanicsOption::modifiedMooneyRivlin)
+            {
+                // c1/c2/kappa are simple per-domain material constants (see
+                // domain::material::mechanicalProperties_, Task 2), unlike
+                // mu/lambda above which come from the E/nu node fields --
+                // not needed for this branch.
+                const auto& mechProps =
+                    domain->materialRef().mechanicalProperties_;
+                assembleSfemModifiedMooneyRivlinElement(sfemElementType,
+                                                        nodesPerElement,
+                                                        mechProps.c1_,
+                                                        mechProps.c2_,
+                                                        mechProps.kappa_,
+                                                        coordinates,
+                                                        elementConnectivity,
+                                                        displacement,
+                                                        rhs,
+                                                        lhs);
+            }
             else if (useOpenAccelQuad4)
             {
                 assembleQuad4LinearElasticity(coordinates, mu, lambda, lhs);

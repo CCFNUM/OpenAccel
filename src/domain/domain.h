@@ -172,6 +172,16 @@ struct material
 
         youngModulus youngModulus_;
         poissonRatio poissonRatio_;
+
+        // Modified Mooney-Rivlin (Flory-split compressible) parameters, used
+        // when solid_mechanics.option is modified_mooney_rivlin. Default to
+        // 0.0 so existing neo-Hookean/linear-elastic input files (which never
+        // set these) are unaffected. If not given directly, they are derived
+        // from young_modulus/poisson_ratio -- see
+        // convertYoungPoissonToMooneyRivlin() in domainIO.cpp.
+        scalar c1_ = 0.0;    // C10
+        scalar c2_ = 0.0;    // C01
+        scalar kappa_ = 0.0; // bulk modulus
     };
 
     struct buoyancyProperties

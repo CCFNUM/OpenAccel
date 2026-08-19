@@ -1296,12 +1296,34 @@ void solidMechanicsModel::updateStressAndStrain_(
     // FEM path: the post-processed strain/stress measure must match the
     // constitutive option actually used for the nonlinear solve (see
     // assembleSfemNeoHookeanElement() in
-    // solidDisplacementAssemblerElemTerms.cpp). For simplifiedNeoHookean we
+    // solidDisplacementAssemblerElemTerms.cpp). For neoHookean we
     // report the finite-strain Cauchy stress and Green-Lagrange strain
     // instead of the infinitesimal-strain linear-elastic measures below.
     const bool useNeoHookeanStress =
         (domain->solidMechanics_.option_ ==
-         solidMechanicsOption::simplifiedNeoHookean);
+         solidMechanicsOption::neoHookean);
+
+    // Same rationale as useNeoHookeanStress above, for the Flory-split
+    // compressible modified Mooney-Rivlin model (see
+    // assembleSfemModifiedMooneyRivlinElement() in
+    // solidDisplacementAssemblerElemTerms.cpp).
+    const bool useMooneyRivlinStress =
+        (domain->solidMechanics_.option_ ==
+         solidMechanicsOption::modifiedMooneyRivlin);
+
+    // c1/c2/kappa are simple per-domain material constants (Task 2's
+    // material::mechanicalProperties_ fields), not per-node fields like E/nu
+    // -- so, unlike mu/lambda below, they are fetched once here.
+    scalar mooneyC1 = 0.0;
+    scalar mooneyC2 = 0.0;
+    scalar mooneyKappa = 0.0;
+    if (useMooneyRivlinStress)
+    {
+        const auto& mechProps = domain->materialRef().mechanicalProperties_;
+        mooneyC1 = mechProps.c1_;
+        mooneyC2 = mechProps.c2_;
+        mooneyKappa = mechProps.kappa_;
+    }
 #endif
 
     // Get interior parts
@@ -1506,6 +1528,140 @@ void solidMechanicsModel::updateStressAndStrain_(
                             }
                         }
                     }
+                    else if (useMooneyRivlinStress)
+                    {
+                        // Deformation gradient: F = I + grad_X(u)
+                        scalar F[SPATIAL_DIM * SPATIAL_DIM];
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                                F[i * SPATIAL_DIM + j] =
+                                    delta_ij + p_grad_u[i * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // J = det(F)
+#if SPATIAL_DIM == 2
+                        const scalar J = F[0] * F[3] - F[1] * F[2];
+#elif SPATIAL_DIM == 3
+                        const scalar J =
+                            F[0] * (F[4] * F[8] - F[5] * F[7]) -
+                            F[1] * (F[3] * F[8] - F[5] * F[6]) +
+                            F[2] * (F[3] * F[7] - F[4] * F[6]);
+#endif
+                        const scalar lnJ = std::log(J);
+                        const scalar Jm23 = std::pow(J, -2.0 / 3.0);
+                        const scalar Jm43 = std::pow(J, -4.0 / 3.0);
+
+                        // Left Cauchy-Green tensor b = F * F^T, and its
+                        // trace I1 = trace(b) (first invariant).
+                        scalar b[SPATIAL_DIM * SPATIAL_DIM];
+                        scalar I1 = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                scalar b_ij = 0.0;
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    b_ij += F[i * SPATIAL_DIM + kk] *
+                                           F[j * SPATIAL_DIM + kk];
+                                }
+                                b[i * SPATIAL_DIM + j] = b_ij;
+                            }
+                            I1 += b[i * SPATIAL_DIM + i];
+                        }
+                        // The Flory split is inherently 3D. In plane strain
+                        // (SPATIAL_DIM == 2), the physical F is 3D with
+                        // F_zz = 1, so b_zz = F_zz^2 = 1 contributes to the
+                        // trace but is not captured by the 2D storage above
+                        // -- add it back in. A genuine 3D build already has
+                        // the full trace from the loop above.
+#if SPATIAL_DIM == 2
+                        I1 += 1.0;
+#endif
+                        // (I2 = 0.5*(I1^2 - trace(b*b)) is the second
+                        // invariant, folded into dev(I1*b - b^2) below rather
+                        // than computed explicitly.)
+
+                        // b^2 = b * b, and its physical trace tr(b^2). In
+                        // plane strain (SPATIAL_DIM == 2) the missing
+                        // b_zz = 1 contributes (b^2)_zz = b_zz*b_zz = 1 to
+                        // the trace (all b_iz, b_zi = 0, so no cross terms);
+                        // a genuine 3D build already has the full trace from
+                        // the loop below.
+                        scalar b2[SPATIAL_DIM * SPATIAL_DIM];
+                        scalar trb2 = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                scalar b2_ij = 0.0;
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    b2_ij += b[i * SPATIAL_DIM + kk] *
+                                            b[kk * SPATIAL_DIM + j];
+                                }
+                                b2[i * SPATIAL_DIM + j] = b2_ij;
+                            }
+                            trb2 += b2[i * SPATIAL_DIM + i];
+                        }
+#if SPATIAL_DIM == 2
+                        trb2 += 1.0;
+#endif
+
+                        // Flory-split Cauchy stress, derived from
+                        //   Psi = c1*(J^(-2/3)*I1 - 3) + c2*(J^(-4/3)*I2 - 3)
+                        //         + (kappa/2)*ln(J)^2
+                        // with I2 = 0.5*(I1^2 - tr(b^2)) expressed via b (no
+                        // b^-1 needed):
+                        //   dev(A)_ij = A_ij - (1/3)*tr(A)*delta_ij
+                        //   σ_ij = (2/J) * [c1*J^(-2/3)*dev(b)_ij
+                        //                   + c2*J^(-4/3)*dev(I1*b - b^2)_ij]
+                        //          + (kappa/J) * ln(J) * delta_ij
+                        // tr(I1*b - b^2) = I1^2 - tr(b^2); d = 3 throughout
+                        // (the physical spatial dimension, not SPATIAL_DIM --
+                        // I1 and trb2 above already carry the plane-strain
+                        // +1 correction).
+                        // Green-Lagrange strain: same E = 0.5*(F^T*F - I) as
+                        // the neo-Hookean branch above.
+                        const scalar trX = I1 * I1 - trb2;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+
+                                const scalar devB_ij =
+                                    b[i * SPATIAL_DIM + j] -
+                                    (I1 / 3.0) * delta_ij;
+
+                                const scalar X_ij =
+                                    I1 * b[i * SPATIAL_DIM + j] -
+                                    b2[i * SPATIAL_DIM + j];
+                                const scalar devX_ij =
+                                    X_ij - (trX / 3.0) * delta_ij;
+
+                                p_stress[i * SPATIAL_DIM + j] +=
+                                    ((2.0 / J) *
+                                         (mooneyC1 * Jm23 * devB_ij +
+                                          mooneyC2 * Jm43 * devX_ij) +
+                                     (mooneyKappa / J) * lnJ * delta_ij) /
+                                    numScvIp;
+
+                                scalar c_ij = 0.0; // (F^T * F)_ij
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    c_ij += F[kk * SPATIAL_DIM + i] *
+                                           F[kk * SPATIAL_DIM + j];
+                                }
+                                p_strain[i * SPATIAL_DIM + j] +=
+                                    0.5 * (c_ij - delta_ij) / numScvIp;
+                            }
+                        }
+                    }
                     else
 #endif
                     {
@@ -1526,11 +1682,11 @@ void solidMechanicsModel::updateStressAndStrain_(
                 }
 
 #ifndef USE_CVFEM_SOLID_MECHANICS
-                if (!useNeoHookeanStress)
+                if (!useNeoHookeanStress && !useMooneyRivlinStress)
 #endif
                 {
                     // Linear elastic constitutive law (default for
-                    // linearElastic and any other non-neo-Hookean option):
+                    // linearElastic and any other unrecognized option):
                     // σ_ij = λ * ε_kk * δ_ij + 2μ * ε_ij
                     scalar trace_strain = 0.0;
                     for (label i = 0; i < SPATIAL_DIM; ++i)

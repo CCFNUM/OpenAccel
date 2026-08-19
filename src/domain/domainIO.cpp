@@ -13,6 +13,27 @@
 namespace accel
 {
 
+namespace
+{
+
+// Converts (Young's modulus, Poisson's ratio) to modified Mooney-Rivlin
+// (c1, c2, kappa) material parameters, assuming a pure neo-Hookean split
+// (C01 = 0) -- used when a modified_mooney_rivlin material is specified via
+// young_modulus/poisson_ratio instead of c1/c2/kappa directly.
+void convertYoungPoissonToMooneyRivlin(scalar E,
+                                       scalar nu,
+                                       scalar& c1,
+                                       scalar& c2,
+                                       scalar& kappa)
+{
+    const scalar muEff = E / (2.0 * (1.0 + nu));
+    c1 = muEff / 2.0;    // C10
+    c2 = 0.0;            // C01 (pure neo-Hookean split if not specified)
+    kappa = E / (3.0 * (1.0 - 2.0 * nu));
+}
+
+} // namespace
+
 // IO
 
 void domain::read_()
@@ -340,15 +361,49 @@ void domain::read_()
                     materialBlockVector_[localMaterialIndex]
                                         ["mechanical_properties"];
 
-                mat.mechanicalProperties_.youngModulus_.option_ =
-                    convertYoungModulusOptionFromString(
-                        mechanicalPropertiesBlock["young_modulus"]["option"]
-                            .template as<std::string>());
+                // young_modulus/poisson_ratio are optional: a mooney_rivlin
+                // material may instead be specified directly via c1/c2/kappa
+                // below, with no dummy young_modulus/poisson_ratio entries
+                // required (see the sanity check further below, once
+                // solid_mechanics.option is known).
+                if (mechanicalPropertiesBlock["young_modulus"])
+                {
+                    mat.mechanicalProperties_.youngModulus_.option_ =
+                        convertYoungModulusOptionFromString(
+                            mechanicalPropertiesBlock["young_modulus"]
+                                                     ["option"]
+                                .template as<std::string>());
+                }
 
-                mat.mechanicalProperties_.poissonRatio_.option_ =
-                    convertPoissonRatioOptionFromString(
-                        mechanicalPropertiesBlock["poisson_ratio"]["option"]
-                            .template as<std::string>());
+                if (mechanicalPropertiesBlock["poisson_ratio"])
+                {
+                    mat.mechanicalProperties_.poissonRatio_.option_ =
+                        convertPoissonRatioOptionFromString(
+                            mechanicalPropertiesBlock["poisson_ratio"]
+                                                     ["option"]
+                                .template as<std::string>());
+                }
+
+                // Modified Mooney-Rivlin parameters (optional; default to
+                // 0.0, converted from young_modulus/poisson_ratio further
+                // below once solid_mechanics.option is known -- see
+                // convertYoungPoissonToMooneyRivlin() call in this file).
+                if (mechanicalPropertiesBlock["c1"])
+                {
+                    mat.mechanicalProperties_.c1_ =
+                        mechanicalPropertiesBlock["c1"].template as<scalar>();
+                }
+                if (mechanicalPropertiesBlock["c2"])
+                {
+                    mat.mechanicalProperties_.c2_ =
+                        mechanicalPropertiesBlock["c2"].template as<scalar>();
+                }
+                if (mechanicalPropertiesBlock["kappa"])
+                {
+                    mat.mechanicalProperties_.kappa_ =
+                        mechanicalPropertiesBlock["kappa"]
+                            .template as<scalar>();
+                }
             }
 
             // move ownership to material vector
@@ -1044,6 +1099,75 @@ void domain::read_()
                 if (solidMechanics_.dampingCoeff_ < 0.0)
                 {
                     errorMsg("damping_coeff must be non-negative");
+                }
+            }
+
+            // Modified Mooney-Rivlin: if a material on this domain did not
+            // specify c1/c2/kappa directly, derive them from
+            // young_modulus/poisson_ratio (pure neo-Hookean split). Deferred
+            // to here (rather than the mechanical_properties parsing above)
+            // because solidMechanics_.option_ is not known until now.
+            if (solidMechanics_.option_ ==
+                solidMechanicsOption::modifiedMooneyRivlin)
+            {
+                for (label iMat = 0;
+                     iMat < static_cast<label>(materialVector_.size());
+                     ++iMat)
+                {
+                    const auto& materialBlock = materialBlockVector_[iMat];
+                    if (!materialBlock["mechanical_properties"])
+                        continue;
+
+                    const auto& mechanicalPropertiesBlock =
+                        materialBlock["mechanical_properties"];
+
+                    const bool hasC1C2Kappa =
+                        mechanicalPropertiesBlock["c1"] ||
+                        mechanicalPropertiesBlock["c2"] ||
+                        mechanicalPropertiesBlock["kappa"];
+
+                    if (hasC1C2Kappa)
+                        continue;
+
+                    const bool hasYoungPoisson =
+                        mechanicalPropertiesBlock["young_modulus"] &&
+                        mechanicalPropertiesBlock["young_modulus"]
+                                                 ["young_modulus"] &&
+                        mechanicalPropertiesBlock["poisson_ratio"] &&
+                        mechanicalPropertiesBlock["poisson_ratio"]
+                                                 ["poisson_ratio"];
+
+                    auto& mechProps =
+                        materialVector_[iMat].mechanicalProperties_;
+
+                    if (hasYoungPoisson)
+                    {
+                        const scalar E = mechanicalPropertiesBlock
+                                             ["young_modulus"]
+                                             ["young_modulus"]
+                                                 .template as<scalar>();
+                        const scalar nu = mechanicalPropertiesBlock
+                                              ["poisson_ratio"]
+                                              ["poisson_ratio"]
+                                                  .template as<scalar>();
+
+                        convertYoungPoissonToMooneyRivlin(E,
+                                                          nu,
+                                                          mechProps.c1_,
+                                                          mechProps.c2_,
+                                                          mechProps.kappa_);
+                    }
+
+                    // Sanity check: a mooney_rivlin material must supply
+                    // either c1/c2/kappa directly, or young_modulus/
+                    // poisson_ratio to derive them from -- otherwise it
+                    // would silently run with zero stiffness.
+                    if (mechProps.c1_ == 0.0 && !hasYoungPoisson)
+                    {
+                        errorMsg(
+                            "mooney_rivlin requires either c1/c2/kappa or "
+                            "young_modulus/poisson_ratio");
+                    }
                 }
             }
         }
