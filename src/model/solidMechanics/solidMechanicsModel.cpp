@@ -1520,8 +1520,7 @@ void solidMechanicsModel::updateStressAndStrain_(
                         const scalar Jm23 = std::pow(J, -2.0 / 3.0);
                         const scalar Jm43 = std::pow(J, -4.0 / 3.0);
 
-                        // Left Cauchy-Green tensor b = F * F^T, and its
-                        // trace I1 = trace(b) (first invariant).
+                        // Left Cauchy-Green tensor b = F * F^T; I1 = trace(b).
                         scalar b[SPATIAL_DIM * SPATIAL_DIM];
                         scalar I1 = 0.0;
                         for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -1538,25 +1537,15 @@ void solidMechanicsModel::updateStressAndStrain_(
                             }
                             I1 += b[i * SPATIAL_DIM + i];
                         }
-                        // The Flory split is inherently 3D. In plane strain
-                        // (SPATIAL_DIM == 2), the physical F is 3D with
-                        // F_zz = 1, so b_zz = F_zz^2 = 1 contributes to the
-                        // trace but is not captured by the 2D storage above
-                        // -- add it back in. A genuine 3D build already has
-                        // the full trace from the loop above.
+                        // Plane-strain embedding: physical F is 3D with F_zz = 1, so add
+                        // b_zz = 1 to I1; a 3D build already has the full trace from the loop above.
 #if SPATIAL_DIM == 2
                         I1 += 1.0;
 #endif
-                        // (I2 = 0.5*(I1^2 - trace(b*b)) is the second
-                        // invariant, folded into dev(I1*b - b^2) below rather
-                        // than computed explicitly.)
+                        // (I2 = 0.5*(I1^2 - trace(b*b)) is folded into dev(I1*b - b^2) below.)
 
-                        // b^2 = b * b, and its physical trace tr(b^2). In
-                        // plane strain (SPATIAL_DIM == 2) the missing
-                        // b_zz = 1 contributes (b^2)_zz = b_zz*b_zz = 1 to
-                        // the trace (all b_iz, b_zi = 0, so no cross terms);
-                        // a genuine 3D build already has the full trace from
-                        // the loop below.
+                        // b^2 = b * b; physical trace tr(b^2). Plane strain adds the missing
+                        // b_zz^2 = 1; a 3D build already has the full trace from the loop below.
                         scalar b2[SPATIAL_DIM * SPATIAL_DIM];
                         scalar trb2 = 0.0;
                         for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -1577,21 +1566,12 @@ void solidMechanicsModel::updateStressAndStrain_(
                         trb2 += 1.0;
 #endif
 
-                        // Flory-split Cauchy stress, derived from
-                        //   Psi = c1*(J^(-2/3)*I1 - 3) + c2*(J^(-4/3)*I2 - 3)
-                        //         + (kappa/2)*ln(J)^2
-                        // with I2 = 0.5*(I1^2 - tr(b^2)) expressed via b (no
-                        // b^-1 needed):
-                        //   dev(A)_ij = A_ij - (1/3)*tr(A)*delta_ij
-                        //   σ_ij = (2/J) * [c1*J^(-2/3)*dev(b)_ij
-                        //                   + c2*J^(-4/3)*dev(I1*b - b^2)_ij]
-                        //          + (kappa/J) * ln(J) * delta_ij
-                        // tr(I1*b - b^2) = I1^2 - tr(b^2); d = 3 throughout
-                        // (the physical spatial dimension, not SPATIAL_DIM --
-                        // I1 and trb2 above already carry the plane-strain
-                        // +1 correction).
-                        // Green-Lagrange strain: same E = 0.5*(F^T*F - I) as
-                        // the neo-Hookean branch above.
+                        // Flory-split Cauchy stress, from
+                        //   Psi = c1*(J^(-2/3)*I1-3) + c2*(J^(-4/3)*I2-3) + (kappa/2)*ln(J)^2
+                        //   σ_ij = (2/J)*[c1*J^(-2/3)*dev(b)_ij + c2*J^(-4/3)*dev(I1*b-b^2)_ij]
+                        //          + (kappa/J)*ln(J)*delta_ij
+                        // d = 3 is the physical dim (not SPATIAL_DIM). Green-Lagrange strain:
+                        // E = 0.5*(F^T*F - I), same as the neo-Hookean branch above.
                         const scalar trX = I1 * I1 - trb2;
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {

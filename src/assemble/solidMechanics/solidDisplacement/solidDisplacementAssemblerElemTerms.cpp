@@ -208,26 +208,8 @@ void assembleSfemNeoHookeanElement(
 }
 
 #if SPATIAL_DIM == 2
-// Unlike the Neo-Hookean kernels, the generated modified Mooney-Rivlin
-// kernels only expose the mesh-level C ABI (*_isoparametric_mesh_soa,
-// declared in sfem_GeneratedModifiedMooneyRivlin_c_abi.hpp) -- there is no
-// single-element "element_soa" convenience wrapper to mirror
-// assembleSfemNeoHookeanElement's call above. We therefore present this one
-// element as a trivial local "mesh" of `nodesPerElement` nodes, using the
-// same self-referential local connectivity already built for the
-// linear_elasticity_apply_aos fallback below (elementConnectivity[node] =
-// &localNodeIds[node], localNodeIds[node] = node).
-//
-// The hessian is BSR (block sparse row) over that local node graph: it needs
-// an explicit CSR (rowptr, colidx) pattern, and writes DIM x DIM,
-// row-major blocks into `values` at each (row, col) graph entry via
-// atomic += (so `values` must be pre-zeroed). For our local 1-element
-// "mesh" every node is coupled to every other node, so the graph is fully
-// dense: rowptr[i] = i * nodesPerElement, colidx lists 0..nodesPerElement-1
-// for every row. The block for local nodes (i, j) then lands at
-// values[(i * nodesPerElement + j) * SPATIAL_DIM * SPATIAL_DIM + bi *
-// SPATIAL_DIM + bj], which we scatter into the dense, node-major
-// `lhs[dofsPerElement * dofsPerElement]` OpenAccel expects.
+// SFEM MR exposes only the mesh-level BSR ABI, so we present this one element
+// as a trivial one-element mesh and scatter the BSR blocks into dense lhs below.
 void assembleSfemModifiedMooneyRivlinElement(
     const smesh::ElemType sfemElementType,
     const label nodesPerElement,
@@ -242,10 +224,7 @@ void assembleSfemModifiedMooneyRivlinElement(
 {
     const label dofsPerElement = nodesPerElement * SPATIAL_DIM;
 
-    // SoA displacement/gradient-output views into the existing node-major
-    // `displacement`/`gradient` buffers: component d of node `n` lives at
-    // offset n * SPATIAL_DIM + d, i.e. exactly a stride-SPATIAL_DIM SoA
-    // array starting at offset d -- no separate copy needed.
+    // SoA displacement/gradient-output views into the existing node-major buffers.
     std::vector<scalar> gradient(dofsPerElement, 0.0);
     const scalar* ux = displacement.data() + 0;
     const scalar* uy = displacement.data() + 1;
@@ -273,8 +252,7 @@ void assembleSfemModifiedMooneyRivlinElement(
             outx,
             outy);
 
-    // Dense CSR graph over the local pseudo-mesh's `nodesPerElement` nodes
-    // (see comment above): every node coupled to every other node.
+    // Dense CSR: every local node coupled to every other.
     std::vector<count_t> rowptr(nodesPerElement + 1);
     std::vector<idx_t> colidx(nodesPerElement * nodesPerElement);
     for (label i = 0; i < nodesPerElement; ++i)
@@ -994,10 +972,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                 else if (solidMechOption ==
                          solidMechanicsOption::modifiedMooneyRivlin)
                 {
-                    // c1/c2/kappa are simple per-domain material constants (see
-                    // domain::material::mechanicalProperties_, Task 2), unlike
-                    // mu/lambda above which come from the E/nu node fields --
-                    // not needed for this branch.
+                    // c1/c2/kappa are per-domain material constants (not per-node like mu/lambda above).
                     const auto& mechProps =
                         domain->materialRef().mechanicalProperties_;
                     assembleSfemModifiedMooneyRivlinElement(sfemElementType,

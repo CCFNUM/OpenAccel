@@ -16,10 +16,8 @@ namespace accel
 namespace
 {
 
-// Converts (Young's modulus, Poisson's ratio) to modified Mooney-Rivlin
-// (c1, c2, kappa) material parameters, assuming a pure neo-Hookean split
-// (C01 = 0) -- used when a modified_mooney_rivlin material is specified via
-// young_modulus/poisson_ratio instead of c1/c2/kappa directly.
+// (E, ν) → (c1, c2, κ) for a pure neo-Hookean split (C01 = 0). Used when a
+// modified_mooney_rivlin material is specified via young_modulus/poisson_ratio.
 void convertYoungPoissonToMooneyRivlin(scalar E,
                                        scalar nu,
                                        scalar& c1,
@@ -362,10 +360,7 @@ void domain::read_()
                                         ["mechanical_properties"];
 
                 // young_modulus/poisson_ratio are optional: a mooney_rivlin
-                // material may instead be specified directly via c1/c2/kappa
-                // below, with no dummy young_modulus/poisson_ratio entries
-                // required (see the sanity check further below, once
-                // solid_mechanics.option is known).
+                // material may instead specify c1/c2/kappa directly (see the sanity check below).
                 if (mechanicalPropertiesBlock["young_modulus"])
                 {
                     mat.mechanicalProperties_.youngModulus_.option_ =
@@ -382,10 +377,8 @@ void domain::read_()
                                 .template as<std::string>());
                 }
 
-                // Modified Mooney-Rivlin parameters (optional; default to
-                // 0.0, converted from young_modulus/poisson_ratio further
-                // below once solid_mechanics.option is known -- see
-                // convertYoungPoissonToMooneyRivlin() call in this file).
+                // Modified Mooney-Rivlin parameters (optional; default 0.0, converted from
+                // young_modulus/poisson_ratio further below once solid_mechanics.option is known).
                 if (mechanicalPropertiesBlock["c1"])
                 {
                     mat.mechanicalProperties_.c1_ =
@@ -1100,11 +1093,8 @@ void domain::read_()
                 }
             }
 
-            // Modified Mooney-Rivlin: if a material on this domain did not
-            // specify c1/c2/kappa directly, derive them from
-            // young_modulus/poisson_ratio (pure neo-Hookean split). Deferred
-            // to here (rather than the mechanical_properties parsing above)
-            // because solidMechanics_.option_ is not known until now.
+            // Modified Mooney-Rivlin: derive c1/c2/kappa from young_modulus/poisson_ratio
+            // if not given directly. Deferred to here because solidMechanics_.option_ isn't known until now.
             if (solidMechanics_.option_ ==
                 solidMechanicsOption::modifiedMooneyRivlin)
             {
@@ -1156,14 +1146,43 @@ void domain::read_()
                                                           mechProps.kappa_);
                     }
 
-                    // Sanity check: a mooney_rivlin material must supply
-                    // either c1/c2/kappa directly, or young_modulus/
-                    // poisson_ratio to derive them from -- otherwise it
-                    // would silently run with zero stiffness.
+                    // Sanity check: mooney_rivlin needs c1/c2/kappa or young_modulus/poisson_ratio, else it silently runs with zero stiffness.
                     if (mechProps.c1_ == 0.0 && !hasYoungPoisson)
                     {
                         errorMsg("mooney_rivlin requires either c1/c2/kappa or "
                                  "young_modulus/poisson_ratio");
+                    }
+                }
+            }
+
+            // linear_elastic and neo_hookean consume young_modulus and
+            // poisson_ratio unconditionally; validate here (deferred like
+            // the MR block above until solidMechanics_.option_ is known) so
+            // downstream field setup can trust the YAML.
+            if (solidMechanics_.option_ ==
+                    solidMechanicsOption::linearElastic ||
+                solidMechanics_.option_ == solidMechanicsOption::neoHookean)
+            {
+                for (label iMat = 0;
+                     iMat < static_cast<label>(materialVector_.size());
+                     ++iMat)
+                {
+                    const auto& materialBlock = materialBlockVector_[iMat];
+                    const bool hasE =
+                        materialBlock["mechanical_properties"] &&
+                        materialBlock["mechanical_properties"]
+                                     ["young_modulus"];
+                    const bool hasNu =
+                        materialBlock["mechanical_properties"] &&
+                        materialBlock["mechanical_properties"]
+                                     ["poisson_ratio"];
+
+                    if (!hasE || !hasNu)
+                    {
+                        errorMsg(
+                            "linear_elastic/neo_hookean requires "
+                            "young_modulus and poisson_ratio in "
+                            "mechanical_properties");
                     }
                 }
             }

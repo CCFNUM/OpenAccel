@@ -36,40 +36,12 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/sfem_config.h
 )
 
-# Unlike neohookean_ogden's element_api.hpp (header-only templates,
-# instantiated at the call site -- no .cpp needed), the generated
-# modified_mooney_rivlin *_isoparametric_mesh_soa functions are plain
-# extern "C" functions declared in sfem_GeneratedModifiedMooneyRivlin_
-# c_abi.hpp but defined in separate .cpp files (dispatch + per-topology
-# kernels) under frontend/ops/generated/modified_mooney_rivlin/. Those
-# must be compiled into this library or the symbols stay undefined at
-# link time.
-#
-# Listed explicitly rather than globbed: a plain glob over that
-# directory also pulls in sfem_GeneratedModifiedMooneyRivlin.cpp and
-# sfem_GeneratedModifiedMooneyRivlin_registration.cpp, which are the
-# sfem::Op-framework wrapper/registration for this technology and
-# transitively #include sfem_Op.hpp (via sfem_GeneratedModifiedMooney
-# Rivlin.hpp) -- a framework OpenAccel does not build against. Only the
-# dispatch entry points OpenAccel actually calls
-# (modified_mooney_rivlin_gradient_2d_isoparametric_mesh_soa,
-# modified_mooney_rivlin_hessian_bsr_2d_isoparametric_mesh_soa, both
-# defined in the dispatch .cpp below) plus every per-topology kernel
-# their switch statements dispatch to are listed.
-#
-# This means both the 2D (QUAD4/TRI3, TRI6, PROTEUS_QUAD4) *and* 3D
-# (HEX8/HEX27/TET4/TET10/PROTEUS_HEX8/27/64) topology kernels are
-# included, even though OpenAccel's SPATIAL_DIM=2 build only ever
-# calls the 2D dispatcher: the dispatch .cpp is one translation unit
-# that defines both the 2D and 3D dispatchers together, and this
-# build has no -ffunction-sections/--gc-sections, so once the linker
-# pulls that object file in for the 2D symbols, the 3D dispatcher's
-# own unresolved references (to the 3D per-topology symbols) must
-# also resolve from somewhere -- hence they're listed here too.
-# QUAD4/HEX8/HEX27 forward to their PROTEUS_* counterparts; TRI3,
-# TRI6, TET4, TET10, and the PROTEUS_* kernels are self-contained.
-# None of the twelve files below, nor anything they #include,
-# references sfem_Op.hpp.
+# MR SFEM kernels expose only the mesh-level BSR ABI (extern C, defined
+# in per-topology .cpp files) -- not the header-only element API used for
+# neohookean_ogden. Sources listed explicitly (not globbed) to exclude
+# sfem_Op-framework files OpenAccel doesn't build against. 3D kernels
+# included alongside 2D because the dispatch translation unit defines
+# both dispatchers together and links transitively.
 set(SFEM_MODIFIED_MOONEY_RIVLIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sfem/frontend/ops/generated/modified_mooney_rivlin/op/sfem_GeneratedModifiedMooneyRivlin_isoparametric_dispatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sfem/frontend/ops/generated/modified_mooney_rivlin/d2/proteus_quad4/modified_mooney_rivlin_proteus_quad4_operator.cpp
