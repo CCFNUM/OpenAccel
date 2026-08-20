@@ -53,15 +53,40 @@ private:
 
     std::unique_ptr<velocity> U_;
 
+    std::vector<std::unique_ptr<velocity>> UVector_; // for every phase
+
     std::unique_ptr<simpleVectorField> Ur_;
+
+    std::vector<std::unique_ptr<simpleVectorField>>
+        UrVector_; // for every phase
+
+    std::vector<std::unique_ptr<simpleVectorField>>
+        duVector_; // phasic momentum correction coefficient
+
+    std::vector<std::unique_ptr<simpleVectorField>>
+        duTildeVector_; // phasic Rhie-Chow correction coefficient
 
     std::unique_ptr<density> rho_;
 
     std::vector<std::unique_ptr<density>> rhoVector_; // for every phase
 
+    std::vector<std::unique_ptr<density>>
+        phaseMassCoefficientVector_; // alpha_k * rho_k
+
     std::unique_ptr<massFlowRate> mDot_;
 
     std::vector<std::unique_ptr<massFlowRate>> mDotVector_; // for every phase
+
+    std::vector<std::unique_ptr<massFlowRate>>
+        intrinsicMDotVector_; // rho_k * U_k dot S
+
+    std::vector<std::unique_ptr<simpleVectorField>>
+        interphaseMomentumSourceVector_;
+
+    std::vector<std::unique_ptr<simpleScalarField>> dragDiagonalVector_;
+
+    // per-phase body force alpha_k (rho_k - rho_ref) g, after redistribution
+    std::vector<std::unique_ptr<simpleVectorField>> phaseBodyForceVector_;
 
     std::unique_ptr<pressure> p_;
 
@@ -151,9 +176,25 @@ public:
 
     static constexpr char Ur_ID[] = "relative_velocity";
 
+    static constexpr char du_ID[] = "du";
+
+    static constexpr char duTilde_ID[] = "du_tilde";
+
     static constexpr char rho_ID[] = "density";
 
     static constexpr char mDot_ID[] = "mass_flow_rate";
+
+    static constexpr char intrinsicMDot_ID[] = "intrinsic_mass_flow_rate";
+
+    static constexpr char phaseMassCoefficient_ID[] =
+        "phase_mass_coefficient";
+
+    static constexpr char interphaseMomentumSource_ID[] =
+        "interphase_momentum_source";
+
+    static constexpr char dragDiagonal_ID[] = "drag_diagonal";
+
+    static constexpr char phaseBodyForce_ID[] = "phase_body_force";
 
     static constexpr char p_ID[] = "pressure";
 

@@ -424,10 +424,9 @@ void domain::read_()
 
         const auto& fluidModelsBlock = domain_conf_["fluid_models"];
 
-        // flow model: always ON if no multiphase model
-        {
-            equations_[static_cast<int>(equationID::segregatedFlow)] = true;
-        }
+        // Exactly one flow system is selected below. Single-phase domains use
+        // segregatedFlow; multiphase domains select their dedicated system.
+        equations_[static_cast<int>(equationID::segregatedFlow)] = true;
 
         // query multiphase model: must exist in case more than a material is
         // assigned
@@ -437,26 +436,25 @@ void domain::read_()
             {
                 const auto& multiphaseBlock = fluidModelsBlock["multiphase"];
 
-                if (multiphaseBlock["homogeneous"])
+                auto configureFreeSurface = [&]()
                 {
-                    multiphase_.homogeneous_ =
-                        multiphaseBlock["homogeneous"].template as<bool>();
-
-                    if (!multiphase_.homogeneous_)
+                    if (!multiphaseBlock["free_surface_model"])
                     {
-                        errorMsg("Inhomogeneous multiphase is not supported");
+                        errorMsg("free surface model option is not provided "
+                                 "for multiphase block in fluid models of "
+                                 "domain " +
+                                 name());
                     }
-                }
-                else
-                {
-                    errorMsg("option is not provided for multiphase block in "
-                             "fluid models of domain");
-                }
 
-                if (multiphaseBlock["free_surface_model"])
-                {
                     const auto& freeSurfaceModelBlock =
                         multiphaseBlock["free_surface_model"];
+
+                    if (!freeSurfaceModelBlock["option"])
+                    {
+                        errorMsg("free_surface_model: `option` is required in "
+                                 "domain " +
+                                 name());
+                    }
 
                     multiphase_.freeSurfaceModel_.option_ =
                         convertFreeSurfaceModelOptionFromString(
@@ -466,51 +464,146 @@ void domain::read_()
                     if (multiphase_.freeSurfaceModel_.option_ !=
                         freeSurfaceModelOption::standard)
                     {
-                        errorMsg("Only free surface model is supported for "
-                                 "multiphase");
+                        errorMsg("Only the standard free surface model is "
+                                 "supported in domain " +
+                                 name());
+                    }
+
+                    multiphase_.option_ = multiphaseModelOption::freeSurface;
+                    multiphase_.homogeneous_ = true;
+                    equations_[static_cast<int>(
+                        equationID::segregatedFreeSurfaceFlow)] = true;
+                    equations_[static_cast<int>(equationID::segregatedFlow)] =
+                        false;
+
+                    if (freeSurfaceModelBlock["interface_compression_level"])
+                    {
+                        multiphase_.freeSurfaceModel_
+                            .interfaceCompressionLevel_ =
+                            freeSurfaceModelBlock
+                                ["interface_compression_level"]
+                                    .template as<label>();
+                    }
+
+                    if (freeSurfaceModelBlock["flux_corrected_transport"])
+                    {
+                        multiphase_.freeSurfaceModel_.fluxCorrectedTransport_ =
+                            freeSurfaceModelBlock["flux_corrected_transport"]
+                                .template as<bool>();
+                    }
+
+                    if (freeSurfaceModelBlock["n_alpha_corrections"])
+                    {
+                        multiphase_.freeSurfaceModel_.nAlphaCorrections_ =
+                            freeSurfaceModelBlock["n_alpha_corrections"]
+                                .template as<label>();
+                    }
+                };
+
+                if (multiphaseBlock["model"])
+                {
+                    multiphase_.option_ =
+                        convertMultiphaseModelOptionFromString(
+                            multiphaseBlock["model"]
+                                .template as<std::string>());
+
+                    if (multiphase_.option_ ==
+                        multiphaseModelOption::eulerEuler)
+                    {
+                        if (multiphaseBlock["homogeneous"] &&
+                            multiphaseBlock["homogeneous"].template as<bool>())
+                        {
+                            errorMsg("Euler-Euler multiphase requires "
+                                     "inhomogeneous phase velocities in "
+                                     "domain " +
+                                     name());
+                        }
+                        if (multiphaseBlock["free_surface_model"])
+                        {
+                            errorMsg("Euler-Euler and free_surface_model are "
+                                     "mutually exclusive in domain " +
+                                     name());
+                        }
+                        if (!multiphaseBlock["primary_phase"])
+                        {
+                            errorMsg("Euler-Euler multiphase requires "
+                                     "`primary_phase` in domain " +
+                                     name());
+                        }
+
+                        multiphase_.homogeneous_ = false;
+                        multiphase_.primaryPhaseName_ =
+                            multiphaseBlock["primary_phase"]
+                                .template as<std::string>();
+                        ::accel::tolower(multiphase_.primaryPhaseName_);
+                        if (!hasMaterial(multiphase_.primaryPhaseName_))
+                        {
+                            errorMsg("Euler-Euler primary phase `" +
+                                     multiphase_.primaryPhaseName_ +
+                                     "` is not a material in domain " +
+                                     name());
+                        }
+                        multiphase_.primaryPhaseGlobalIndex_ =
+                            simulationRef().materialIndex(
+                                multiphase_.primaryPhaseName_);
+
+                        if (multiphaseBlock["residual_volume_fraction"])
+                        {
+                            multiphase_.residualVolumeFraction_ =
+                                multiphaseBlock["residual_volume_fraction"]
+                                    .template as<scalar>();
+                        }
+                        if (multiphase_.residualVolumeFraction_ <= 0.0 ||
+                            multiphase_.residualVolumeFraction_ *
+                                    static_cast<scalar>(nMaterials()) >=
+                                1.0)
+                        {
+                            errorMsg(
+                                "Euler-Euler `residual_volume_fraction` must "
+                                "be positive and leave non-zero volume for "
+                                "every active phase in domain " +
+                                name());
+                        }
+
+                        equations_[static_cast<int>(
+                            equationID::segregatedEulerEulerFlow)] = true;
+                        equations_[static_cast<int>(
+                            equationID::segregatedFlow)] = false;
+                    }
+                    else if (multiphase_.option_ ==
+                             multiphaseModelOption::freeSurface)
+                    {
+                        if (multiphaseBlock["homogeneous"] &&
+                            !multiphaseBlock["homogeneous"]
+                                 .template as<bool>())
+                        {
+                            errorMsg("Free-surface multiphase requires "
+                                     "`homogeneous: true` in domain " +
+                                     name());
+                        }
+                        configureFreeSurface();
                     }
                     else
                     {
-                        equations_[static_cast<int>(
-                            equationID::segregatedFreeSurfaceFlow)] = true;
-                        equations_[static_cast<int>(
-                            equationID::segregatedFlow)] = false;
-
-                        // assert there are more than one phase in the domain
-                        assert(nMaterials() > 1);
-
-                        if (freeSurfaceModelBlock
-                                ["interface_compression_level"])
-                        {
-                            multiphase_.freeSurfaceModel_
-                                .interfaceCompressionLevel_ =
-                                freeSurfaceModelBlock
-                                    ["interface_compression_level"]
-                                        .template as<label>();
-                        }
-
-                        if (freeSurfaceModelBlock["flux_corrected_transport"])
-                        {
-                            multiphase_.freeSurfaceModel_
-                                .fluxCorrectedTransport_ =
-                                freeSurfaceModelBlock
-                                    ["flux_corrected_transport"]
-                                        .template as<bool>();
-                        }
-
-                        if (freeSurfaceModelBlock["n_alpha_corrections"])
-                        {
-                            multiphase_.freeSurfaceModel_.nAlphaCorrections_ =
-                                freeSurfaceModelBlock["n_alpha_corrections"]
-                                    .template as<label>();
-                        }
+                        errorMsg("A multiphase domain cannot use model `none`");
                     }
                 }
                 else
                 {
-                    errorMsg("free surface model option is not provided for "
-                             "multiphase block in "
-                             "fluid models of domain");
+                    // Legacy free-surface syntax remains supported unchanged.
+                    if (!multiphaseBlock["homogeneous"])
+                    {
+                        errorMsg("option is not provided for multiphase block "
+                                 "in fluid models of domain");
+                    }
+                    multiphase_.homogeneous_ =
+                        multiphaseBlock["homogeneous"].template as<bool>();
+                    if (!multiphase_.homogeneous_)
+                    {
+                        errorMsg("Inhomogeneous multiphase requires "
+                                 "`model: euler_euler`");
+                    }
+                    configureFreeSurface();
                 }
             }
             else
@@ -800,6 +893,12 @@ void domain::read_()
                 fpm.materialA_ = pairList[0];
                 fpm.materialB_ = pairList[1];
 
+                if (fpm.materialA_ == fpm.materialB_)
+                {
+                    errorMsg("fluid_pair_models: a pair must contain two "
+                             "different materials");
+                }
+
                 // validate both materials exist in this domain
                 if (!this->hasMaterial(fpm.materialA_))
                 {
@@ -835,6 +934,12 @@ void domain::read_()
                 // read surface tension model
                 if (pairBlock["surface_tension"])
                 {
+                    if (multiphase_.option_ ==
+                        multiphaseModelOption::eulerEuler)
+                    {
+                        errorMsg("surface_tension is currently available only "
+                                 "for the free-surface model");
+                    }
                     const auto& stBlock = pairBlock["surface_tension"];
 
                     if (stBlock["option"])
@@ -849,6 +954,138 @@ void domain::read_()
                         fpm.surfaceTension_.coefficient_ =
                             stBlock["surface_tension_coefficient"]
                                 .template as<scalar>();
+                    }
+                }
+
+                // Pairwise Euler-Euler momentum transfer. The data structure
+                // is deliberately pair based so it scales to any phase count.
+                if (pairBlock["drag"])
+                {
+                    if (multiphase_.option_ !=
+                        multiphaseModelOption::eulerEuler)
+                    {
+                        errorMsg("drag models require `model: euler_euler`");
+                    }
+
+                    const auto& dragBlock = pairBlock["drag"];
+                    if (!dragBlock["option"])
+                    {
+                        errorMsg("fluid_pair_models drag: `option` is required");
+                    }
+                    fpm.drag_.option_ = convertDragModelOptionFromString(
+                        dragBlock["option"].template as<std::string>());
+
+                    if (fpm.drag_.option_ == dragModelOption::constant)
+                    {
+                        if (!dragBlock["coefficient"])
+                        {
+                            errorMsg("constant drag requires `coefficient`");
+                        }
+                        fpm.drag_.coefficient_ =
+                            dragBlock["coefficient"].template as<scalar>();
+                        if (fpm.drag_.coefficient_ < 0.0)
+                        {
+                            errorMsg("drag coefficient must be non-negative");
+                        }
+                    }
+                    else if (fpm.drag_.option_ ==
+                             dragModelOption::schillerNaumann)
+                    {
+                        if (!dragBlock["dispersed_phase"] ||
+                            !dragBlock["diameter"])
+                        {
+                            errorMsg("Schiller-Naumann drag requires "
+                                     "`dispersed_phase` and `diameter`");
+                        }
+                        fpm.drag_.dispersedPhaseName_ =
+                            dragBlock["dispersed_phase"]
+                                .template as<std::string>();
+                        ::accel::tolower(fpm.drag_.dispersedPhaseName_);
+                        if (fpm.drag_.dispersedPhaseName_ != fpm.materialA_ &&
+                            fpm.drag_.dispersedPhaseName_ != fpm.materialB_)
+                        {
+                            errorMsg("drag dispersed_phase must belong to its "
+                                     "fluid pair");
+                        }
+                        fpm.drag_.dispersedPhaseGlobalIndex_ =
+                            simulationRef().materialIndex(
+                                fpm.drag_.dispersedPhaseName_);
+                        fpm.drag_.diameter_ =
+                            dragBlock["diameter"].template as<scalar>();
+                        if (fpm.drag_.diameter_ <= 0.0)
+                        {
+                            errorMsg("dispersed phase diameter must be positive");
+                        }
+
+                        // Optional dispersed/continuous role blending. Without
+                        // it the named dispersed phase stays dispersed even
+                        // where it is the continuous one, which makes the drag
+                        // coefficient wrong by orders of magnitude there.
+                        fpm.drag_.invertedDiameter_ = fpm.drag_.diameter_;
+                        if (dragBlock["blending"])
+                        {
+                            const auto& blendBlock = dragBlock["blending"];
+                            if (blendBlock["option"])
+                            {
+                                fpm.drag_.blending_ =
+                                    convertDragBlendingOptionFromString(
+                                        blendBlock["option"]
+                                            .template as<std::string>());
+                            }
+                            if (blendBlock["min_partly_continuous"])
+                            {
+                                fpm.drag_.minPartlyContinuous_ =
+                                    blendBlock["min_partly_continuous"]
+                                        .template as<scalar>();
+                            }
+                            if (blendBlock["min_fully_continuous"])
+                            {
+                                fpm.drag_.minFullyContinuous_ =
+                                    blendBlock["min_fully_continuous"]
+                                        .template as<scalar>();
+                            }
+                            if (blendBlock["inverted_diameter"])
+                            {
+                                fpm.drag_.invertedDiameter_ =
+                                    blendBlock["inverted_diameter"]
+                                        .template as<scalar>();
+                                if (fpm.drag_.invertedDiameter_ <= 0.0)
+                                {
+                                    errorMsg("drag blending: "
+                                             "`inverted_diameter` must be "
+                                             "positive");
+                                }
+                            }
+                            if (blendBlock["segregated_m"])
+                            {
+                                fpm.drag_.segregatedM_ =
+                                    blendBlock["segregated_m"]
+                                        .template as<scalar>();
+                            }
+                            if (blendBlock["segregated_n"])
+                            {
+                                fpm.drag_.segregatedN_ =
+                                    blendBlock["segregated_n"]
+                                        .template as<scalar>();
+                            }
+                            if (fpm.drag_.segregatedM_ < 0.0 ||
+                                fpm.drag_.segregatedN_ < 0.0)
+                            {
+                                errorMsg("drag blending: `segregated_m` and "
+                                         "`segregated_n` must be "
+                                         "non-negative");
+                            }
+                            if (fpm.drag_.minPartlyContinuous_ < 0.0 ||
+                                fpm.drag_.minFullyContinuous_ > 1.0 ||
+                                fpm.drag_.minPartlyContinuous_ >=
+                                    fpm.drag_.minFullyContinuous_)
+                            {
+                                errorMsg(
+                                    "drag blending requires 0 <= "
+                                    "`min_partly_continuous` < "
+                                    "`min_fully_continuous` <= 1");
+                            }
+                        }
                     }
                 }
 

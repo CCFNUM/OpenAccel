@@ -2959,8 +2959,12 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
     const auto& muEffSTKFieldRef = model_->muEffRef().stkFieldRef();
     const auto& mDotSideSTKFieldRef =
         model_->mDotRef().sideFieldRef().stkFieldRef();
-    const auto& sideFlowDirectionSTKFieldRef =
-        model_->URef().sideFlowDirectionFieldRef().stkFieldRef();
+    const bool hasSideFlowDirection =
+        model_->URef().hasSideFlowDirectionFields();
+    const auto* sideFlowDirectionSTKFieldPtr =
+        hasSideFlowDirection
+            ? &model_->URef().sideFlowDirectionFieldRef().stkFieldRef()
+            : nullptr;
 
     // Get geometric fields
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
@@ -3064,8 +3068,10 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
             // pointer to face data
             const scalar* mDot =
                 stk::mesh::field_data(mDotSideSTKFieldRef, side);
-            const scalar* dir =
-                stk::mesh::field_data(sideFlowDirectionSTKFieldRef, side);
+            const scalar* dir = sideFlowDirectionSTKFieldPtr
+                                    ? stk::mesh::field_data(
+                                          *sideFlowDirectionSTKFieldPtr, side)
+                                    : nullptr;
             const scalar* areaVec =
                 stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
 
@@ -3213,7 +3219,12 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
                     scalar den = 0.0;
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        const scalar d = dir[SPATIAL_DIM * ip + i];
+                        // Opening directions point into the domain. If a
+                        // phase-specific direction field is unavailable,
+                        // use the negative outward face normal.
+                        const scalar d = dir
+                                              ? dir[SPATIAL_DIM * ip + i]
+                                              : -p_nx[i];
                         num += p_uBip[i] * p_nx[i];
                         den += d * p_nx[i];
                     }

@@ -4,8 +4,18 @@
 # Description: CMake build definitions
 # Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
+find_package(Eigen3 QUIET)
+if(Eigen3_FOUND)
+    target_include_directories(main_obj SYSTEM PUBLIC ${EIGEN3_INCLUDE_DIRS})
+    message("-- Found Eigen3 = ${EIGEN3_INCLUDE_DIRS}")
+elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/eigen/Eigen/Core)
+    target_include_directories(main_obj SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/eigen)
+    message("-- Using vendored Eigen from external/eigen")
+else()
+    message(FATAL_ERROR "Eigen3 headers not found. Install libeigen3-dev or initialize the external/eigen submodule.")
+endif()
+
 target_include_directories(main_obj SYSTEM PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/eigen
     ${CMAKE_CURRENT_SOURCE_DIR}/exprtk
     ${CMAKE_CURRENT_SOURCE_DIR}/nanoflann/include
     ${CMAKE_CURRENT_SOURCE_DIR}/nalu/include

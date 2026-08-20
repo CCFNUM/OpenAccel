@@ -1011,6 +1011,16 @@ protected:
         return field_broker_->rhoRef();
     }
 
+    virtual velocity& advectionVelocityRef()
+    {
+        return field_broker_->URef();
+    }
+
+    virtual const velocity& advectionVelocityRef() const
+    {
+        return field_broker_->URef();
+    }
+
     virtual elementField<scalar, 1>& mDotRef()
     {
         return field_broker_->mDotRef();
@@ -1214,7 +1224,7 @@ void phiAssembler<N>::assembleBoundaryRelaxation_(const domain* domain,
                     if (domain->type() == domainType::fluid)
                     {
                         const boundaryConditionType UBCType =
-                            field_broker_->URef()
+                            this->advectionVelocityRef()
                                 .boundaryConditionRef(domain->index(),
                                                       iBoundary)
                                 .type();

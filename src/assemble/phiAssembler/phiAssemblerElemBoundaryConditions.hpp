@@ -935,7 +935,8 @@ void phiAssembler<N>::assembleElemTermsBoundaryInletFixedValue_(
         phi_->nodeSideFieldRef().stkFieldRef();
     const auto& sidePhiSTKFieldRef = phi_->sideFieldRef().stkFieldRef();
     const auto* reversalFlagSTKFieldPtr =
-        includeAdv ? field_broker_->URef().reversalFlagRef().stkFieldPtr()
+        includeAdv
+            ? this->advectionVelocityRef().reversalFlagRef().stkFieldPtr()
                    : nullptr;
 
     // Get geometric fields
@@ -1262,7 +1263,8 @@ void phiAssembler<N>::assembleElemTermsBoundaryOutletZeroGradient_(
     // Get fields
     const auto& phiSTKFieldRef = phi_->stkFieldRef();
     const auto* reversalFlagSTKFieldPtr =
-        includeAdv ? field_broker_->URef().reversalFlagRef().stkFieldPtr()
+        includeAdv
+            ? this->advectionVelocityRef().reversalFlagRef().stkFieldPtr()
                    : nullptr;
 
     // Get geometric fields
@@ -1475,12 +1477,24 @@ void phiAssembler<N>::assembleElemTermsBoundaryOpening_(
     std::vector<scalar> ws_dndx;
     std::vector<scalar> ws_det_j;
 
+    // This kernel needs `phi_`'s boundary side values for the reversed-flow
+    // (entrainment) branch. A field whose opening boundary condition never
+    // registered them would otherwise be a null dereference here.
+    STK_ThrowRequireMsg(
+        phi_->nodeSideFieldPtr() != nullptr && phi_->sideFieldPtr() != nullptr,
+        "phiAssembler::assembleElemTermsBoundaryOpening_: field `"
+            << phi_->name() << "` has no boundary side fields on opening `"
+            << boundary->name()
+            << "`; register them for this boundary, or give the equation a "
+               "specialized opening kernel");
+
     const auto& phiSTKFieldRef = phi_->stkFieldRef();
     const auto& nodalSidePhiSTKFieldRef =
         phi_->nodeSideFieldRef().stkFieldRef();
     const auto& sidePhiSTKFieldRef = phi_->sideFieldRef().stkFieldRef();
     const auto* reversalFlagSTKFieldPtr =
-        includeAdv ? field_broker_->URef().reversalFlagRef().stkFieldPtr()
+        includeAdv
+            ? this->advectionVelocityRef().reversalFlagRef().stkFieldPtr()
                    : nullptr;
 
     // Get geometric fields

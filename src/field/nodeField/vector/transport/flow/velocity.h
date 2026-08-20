@@ -48,6 +48,11 @@ public:
 
     void registerSideFlowDirectionFields(label iZone, label iBoundary);
 
+    bool hasSideFlowDirectionFields() const
+    {
+        return nodeSideFlowDirectionFieldPtr_ && sideFlowDirectionFieldPtr_;
+    }
+
     void updateInterfaceSideField(label iInterface, bool master) override;
 
     // Access
@@ -55,6 +60,16 @@ public:
     sideField<label, 1>& reversalFlagRef();
 
     const sideField<label, 1>& reversalFlagRef() const;
+
+    sideField<label, 1>* reversalFlagPtr()
+    {
+        return reversalFlagPtr_.get();
+    }
+
+    const sideField<label, 1>* reversalFlagPtr() const
+    {
+        return reversalFlagPtr_.get();
+    }
 
     nodeSideField<scalar, SPATIAL_DIM>& nodeSideFlowDirectionFieldRef();
 

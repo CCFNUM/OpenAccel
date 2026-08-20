@@ -99,11 +99,24 @@ EXAMPLES_DIR = "examples"
 
 
 def available_example_cases(root: Path) -> list[str]:
-    """Names of every case directory under examples/, sorted."""
+    """Paths of every case directory under examples/, relative to it, sorted.
+
+    Most examples are flat (``examples/cavity``), but some are grouped into
+    sub-directories (``examples/incompressible/laminar/eulerEuler/
+    slipRelaxation``), so nested directories holding an ``input.i`` are
+    discovered too. Flat directory names are kept unconditionally so a case
+    whose input file is named differently is still listed.
+    """
     examples = root / EXAMPLES_DIR
     if not examples.is_dir():
         return []
-    return sorted(p.name for p in examples.iterdir() if p.is_dir())
+    flat = {p.name for p in examples.iterdir() if p.is_dir()}
+    nested = {
+        str(p.parent.relative_to(examples))
+        for p in examples.rglob("input.i")
+        if p.is_file()
+    }
+    return sorted(flat | nested)
 
 
 def resolve_single_case(root: Path, requested: str) -> dict:
@@ -125,13 +138,25 @@ def resolve_single_case(root: Path, requested: str) -> dict:
     if match is None:
         match = next((n for n in names if n.lower() == name.lower()), None)
     if match is None:
+        # Accept the leaf name of a nested case, e.g. `slipRelaxation` for
+        # `incompressible/laminar/eulerEuler/slipRelaxation`.
+        leaves = [n for n in names if Path(n).name.lower() == name.lower()]
+        if len(leaves) > 1:
+            raise ValueError(
+                f"ambiguous case name '{requested}': matches "
+                + ", ".join(leaves)
+            )
+        if leaves:
+            match = leaves[0]
+    if match is None:
         raise ValueError(f"unknown case: {requested}")
 
     for case in SELECTED_CASES:
         if case["name"] == match:
             return dict(case)
-    # Cases outside the curated quick set are still runnable.
-    return {"name": match, "dir": f"{EXAMPLES_DIR}/{match}"}
+    # Cases outside the curated quick set are still runnable. Report under the
+    # leaf name so nested cases stay readable in the results table.
+    return {"name": Path(match).name, "dir": f"{EXAMPLES_DIR}/{match}"}
 
 
 # Files are NetCDF classic/64-bit (CDF-1/2/5) or NetCDF-4/HDF5.

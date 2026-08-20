@@ -39,6 +39,15 @@ target_sources(main_obj PRIVATE
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssembler.cpp
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssemblerElemInterfaceConditions.cpp
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssemblerElemTerms.cpp
+    ${DIR}/multiphase/eulerEuler/phasicContinuity/phasicContinuityAssembler.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/phasicNavierStokes/phasicNavierStokesAssembler.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/phasicNavierStokes/phasicNavierStokesAssemblerNodeTerms.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/phasicNavierStokes/phasicNavierStokesAssemblerElemBoundaryConditions.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/bulkPressureCorrection/bulkEulerEulerPressureCorrectionAssembler.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/bulkPressureCorrection/bulkEulerEulerPressureCorrectionAssemblerElemBoundaryConditions.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/bulkPressureCorrection/bulkEulerEulerPressureCorrectionAssemblerElemInterfaceConditions.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/bulkPressureCorrection/bulkEulerEulerPressureCorrectionAssemblerElemTerms.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/bulkPressureCorrection/bulkEulerEulerPressureCorrectionAssemblerNodeTerms.cpp
     ############################################################################
     ${DIR}/turbulence/RANS/kEpsilon/segregatedKEpsilon/turbulentDissipationRate/turbulentDissipationRateAssemblerElemBoundaryConditions.cpp
     ${DIR}/turbulence/RANS/kEpsilon/segregatedKEpsilon/turbulentDissipationRate/turbulentDissipationRateAssemblerNodeTerms.cpp
@@ -78,6 +87,9 @@ target_include_directories(main_obj PUBLIC
     ############################################################################
     ${DIR}/multiphase/freeSurfaceFlow/segregatedBulkFlow/bulkPressureCorrection
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction
+    ${DIR}/multiphase/eulerEuler/phasicContinuity
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/phasicNavierStokes
+    ${DIR}/multiphase/eulerEuler/segregatedPhasicFlow/bulkPressureCorrection
     ############################################################################
     ${DIR}/phiAssembler
     ############################################################################

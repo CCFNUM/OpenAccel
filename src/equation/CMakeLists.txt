@@ -23,6 +23,10 @@ target_sources(main_obj PRIVATE
     ${DIR}/multiphase/freeSurfaceFlow/bulkPressureCorrection/bulkPressureCorrectionEquation.cpp
     ${DIR}/multiphase/freeSurfaceFlow/segregatedFreeSurfaceFlowEquations.cpp
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionEquation.cpp
+    ${DIR}/multiphase/eulerEuler/segregatedEulerEulerFlowEquations.cpp
+    ${DIR}/multiphase/eulerEuler/phasicContinuityEquation.cpp
+    ${DIR}/multiphase/eulerEuler/phasicNavierStokesEquation.cpp
+    ${DIR}/multiphase/eulerEuler/bulkEulerEulerPressureCorrectionEquation.cpp
     ############################################################################
     ${DIR}/turbulence/RANS/kEpsilon/segregatedKEpsilonEquations.cpp
     ${DIR}/turbulence/RANS/kEpsilon/turbulentDissipationRate/turbulentDissipationRateEquation.cpp
@@ -64,6 +68,7 @@ target_include_directories(main_obj PUBLIC
     ${DIR}/multiphase/freeSurfaceFlow/bulkNavierStokes
     ${DIR}/multiphase/freeSurfaceFlow/bulkPressureCorrection
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction
+    ${DIR}/multiphase/eulerEuler
     ############################################################################
     ${DIR}/turbulence/RANS/kEpsilon
     ${DIR}/turbulence/RANS/kEpsilon/turbulentDissipationRate

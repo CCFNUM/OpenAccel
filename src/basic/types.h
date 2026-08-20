@@ -235,6 +235,7 @@ enum class equationID
     coupledNavierStokes,
     pressureCorrection,
     segregatedCorrelationTransitionShearStressTransport,
+    segregatedEulerEulerFlow,
     segregatedFlow,
     segregatedFreeSurfaceFlow,
     segregatedKEpsilon,
@@ -295,6 +296,42 @@ enum class turbulenceOption
 };
 
 turbulenceOption convertTurbulenceOptionFromString(std::string s);
+
+// Multiphase model option
+enum class multiphaseModelOption
+{
+    none,
+    freeSurface,
+    eulerEuler
+};
+
+multiphaseModelOption convertMultiphaseModelOptionFromString(std::string s);
+
+// Interphase drag model option
+enum class dragModelOption
+{
+    none,
+    constant,
+    schillerNaumann
+};
+
+dragModelOption convertDragModelOptionFromString(std::string s);
+
+// How the dispersed/continuous roles of a fluid pair are resolved.
+//   none   - the roles are fixed by `dispersed_phase` everywhere. Correct only
+//            while the named phase really is the dispersed one.
+//   linear - the roles follow the local volume fraction, blended linearly over
+//            [min_partly_continuous, min_fully_continuous]. Needed wherever a
+//            case contains both a dispersed region and a separated one (a
+//            bubble column with a free surface has bubbles in liquid below the
+//            interface and droplets in gas above it).
+enum class dragBlendingOption
+{
+    none,
+    linear
+};
+
+dragBlendingOption convertDragBlendingOptionFromString(std::string s);
 
 // Free surface model option
 enum class freeSurfaceModelOption

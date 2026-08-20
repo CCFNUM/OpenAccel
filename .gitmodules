@@ -4,7 +4,7 @@
 	branch = main
 [submodule "external/eigen"]
 	path = external/eigen
-	url = https://gitlab.com/libeigen/eigen.git
+	url = https://github.com/eigen/eigen.git
 [submodule "external/exprtk"]
 	path = external/exprtk
 	url = https://github.com/ArashPartow/exprtk.git

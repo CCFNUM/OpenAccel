@@ -32,6 +32,7 @@ std::unordered_map<std::string, equationID> equationIDMap{
     {"pressure_correction", equationID::pressureCorrection},
     {"segregated_correlation_transition_shear_stress_transport",
      equationID::segregatedCorrelationTransitionShearStressTransport},
+    {"segregated_euler_euler_flow", equationID::segregatedEulerEulerFlow},
     {"segregated_flow", equationID::segregatedFlow},
     {"segregated_free_surface_flow", equationID::segregatedFreeSurfaceFlow},
     {"segregated_k_epsilon", equationID::segregatedKEpsilon},
@@ -154,6 +155,59 @@ turbulenceOption convertTurbulenceOptionFromString(std::string s)
         errorMsg("No turbulence option found for `" + s + "`");
     }
     return turbulenceOptionMap[s];
+}
+
+// Multiphase model option
+std::unordered_map<std::string, multiphaseModelOption> multiphaseModelOptionMap{
+    {"none", multiphaseModelOption::none},
+    {"free_surface", multiphaseModelOption::freeSurface},
+    {"euler_euler", multiphaseModelOption::eulerEuler}};
+
+multiphaseModelOption convertMultiphaseModelOptionFromString(std::string s)
+{
+    ::accel::tolower(s);
+    std::replace(s.begin(), s.end(), '-', '_');
+    const auto it = multiphaseModelOptionMap.find(s);
+    if (it == multiphaseModelOptionMap.end())
+    {
+        errorMsg("No multiphase model option found for `" + s + "`");
+    }
+    return multiphaseModelOptionMap[s];
+}
+
+// Interphase drag model option
+std::unordered_map<std::string, dragModelOption> dragModelOptionMap{
+    {"none", dragModelOption::none},
+    {"constant", dragModelOption::constant},
+    {"schiller_naumann", dragModelOption::schillerNaumann}};
+
+dragModelOption convertDragModelOptionFromString(std::string s)
+{
+    ::accel::tolower(s);
+    std::replace(s.begin(), s.end(), '-', '_');
+    const auto it = dragModelOptionMap.find(s);
+    if (it == dragModelOptionMap.end())
+    {
+        errorMsg("No drag model option found for `" + s + "`");
+    }
+    return dragModelOptionMap[s];
+}
+
+// Drag blending option
+std::unordered_map<std::string, dragBlendingOption> dragBlendingOptionMap{
+    {"none", dragBlendingOption::none},
+    {"linear", dragBlendingOption::linear}};
+
+dragBlendingOption convertDragBlendingOptionFromString(std::string s)
+{
+    ::accel::tolower(s);
+    std::replace(s.begin(), s.end(), '-', '_');
+    const auto it = dragBlendingOptionMap.find(s);
+    if (it == dragBlendingOptionMap.end())
+    {
+        errorMsg("No drag blending option found for `" + s + "`");
+    }
+    return dragBlendingOptionMap[s];
 }
 
 // Free surface model option

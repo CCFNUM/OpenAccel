@@ -67,7 +67,9 @@ velocity::velocity(realm* realmPtr,
                         {
                             reversalFlagPtr_ =
                                 std::make_unique<sideField<label, 1>>(
-                                    realmPtr->meshPtr(), "reversal_flag", 1);
+                                    realmPtr->meshPtr(),
+                                    name + ".reversal_flag",
+                                    1);
                         }
                         // Put the side field on the corresponding boundary
                         // part
@@ -5534,13 +5536,17 @@ void velocity::registerSideFlowDirectionFields(label iZone, label iBoundary)
     {
         nodeSideFlowDirectionFieldPtr_ =
             std::make_unique<nodeSideField<scalar, SPATIAL_DIM>>(
-                this->meshPtr(), "flow_direction_node_side", 1);
+                this->meshPtr(),
+                this->name() + ".flow_direction_node_side",
+                1);
     }
     if (!sideFlowDirectionFieldPtr_)
     {
         sideFlowDirectionFieldPtr_ =
             std::make_unique<sideField<scalar, SPATIAL_DIM>>(
-                this->meshPtr(), "flow_direction_side", 1);
+                this->meshPtr(),
+                this->name() + ".flow_direction_side",
+                1);
     }
 
     // Put the side fields on the corresponding boundary part

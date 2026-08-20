@@ -55,7 +55,13 @@ struct multiphase
         label nAlphaCorrections_ = 1; // FCT outer corrections
     };
 
+    multiphaseModelOption option_ = multiphaseModelOption::none;
     bool homogeneous_ = true;
+    std::string primaryPhaseName_;
+    label primaryPhaseGlobalIndex_ = -1;
+    // Numerical phase-presence floor used by Euler-Euler momentum and alpha
+    // bounding. Cases may override this to match their phase model.
+    scalar residualVolumeFraction_ = 1.0e-6;
     freeSurfaceModel freeSurfaceModel_;
 };
 
@@ -95,7 +101,31 @@ struct fluidPairModel
         scalar coefficient_ = 0.0;
     };
 
+    struct drag
+    {
+        dragModelOption option_ = dragModelOption::none;
+        scalar coefficient_ = 0.0;
+        std::string dispersedPhaseName_;
+        label dispersedPhaseGlobalIndex_ = -1;
+        scalar diameter_ = 0.0;
+
+        // Dispersed/continuous role blending. Defaults reproduce OpenFOAM's
+        // usual thresholds; `none` restores the fixed-role behaviour.
+        dragBlendingOption blending_ = dragBlendingOption::linear;
+        scalar minPartlyContinuous_ = 0.3;
+        scalar minFullyContinuous_ = 0.7;
+        // Size of the nominally continuous phase once it becomes the dispersed
+        // one (droplets in gas). Defaults to `diameter_` when unset.
+        scalar invertedDiameter_ = 0.0;
+        // Marschall segregated-interface drag coefficients. These are used
+        // only where the blending weights leave a segregated contribution.
+        scalar segregatedM_ = 0.5;
+        scalar segregatedN_ = 8.0;
+
+    };
+
     surfaceTension surfaceTension_;
+    drag drag_;
 };
 
 struct material

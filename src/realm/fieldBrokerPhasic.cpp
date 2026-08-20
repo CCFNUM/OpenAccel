@@ -17,6 +17,207 @@
 namespace accel
 {
 
+void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain,
+                                label iPhase)
+{
+    auto& velocityField = URef(iPhase);
+    if (!velocityField.isZoneUnset(domain->index()))
+    {
+        return;
+    }
+
+    velocityField.setZone(domain->index());
+    const std::string phaseName =
+        realmPtr_->simulationRef().materialName(iPhase);
+    initialCondition::setupFluidSpecificFieldInitializationOverDomainFromInput(
+        velocityField, realm::U_ID, phaseName, domain);
+
+    for (interface* interf : domain->interfacesRef())
+    {
+        if (interf->isInternal())
+        {
+            if (!interf->isSlipNonOverlap())
+            {
+                velocityField.registerSideFieldsForInterfaceSide(
+                    interf->index(), true, true);
+                velocityField.registerSideFieldsForInterfaceSide(
+                    interf->index(), false, true);
+            }
+        }
+        else if (interf->isFluidSolidType())
+        {
+            velocityField.registerSideFieldsForInterfaceSide(
+                interf->index(), interf->isMasterZone(domain->index()));
+        }
+        else if (!interf->isSlipNonOverlap())
+        {
+            velocityField.registerSideFieldsForInterfaceSide(
+                interf->index(),
+                interf->isMasterZone(domain->index()),
+                true);
+        }
+    }
+
+    setupBoundaryConditions_(
+        domain,
+        iPhase,
+        [this](const ::accel::domain* domain,
+               const label iBoundary,
+               const label iPhase,
+               const boundaryPhysicalType physicalType,
+               const YAML::Node fluidValues)
+    {
+        auto& phaseVelocity = URef(iPhase);
+        auto& bc = phaseVelocity.boundaryConditionRef(domain->index(),
+                                                       iBoundary);
+        const std::string phaseName =
+            realmPtr_->simulationRef().materialName(iPhase);
+        // `fluid_values` is optional on a patch (e.g. wall/symmetry). A missing
+        // block is a Null node, which is `IsDefined()` but not a map: indexing
+        // it yields an invalid node that throws on the next lookup, so test
+        // IsMap() before descending into the phase entry. The fallback must be
+        // an explicitly Undefined node so the `!velocityNode` tests below see
+        // "not specified" -- a default-constructed node is Null, not undefined.
+        const YAML::Node velocityNode =
+            fluidValues.IsMap() ? fluidValues[phaseName]["velocity"]
+                                : YAML::Node(YAML::NodeType::Undefined);
+
+        auto setSpecifiedValue = [&]()
+        {
+            bc.setType(boundaryConditionType::specifiedValue);
+            if (velocityNode["value"])
+            {
+                bc.query<SPATIAL_DIM>(velocityNode, "value", "value");
+            }
+            else if (velocityNode["velocity"])
+            {
+                bc.query<SPATIAL_DIM>(velocityNode, "value", "velocity");
+            }
+            else
+            {
+                errorMsg("phase velocity value is missing for `" + phaseName +
+                         "`");
+            }
+            phaseVelocity.registerSideFields(domain->index(), iBoundary);
+        };
+
+        std::string option;
+        if (velocityNode && velocityNode["option"])
+        {
+            option = velocityNode["option"].template as<std::string>();
+            ::accel::tolower(option);
+        }
+
+        switch (physicalType)
+        {
+            case boundaryPhysicalType::inlet:
+                if (!velocityNode)
+                {
+                    errorMsg("phase velocity must be specified at an inlet "
+                             "for `" +
+                             phaseName + "`");
+                }
+                if (option == "value")
+                {
+                    setSpecifiedValue();
+                }
+                else if (option == "zero_gradient")
+                {
+                    bc.setType(boundaryConditionType::zeroGradient);
+                }
+                else
+                {
+                    errorMsg("unsupported phase velocity inlet option `" +
+                             option + "`");
+                }
+                break;
+
+            case boundaryPhysicalType::outlet:
+            case boundaryPhysicalType::opening:
+                if (physicalType == boundaryPhysicalType::opening)
+                {
+                    // Opening momentum needs a direction field for every
+                    // phase. The common field broker parses the opening
+                    // direction; use the boundary normal for each phasic
+                    // velocity unless a phase-specific direction is given.
+                    bc.setType(boundaryConditionType::specifiedDirection);
+                    bc.addRawData("flow_direction_option",
+                                  "normal_to_boundary_condition");
+                    phaseVelocity.registerSideFlowDirectionFields(
+                        domain->index(), iBoundary);
+                }
+                if (!velocityNode || option == "zero_gradient")
+                {
+                    bc.setType(boundaryConditionType::zeroGradient);
+                }
+                else if (option == "value")
+                {
+                    setSpecifiedValue();
+                }
+                else
+                {
+                    errorMsg("unsupported phase velocity outlet/opening "
+                             "option `" +
+                             option + "`");
+                }
+                break;
+
+            case boundaryPhysicalType::wall:
+                if (!velocityNode || option == "no_slip" ||
+                    option == "no_slip_wall")
+                {
+                    bc.setType(boundaryConditionType::noSlip);
+                    bc.setConstantValue<SPATIAL_DIM>(
+                        "value", std::vector<scalar>(SPATIAL_DIM, 0));
+                    phaseVelocity.registerSideFields(domain->index(),
+                                                     iBoundary);
+                }
+                else if (option == "slip")
+                {
+                    bc.setType(boundaryConditionType::slip);
+                }
+                else if (option == "value")
+                {
+                    setSpecifiedValue();
+                }
+                else
+                {
+                    errorMsg("unsupported phase velocity wall option `" +
+                             option + "`");
+                }
+                break;
+
+            case boundaryPhysicalType::symmetry:
+                bc.setType(boundaryConditionType::symmetry);
+                break;
+
+            default:
+                break;
+        }
+    });
+
+    if (meshRef().anyZoneFrameRotating() ||
+        meshRef().anyZoneMeshTransforming() ||
+        meshRef().anyZoneMeshDeforming())
+    {
+        UrRef(iPhase).setZone(domain->index());
+    }
+}
+
+void fieldBroker::setupMomentumCorrection(
+    const std::shared_ptr<domain> domain,
+    label iPhase)
+{
+    if (duRef(iPhase).isZoneUnset(domain->index()))
+    {
+        duRef(iPhase).setZone(domain->index());
+    }
+    if (duTildeRef(iPhase).isZoneUnset(domain->index()))
+    {
+        duTildeRef(iPhase).setZone(domain->index());
+    }
+}
+
 void fieldBroker::setupVolumeFraction(const std::shared_ptr<domain> domain,
                                       label iPhase)
 {
@@ -65,6 +266,12 @@ void fieldBroker::setupVolumeFraction(const std::shared_ptr<domain> domain,
             {
                 case boundaryPhysicalType::inlet:
                     {
+                        if (!fluidValues.IsMap())
+                        {
+                            errorMsg("`fluid_values` must be specified at an "
+                                     "inlet boundary of domain `" +
+                                     domain->name() + "`");
+                        }
                         const auto& fluidValuesForMaterialNode =
                             fluidValues[realmPtr_->simulationRef().materialName(
                                 iPhase)];
@@ -107,6 +314,12 @@ void fieldBroker::setupVolumeFraction(const std::shared_ptr<domain> domain,
 
                 case boundaryPhysicalType::opening:
                     {
+                        if (!fluidValues.IsMap())
+                        {
+                            errorMsg("`fluid_values` must be specified at an "
+                                     "opening boundary of domain `" +
+                                     domain->name() + "`");
+                        }
                         const auto& fluidValuesForMaterialNode =
                             fluidValues[realmPtr_->simulationRef().materialName(
                                 iPhase)];
@@ -309,6 +522,15 @@ void fieldBroker::initializeVolumeFraction(const std::shared_ptr<domain> domain,
     }
 }
 
+void fieldBroker::initializeVelocity(const std::shared_ptr<domain> domain,
+                                     label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).initialize(domain->index());
+    }
+}
+
 void fieldBroker::initializeDensity(const std::shared_ptr<domain> domain,
                                     label iPhase)
 {
@@ -413,6 +635,15 @@ void fieldBroker::resetVolumeFraction(const std::shared_ptr<domain> domain,
     }
 }
 
+void fieldBroker::resetVelocity(const std::shared_ptr<domain> domain,
+                                label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).initialize(domain->index(), true);
+    }
+}
+
 void fieldBroker::resetDensity(const std::shared_ptr<domain> domain,
                                label iPhase)
 {
@@ -474,6 +705,15 @@ void fieldBroker::updateVolumeFraction(const std::shared_ptr<domain> domain,
     if (realmPtr_->alphaVector_[iPhase])
     {
         alphaRef(iPhase).update(domain->index());
+    }
+}
+
+void fieldBroker::updateVelocity(const std::shared_ptr<domain> domain,
+                                 label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).update(domain->index());
     }
 }
 
@@ -579,6 +819,16 @@ void fieldBroker::updateVolumeFractionGradientField(
     }
 }
 
+void fieldBroker::updateVelocityGradientField(
+    const std::shared_ptr<domain> domain,
+    label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).updateGradientField(domain->index());
+    }
+}
+
 void fieldBroker::updateDensityGradientField(
     const std::shared_ptr<domain> domain,
     label iPhase)
@@ -629,6 +879,16 @@ void fieldBroker::updateVolumeFractionBlendingFactorField(
     }
 }
 
+void fieldBroker::updateVelocityBlendingFactorField(
+    const std::shared_ptr<domain> domain,
+    label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).updateBlendingFactorField(domain->index());
+    }
+}
+
 void fieldBroker::updateDensityBlendingFactorField(
     const std::shared_ptr<domain> domain,
     label iPhase)
@@ -676,6 +936,16 @@ void fieldBroker::updateVolumeFractionPrevIterField(
     if (realmPtr_->alphaVector_[iPhase])
     {
         alphaRef(iPhase).updatePrevIterField(domain->index());
+    }
+}
+
+void fieldBroker::updateVelocityPrevIterField(
+    const std::shared_ptr<domain> domain,
+    label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).updatePrevIterField(domain->index());
     }
 }
 
@@ -769,7 +1039,84 @@ void fieldBroker::updateThermalConductivityPrevTimeField(
     }
 }
 
+void fieldBroker::updateVelocityPrevTimeField(
+    const std::shared_ptr<domain> domain,
+    label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).updatePrevTimeField(domain->index());
+    }
+}
+
+void fieldBroker::synchronizeVelocity(const std::shared_ptr<domain> domain,
+                                      label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).synchronize(domain->index());
+    }
+}
+
+void fieldBroker::updateVelocityScale(label iPhase)
+{
+    if (realmPtr_->UVector_[iPhase])
+    {
+        URef(iPhase).updateScale();
+    }
+}
+
 // Public access
+
+velocity& fieldBroker::URef(label iPhase)
+{
+    RETURN_REF_ALLOC_MATERIAL(
+        realmPtr_->UVector_,
+        iPhase,
+        velocity,
+        realmPtr_,
+        realm::U_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        n_states,
+        high_res);
+}
+
+const velocity& fieldBroker::URef(label iPhase) const
+{
+    RETURN_REF_ALLOC_MATERIAL(
+        realmPtr_->UVector_,
+        iPhase,
+        velocity,
+        realmPtr_,
+        realm::U_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        n_states,
+        high_res);
+}
+
+simpleVectorField& fieldBroker::UrRef(label iPhase)
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->UrVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::Ur_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+const simpleVectorField& fieldBroker::UrRef(label iPhase) const
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->UrVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::Ur_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
 
 density& fieldBroker::rhoRef(label iPhase)
 {
@@ -821,6 +1168,131 @@ const massFlowRate& fieldBroker::mDotRef(label iPhase) const
         realm::mDot_ID + std::string(".") +
             realmPtr_->simulationRef().materialName(iPhase),
         n_states);
+}
+
+massFlowRate& fieldBroker::intrinsicMDotRef(label iPhase)
+{
+    RETURN_REF_ALLOC_MATERIAL(
+        realmPtr_->intrinsicMDotVector_,
+        iPhase,
+        massFlowRate,
+        realmPtr_,
+        realm::intrinsicMDot_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        n_states);
+}
+
+const massFlowRate& fieldBroker::intrinsicMDotRef(label iPhase) const
+{
+    RETURN_REF_ALLOC_MATERIAL(
+        realmPtr_->intrinsicMDotVector_,
+        iPhase,
+        massFlowRate,
+        realmPtr_,
+        realm::intrinsicMDot_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        n_states);
+}
+
+density& fieldBroker::phaseMassCoefficientRef(label iPhase)
+{
+    RETURN_REF_ALLOC_MATERIAL(
+        realmPtr_->phaseMassCoefficientVector_,
+        iPhase,
+        density,
+        realmPtr_,
+        realm::phaseMassCoefficient_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        n_states,
+        false,
+        false);
+}
+
+const density& fieldBroker::phaseMassCoefficientRef(label iPhase) const
+{
+    RETURN_REF_ALLOC_MATERIAL(
+        realmPtr_->phaseMassCoefficientVector_,
+        iPhase,
+        density,
+        realmPtr_,
+        realm::phaseMassCoefficient_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        n_states,
+        false,
+        false);
+}
+
+simpleVectorField& fieldBroker::phaseBodyForceRef(label iPhase)
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->phaseBodyForceVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::phaseBodyForce_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+const simpleVectorField& fieldBroker::phaseBodyForceRef(label iPhase) const
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->phaseBodyForceVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::phaseBodyForce_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+simpleVectorField& fieldBroker::interphaseMomentumSourceRef(label iPhase)
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->interphaseMomentumSourceVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::interphaseMomentumSource_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+const simpleVectorField& fieldBroker::interphaseMomentumSourceRef(
+    label iPhase) const
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->interphaseMomentumSourceVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::interphaseMomentumSource_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+simpleScalarField& fieldBroker::dragDiagonalRef(label iPhase)
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->dragDiagonalVector_,
+        iPhase,
+        simpleScalarField,
+        realmPtr_,
+        realm::dragDiagonal_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+const simpleScalarField& fieldBroker::dragDiagonalRef(label iPhase) const
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->dragDiagonalVector_,
+        iPhase,
+        simpleScalarField,
+        realmPtr_,
+        realm::dragDiagonal_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
 }
 
 // Protected access
@@ -1062,6 +1534,54 @@ const simpleVectorField& fieldBroker::nHatRef(label iPhase) const
             realmPtr_->simulationRef().materialName(iPhase),
         stk::topology::NODE_RANK);
 };
+
+simpleVectorField& fieldBroker::duRef(label iPhase)
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->duVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::du_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+const simpleVectorField& fieldBroker::duRef(label iPhase) const
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->duVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::du_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+simpleVectorField& fieldBroker::duTildeRef(label iPhase)
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->duTildeVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::duTilde_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
+
+const simpleVectorField& fieldBroker::duTildeRef(label iPhase) const
+{
+    RETURN_REF_ALLOC_AUX_MATERIAL(
+        realmPtr_->duTildeVector_,
+        iPhase,
+        simpleVectorField,
+        realmPtr_,
+        realm::duTilde_ID + std::string(".") +
+            realmPtr_->simulationRef().materialName(iPhase),
+        stk::topology::NODE_RANK);
+}
 
 void fieldBroker::setupBoundaryConditions_(
     const std::shared_ptr<domain> domain,

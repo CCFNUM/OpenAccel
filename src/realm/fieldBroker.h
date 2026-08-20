@@ -95,6 +95,34 @@ public:
 
     const massFlowRate& mDotRef(label iPhase) const;
 
+    massFlowRate& intrinsicMDotRef(label iPhase);
+
+    const massFlowRate& intrinsicMDotRef(label iPhase) const;
+
+    density& phaseMassCoefficientRef(label iPhase);
+
+    const density& phaseMassCoefficientRef(label iPhase) const;
+
+    simpleVectorField& phaseBodyForceRef(label iPhase);
+
+    const simpleVectorField& phaseBodyForceRef(label iPhase) const;
+
+    simpleVectorField& interphaseMomentumSourceRef(label iPhase);
+
+    const simpleVectorField& interphaseMomentumSourceRef(label iPhase) const;
+
+    simpleScalarField& dragDiagonalRef(label iPhase);
+
+    const simpleScalarField& dragDiagonalRef(label iPhase) const;
+
+    velocity& URef(label iPhase);
+
+    const velocity& URef(label iPhase) const;
+
+    simpleVectorField& UrRef(label iPhase);
+
+    const simpleVectorField& UrRef(label iPhase) const;
+
     // public API for fluid transport
     // TODO: Provide convenience methods for transport
     // field initialization and facilitation of code re-usage
@@ -194,6 +222,12 @@ public:
     virtual void setupMassFlowRate(const std::shared_ptr<domain> domain,
                                    label iPhase);
 
+    virtual void setupVelocity(const std::shared_ptr<domain> domain,
+                               label iPhase);
+
+    virtual void setupMomentumCorrection(const std::shared_ptr<domain> domain,
+                                         label iPhase);
+
     // public API for field raw initialization
 
     virtual void initializeVelocity(const std::shared_ptr<domain> domain);
@@ -289,6 +323,9 @@ public:
     virtual void initializeMassFlowRate(const std::shared_ptr<domain> domain,
                                         label iPhase);
 
+    virtual void initializeVelocity(const std::shared_ptr<domain> domain,
+                                    label iPhase);
+
     // public API for field raw resetting
 
     virtual void resetVelocity(const std::shared_ptr<domain> domain);
@@ -363,6 +400,9 @@ public:
 
     virtual void resetCompressibility(const std::shared_ptr<domain> domain,
                                       label iPhase);
+
+    virtual void resetVelocity(const std::shared_ptr<domain> domain,
+                               label iPhase);
 
     // public API for field raw update
 
@@ -448,7 +488,10 @@ public:
                                        label iPhase);
 
     virtual void updateMassFlowRate(const std::shared_ptr<domain> domain,
-                                    label iPhase);
+                                   label iPhase);
+
+    virtual void updateVelocity(const std::shared_ptr<domain> domain,
+                                label iPhase);
 
     // gradient
 
@@ -517,6 +560,10 @@ public:
                                       label iPhase);
 
     virtual void
+    updateVelocityGradientField(const std::shared_ptr<domain> domain,
+                                label iPhase);
+
+    virtual void
     updateDensityGradientField(const std::shared_ptr<domain> domain,
                                label iPhase);
 
@@ -580,6 +627,10 @@ public:
     // index)
 
     virtual void updateVolumeFractionBlendingFactorField(
+        const std::shared_ptr<domain> domain,
+        label iPhase);
+
+    virtual void updateVelocityBlendingFactorField(
         const std::shared_ptr<domain> domain,
         label iPhase);
 
@@ -660,6 +711,10 @@ public:
                                       label iPhase);
 
     virtual void
+    updateVelocityPrevIterField(const std::shared_ptr<domain> domain,
+                                label iPhase);
+
+    virtual void
     updateDensityPrevIterField(const std::shared_ptr<domain> domain,
                                label iPhase);
 
@@ -737,6 +792,15 @@ public:
     virtual void
     updateVolumeFractionPrevTimeField(const std::shared_ptr<domain> domain,
                                       label iPhase);
+
+    virtual void
+    updateVelocityPrevTimeField(const std::shared_ptr<domain> domain,
+                                label iPhase);
+
+    virtual void synchronizeVelocity(const std::shared_ptr<domain> domain,
+                                     label iPhase);
+
+    virtual void updateVelocityScale(label iPhase);
 
     virtual void
     updateDensityPrevTimeField(const std::shared_ptr<domain> domain,
@@ -1092,6 +1156,14 @@ protected:
     simpleVectorField& nHatRef(label iPhase);
 
     const simpleVectorField& nHatRef(label iPhase) const;
+
+    simpleVectorField& duRef(label iPhase);
+
+    const simpleVectorField& duRef(label iPhase) const;
+
+    simpleVectorField& duTildeRef(label iPhase);
+
+    const simpleVectorField& duTildeRef(label iPhase) const;
 
 protected:
     // helper methods for auxiliary fields

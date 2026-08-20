@@ -284,12 +284,31 @@ void simulation::createDomains_()
                              " have different heat transfer options");
                 }
 
-                if (dm1.multiphase_.freeSurfaceModel_.option_ !=
-                    dm2.multiphase_.freeSurfaceModel_.option_)
+                if (dm1.multiphase_.option_ != dm2.multiphase_.option_)
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different multiphase model options");
+                }
+
+                if (dm1.multiphase_.option_ ==
+                        multiphaseModelOption::freeSurface &&
+                    dm1.multiphase_.freeSurfaceModel_.option_ !=
+                        dm2.multiphase_.freeSurfaceModel_.option_)
                 {
                     errorMsg("Domains connected through interface " +
                              iface.name() +
                              " have different free surface model options");
+                }
+
+                if (dm1.multiphase_.option_ ==
+                        multiphaseModelOption::eulerEuler &&
+                    dm1.multiphase_.primaryPhaseGlobalIndex_ !=
+                        dm2.multiphase_.primaryPhaseGlobalIndex_)
+                {
+                    errorMsg("Domains connected through interface " +
+                             iface.name() +
+                             " have different Euler-Euler primary phases");
                 }
 
                 if (dm1.buoyancy_.option_ != dm2.buoyancy_.option_)
@@ -487,6 +506,17 @@ void simulation::collectEquations_()
             {
                 equationVector_.push_back(
                     std::make_unique<segregatedFreeSurfaceFlowEquations>(
+                        realmPtr_.get()));
+            }
+        }
+
+        // segregated Euler-Euler flow equations
+        if (domain->hasEquation(equationID::segregatedEulerEulerFlow))
+        {
+            if (!findEquation_(equationID::segregatedEulerEulerFlow))
+            {
+                equationVector_.push_back(
+                    std::make_unique<segregatedEulerEulerFlowEquations>(
                         realmPtr_.get()));
             }
         }

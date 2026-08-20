@@ -85,7 +85,7 @@ void phiAssembler<N>::assembleElemTermsInterior_(const domain* domain,
     const auto& blendingFactorSTKFieldRef =
         phi_->blendingFactorRef().stkFieldRef();
     const auto* USTKFieldPtr =
-        NSO ? field_broker_->URef().stkFieldPtr() : nullptr;
+        NSO ? this->advectionVelocityRef().stkFieldPtr() : nullptr;
     const auto* rhoSTKFieldPtr = NSO ? this->rhoRef().stkFieldPtr() : nullptr;
 
     // Get geometric fields

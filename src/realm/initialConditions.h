@@ -104,9 +104,28 @@ void setupFluidSpecificFieldInitializationOverDomainFromInput(
     const std::string& phase_name,
     const std::shared_ptr<domain>& domain)
 {
-    const YAML::Node phase_conf =
-        domain->getYAMLInitialConditions()["fluid_specific_initialization"]
-                                          [phase_name];
+    // Guard each level: indexing an undefined YAML node throws InvalidNode,
+    // which hides which field/phase is actually missing from the input.
+    const YAML::Node fsi_conf =
+        domain->getYAMLInitialConditions()["fluid_specific_initialization"];
+    if (!fsi_conf)
+    {
+        errorMsg("initialCondition::"
+                 "setupFluidSpecificFieldInitializationOverDomainFromInput: "
+                 "initialization config does not define "
+                 "`fluid_specific_initialization` for domain `" +
+                 domain->name() + "` (required for field `" + field_name +
+                 "` of phase `" + phase_name + "`)");
+    }
+    const YAML::Node phase_conf = fsi_conf[phase_name];
+    if (!phase_conf)
+    {
+        errorMsg("initialCondition::"
+                 "setupFluidSpecificFieldInitializationOverDomainFromInput: "
+                 "`fluid_specific_initialization` has no entry for phase `" +
+                 phase_name + "` in domain `" + domain->name() +
+                 "` (required for field `" + field_name + "`)");
+    }
     const YAML::Node field_conf = phase_conf[field_name];
     if (field_conf)
     {

@@ -23,6 +23,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/solidMechanics/solidMechanicsModel.cpp
     ############################################################################
     ${DIR}/multiphase/freeSurfaceFlow/freeSurfaceFlowModel.cpp
+    ${DIR}/multiphase/eulerEuler/eulerEulerModel.cpp
     ${DIR}/multiphase/multiphaseModel.cpp
     ############################################################################
     ${DIR}/turbulence/RANS/RANSModel.cpp
@@ -51,6 +52,7 @@ target_include_directories(main_obj PUBLIC
     ${DIR}/solidMechanics
     ############################################################################
     ${DIR}/multiphase
+    ${DIR}/multiphase/eulerEuler
     ${DIR}/multiphase/freeSurfaceFlow
     ############################################################################
     ${DIR}/turbulence

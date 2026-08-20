@@ -22,8 +22,26 @@ include(cmake/CheckGit.cmake)
 CheckGitSetup()
 
 # Find MPI package
-option(MPI_CXX_SKIP_MPICXX "Skip MPI C++ bindings" ON)
-find_package(MPI REQUIRED)
+option(MPI_CXX_SKIP_MPICXX "Skip MPI C++ bindings" OFF)
+if(DEFINED PETSC_DIR)
+    get_filename_component(PETSC_PARENT_DIR "${PETSC_DIR}" DIRECTORY)
+    file(GLOB SPACK_OPENMPI_PREFIXES "${PETSC_PARENT_DIR}/openmpi-*")
+    list(LENGTH SPACK_OPENMPI_PREFIXES SPACK_OPENMPI_PREFIX_COUNT)
+    if(SPACK_OPENMPI_PREFIX_COUNT EQUAL 1)
+        list(GET SPACK_OPENMPI_PREFIXES 0 SPACK_OPENMPI_PREFIX)
+        if(EXISTS "${SPACK_OPENMPI_PREFIX}/bin/mpicc" AND EXISTS "${SPACK_OPENMPI_PREFIX}/bin/mpicxx")
+            message("-- Using OpenMPI from PETSc sibling prefix: ${SPACK_OPENMPI_PREFIX}")
+            set(MPI_C_COMPILER "${SPACK_OPENMPI_PREFIX}/bin/mpicc" CACHE FILEPATH "MPI C compiler" FORCE)
+            set(MPI_CXX_COMPILER "${SPACK_OPENMPI_PREFIX}/bin/mpicxx" CACHE FILEPATH "MPI CXX compiler" FORCE)
+            include_directories(BEFORE "${SPACK_OPENMPI_PREFIX}/include")
+            link_directories("${SPACK_OPENMPI_PREFIX}/lib" "${SPACK_OPENMPI_PREFIX}/lib64")
+            list(APPEND CMAKE_PREFIX_PATH "${SPACK_OPENMPI_PREFIX}/lib/cmake" "${SPACK_OPENMPI_PREFIX}/lib64/cmake")
+        endif()
+    elseif(SPACK_OPENMPI_PREFIX_COUNT GREATER 1)
+        message(WARNING "Multiple OpenMPI prefixes found next to PETSC_DIR; using default MPI detection")
+    endif()
+endif()
+find_package(MPI REQUIRED COMPONENTS C CXX)
 
 # Set a default value of 3 for SPATIAL_DIM if not provided
 if(NOT DEFINED SPATIAL_DIM)
@@ -75,6 +93,34 @@ find_package(Trilinos NO_MODULE REQUIRED)
 message("-- Found Trilinos = ${Trilinos_DIR}")
 message("   Trilinos version: ${Trilinos_VERSION}")
 
+set(TRILINOS_INCLUDE_HINTS)
+set(TRILINOS_LIBRARY_HINTS)
+if(DEFINED ENV{TRILINOS_ROOT})
+    list(APPEND TRILINOS_INCLUDE_HINTS "$ENV{TRILINOS_ROOT}/include")
+    list(APPEND TRILINOS_LIBRARY_HINTS
+         "$ENV{TRILINOS_ROOT}/lib" "$ENV{TRILINOS_ROOT}/lib64")
+else()
+    # A package-manager installation normally places TrilinosConfig.cmake in
+    # <prefix>/lib*/cmake/Trilinos. Derive the prefix from the package that
+    # find_package selected instead of embedding a developer-machine path.
+    get_filename_component(TRILINOS_CMAKE_DIR "${Trilinos_DIR}" DIRECTORY)
+    get_filename_component(TRILINOS_LIB_DIR "${TRILINOS_CMAKE_DIR}" DIRECTORY)
+    get_filename_component(TRILINOS_PREFIX "${TRILINOS_LIB_DIR}" DIRECTORY)
+    if(EXISTS "${TRILINOS_PREFIX}/include")
+        list(APPEND TRILINOS_INCLUDE_HINTS "${TRILINOS_PREFIX}/include")
+        list(APPEND TRILINOS_LIBRARY_HINTS
+             "${TRILINOS_PREFIX}/lib" "${TRILINOS_PREFIX}/lib64")
+    elseif(EXISTS "/usr/include/trilinos")
+        list(APPEND TRILINOS_INCLUDE_HINTS "/usr/include/trilinos")
+    endif()
+endif()
+list(APPEND TRILINOS_INCLUDE_HINTS ${Trilinos_INCLUDE_DIRS})
+list(APPEND TRILINOS_LIBRARY_HINTS ${Trilinos_LIBRARY_DIRS})
+list(REMOVE_DUPLICATES TRILINOS_INCLUDE_HINTS)
+list(REMOVE_DUPLICATES TRILINOS_LIBRARY_HINTS)
+include_directories(BEFORE SYSTEM ${TRILINOS_INCLUDE_HINTS})
+link_directories(${TRILINOS_LIBRARY_HINTS})
+
 # Check if Trilinos linear solver packages are available (Belos, Ifpack2, Tpetra)
 set(TRILINOS_LINEAR_SOLVER_AVAILABLE FALSE)
 if(WITH_TRILINOS_SOLVER)
@@ -122,12 +168,22 @@ endif()
 
 # PETSc
 if(DEFINED PETSC_DIR)
+    if(NOT IS_DIRECTORY "${PETSC_DIR}")
+        message(FATAL_ERROR "PETSC_DIR is defined but does not point to a directory: ${PETSC_DIR}")
+    endif()
+
+    if(NOT EXISTS "${PETSC_DIR}/include/petscksp.h" AND
+       NOT EXISTS "${PETSC_DIR}/${PETSC_ARCH}/include/petscksp.h" AND
+       NOT EXISTS "${PETSC_DIR}/include/petsc/finclude/petscksp.h")
+        message(FATAL_ERROR "Cannot find petscksp.h in PETSC_DIR. Please verify PETSC_DIR and PETSC_ARCH.\n  PETSC_DIR=${PETSC_DIR}\n  PETSC_ARCH=${PETSC_ARCH}")
+    endif()
+
     message("-- PETSC_DIR (${PETSC_DIR}) is provided. PETSc functionalities are enabled.")
     add_compile_definitions(HAS_PETSC)
-    include_directories(${PETSC_DIR}/include)
+    include_directories(BEFORE ${PETSC_DIR}/include)
 
     if(DEFINED PETSC_ARCH)
-        include_directories(${PETSC_DIR}/${PETSC_ARCH}/include)
+        include_directories(BEFORE ${PETSC_DIR}/${PETSC_ARCH}/include)
     endif()
 else()
     if (PKG_CONFIG_FOUND)
@@ -136,7 +192,7 @@ else()
 
         if(PETSC_FOUND)
             add_compile_definitions(HAS_PETSC)
-            include_directories(${PETSC_INCLUDE_DIRS})
+            include_directories(BEFORE ${PETSC_INCLUDE_DIRS})
             link_directories(${PETSC_LIBRARY_DIRS})
         else()
             message("-- PETSc functionalities are DISABLED")
@@ -203,7 +259,7 @@ target_link_libraries(main_obj PUBLIC ${libLinSolve})
 target_link_libraries(main_obj PUBLIC ${Trilinos_LIBRARIES})
 
 # Link your executable with MPI libraries
-target_link_libraries(main_obj PUBLIC MPI::MPI_C)
+target_link_libraries(main_obj PUBLIC MPI::MPI_C MPI::MPI_CXX)
 
 # Link to Git version object and various dependencies for external/
 target_link_libraries(main_obj PRIVATE git_version)

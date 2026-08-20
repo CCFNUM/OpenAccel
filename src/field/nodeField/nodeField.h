@@ -385,6 +385,16 @@ public:
 
     const nodeSideField<scalar, N>& nodeSideFieldRef() const;
 
+    nodeSideField<scalar, N>* nodeSideFieldPtr()
+    {
+        return nodeSideFieldPtr_.get();
+    }
+
+    const nodeSideField<scalar, N>* nodeSideFieldPtr() const
+    {
+        return nodeSideFieldPtr_.get();
+    }
+
     sideField<scalar, N>& sideFieldRef();
 
     const sideField<scalar, N>& sideFieldRef() const;

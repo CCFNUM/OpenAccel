@@ -31,6 +31,7 @@
 #include "segregatedCorrelationTransitionShearStressTransportEquations.h"
 
 // multiphase
+#include "segregatedEulerEulerFlowEquations.h"
 #include "segregatedFreeSurfaceFlowEquations.h"
 
 // clang-format on

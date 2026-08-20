@@ -1434,6 +1434,14 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
                                     bc.query<1>(massAndMomentumNode,
                                                 "value",
                                                 "relative_pressure");
+                                    if (massAndMomentumNode["reference_phase"])
+                                    {
+                                        bc.addRawData(
+                                            "reference_phase",
+                                            massAndMomentumNode
+                                                ["reference_phase"]
+                                                    .template as<std::string>());
+                                    }
                                     pRef().registerSideFields(domain->index(),
                                                               iBoundary);
                                 }
