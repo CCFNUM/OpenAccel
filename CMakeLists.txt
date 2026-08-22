@@ -160,8 +160,7 @@ else()
 endif()
 
 # Solid mechanics assembler: both SFEM and CVFEM are always compiled in;
-# selection between them is a runtime expert parameter
-# (solid_assembler_type in the input file).
+# selection between them is a runtime expert parameter (solid_assembler_type in the input file).
 message("-- Solid mechanics assembler: SFEM + CVFEM (runtime-selectable)")
 
 # Which thermal energy equation to use?

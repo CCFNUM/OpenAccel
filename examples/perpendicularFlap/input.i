@@ -23,7 +23,7 @@ simulation:
                     timestep_increase_factor: 1.06
         domains:
         - name: fluid
-          location: [fluid]
+          location: [fluiddefault-hex]
           materials: [fluid_1]
           type: fluid
           domain_models:
@@ -66,7 +66,7 @@ simulation:
                 option: value
                 pressure: 0
         - name: solid
-          location: [solid]
+          location: [soliddefault-hex]
           materials: [solid_1]
           type: solid
           solid_models:

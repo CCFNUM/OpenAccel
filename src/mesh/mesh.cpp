@@ -38,9 +38,8 @@ mesh::mesh(controls* controlsPtr) : controlsPtr_(controlsPtr)
     }
     else
     {
-        // A Galerkin FEM element couples every pair of its nodes. The reduced
-        // CVFEM edge stencil drops valid FEM coefficients during global
-        // assembly.
+        // A Galerkin FEM element couples every pair of its nodes; the reduced
+        // CVFEM edge stencil would drop valid FEM coefficients during global assembly.
         stencil_ = ::linearSolver::GraphLayout::Stencil__Full;
     }
 }

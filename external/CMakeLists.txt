@@ -15,9 +15,8 @@ target_include_directories(main_obj SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/gplotpp
 )
 
-# SFEM external kernels (linked unconditionally: SFEM and CVFEM solid
-# mechanics are both always compiled in, with runtime dispatch between them
-# -- see solid_assembler_type expert parameter).
+# SFEM external kernels (linked unconditionally: SFEM and CVFEM are both
+# always compiled in, with runtime dispatch -- see solid_assembler_type expert parameter).
 set(SMESH_ENABLE_DEMO OFF CACHE BOOL "" FORCE)
 set(SMESH_ENABLE_DEV_MODE OFF CACHE BOOL "" FORCE)
 set(SMESH_ENABLE_MPI OFF CACHE BOOL "" FORCE)

@@ -18,10 +18,8 @@ void solidDisplacementAssembler::postAssemble(const domain* domain,
     }
     else
     {
-        // FEM solid mechanics assembles a consistent Newton tangent. Relaxing
-        // only its diagonal destroys rigid-body consistency and, together
-        // with the relaxed field correction, applies the displacement URF
-        // twice.
+        // SFEM tangent is a consistent Newton matrix; CVFEM diagonal relaxation
+        // would break rigid-body kernel and double-apply the URF via ΔD.
         this->applyConstraints(domain, ctx);
     }
     applySymmetryConditions_(domain, ctx);
