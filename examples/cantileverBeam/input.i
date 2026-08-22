@@ -33,7 +33,7 @@ simulation:
                 solid_mechanics:
                     option: traction
                     pressure: 0
-                    shear: [0, 0, 0]
+                    shear: [0, 0]
           - name: top
             type: wall
             location: [top]
@@ -41,7 +41,7 @@ simulation:
                 solid_mechanics:
                     option: traction
                     pressure: 0
-                    shear: [1, 0, 0]
+                    shear: [1, 0]
           - name: bottom
             type: wall
             location: [bottom]
@@ -49,7 +49,7 @@ simulation:
                 solid_mechanics:
                     option: traction
                     pressure: 0
-                    shear: [0, 0, 0]
+                    shear: [0, 0]
           - name: left
             type: wall
             location: [left]
@@ -57,7 +57,7 @@ simulation:
                 solid_mechanics:
                     option: traction
                     pressure: 0
-                    shear: [0, 0, 0]
+                    shear: [0, 0]
           - name: right
             type: wall
             location: [right]
@@ -65,51 +65,41 @@ simulation:
                 solid_mechanics:
                     option: traction
                     pressure: 0
-                    shear: [0, 0, 0]
+                    shear: [0, 0]
           initialization:
             displacement:
                 option: value
-                displacement: [0, 0, 0]
+                displacement: [0, 0]
     solver:
         solver_control:
             basic_settings:
                 convergence_controls:
                     min_iterations: 1
                     max_iterations: 50
-                    # Required by OpenAccel steady-state controls; it does not
-                    # add inertia to the solid equation.
                     physical_timescale: 1
                     relaxation_parameters:
-                        # solids4foam field relaxation for DD is 0.3. Its
-                        # separate equation relaxation for D (0.9) has no
-                        # independent OpenAccel input equivalent.
                         solid_displacement_relaxation_factor: 0.3
                 convergence_criteria:
                     residual_type: RMS
-                    # This RMS correction metric is not equivalent to
-                    # solids4foam's solutionTolerance.
                     residual_target: 1e-8
             advanced_options:
                 equation_controls:
                     sub_iterations:
-                        # One displacement correction per outer corrector.
                         solid_displacement: 1
                 linear_solver_settings:
                     default:
                         family: PETSc
                         min_iterations: 0
-                        # Solve the SFEM Newton tangent completely. The
-                        # solids4foam PCG/DIC operator is not equivalent.
-                        max_iterations: 1
+                        max_iterations: 20
                         rtol: 1.0e-4
-                        atol: 1.0e-9
+                        atol: 1.0e-10
                         options:
                             ksp_type: preonly
                             pc_type: lu
         output_control:
             file_path: results.e
             output_frequency: 1
-            output_fields: [displacement]
+            output_fields: [displacement,stress,strain]
             corrected_boundary_values: true
     material_library:
     - name: steel

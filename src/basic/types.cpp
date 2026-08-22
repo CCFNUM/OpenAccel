@@ -1114,6 +1114,27 @@ convertKinematicFormulationTypeFromString(std::string s)
     return kinematicFormulationType::totalLagrangian; // useless
 }
 
+// Solid mechanics assembler technology
+
+std::unordered_map<std::string, solidAssemblerType> solidAssemblerTypeMap{
+    {"sfem", solidAssemblerType::sfem},
+    {"cvfem", solidAssemblerType::cvfem}};
+
+solidAssemblerType convertSolidAssemblerTypeFromString(std::string s)
+{
+    auto it = solidAssemblerTypeMap.find(s);
+    if (it != solidAssemblerTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid solid assembler type: " + s);
+    }
+
+    return solidAssemblerType::cvfem; // useless
+}
+
 // Post process type
 
 std::unordered_map<std::string, postProcessType> postProcessTypeMap{

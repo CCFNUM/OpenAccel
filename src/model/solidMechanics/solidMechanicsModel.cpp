@@ -1292,24 +1292,17 @@ void solidMechanicsModel::updateStressAndStrain_(
     // Check if plane stress or plane strain
     const bool planeStress = domain->solidMechanics_.planeStress_;
 
-#ifndef USE_CVFEM_SOLID_MECHANICS
     // FEM path: the post-processed strain/stress measure must match the
     // constitutive option actually used for the nonlinear solve (see
     // assembleSfemNeoHookeanElement() in
     // solidDisplacementAssemblerElemTerms.cpp). For neoHookean we
     // report the finite-strain Cauchy stress and Green-Lagrange strain
     // instead of the infinitesimal-strain linear-elastic measures below.
-    const bool useNeoHookeanStress =
-        (domain->solidMechanics_.option_ ==
-         solidMechanicsOption::neoHookean);
-
-    // Same rationale as useNeoHookeanStress above, for the Flory-split
-    // compressible modified Mooney-Rivlin model (see
-    // assembleSfemModifiedMooneyRivlinElement() in
-    // solidDisplacementAssemblerElemTerms.cpp).
-    const bool useMooneyRivlinStress =
-        (domain->solidMechanics_.option_ ==
-         solidMechanicsOption::modifiedMooneyRivlin);
+    // CVFEM has no finite-strain post-processing path, so these stay false
+    // and the infinitesimal-strain/linear-elastic measures below are always
+    // used in that case.
+    bool useNeoHookeanStress = false;
+    bool useMooneyRivlinStress = false;
 
     // c1/c2/kappa are simple per-domain material constants (Task 2's
     // material::mechanicalProperties_ fields), not per-node fields like E/nu
@@ -1317,14 +1310,27 @@ void solidMechanicsModel::updateStressAndStrain_(
     scalar mooneyC1 = 0.0;
     scalar mooneyC2 = 0.0;
     scalar mooneyKappa = 0.0;
-    if (useMooneyRivlinStress)
+
+    if (!this->controlsRef().isCvfemSolidMechanics())
     {
-        const auto& mechProps = domain->materialRef().mechanicalProperties_;
-        mooneyC1 = mechProps.c1_;
-        mooneyC2 = mechProps.c2_;
-        mooneyKappa = mechProps.kappa_;
+        useNeoHookeanStress = (domain->solidMechanics_.option_ ==
+                               solidMechanicsOption::neoHookean);
+
+        // Same rationale as useNeoHookeanStress above, for the Flory-split
+        // compressible modified Mooney-Rivlin model (see
+        // assembleSfemModifiedMooneyRivlinElement() in
+        // solidDisplacementAssemblerElemTerms.cpp).
+        useMooneyRivlinStress = (domain->solidMechanics_.option_ ==
+                                 solidMechanicsOption::modifiedMooneyRivlin);
+
+        if (useMooneyRivlinStress)
+        {
+            const auto& mechProps = domain->materialRef().mechanicalProperties_;
+            mooneyC1 = mechProps.c1_;
+            mooneyC2 = mechProps.c2_;
+            mooneyKappa = mechProps.kappa_;
+        }
     }
-#endif
 
     // Get interior parts
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -1471,7 +1477,6 @@ void solidMechanicsModel::updateStressAndStrain_(
                         }
                     }
 
-#ifndef USE_CVFEM_SOLID_MECHANICS
                     if (useNeoHookeanStress)
                     {
                         // Deformation gradient: F = I + grad_X(u)
@@ -1663,7 +1668,6 @@ void solidMechanicsModel::updateStressAndStrain_(
                         }
                     }
                     else
-#endif
                     {
                         // Infinitesimal strain:
                         // ε_ij = 0.5 * (∂u_i/∂x_j + ∂u_j/∂x_i)
@@ -1681,9 +1685,7 @@ void solidMechanicsModel::updateStressAndStrain_(
                     }
                 }
 
-#ifndef USE_CVFEM_SOLID_MECHANICS
                 if (!useNeoHookeanStress && !useMooneyRivlinStress)
-#endif
                 {
                     // Linear elastic constitutive law (default for
                     // linearElastic and any other unrecognized option):
