@@ -1,5 +1,4 @@
 # vim: ft=yaml
-# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -8,15 +7,16 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 1
+            total_time: 0.4
             time_steps:
                 option: adaptive
-                initial_timestep: 0.0001
+                #timestep: 0.0002
+                initial_timestep: 0.001
                 timestep_update_frequency: 1
                 timestep_adaptation:
                     option: max_courant
-                    courant_number: 0.25
-                    min_timestep: 1.0e-6
+                    courant_number: 0.3
+                    min_timestep: 1.0e-7
                     max_timestep: 1
                     timestep_decrease_factor: 0.8
                     timestep_increase_factor: 1.06
@@ -102,7 +102,7 @@ simulation:
           type: solid
           solid_models:
             solid_mechanics:
-                option: linear_elastic
+                option: neo_hookean
                 formulation: total_lagrangian
                 plane_stress: false
           boundaries:
@@ -131,69 +131,86 @@ simulation:
         solver_control:
             basic_settings:
                 advection_scheme: high_resolution
-                transient_scheme: second_order_backward_euler
+                transient_scheme: first_order_backward_euler
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 10
+                    max_iterations: 100
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-6
+                    residual_target: 1e-7
+                    physics_convergence:
+                         enabled: false
+                         write_residuals: true
+                         criteria: [fsi_interface_residual]
+                         targets:
+                              fsi_interface_residual: 1e-4
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:
                 equation_controls:
+                    sub_iterations:
+                        pressure_correction: 15
+                        solid_displacement: 20   
                     volume_fraction_smoothing:
                         smooth_volume_fraction: true
-                        smoothing_iterations: 3
-                        fourier_number: 0.25
+                        smoothing_iterations: 4
+                        fourier_number: 0.2
                     acceleration:
                         solid_displacement:
                             option: aitken
-                            initial_omega: 0.05
-                            omega_min: 0.01
-                            omega_max: 0.6
+                            initial_omega: 0.2
+                            omega_min: 0.05
+                            omega_max: 0.5
                     mesh_motion:
                         freeze_per_timestep: false
-                        max_smoothing_iters: 25
+                        max_smoothingi_iters: 50
                 interface_transfer:
                     verbose: 1
                 linear_solver_settings:
                     default:
                         family: Trilinos
                         min_iterations: 3
-                        max_iterations: 50
-                        rtol: 1.0e-3
+                        max_iterations: 100
+                        rtol: 1.0e-5
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
                             preconditioner: ilu
+                    solid_displacement:
+                        family: PETSc
+                        max_iterations: 100
+                        rtol: 1.0e-7
+                        atol: 1.0e-12
+                        options:
+                            ksp_type: preonly
+                            pc_type: lu
                     pressure_correction:
                         family: HYPRE
                         min_iterations: 3
                         max_iterations: 100
-                        rtol: 1.0e-5
-                        atol: 1.0e-10
+                        rtol: 1.0e-6
+                        atol: 1.0e-12
                         options:
                             solver:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-                                coarsen_type: 6 # Falgout — robust for jumps
+                                coarsen_type: 6
                                 interp_type: 6
-                                relax_type: 18 # Symmetric hybrid SOR
+                                relax_type: 6
                                 strong_threshold: 0.5
-                                num_sweeps: 3
+                                num_sweeps: 2
                                 max_levels: 25
                                 aggressive_levels: 0
-                                trunc_factor: 0.1
+                                trunc_factor: 0
             expert_parameters:
                 body_force_redistribution: false
                 force_full_node_graph: false
         output_control:
-            file_path: results.e
+            file_path: results_40000kg.e
             output_frequency:
                 option: time_interval
-                time_interval: 0.05
+                time_interval: 0.01
             write_timestep_info: true
             output_fields: [velocity, pressure, volume_fraction.water, displacement_mesh, velocity_mesh, density, dynamic_viscosity]
             corrected_boundary_values: true
@@ -222,9 +239,12 @@ simulation:
             option: value
             density: 2500
       mechanical_properties:
+        #c1: 80e6         # 80 MPa
+        #c2: 20e6         # 20 MPa
+        #kappa: 4970e6
         young_modulus:
             option: value
             young_modulus: 1e6
         poisson_ratio:
             option: value
-            poisson_ratio: 0
+            poisson_ratio: 0  

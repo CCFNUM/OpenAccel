@@ -1,7 +1,7 @@
 # vim: ft=yaml
 # This is a 3D case and must be run with a 3D-compiled binary.
 mesh:
-    file_path: mesh.e
+    file_path: mesh_2d.e
     automatic_decomposition_type: rcb
 simulation:
     verbose: 1
@@ -31,7 +31,7 @@ simulation:
                     shear: [10000, 0, 0]
           - name: symmetry
             type: symmetry
-            location: [left, down, front_and_back]
+            location: [left, down]
           initialization:
             displacement:
                 option: value

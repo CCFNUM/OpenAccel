@@ -1036,6 +1036,14 @@ void controls::read(YAML::Node inputNode)
                             .template as<std::string>());
             }
 
+            if (expertParameters["solid_assembler_type"])
+            {
+                solver_.solverControl_.expertParameters_.solidAssemblerType_ =
+                    convertSolidAssemblerTypeFromString(
+                        expertParameters["solid_assembler_type"]
+                            .template as<std::string>());
+            }
+
             if (expertParameters["strong_dirichlet_wall_scale"])
             {
                 solver_.solverControl_.expertParameters_

@@ -11,7 +11,6 @@
 namespace accel
 {
 
-#ifndef USE_CVFEM_SOLID_MECHANICS
 namespace
 {
 
@@ -123,14 +122,14 @@ bool assembleFEMInterfacePenalty(
 }
 
 } // namespace
-#endif
 
 void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
     const domain* domain,
     const interfaceSideInfo* interfaceSideInfoPtr,
     Context* ctx)
 {
-#ifdef USE_CVFEM_SOLID_MECHANICS
+    if (field_broker_->controlsRef().isCvfemSolidMechanics())
+    {
     if (interfaceSideInfoPtr->interfPtr()->isFluidSolidType())
     {
         const auto& mesh = field_broker_->meshRef();
@@ -936,7 +935,9 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
             }
         }
     }
-#else
+    }
+    else
+    {
     const auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
@@ -1395,7 +1396,7 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
     }
-#endif
+    }
 }
 
 } // namespace accel

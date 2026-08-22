@@ -267,6 +267,8 @@ struct solverDictionary
             nonconformalMethod nonconformalMethod_ =
                 nonconformalMethod::discontinuousGalerkin;
             gradientAveragingType cvpgType_ = gradientAveragingType::arithAver;
+            solidAssemblerType solidAssemblerType_ =
+                solidAssemblerType::cvfem;
         };
 
         basicSettingsDictionary basicSettings_;
@@ -359,6 +361,8 @@ public:
     bool isReducedStencil() const;
 
     bool isRenumbered() const;
+
+    bool isCvfemSolidMechanics() const;
 
     bool isTransient() const;
 

@@ -43,6 +43,12 @@ bool controls::isRenumbered() const
     return solver_.solverControl_.expertParameters_.nodeReordering_;
 }
 
+bool controls::isCvfemSolidMechanics() const
+{
+    return solver_.solverControl_.expertParameters_.solidAssemblerType_ ==
+           solidAssemblerType::cvfem;
+}
+
 bool controls::isTransient() const
 {
     return analysisType_.transient_;

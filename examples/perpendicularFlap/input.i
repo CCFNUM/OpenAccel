@@ -10,8 +10,17 @@ simulation:
             option: transient
             total_time: 5
             time_steps:
-                option: constant
-                timestep: 0.01
+                option: adaptive
+                #timestep: 0.001
+                initial_timestep: 0.001
+                timestep_update_frequency: 1
+                timestep_adaptation:
+                    option: max_courant
+                    courant_number: 0.3
+                    min_timestep: 1.0e-6
+                    max_timestep: 0.01
+                    timestep_decrease_factor: 0.8
+                    timestep_increase_factor: 1.06
         domains:
         - name: fluid
           location: [fluid]
@@ -37,7 +46,7 @@ simulation:
             boundary_details:
                 mass_and_momentum:
                     option: velocity_components
-                    u: 10
+                    u: 50
                     v: 0
           - name: outlet
             type: outlet
@@ -62,7 +71,7 @@ simulation:
           type: solid
           solid_models:
             solid_mechanics:
-                option: linear_elastic
+                option: neo_hookean
                 formulation: total_lagrangian
                 plane_stress: false
           boundaries:
@@ -91,7 +100,7 @@ simulation:
         solver_control:
             basic_settings:
                 transient_scheme: first_order_backward_euler
-                advection_scheme: upwind
+                advection_scheme: high_resolution
                 convergence_controls:
                     min_iterations: 1
                     max_iterations: 50
@@ -111,16 +120,16 @@ simulation:
                             option: aitken
                             initial_omega: 0.5
                             omega_min: 0.1
-                            omega_max: 1.0
+                            omega_max: 0.7
                     mesh_motion:
                         freeze_per_timestep: false
                         max_smoothing_iters: 3
                 linear_solver_settings:
                     default:
-                        family: Trilinos
+                        family: trilinos
                         min_iterations: 3
-                        max_iterations: 20
-                        rtol: 1.0e-2
+                        max_iterations: 200
+                        rtol: 1.0e-5
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
@@ -130,7 +139,7 @@ simulation:
             output_frequency:
                 option: timestep_interval
                 timestep_interval: 10
-            output_fields: [velocity, pressure, density, total_pressure, young_modulus, poisson_ratio, velocity_mesh, displacement_mesh]
+            output_fields: [velocity, pressure, stress, strain, density, total_pressure, young_modulus, poisson_ratio, velocity_mesh, displacement_mesh]
             corrected_boundary_values: true
             post_process:
             - name: forces
