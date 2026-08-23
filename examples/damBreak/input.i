@@ -8,18 +8,19 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 1
+            total_time: 10
             time_steps:
-                option: adaptive
-                initial_timestep: 0.001
-                timestep_update_frequency: 1
-                timestep_adaptation:
-                    option: max_courant
-                    courant_number: 1.0
-                    min_timestep: 1.0e-6
-                    max_timestep: 1
-                    timestep_decrease_factor: 0.8
-                    timestep_increase_factor: 1.06
+                option: constant
+                timestep: 0.1
+                #initial_timestep: 1
+                #timestep_update_frequency: 1
+                #timestep_adaptation:
+                    #option: max_courant
+                    #courant_number: 1.0
+                    #min_timestep: 1.0e-2
+                    #max_timestep: 1.1
+                    #timestep_decrease_factor: 0.8
+                    #timestep_increase_factor: 1.06
         domains:
         - name: default_domain
           location: [fluid]
@@ -82,12 +83,12 @@ simulation:
                     volume_fraction:
                         option: value
                         input_type: expression
-                        volume_fraction: "if (x<=0.152348 and y<=0.290476, 1, 0)"
+                        volume_fraction: "if (x<=0.146 and y<=0.292, 1, 0)"
                 air:
                     volume_fraction:
                         option: value
                         input_type: expression
-                        volume_fraction: "if (x<=0.152348 and y<=0.290476, 0, 1)"
+                        volume_fraction: "if (x<=0.146 and y<=0.292, 0, 1)"
     solver:
         solver_control:
             basic_settings:
@@ -131,7 +132,7 @@ simulation:
             file_path: results.e
             output_frequency:
                 option: time_interval
-                time_interval: 0.05
+                time_interval: 0.01
             write_timestep_info: true
             output_fields: [velocity, pressure, volume_fraction.water]
     material_library:

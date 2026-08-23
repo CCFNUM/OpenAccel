@@ -745,6 +745,15 @@ enum class kinematicFormulationType
 kinematicFormulationType
 convertKinematicFormulationTypeFromString(std::string s);
 
+// Solid mechanics assembler technology
+enum class solidAssemblerType
+{
+    sfem,
+    cvfem
+};
+
+solidAssemblerType convertSolidAssemblerTypeFromString(std::string s);
+
 // Post process type
 enum class postProcessType
 {

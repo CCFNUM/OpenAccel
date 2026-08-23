@@ -8,12 +8,19 @@
 namespace accel
 {
 
-#ifndef USE_CVFEM_SOLID_MECHANICS
 void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
     const domain* domain,
     const boundary* boundary,
     Context* ctx)
 {
+    if (field_broker_->controlsRef().isCvfemSolidMechanics())
+    {
+        // CVFEM has no dedicated specified-flux boundary treatment for solid
+        // displacement; fall back to the generic phiAssembler implementation.
+        Base::assembleElemTermsBoundaryWallSpecifiedFlux_(domain, boundary, ctx);
+        return;
+    }
+
     const auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
@@ -182,6 +189,5 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
         }
     }
 }
-#endif
 
 } /* namespace accel */

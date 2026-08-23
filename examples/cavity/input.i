@@ -1,7 +1,7 @@
 # vim: ft=yaml
 # This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
-    file_path: mesh.e
+    file_path: medium_mesh.e
     automatic_decomposition_type: rcb
 simulation:
     verbose: 1
@@ -26,7 +26,7 @@ simulation:
                 mass_and_momentum:
                     wall_velocity:
                         option: cartesian_components
-                        wall_velocity: [1, 0]
+                        wall_velocity: [10, 0]
           - name: sides
             type: wall
             location: [sides]
@@ -40,14 +40,14 @@ simulation:
     solver:
         solver_control:
             basic_settings:
-                advection_scheme: high_resolution
+                advection_scheme: upwind
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 200
+                    max_iterations: 1000
                     physical_timescale: 1
                     relaxation_parameters:
-                        velocity_relaxation_factor: 0.9
-                        pressure_relaxation_factor: 0.1
+                        velocity_relaxation_factor: 0.8
+                        pressure_relaxation_factor: 0.3
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1e-6
@@ -59,8 +59,8 @@ simulation:
                 linear_solver_settings:
                     default:
                         family: PETSc
-                        max_iterations: 20
-                        rtol: 1.0e-1
+                        max_iterations: 40
+                        rtol: 1.0e-2
                         atol: 1.0e-12
                         options:
                             ksp_type: fgmres
@@ -76,7 +76,7 @@ simulation:
             expert_parameters:
                 relax_gradients: false
         output_control:
-            file_path: results.e
+            file_path: results_medium.e
             output_frequency: 10
             output_fields: [velocity, pressure]
     material_library:

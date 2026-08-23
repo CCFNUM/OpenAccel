@@ -6,16 +6,13 @@
 
 #include "solidDisplacementAssembler.h"
 
-#ifndef USE_CVFEM_SOLID_MECHANICS
 #include "linear_elasticity.hpp"
 #include "sfem_GeneratedNeoHookeanOgden_element_api.hpp"
 #include "sfem_GeneratedModifiedMooneyRivlin_c_abi.hpp"
-#endif
 
 namespace accel
 {
 
-#ifndef USE_CVFEM_SOLID_MECHANICS
 #if SPATIAL_DIM == 2
 namespace
 {
@@ -345,13 +342,13 @@ void assembleSfemModifiedMooneyRivlinElement(
 #endif // SPATIAL_DIM == 2
 
 } // namespace
-#endif
 
 void solidDisplacementAssembler::assembleElemTermsInterior_(
     const domain* domain,
     Context* ctx)
 {
-#ifdef USE_CVFEM_SOLID_MECHANICS
+    if (field_broker_->controlsRef().isCvfemSolidMechanics())
+    {
     const auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
@@ -832,7 +829,9 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
     }
-#else
+    }
+    else
+    {
     const auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
@@ -1134,8 +1133,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
     }
-
-#endif
+    }
 }
 
 } // namespace accel
