@@ -93,12 +93,10 @@ private:
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx) override;
 
-#ifndef USE_CVFEM_SOLID_MECHANICS
     void assembleElemTermsBoundaryWallSpecifiedFlux_(
         const domain* domain,
         const boundary* boundary,
         Context* ctx) override;
-#endif
 };
 
 } /* namespace accel */

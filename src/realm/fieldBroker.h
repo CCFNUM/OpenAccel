@@ -1401,7 +1401,8 @@ protected:
         if ((EField).isZoneUnset((domain)->index()))                           \
         {                                                                      \
             (EField).setZone((domain)->index());                               \
-            if (domain->materialRef(__VA_ARGS__)                               \
+            if ((materialBlock)["mechanical_properties"]["young_modulus"] &&   \
+                domain->materialRef(__VA_ARGS__)                               \
                     .mechanicalProperties_.youngModulus_.option_ ==            \
                 youngModulusOption::value)                                     \
             {                                                                  \
@@ -1421,7 +1422,8 @@ protected:
         if ((nuField).isZoneUnset((domain)->index()))                          \
         {                                                                      \
             (nuField).setZone((domain)->index());                              \
-            if (domain->materialRef(__VA_ARGS__)                               \
+            if ((materialBlock)["mechanical_properties"]["poisson_ratio"] &&   \
+                domain->materialRef(__VA_ARGS__)                               \
                     .mechanicalProperties_.poissonRatio_.option_ ==            \
                 poissonRatioOption::value)                                     \
             {                                                                  \

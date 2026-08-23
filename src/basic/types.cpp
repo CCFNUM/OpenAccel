@@ -122,9 +122,9 @@ heatTransferOption convertHeatTransferOptionFromString(std::string s)
 std::unordered_map<std::string, solidMechanicsOption> solidMechanicsOptionMap{
     {"none", solidMechanicsOption::none},
     {"linear_elastic", solidMechanicsOption::linearElastic},
-    {"simplified_new_hookean", solidMechanicsOption::simplifiedNeoHookean},
-    {"simplified_neo_hookean", solidMechanicsOption::simplifiedNeoHookean},
-    {"neo_hookean", solidMechanicsOption::simplifiedNeoHookean}};
+    {"neo_hookean", solidMechanicsOption::neoHookean},
+    {"mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin},
+    {"modified_mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin}};
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s)
 {
@@ -1112,6 +1112,27 @@ convertKinematicFormulationTypeFromString(std::string s)
     }
 
     return kinematicFormulationType::totalLagrangian; // useless
+}
+
+// Solid mechanics assembler technology
+
+std::unordered_map<std::string, solidAssemblerType> solidAssemblerTypeMap{
+    {"sfem", solidAssemblerType::sfem},
+    {"cvfem", solidAssemblerType::cvfem}};
+
+solidAssemblerType convertSolidAssemblerTypeFromString(std::string s)
+{
+    auto it = solidAssemblerTypeMap.find(s);
+    if (it != solidAssemblerTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid solid assembler type: " + s);
+    }
+
+    return solidAssemblerType::cvfem; // useless
 }
 
 // Post process type

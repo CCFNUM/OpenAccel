@@ -12,21 +12,26 @@ namespace accel
 void solidDisplacementAssembler::postAssemble(const domain* domain,
                                               Context* ctx)
 {
-#ifdef USE_CVFEM_SOLID_MECHANICS
-    phiAssembler<SPATIAL_DIM>::postAssemble(domain, ctx);
-#else
-    // FEM solid mechanics assembles a consistent Newton tangent. Relaxing only
-    // its diagonal destroys rigid-body consistency and, together with the
-    // relaxed field correction, applies the displacement URF twice.
-    this->applyConstraints(domain, ctx);
-#endif
+    if (field_broker_->controlsRef().isCvfemSolidMechanics())
+    {
+        phiAssembler<SPATIAL_DIM>::postAssemble(domain, ctx);
+    }
+    else
+    {
+        // FEM solid mechanics assembles a consistent Newton tangent. Relaxing
+        // only its diagonal destroys rigid-body consistency and, together
+        // with the relaxed field correction, applies the displacement URF
+        // twice.
+        this->applyConstraints(domain, ctx);
+    }
     applySymmetryConditions_(domain, ctx);
 }
 
 void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
                                                           Context* ctx)
 {
-#ifdef USE_CVFEM_SOLID_MECHANICS
+    if (field_broker_->controlsRef().isCvfemSolidMechanics())
+    {
     const auto& mesh = model_->meshRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
@@ -136,7 +141,9 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
             }
         }
     }
-#else
+    }
+    else
+    {
     const auto& mesh = model_->meshRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
@@ -252,8 +259,7 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
             }
         }
     }
-
-#endif
+    }
 }
 
 } /* namespace accel */

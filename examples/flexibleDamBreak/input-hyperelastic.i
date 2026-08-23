@@ -1,5 +1,5 @@
 # vim: ft=yaml
-# This is a 2D FEM case and must be run with a 2D-compiled binary.
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -17,7 +17,7 @@ simulation:
                     option: max_courant
                     courant_number: 0.25
                     min_timestep: 1.0e-6
-                    max_timestep: 1
+                    max_timestep: 0.01
                     timestep_decrease_factor: 0.8
                     timestep_increase_factor: 1.06
         domains:
@@ -102,7 +102,6 @@ simulation:
           type: solid
           solid_models:
             solid_mechanics:
-                # Compressible Neo-Hookean internal force and tangent from SFEM.
                 option: neo_hookean
                 formulation: total_lagrangian
                 plane_stress: false
@@ -135,16 +134,17 @@ simulation:
                 transient_scheme: second_order_backward_euler
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 5
+                    max_iterations: 50
                 convergence_criteria:
                     residual_type: RMS
-                    residual_target: 1e-4
+                    residual_target: 1e-6
                 interpolation_scheme:
                     velocity_interpolation_type: linear_linear
             advanced_options:
                 equation_controls:
                     sub_iterations:
-                        solid_displacement: 10
+                        pressure_correction: 15
+                        solid_displacement: 20
                     volume_fraction_smoothing:
                         smooth_volume_fraction: true
                         smoothing_iterations: 3
@@ -152,12 +152,12 @@ simulation:
                     acceleration:
                         solid_displacement:
                             option: aitken
-                            initial_omega: 0.05
-                            omega_min: 0.01
-                            omega_max: 0.4
+                            initial_omega: 0.3
+                            omega_min: 0.1
+                            omega_max: 0.5
                     mesh_motion:
                         freeze_per_timestep: false
-                        max_smoothing_iters: 25
+                        max_smoothing_iters: 30
                 interface_transfer:
                     verbose: 1
                 linear_solver_settings:
@@ -165,7 +165,7 @@ simulation:
                         family: Trilinos
                         min_iterations: 3
                         max_iterations: 50
-                        rtol: 1.0e-3
+                        rtol: 1.0e-5
                         atol: 1.0e-12
                         options:
                             belos_solver: gmres
@@ -174,31 +174,31 @@ simulation:
                         family: HYPRE
                         min_iterations: 3
                         max_iterations: 100
-                        rtol: 1.0e-5
+                        rtol: 1.0e-6
                         atol: 1.0e-10
                         options:
                             solver:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-                                coarsen_type: 6
+                                coarsen_type: 6 # Falgout — robust for jumps
                                 interp_type: 6
-                                relax_type: 18
+                                relax_type: 18 # Symmetric hybrid SOR
                                 strong_threshold: 0.5
                                 num_sweeps: 3
                                 max_levels: 25
                                 aggressive_levels: 0
-                                trunc_factor: 0.1
+                                trunc_factor: 0
             expert_parameters:
                 body_force_redistribution: false
                 force_full_node_graph: false
         output_control:
-            file_path: results-hyperelastic.e
+            file_path: results_neo.e
             output_frequency:
                 option: time_interval
-                time_interval: 0.05
+                time_interval: 0.01
             write_timestep_info: true
-            output_fields: [velocity, pressure, volume_fraction.water, displacement, displacement_mesh, velocity_mesh, density, dynamic_viscosity]
+            output_fields: [velocity, pressure, volume_fraction.water, displacement_mesh, velocity_mesh, density, dynamic_viscosity]
             corrected_boundary_values: true
     material_library:
     - name: water

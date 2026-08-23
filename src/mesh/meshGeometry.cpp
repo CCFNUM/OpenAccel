@@ -1501,6 +1501,103 @@ void mesh::updateExposedAreaVectorField_(
     }
 }
 
+void mesh::computeDeformedExposedAreaVector(
+    const stk::mesh::PartVector& parts,
+    const STKScalarField& displacementField,
+    std::vector<scalar>& deformedAreaVec)
+{
+    // get required components
+    stk::mesh::BulkData& bulkData = this->bulkDataRef();
+    stk::mesh::MetaData& metaData = this->metaDataRef();
+
+    // extract coordinates field (reference/undeformed for a solid-mechanics,
+    // Total-Lagrangian zone -- displacementField is added on top below)
+    STKScalarField* coordinates = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinateFieldName());
+
+    // setup for buckets; union parts and ask for universal part -- same
+    // selector construction as updateExposedAreaVectorField_(), so a caller
+    // that builds this exact selector over the same `parts` sees sides in
+    // the same order and can track offsets into deformedAreaVec in lockstep
+    stk::mesh::Selector selAllSides =
+        metaData.universal_part() & stk::mesh::selectUnion(parts);
+    stk::mesh::BucketVector const& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selAllSides);
+
+    // first pass: size the output buffer (total IPs over all selected sides)
+    label totalComponents = 0;
+    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        MasterElement* meFC =
+            MasterElementRepo::get_surface_master_element((*ib)->topology());
+        totalComponents += static_cast<label>((*ib)->size()) *
+                           meFC->numIntPoints_ * SPATIAL_DIM;
+    }
+    deformedAreaVec.resize(totalComponents);
+
+    label offset = 0;
+    std::vector<scalar> ws_deformed_coordinates;
+    std::vector<scalar> ws_scs_areav;
+
+    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& sideBucket = **ib;
+
+        // extract master element
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
+
+        // extract master element specifics
+        const label nodesPerSide = meFC->nodesPerElement_;
+        const label numScsBip = meFC->numIntPoints_;
+
+        // define scratch field
+        ws_deformed_coordinates.resize(nodesPerSide * SPATIAL_DIM);
+        ws_scs_areav.resize(numScsBip * SPATIAL_DIM);
+
+        const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
+        for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSidesPerBucket;
+             ++iSide)
+        {
+            // face node relations for nodal gather
+            stk::mesh::Entity const* sideNodeRels =
+                sideBucket.begin_nodes(iSide);
+
+            //===============================================
+            // gather nodal data: deformed position = coordinates + displacement
+            //===============================================
+            label num_nodes = sideBucket.num_nodes(iSide);
+            for (label ni = 0; ni < num_nodes; ++ni)
+            {
+                stk::mesh::Entity node = sideNodeRels[ni];
+                scalar* coords = stk::mesh::field_data(*coordinates, node);
+                scalar* disp = stk::mesh::field_data(displacementField, node);
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    ws_deformed_coordinates[offSet + j] = coords[j] + disp[j];
+                }
+            }
+
+            // compute scs integration point areavec on the deformed geometry
+            scalar scs_error = 0.0;
+            meFC->determinant(
+                1, &ws_deformed_coordinates[0], &ws_scs_areav[0], &scs_error);
+
+            // scatter to output buffer
+            for (label k = 0; k < numScsBip * SPATIAL_DIM; ++k)
+            {
+                deformedAreaVec[offset + k] = ws_scs_areav[k];
+            }
+            offset += numScsBip * SPATIAL_DIM;
+        }
+    }
+}
+
 void mesh::updateWallNormalDistanceField_(stk::mesh::ConstPartVector wallParts)
 {
     // if no wall parts assigned, consider all active ones

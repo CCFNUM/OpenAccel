@@ -30,15 +30,19 @@ void ElementValidatorDeleter::operator()(elementValidator* ptr)
 
 mesh::mesh(controls* controlsPtr) : controlsPtr_(controlsPtr)
 {
-#ifdef USE_CVFEM_SOLID_MECHANICS
-    stencil_ = controlsPtr->isReducedStencil()
-                   ? ::linearSolver::GraphLayout::Stencil__Reduced
-                   : ::linearSolver::GraphLayout::Stencil__Full;
-#else
-    // A Galerkin FEM element couples every pair of its nodes. The reduced
-    // CVFEM edge stencil drops valid FEM coefficients during global assembly.
-    stencil_ = ::linearSolver::GraphLayout::Stencil__Full;
-#endif                    
+    if (controlsPtr->isCvfemSolidMechanics())
+    {
+        stencil_ = controlsPtr->isReducedStencil()
+                       ? ::linearSolver::GraphLayout::Stencil__Reduced
+                       : ::linearSolver::GraphLayout::Stencil__Full;
+    }
+    else
+    {
+        // A Galerkin FEM element couples every pair of its nodes. The reduced
+        // CVFEM edge stencil drops valid FEM coefficients during global
+        // assembly.
+        stencil_ = ::linearSolver::GraphLayout::Stencil__Full;
+    }
 }
 
 mesh::~mesh()

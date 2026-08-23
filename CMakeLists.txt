@@ -14,7 +14,6 @@ set(CMAKE_CXX_STANDARD 20)
 # options
 option(WITH_AMGSOLVER "Build with AMG solver" OFF)
 option(WITH_CANONICAL_SUFFIX "Enable canonical executable suffix" OFF)
-option(WITH_CVFEM_SOLID_MECHANICS "Use CVFEM for solid mechanics" ON)
 option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
 option(WITH_FASTMATH "Use fast math optimization" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
@@ -160,13 +159,10 @@ else()
     message("-- HYPRE functionalities are DISABLED")
 endif()
 
-# Solid mechanics assembler
-if(WITH_CVFEM_SOLID_MECHANICS)
-    add_compile_definitions(USE_CVFEM_SOLID_MECHANICS)
-    message("-- Solid mechanics assembler: CVFEM")
-else()
-    message("-- Solid mechanics assembler: FEM")
-endif()
+# Solid mechanics assembler: both SFEM and CVFEM are always compiled in;
+# selection between them is a runtime expert parameter
+# (solid_assembler_type in the input file).
+message("-- Solid mechanics assembler: SFEM + CVFEM (runtime-selectable)")
 
 # Which thermal energy equation to use?
 if(WITH_THERMAL_TEMPERATURE)

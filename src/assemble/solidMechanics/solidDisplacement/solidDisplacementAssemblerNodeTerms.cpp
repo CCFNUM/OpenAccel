@@ -21,24 +21,18 @@ void solidDisplacementAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
     const domain* domain,
     Context* ctx)
 {
-#ifdef USE_CVFEM_SOLID_MECHANICS
     // First order scheme not typically used for structural dynamics
-    // (requires 3 time levels for second derivative)
-    // Fall through to second order implementation
-    assembleNodeTermsFusedSecondOrderUnsteady_(domain, ctx);
-#else
-    // FEM: First order scheme not typically used for structural dynamics
     // (requires 3 time levels for second derivative)
     // Fall through to second order implementation for now
     assembleNodeTermsFusedSecondOrderUnsteady_(domain, ctx);
-#endif
 }
 
 void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
     const domain* domain,
     Context* ctx)
 {
-#ifdef USE_CVFEM_SOLID_MECHANICS
+    if (field_broker_->controlsRef().isCvfemSolidMechanics())
+    {
     // ========================================================================
     // Second-order time discretization for structural dynamics:
     // ρ * d²D/dt² ≈ ρ/dt² * (D^{n+1} - 2*D^n + D^{n-1})
@@ -173,7 +167,9 @@ void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
     }
-#else
+    }
+    else
+    {
      // Reuse the same lumped nodal inertia assembly as the CVFEM solid path.
     // The transient contribution is assembled from nodal density and nodal
     // control volume, while the FEM stiffness remains in the element terms.
@@ -258,8 +254,7 @@ void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
     }
-
-#endif
+    }
 }
 
 } // namespace accel
