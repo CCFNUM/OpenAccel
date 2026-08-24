@@ -79,6 +79,12 @@ bool controls::isNSO() const
     return solver_.solverControl_.expertParameters_.nso_;
 }
 
+bool controls::bypassVolumeFractionConvergence() const
+{
+    return solver_.solverControl_.expertParameters_
+        .bypassVolumeFractionConvergence_;
+}
+
 bool controls::useAutomaticDomainDecomposition() const
 {
     return !solver_.solverControl_.advancedOptions_.domainDecomposition_.method_

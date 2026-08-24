@@ -253,6 +253,14 @@ struct solverDictionary
             bool nodeReordering_ = false;
             bool forceWallDistanceCalculation_ = false;
             bool disablePhysics_ = false;
+            // when the outer FSI/coefficient loop's convergence is driven by
+            // the default AND-of-equations check (physics_convergence
+            // disabled), the volume fraction equation's residual is
+            // normalized by max(alpha)-min(alpha)=1 and rarely satisfies a
+            // tight RMS target, so it can block that AND-loop from ever
+            // reporting convergence. Bypassing its contribution there lets
+            // the outer loop converge on the remaining equations instead.
+            bool bypassVolumeFractionConvergence_ = true;
             bool freezeFlow_ = false;
             bool freezePressure_ = false;
             bool freezeEnergy_ = false;
@@ -354,6 +362,8 @@ public:
     bool isHighResolutionTurbulenceNumerics() const;
 
     bool isNSO() const;
+
+    bool bypassVolumeFractionConvergence() const;
 
     bool useAutomaticDomainDecomposition() const;
 

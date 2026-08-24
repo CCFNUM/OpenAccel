@@ -1073,6 +1073,14 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["disable_physics"].template as<bool>();
             }
 
+            if (expertParameters["bypass_volume_fraction_convergence"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .bypassVolumeFractionConvergence_ =
+                    expertParameters["bypass_volume_fraction_convergence"]
+                        .template as<bool>();
+            }
+
             if (expertParameters["freeze_flow"])
             {
                 solver_.solverControl_.expertParameters_.freezeFlow_ =

@@ -60,12 +60,23 @@ void segregatedFreeSurfaceFlowEquations::addDomain(
 bool segregatedFreeSurfaceFlowEquations::isConverged() const
 {
     bool converged = U_eq_->isConverged() && pCorr_eq_->isConverged();
-    for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+
+    // The volume fraction residual is normalized by max(alpha)-min(alpha)=1
+    // and rarely satisfies a tight RMS target, so left in this AND it can
+    // permanently block both this composite equation's own sub-iteration
+    // early-exit and (via simulation::checkConvergence()'s AND-of-equations
+    // loop when physics_convergence is disabled) the outer FSI/coefficient
+    // loop's convergence. Bypassable via the
+    // bypass_volume_fraction_convergence expert parameter (default: true).
+    if (!this->controlsRef().bypassVolumeFractionConvergence())
     {
-        if (!this->phaseRef(iPhase).primaryPhase_)
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
         {
-            assert(alpha_eq_[iPhase]);
-            converged = converged && alpha_eq_[iPhase]->isConverged();
+            if (!this->phaseRef(iPhase).primaryPhase_)
+            {
+                assert(alpha_eq_[iPhase]);
+                converged = converged && alpha_eq_[iPhase]->isConverged();
+            }
         }
     }
 

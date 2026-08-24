@@ -32,14 +32,24 @@ private:
 
     std::map<label, std::vector<scalar>> fsiInterfaceDispPrev_;
     std::map<label, scalar> fsiInterfaceResidualNormMax_;
+    // running max of ||D_total|| at the interface this timestep, used for
+    // the second (displacement-normalized) residual definition combined via
+    // min() with the residual-normalized one above (s4f-style dual norm).
+    std::map<label, scalar> fsiInterfaceMaxTotalDisplNorm_;
     std::map<label, scalar> fsiInterfaceResidualNorms_;
     scalar fsiInterfaceResidualNorm_ = 0.0;
+
+    std::map<label, std::vector<scalar>> fsiInterfaceTractionPrev_;
+    std::map<label, scalar> fsiInterfaceTractionResidualNormMax_;
+    std::map<label, scalar> fsiForceResidualNorms_;
     scalar fsiForceResidualNorm_ = 0.0;
 
     std::map<std::string, std::map<label, std::shared_ptr<std::ofstream>>>
         residualStreams_;
 
     void updateFsiInterfaceResidual_(bool writeResiduals);
+
+    void updateFsiForceResidual_(bool writeResiduals);
 
     void initializeResidualFile_(label interfIdx,
                                  const std::string& interfName,

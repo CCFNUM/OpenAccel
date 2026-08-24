@@ -37,8 +37,13 @@ void physicsConvergence::resetForTimeStep()
 
     fsiInterfaceDispPrev_.clear();
     fsiInterfaceResidualNormMax_.clear();
+    fsiInterfaceMaxTotalDisplNorm_.clear();
     fsiInterfaceResidualNorms_.clear();
     fsiInterfaceResidualNorm_ = 0.0;
+
+    fsiInterfaceTractionPrev_.clear();
+    fsiInterfaceTractionResidualNormMax_.clear();
+    fsiForceResidualNorms_.clear();
     fsiForceResidualNorm_ = 0.0;
 }
 
@@ -65,6 +70,7 @@ void physicsConvergence::update()
                 updateFsiInterfaceResidual_(physConv.writeResiduals_);
                 break;
             case physicsConvergenceType::fsiForceResidual:
+                updateFsiForceResidual_(physConv.writeResiduals_);
                 break;
             default:
                 break;
@@ -155,6 +161,20 @@ void physicsConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
             if (prev.empty() || prev.size() != vecSize)
             {
                 prev = DCurrent;
+
+                // seed the total-displacement running max so residualNorm2
+                // starts from a sensible baseline on the next iteration
+                // instead of comparing against 0.
+                scalar seedTotalDisplNormSq = 0.0;
+                for (size_t i = 0; i < vecSize; ++i)
+                {
+                    seedTotalDisplNormSq += DCurrent[i] * DCurrent[i];
+                }
+                messager::sumReduce(seedTotalDisplNormSq);
+                auto& maxTotalDispl = fsiInterfaceMaxTotalDisplNorm_[interfIdx];
+                maxTotalDispl =
+                    std::max(maxTotalDispl, std::sqrt(seedTotalDisplNormSq));
+
                 fsiInterfaceResidualNorms_[interfIdx] = 1.0;
                 fsiInterfaceResidualNorm_ =
                     std::max(fsiInterfaceResidualNorm_, 1.0);
@@ -162,17 +182,34 @@ void physicsConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
             }
 
             scalar normSq = 0.0;
+            scalar totalDisplNormSq = 0.0;
             for (size_t i = 0; i < vecSize; ++i)
             {
                 const scalar r = DCurrent[i] - prev[i];
                 normSq += r * r;
+                totalDisplNormSq += DCurrent[i] * DCurrent[i];
             }
             messager::sumReduce(normSq);
+            messager::sumReduce(totalDisplNormSq);
             const scalar norm = std::sqrt(normSq);
+            const scalar totalDisplNorm = std::sqrt(totalDisplNormSq);
 
+            // residualNorm1: raw mismatch normalized by the running max of
+            // the mismatch itself.
             auto& maxNorm = fsiInterfaceResidualNormMax_[interfIdx];
             maxNorm = std::max(maxNorm, norm);
-            const scalar normRel = norm / (maxNorm + SMALL);
+            const scalar normRel1 = norm / (maxNorm + SMALL);
+
+            // residualNorm2: raw mismatch normalized by the running max of
+            // the total accumulated interface displacement (s4f dual-norm
+            // definition). Combined via min() with residualNorm1 so a large
+            // early mismatch relative to a still-small total displacement
+            // doesn't stall convergence once the displacement itself grows.
+            auto& maxTotalDispl = fsiInterfaceMaxTotalDisplNorm_[interfIdx];
+            maxTotalDispl = std::max(maxTotalDispl, totalDisplNorm);
+            const scalar normRel2 = norm / (maxTotalDispl + SMALL);
+
+            const scalar normRel = std::min(normRel1, normRel2);
             fsiInterfaceResidualNorms_[interfIdx] = normRel;
             fsiInterfaceResidualNorm_ =
                 std::max(fsiInterfaceResidualNorm_, normRel);
@@ -196,6 +233,140 @@ void physicsConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
                 }
                 writeResidualLine_(
                     "fsi_interface_residual", interfIdx, normRel);
+            }
+        }
+    }
+}
+
+void physicsConvergence::updateFsiForceResidual_(bool writeResiduals)
+{
+    solidDisplacementEquation* solidEq = nullptr;
+    for (auto& equation : sim_.equationVector_)
+    {
+        if (equation->getID() == equationID::solidDisplacement)
+        {
+            solidEq = dynamic_cast<solidDisplacementEquation*>(equation.get());
+            break;
+        }
+    }
+
+    if (!solidEq)
+    {
+        return;
+    }
+
+    // traction lives on D's side-flux field (side-rank integration-point
+    // data, not a nodal field like displacement), populated on the fluid
+    // side by solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_
+    auto& tractionSTKField = solidEq->DRef().sideFluxFieldRef().stkFieldRef();
+    std::unordered_set<label> visited;
+
+    for (const auto& domain : sim_.domainVector_)
+    {
+        for (const interface* interf : domain->interfacesRef())
+        {
+            if (!interf->isFluidSolidType())
+            {
+                continue;
+            }
+            if (!visited.insert(interf->index()).second)
+            {
+                continue;
+            }
+
+            const label masterIdx = interf->masterZoneIndex();
+            const label slaveIdx = interf->slaveZoneIndex();
+            const label fluidZoneIndex =
+                (sim_.domainRef(masterIdx).type() == domainType::fluid)
+                    ? masterIdx
+                    : slaveIdx;
+
+            const interfaceSideInfo* fluidSide =
+                interf->interfaceSideInfoPtr(fluidZoneIndex);
+
+            stk::mesh::MetaData& metaData = tractionSTKField.mesh_meta_data();
+            stk::mesh::BulkData& bulkData = tractionSTKField.get_mesh();
+
+            // side-rank field: select locally-owned sides on the fluid-side
+            // interface parts (mirrors the ownership selection used when the
+            // traction is written in solidMechanicsModel.cpp).
+            stk::mesh::Selector selFluidSides =
+                metaData.locally_owned_part() &
+                stk::mesh::selectUnion(fluidSide->currentPartVec_);
+            const stk::mesh::BucketVector& fluidSideBuckets =
+                bulkData.get_buckets(metaData.side_rank(), selFluidSides);
+
+            // gather traction values in stable bucket/side/integration-point
+            // order into a flat vector
+            std::vector<scalar> tCurrent;
+            for (const stk::mesh::Bucket* bucket : fluidSideBuckets)
+            {
+                MasterElement* meFC = MasterElementRepo::
+                    get_surface_master_element(bucket->topology());
+                const label numScsBip = meFC->numIntPoints_;
+
+                for (const stk::mesh::Entity side : *bucket)
+                {
+                    const scalar* tractionValues =
+                        stk::mesh::field_data(tractionSTKField, side);
+                    for (label ip = 0; ip < numScsBip; ++ip)
+                    {
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            tCurrent.push_back(
+                                tractionValues[SPATIAL_DIM * ip + j]);
+                        }
+                    }
+                }
+            }
+
+            const label interfIdx = interf->index();
+            auto& prev = fsiInterfaceTractionPrev_[interfIdx];
+            if (prev.empty() || prev.size() != tCurrent.size())
+            {
+                prev = tCurrent;
+                fsiForceResidualNorms_[interfIdx] = 1.0;
+                fsiForceResidualNorm_ = std::max(fsiForceResidualNorm_, 1.0);
+                continue;
+            }
+
+            scalar normSq = 0.0;
+            scalar tractionNormSq = 0.0;
+            for (size_t i = 0; i < tCurrent.size(); ++i)
+            {
+                const scalar r = tCurrent[i] - prev[i];
+                normSq += r * r;
+                tractionNormSq += tCurrent[i] * tCurrent[i];
+            }
+            messager::sumReduce(normSq);
+            messager::sumReduce(tractionNormSq);
+            const scalar norm = std::sqrt(normSq);
+            const scalar tractionNorm = std::sqrt(tractionNormSq);
+
+            auto& maxNorm = fsiInterfaceTractionResidualNormMax_[interfIdx];
+            maxNorm = std::max(maxNorm, tractionNorm);
+            const scalar normRel = norm / (maxNorm + SMALL);
+            fsiForceResidualNorms_[interfIdx] = normRel;
+            fsiForceResidualNorm_ = std::max(fsiForceResidualNorm_, normRel);
+
+            prev = tCurrent;
+
+            if (messager::master())
+            {
+                std::cout << "  FSI Force Residual [" << interf->name() << "]"
+                          << "  |r|_norm=" << std::scientific
+                          << std::setprecision(4) << normRel << std::endl;
+            }
+
+            if (writeResiduals)
+            {
+                auto& streams = residualStreams_["fsi_force_residual"];
+                if (streams.find(interfIdx) == streams.end())
+                {
+                    initializeResidualFile_(
+                        interfIdx, interf->name(), "fsi_force_residual");
+                }
+                writeResidualLine_("fsi_force_residual", interfIdx, normRel);
             }
         }
     }
@@ -232,7 +403,13 @@ bool physicsConvergence::isConverged() const
                                           physConv.fsiInterfaceResidualTarget_);
                 break;
             case physicsConvergenceType::fsiForceResidual:
-                converged = false;
+                if (fsiForceResidualNorms_.empty())
+                {
+                    converged = false;
+                    break;
+                }
+                converged = converged && (fsiForceResidualNorm_ <=
+                                          physConv.fsiForceResidualTarget_);
                 break;
             default:
                 converged = false;
