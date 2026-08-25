@@ -204,6 +204,9 @@ void segregatedEulerEulerFlowEquations::solve()
             fieldBroker::updateDynamicViscosity(domain, phaseIndex);
             updatePhaseMassCoefficient(domain, phaseIndex);
         }
+        // Must precede the drag: it supplies the volume fraction the drag
+        // law shares with the body force.
+        updatePhaseSmoothedVolumeFraction(domain);
         updateInterphaseMomentumSources(domain);
         updatePhaseBodyForces(domain);
     }
@@ -278,6 +281,7 @@ void segregatedEulerEulerFlowEquations::solve()
             updateVelocityGradientField(domain, phaseIndex);
             updateVelocityBlendingFactorField(domain, phaseIndex);
         }
+        updatePhaseSmoothedVolumeFraction(domain);
         updateInterphaseMomentumSources(domain);
     }
 }

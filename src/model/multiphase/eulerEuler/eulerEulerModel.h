@@ -68,6 +68,28 @@ public:
     // the inherited `body_forces` scratch field.
     void updatePhaseBodyForces(const std::shared_ptr<domain> domain);
 
+    // Volume fraction passed through the same redistribution and the same
+    // limiter as the body force, for the drag law to use.
+    //
+    // The terminal slip follows K u_r = F_buoy. updatePhaseBodyForces builds
+    // F_buoy from the *redistributed* alpha_k, while K is proportional to the
+    // *pointwise* alpha_k, so u_r^2 ends up proportional to the ratio of the
+    // two and inherits alpha's grid-scale content -- although the terminal
+    // slip is physically independent of alpha altogether. On the laminar
+    // bubble column alpha's 2*dx component is 30% of its mean, which predicts
+    // a slip mode of 0.044 against a mean slip of 0.295; the measured value is
+    // 0.046, while OpenFOAM, which uses one alpha for both, has 2e-5.
+    //
+    // Feeding the same smoothed alpha to the drag makes that ratio exactly one
+    // (the body-force limiter clips the force by +/-|raw|, which for a
+    // constant (rho_k-rho_ref)g is the same relative clip as limiting alpha
+    // by +/-|alpha|), so the slip stops responding to alpha's noise while its
+    // mean value is unchanged.
+    void updatePhaseSmoothedVolumeFraction(
+        const std::shared_ptr<domain> domain);
+
+    nodeField<1>& phaseSmoothedAlphaRef(label phaseIndex);
+
     void updateInterphaseMomentumSources(
         const std::shared_ptr<domain> domain);
 
@@ -121,6 +143,8 @@ public:
     void updatePressure(const std::shared_ptr<domain> domain);
 
 private:
+    std::vector<std::unique_ptr<nodeField<1>>> phaseSmoothedAlpha_;
+
     // Opening total-pressure side field. A configured reference phase supplies
     // rho, U, and mDot directly; otherwise reconstruct mixture quantities:
     //   rho_m   = sum_k alpha_k rho_k

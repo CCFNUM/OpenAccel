@@ -27,7 +27,7 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 5
+            total_time: 10
             time_steps:
                 option: constant
                 # Segregated Euler-Euler with buoyancy-driven phase slip is
@@ -162,8 +162,8 @@ simulation:
                         # Damp the localized phasic-momentum mode at the
                         # moving alpha interface. This acts on each momentum
                         # correction, rather than clipping the final velocity.
-                        velocity_relaxation_factor: 0.5
-                        pressure_relaxation_factor: 0.2
+                        velocity_relaxation_factor: 0.7
+                        pressure_relaxation_factor: 0.1
                     min_iterations: 2
                     # Match OpenFOAM's nOuterCorrectors = 3. Continuing a
                     # transient corrector to 30 iterations can pass the
@@ -180,7 +180,7 @@ simulation:
                 linear_solver_settings:
                     default:
                         family: PETSc
-                        min_iterations: 3
+                        min_iterations: 2
                         max_iterations: 50
                         rtol: 1.0e-4
                         atol: 1.0e-14
@@ -189,7 +189,7 @@ simulation:
                             pc_type: bjacobi
                     pressure_correction:
                         family: HYPRE
-                        min_iterations: 3
+                        min_iterations: 2
                         max_iterations: 100
                         rtol: 1.0e-6
                         atol: 1.0e-14

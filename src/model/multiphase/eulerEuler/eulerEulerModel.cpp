@@ -60,6 +60,121 @@ eulerEulerModel::eulerEulerModel(realm* realm) : multiphaseModel(realm)
             UrRef(phaseIndex);
         }
     }
+
+    phaseSmoothedAlpha_.reserve(phases_.size());
+    for (const auto& currentPhase : phases_)
+    {
+        phaseSmoothedAlpha_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(),
+            "euler_euler_smoothed_volume_fraction." + currentPhase.name_,
+            1,
+            false));
+    }
+}
+
+nodeField<1>& eulerEulerModel::phaseSmoothedAlphaRef(label phaseIndex)
+{
+    for (label phase = 0; phase < nPhases(); ++phase)
+    {
+        if (this->phaseIndex(phase) == phaseIndex)
+        {
+            return *phaseSmoothedAlpha_[phase];
+        }
+    }
+    STK_ThrowRequireMsg(false, "Unknown Euler-Euler phase index");
+    return *phaseSmoothedAlpha_.front();
+}
+
+void eulerEulerModel::updatePhaseSmoothedVolumeFraction(
+    const std::shared_ptr<domain> domain)
+{
+    const auto& metaData = meshRef().metaDataRef();
+    const auto& bulkData = meshRef().bulkDataRef();
+    const auto& partVec = domain->zonePtr()->interiorParts();
+    auto* rawField = FOriginalSTKFieldPtr_;
+    auto* smoothedField = FSTKFieldPtr_;
+    assert(rawField && smoothedField);
+
+    const bool redistribute =
+        controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.bodyForceRedistribution_;
+
+    const auto selection =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+    const auto& buckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selection);
+
+    for (const label phaseIndex : activePhaseIndices(domain))
+    {
+        const auto& alphaField = alphaRef(phaseIndex).stkFieldRef();
+        auto& targetRef = phaseSmoothedAlphaRef(phaseIndex);
+        auto& targetField = targetRef.stkFieldRef();
+
+        if (!redistribute)
+        {
+            // Body-force redistribution off: the drag keeps the pointwise
+            // alpha, exactly as the body force does.
+            for (const stk::mesh::Bucket* bucketPtr : buckets)
+            {
+                const auto& bucket = *bucketPtr;
+                const scalar* alpha =
+                    stk::mesh::field_data(alphaField, bucket);
+                scalar* target = stk::mesh::field_data(targetField, bucket);
+                for (stk::mesh::Bucket::size_type node = 0;
+                     node < bucket.size();
+                     ++node)
+                {
+                    target[node] = alpha[node];
+                }
+            }
+            targetRef.synchronizeGhostedEntities(domain->index());
+            continue;
+        }
+
+        // Stage alpha through the shared body-force scratch, one phase at a
+        // time, exactly as updatePhaseBodyForces stages its force.
+        for (const stk::mesh::Bucket* bucketPtr : buckets)
+        {
+            const auto& bucket = *bucketPtr;
+            scalar* seed = stk::mesh::field_data(*rawField, bucket);
+            const scalar* alpha = stk::mesh::field_data(alphaField, bucket);
+            for (stk::mesh::Bucket::size_type node = 0; node < bucket.size();
+                 ++node)
+            {
+                for (label component = 0; component < SPATIAL_DIM;
+                     ++component)
+                {
+                    seed[SPATIAL_DIM * node + component] = alpha[node];
+                }
+            }
+        }
+
+        flowModel::redistributeBodyForces(domain);
+
+        for (const stk::mesh::Bucket* bucketPtr : buckets)
+        {
+            const auto& bucket = *bucketPtr;
+            const scalar* raw = stk::mesh::field_data(*rawField, bucket);
+            const scalar* smoothed =
+                stk::mesh::field_data(*smoothedField, bucket);
+            scalar* target = stk::mesh::field_data(targetField, bucket);
+            for (stk::mesh::Bucket::size_type node = 0; node < bucket.size();
+                 ++node)
+            {
+                // Every seeded component carried alpha, so any component of
+                // the result is the smoothed alpha. Same limiter as the body
+                // force, so the two stay in step across a free surface.
+                const scalar rawValue = raw[SPATIAL_DIM * node];
+                const scalar limit = redistributionLimit_ * std::abs(rawValue);
+                const scalar correction =
+                    smoothed[SPATIAL_DIM * node] - rawValue;
+                target[node] =
+                    rawValue + std::max(-limit, std::min(limit, correction));
+            }
+        }
+        targetRef.synchronizeGhostedEntities(domain->index());
+    }
 }
 
 std::vector<label> eulerEulerModel::activePhaseIndices(
@@ -499,8 +614,11 @@ void eulerEulerModel::updateInterphaseMomentumSources(
         auto& diagonalBField = dragDiagonalRef(phaseB).stkFieldRef();
         const auto& velocityAField = URef(phaseA).stkFieldRef();
         const auto& velocityBField = URef(phaseB).stkFieldRef();
-        const auto& alphaAField = alphaRef(phaseA).stkFieldRef();
-        const auto& alphaBField = alphaRef(phaseB).stkFieldRef();
+        // Smoothed alpha, matching the body force -- see
+        // updatePhaseSmoothedVolumeFraction for why the drag must use the
+        // same volume fraction the buoyancy does.
+        const auto& alphaAField = phaseSmoothedAlphaRef(phaseA).stkFieldRef();
+        const auto& alphaBField = phaseSmoothedAlphaRef(phaseB).stkFieldRef();
         const auto& alphaGradientAField =
             alphaRef(phaseA).gradRef().stkFieldRef();
         const auto& alphaGradientBField =
