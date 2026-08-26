@@ -266,9 +266,10 @@ target_link_libraries(${exec} PRIVATE main_obj)
 
 # debugging utilities
 if(WITH_DEBUG_LIB)
-    add_library(debug OBJECT
+    add_library(debug_obj OBJECT
         debug/debug.cpp
     )
-    target_compile_options(debug PRIVATE -O0 -g -UNDEBUG) # always build this object library in debug mode
-    target_link_libraries(debug PRIVATE main_obj)
+    target_compile_options(debug_obj PRIVATE -O0 -g -UNDEBUG) # always build this object library in debug mode
+    target_link_libraries(debug_obj PRIVATE main_obj)
+    target_link_libraries(${exec} PRIVATE debug_obj)
 endif()
