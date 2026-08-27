@@ -5,10 +5,10 @@
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "navierStokesEquation.h"
-#include "realm.h"
-#include "scaling.h"
 #include "interface.h"
 #include "ipInfo.h"
+#include "realm.h"
+#include "scaling.h"
 
 namespace accel
 {
