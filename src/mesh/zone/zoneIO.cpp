@@ -161,8 +161,9 @@ void zone::read(const YAML::Node& domain)
                 domain["domain_models"]["mesh_deformation"]["stationary_parts"])
             {
                 std::vector<std::string> stationaryPartNames =
-                    domain["domain_models"]["domain_motion"]["stationary_parts"]
-                        .template as<std::vector<std::string>>();
+                    domain["domain_models"]["mesh_deformation"]
+                          ["stationary_parts"]
+                              .template as<std::vector<std::string>>();
 
                 for (auto stationaryPartName : stationaryPartNames)
                 {
@@ -242,8 +243,8 @@ void zone::read(const YAML::Node& domain)
     {
         errorMsg("zone: `boundaries` block is missing for domain `" +
                  domain["name"].template as<std::string>() +
-                 "`.\nboundary_conditions:\n -name: <boundary name>\n type: "
-                 "<boundary type>\n location: <location list>");
+                 "`.\nboundaries:\n- name: <boundary name>\n  type: "
+                 "<boundary type>\n  location: <location list>");
     }
 }
 
