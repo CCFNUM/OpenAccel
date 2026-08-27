@@ -61,6 +61,9 @@ void segregatedCorrelationTransitionShearStressTransportEquations::initialize()
     tef_eq_->initialize();
     ti_eq_->initialize();
 
+    // restore the under-relaxed turbulent eddy viscosity on explicit restarts
+    FOREACH_DOMAIN(initializeTurbulentDynamicViscosity);
+
     FOREACH_DOMAIN(clipValues);
     FOREACH_DOMAIN(clipMinDistToWall);
 
@@ -72,6 +75,15 @@ void segregatedCorrelationTransitionShearStressTransportEquations::initialize()
 void segregatedCorrelationTransitionShearStressTransportEquations::
     postInitialize()
 {
+    // On an explicit restart, refresh the derived turbulence fields that are
+    // not persisted (effective viscosity and the wall-function chain) once all
+    // restored quantities (mu, rho, mut) are available, so the first momentum
+    // solve matches the run-through state.
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(updateEffectiveDynamicViscosity);
+        FOREACH_DOMAIN(updateWallFunctions);
+    }
 }
 
 void segregatedCorrelationTransitionShearStressTransportEquations::preSolve()

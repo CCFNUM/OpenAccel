@@ -261,6 +261,9 @@ struct solverDictionary
             bool nso_ = false;
             scalar nsoFourthOrderFac_ = 1.0;
             bool highSpeedBlendDamping_ = false;
+            // Cap on the high-resolution blend beta in
+            // phi_ip = phi_upwind + beta * (grad phi . dx): 0 upwind, 1 linear
+            scalar blendFactorMax_ = 1.0;
             nonconformalMethod nonconformalMethod_ =
                 nonconformalMethod::discontinuousGalerkin;
             gradientAveragingType cvpgType_ = gradientAveragingType::arithAver;
@@ -291,6 +294,15 @@ struct solverDictionary
 
         // STK specific (if restart this becomes stk::io::APPEND_RESULTS)
         stk::io::DatabasePurpose writeMode_{stk::io::WRITE_RESULTS};
+        std::unique_ptr<Ioss::PropertyManager> propertyManagerPtr_{nullptr};
+
+        // I/O control
+        size_t fileIndex_{0};
+        label lastRestart_{-1};
+        label lastResults_{-1};
+        label writeCounter_{0};
+        scalar writeTime_{0.0};
+        scalar lastResultsTime_{-1.0};
     };
 
     struct restartControlDictionary
@@ -304,6 +316,11 @@ struct solverDictionary
         // STK specific (see controlsIO.cpp)
         stk::io::MeshField::TimeMatchOption timeMatchOption_{
             stk::io::MeshField::CLOSEST};
+        std::unique_ptr<Ioss::PropertyManager> propertyManagerPtr_{nullptr};
+
+        // state
+        size_t fileIndex_{0};
+        std::set<std::string> fields_; // registered restart fields
     };
 
     solverControlDictionary solverControl_;
@@ -333,7 +350,7 @@ public:
         return solver_;
     };
 
-    solverDictionary& solverRefMutable()
+    solverDictionary& solverRef()
     {
         return solver_;
     };
@@ -365,6 +382,8 @@ public:
     void setRestartParam();
 
     void deserializeRestartParam(const stk::io::StkMeshIoBroker& io_broker);
+
+    void registerRestartField(const std::string& fieldName);
 
     scalar getTotalTime() const;
 
@@ -433,6 +452,8 @@ private:
         scalar dt, maxCourant, intervalStart, intervalLength;
         std::string action{"unchanged"};
     };
+
+    void defineRestartParam_();
 
     int timestepPosition_(const int i) const;
 

@@ -539,7 +539,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
             const label offSetDnDx =                                           \
                 SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;         \
                                                                                \
-            /* Compute trace-like term: Σⱼ Aⱼ ∂N/∂xⱼ */             \
+            /* Compute trace-like term: Σⱼ Aⱼ ∂N/∂xⱼ */                        \
             scalar trace_term = 0.0;                                           \
             for (label k = 0; k < SPATIAL_DIM; ++k)                            \
             {                                                                  \
@@ -548,7 +548,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
                 trace_term += axk * dndxk;                                     \
             }                                                                  \
                                                                                \
-            /* Compute area-direction dot product: Σₖ Aₖ dₖ */          \
+            /* Compute area-direction dot product: Σₖ Aₖ dₖ */                 \
             scalar area_dot_dir = 0.0;                                         \
             for (label k = 0; k < SPATIAL_DIM; ++k)                            \
             {                                                                  \
@@ -577,7 +577,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
                     const scalar nxj = p_nx[j];                                \
                     const scalar uxj = p_U[ic * SPATIAL_DIM + j];              \
                                                                                \
-                    /* Transformed coefficient: only n·u contributes */       \
+                    /* Transformed coefficient: only n·u contributes */        \
                     const scalar lhsfac =                                      \
                         stress_proj_dir * nxj * inv_dir_dot_n;                 \
                                                                                \

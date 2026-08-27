@@ -98,9 +98,6 @@ void navierStokesEquation::initialize()
 
     // update high-res fields
     FOREACH_DOMAIN(model_->updateVelocityBlendingFactorField);
-
-    // update velocity scale
-    model_->URef().updateScale();
 }
 
 void navierStokesEquation::postInitialize()
@@ -116,6 +113,7 @@ void navierStokesEquation::postInitialize()
     // post initialization
     model_->rhoRef().updateScale();
     model_->muRef().updateScale();
+    model_->URef().updateScale();
 
     // raw initialization of mass flux: can be safely done now after
     // initialization of velocity and density at all active domains
@@ -126,7 +124,8 @@ void navierStokesEquation::postInitialize()
     FOREACH_DOMAIN(model_->transformMassFlowRateToRelative);
 
     // in case of transient, old density must be updated before div update
-    if (model_->controlsRef().isTransient())
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_ &&
+        model_->controlsRef().isTransient())
     {
         FOREACH_DOMAIN(model_->updateDensityPrevTimeField);
     }

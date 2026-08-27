@@ -156,6 +156,20 @@ void turbulenceModel::updateEffectiveDynamicViscosity(
     }
 }
 
+void turbulenceModel::updateWallFunctions(const std::shared_ptr<domain> domain)
+{
+    updateUStar(domain);
+    updateYStar(domain);
+    updateYPlus(domain);
+    updateUTau(domain);
+    updateUPlus(domain);
+    updateUWallCoeffs(domain);
+    updateWallShearStress(domain);
+    updateDuPlusDyPlus(domain);
+    updateTPlus(domain);
+    updateTWallCoeffs(domain);
+}
+
 void turbulenceModel::updateTurbulentThermalConductivity(
     const std::shared_ptr<domain> domain)
 {
@@ -410,6 +424,11 @@ void turbulenceModel::initializeTurbulentKineticEnergy(
 {
     fieldBroker::initializeTurbulentKineticEnergy(domain);
 
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        return;
+    }
+
     // k = 1.5 * (TKI * velocity scale)^2
     if (automaticWithoutDatabaseField(kRef(), domain->index()))
     {
@@ -441,6 +460,11 @@ void turbulenceModel::initializeTurbulentEddyFrequency(
     const std::shared_ptr<domain> domain)
 {
     fieldBroker::initializeTurbulentEddyFrequency(domain);
+
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        return;
+    }
 
     // omega = sqrt(1.5) * TKI * U / (0.1 * TLS * Cmu)
     if (automaticWithoutDatabaseField(omegaRef(), domain->index()))
@@ -480,10 +504,21 @@ void turbulenceModel::initializeTurbulentEddyFrequency(
     updateTurbulentEddyFrequencySideFields_(domain);
 }
 
+void turbulenceModel::initializeTurbulentDynamicViscosity(
+    const std::shared_ptr<domain> domain)
+{
+    fieldBroker::initializeTurbulentDynamicViscosity(domain);
+}
+
 void turbulenceModel::initializeTurbulentDissipationRate(
     const std::shared_ptr<domain> domain)
 {
     fieldBroker::initializeTurbulentDissipationRate(domain);
+
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        return;
+    }
 
     // epsilon = 1.5^1.5 * (TKI * U)^3 / (0.1 * TLS)
     if (automaticWithoutDatabaseField(epsilonRef(), domain->index()))
@@ -529,6 +564,11 @@ void turbulenceModel::initializeTurbulentIntermittency(
     const std::shared_ptr<domain> domain)
 {
     fieldBroker::initializeTurbulentIntermittency(domain);
+
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        return;
+    }
 
     // no correlation to start from: begin fully turbulent, as at the inlet
     if (automaticWithoutDatabaseField(gammaRef(), domain->index()))

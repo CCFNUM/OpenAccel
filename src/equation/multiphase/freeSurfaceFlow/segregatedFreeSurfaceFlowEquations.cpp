@@ -103,8 +103,8 @@ void segregatedFreeSurfaceFlowEquations::setup()
 void segregatedFreeSurfaceFlowEquations::initialize()
 {
     // initialize velocity and pressure
-    U_eq_->initialize();
-    pCorr_eq_->initialize();
+    U_eq_->initialize();     // 1. must be first
+    pCorr_eq_->initialize(); // 2.
 
     // initialize volume fractions
     for (label iPhase = 0; iPhase < nPhases(); iPhase++)
@@ -133,8 +133,8 @@ void segregatedFreeSurfaceFlowEquations::initialize()
 void segregatedFreeSurfaceFlowEquations::postInitialize()
 {
     // initialize phase and bulk properties, and initialize phase mass flux
-    U_eq_->postInitialize();
-    pCorr_eq_->postInitialize();
+    U_eq_->postInitialize();     // 1. must be first
+    pCorr_eq_->postInitialize(); // 2.
 
     equation::isInitialized_ =
         U_eq_->isInitialized() && pCorr_eq_->isInitialized();

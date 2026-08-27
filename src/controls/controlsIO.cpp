@@ -963,6 +963,19 @@ void controls::read(YAML::Node inputNode)
                         .template as<bool>();
             }
 
+            if (expertParameters["blend_factor_max"])
+            {
+                const scalar blendMax =
+                    expertParameters["blend_factor_max"].template as<scalar>();
+                if (blendMax < 0.0 || blendMax > 2.0)
+                {
+                    errorMsg("blend_factor_max must lie in [0, 2]: 0 is pure "
+                             "upwind, 1 the full linear reconstruction");
+                }
+                solver_.solverControl_.expertParameters_.blendFactorMax_ =
+                    blendMax;
+            }
+
             if (expertParameters["cvpg_type"])
             {
                 solver_.solverControl_.expertParameters_

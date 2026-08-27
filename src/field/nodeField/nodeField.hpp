@@ -112,6 +112,13 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
         // Turn HR flag ON
         advectionScheme_ = advectionSchemeType::highResolution;
 
+        // Cap the blend factor; volumeFraction overrides it with its own bound
+        blendingFactorMax_ =
+            this->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.blendFactorMax_;
+
         // Update high-resolution blending coefficient field
         this->setupBlendingFactorField();
     }
@@ -750,6 +757,25 @@ void nodeField<N, M>::setupBlendingFactorField(bool dummy)
         this->meshPtr(), this->name() + "_blending_factor", 1, true);
     this->blendingFactorRef().setToValue(std::vector<scalar>(N, 0));
 
+    // The generic (phi) assembler may create the blending factor after the
+    // parent field has already been set up on its zones (e.g. the scalar
+    // turbulence equations).  In that case the parent's setZone() never ran
+    // while the blending factor existed, so propagate the enabled zones here so
+    // the blending factor can be restored/initialised on a restart.
+    for (label iZone = 0; iZone < this->meshPtr()->nZones(); iZone++)
+    {
+        if (this->isZoneSet(iZone))
+        {
+            this->blendingFactorRef().setZone(iZone);
+        }
+    }
+
+    // The high-resolution blending factor carries iteration history through its
+    // one-sided relaxation; persist it so a restart resumes with a consistent
+    // limiter state instead of re-deriving it from scratch.
+    this->meshRef().controlsRef().solverRef().restartControl_.fields_.insert(
+        this->name() + "_blending_factor");
+
     if (!dummy)
     {
         assert(gradFieldPtr_ != nullptr);
@@ -784,11 +810,28 @@ void nodeField<N, M>::initialize(label iZone, bool force)
 
     this->initializeSideFields(iZone);
 
+    // NOTE [faw 2026-08-13]: Only true for some fields.  Other fields perform
+    // more initialization in the model that called this function afterwards or
+    // possibly in a postInitialize() method call.
     this->setIsInitialized(iZone);
+
+    const auto& restart_ctrl =
+        this->meshRef().controlsRef().solverRef().restartControl_;
+
+    // The high-resolution blending factor carries iteration history (one-sided
+    // relaxation); restore it together with its parent field so a restart does
+    // not re-derive a stale limiter state.
+    if (restart_ctrl.isRestart_ && blendingFactorFieldPtr_)
+    {
+        this->blendingFactorRef().initialize(iZone);
+    }
 
     // supplementary tasks for transient simulations, primarily for second order
     // transient schemes
-    this->updatePrevTimeField(iZone);
+    if (!restart_ctrl.isRestart_)
+    {
+        this->updatePrevTimeField(iZone);
+    }
 }
 
 template <size_t N, size_t M>
@@ -797,7 +840,6 @@ void nodeField<N, M>::initializeField(label iZone)
     // ensure field is enabled on the zone
     assert(this->isZoneSet(iZone));
 
-    bool initialize_field = true;
     const auto& restart_ctrl =
         this->meshRef().controlsRef().solverRef().restartControl_;
 
@@ -834,52 +876,49 @@ void nodeField<N, M>::initializeField(label iZone)
         // restore
         this->meshRef().ioBrokerRef().read_input_field(mf);
 
-        if (mf.field_restored())
-        {
-            stk::mesh::communicate_field_data(this->bulkDataRef(),
-                                              {this->stkFieldPtr_});
-            initialize_field = false;
-            if (messager::master())
-            {
-                std::cout << "Field " + this->name() +
-                                 " has been restored at time "
-                          << std::scientific << mf.time_restored() << std::endl;
-            }
+        assert(mf.field_restored());
 
-            // FIXME: Since we operate on fields individually
-            // rather than calling bulk field restore method from STK API, it is
-            // possible that individual fields may have inconsistent restored
-            // time (typically this should not happen based on tests I did, but
-            // it is a possibility and it will happen here).
-            //
-            // WARNING: The assignments to the global
-            // controlsRef().time/globalIter variables below will be executed
-            // for EVERY restored field, it is assumed these calls will be
-            // directed to the correct internal STK database and hence they all
-            // produce the same value for mf.time_restored() and global
-            // parameter fetch.
-            this->meshRef().controlsRef().deserializeRestartParam(
-                this->meshRef().ioBrokerRef());
-            if (this->meshRef().controlsRef().isTransient())
-            {
-                this->meshRef().controlsRef().time = mf.time_restored();
-            }
-            else
-            {
-                assert(mf.time_restored() -
-                           static_cast<label>(mf.time_restored()) ==
-                       0.0);
-                assert(this->meshRef().controlsRef().globalIter == 0 ||
-                       this->meshRef().controlsRef().globalIter ==
-                           static_cast<label>(mf.time_restored()));
-                this->meshRef().controlsRef().globalIter =
-                    static_cast<label>(mf.time_restored());
-            }
+        stk::mesh::communicate_field_data(this->bulkDataRef(),
+                                          {this->stkFieldPtr_});
+        if (messager::master())
+        {
+            std::cout << "Field " + this->name() + " has been restored at time "
+                      << std::scientific << mf.time_restored() << std::endl;
+        }
+
+        // FIXME: Since we operate on fields individually
+        // rather than calling bulk field restore method from STK API, it is
+        // possible that individual fields may have inconsistent restored
+        // time (typically this should not happen based on tests I did, but
+        // it is a possibility and it will happen here).
+        //
+        // WARNING: The assignments to the global
+        // controlsRef().time/globalIter variables below will be executed
+        // for EVERY restored field, it is assumed these calls will be
+        // directed to the correct internal STK database and hence they all
+        // produce the same value for mf.time_restored() and global
+        // parameter fetch.
+        this->meshRef().controlsRef().deserializeRestartParam(
+            this->meshRef().ioBrokerRef());
+        if (this->meshRef().controlsRef().isTransient())
+        {
+            this->meshRef().controlsRef().time = mf.time_restored();
+        }
+        else
+        {
+            assert(mf.time_restored() -
+                       static_cast<label>(mf.time_restored()) ==
+                   0.0);
+            assert(this->meshRef().controlsRef().globalIter == 0 ||
+                   this->meshRef().controlsRef().globalIter ==
+                       static_cast<label>(mf.time_restored()));
+            this->meshRef().controlsRef().globalIter =
+                static_cast<label>(mf.time_restored());
         }
     }
 
     // apply zone loop
-    if (initialize_field)
+    if (!restart_ctrl.isRestart_) // value initialization from yaml
     {
         const auto& initCond = this->initialConditionRef(iZone);
         if (initCond.type() == initialConditionOption::value)

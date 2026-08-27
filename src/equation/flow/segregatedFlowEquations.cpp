@@ -62,14 +62,14 @@ void segregatedFlowEquations::setup()
 
 void segregatedFlowEquations::initialize()
 {
-    U_eq_->initialize();
-    pCorr_eq_->initialize();
+    U_eq_->initialize();     // 1. must be first
+    pCorr_eq_->initialize(); // 2.
 }
 
 void segregatedFlowEquations::postInitialize()
 {
-    U_eq_->postInitialize();
-    pCorr_eq_->postInitialize();
+    U_eq_->postInitialize();     // 1. must be first
+    pCorr_eq_->postInitialize(); // 2.
 
     equation::isInitialized_ =
         U_eq_->isInitialized() && pCorr_eq_->isInitialized();

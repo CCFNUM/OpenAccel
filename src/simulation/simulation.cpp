@@ -67,9 +67,9 @@ simulation::simulation(const int argc, const char* argv[]) : verbose_(0)
 
 simulation::~simulation()
 {
-    if (gp_ptr_)
+    if (gpPtr_)
     {
-        gp_ptr_->sendcommand("quit");
+        gpPtr_->sendcommand("quit");
     }
 }
 
@@ -167,6 +167,9 @@ void simulation::run()
 
 void simulation::runSteadyState()
 {
+    auto& io = controlsRef().solverRef().outputControl_;
+    const auto& restart = controlsRef().solverRef().restartControl_;
+
     label minIterations =
         controlsRef()
             .solverRef()
@@ -179,13 +182,13 @@ void simulation::runSteadyState()
     for (controlsRef().iter = 1; controlsRef().iter <= maxIterations;
          controlsRef().iter++)
     {
-        io_write_counter_ = ++controlsRef().globalIter;
-        io_write_time_ = io_write_counter_;
+        io.writeCounter_ = ++controlsRef().globalIter;
+        io.writeTime_ = io.writeCounter_;
 
         if (messager::master())
         {
             std::cout << std::endl << "Iter = " << controlsRef().iter;
-            if (controlsRef().solverRef().restartControl_.isRestart_)
+            if (restart.isRestart_)
             {
                 std::cout << " (global iter = " << controlsRef().globalIter
                           << ")";
@@ -240,13 +243,15 @@ void simulation::runSteadyState()
 
 void simulation::runTransient()
 {
+    auto& io = controlsRef().solverRef().outputControl_;
+
     while (controlsRef().getTotalTime() - controlsRef().time >
            50 * ::accel::SMALL)
     {
         controlsRef().advanceAndSetTimestep();
         controlsRef().time += controlsRef().getTimestep();
-        io_write_counter_ = controlsRef().getTimeStepCount();
-        io_write_time_ = controlsRef().time;
+        io.writeCounter_ = controlsRef().getTimeStepCount();
+        io.writeTime_ = controlsRef().time;
 
         label minCoeffIterations = controlsRef()
                                        .solverRef()

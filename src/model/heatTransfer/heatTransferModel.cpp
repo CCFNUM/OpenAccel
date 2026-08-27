@@ -443,6 +443,11 @@ void heatTransferModel::initializeTemperature(
     // raw initialization
     fieldBroker::initializeTemperature(domain);
 
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        return;
+    }
+
     // zero is not a usable absolute temperature: seed from the boundaries
     if (TRef().isZoneUnset(domain->index()) ||
         TRef().initialConditionRef(domain->index()).type() !=
@@ -1296,20 +1301,25 @@ void heatTransferModel::transformSpecificTotalEnthalpyFrameWork_(
     // Adiabatic/all-periodic configurations need no h0 side field. Side and
     // node-side fields are registered together, so a null side pointer also
     // means there is no boundary state to transform.
-    if (boundaryParts.empty() || h0Ref().sideFieldPtr() == nullptr ||
-        URef().sideFieldPtr() == nullptr)
+    if (boundaryParts.empty() || h0Ref().sideFieldPtr() == nullptr)
     {
         return;
     }
 
     auto& nodeSideH0STKFieldRef = h0Ref().nodeSideFieldRef().stkFieldRef();
     const auto& nodeSideUSTKFieldRef = URef().nodeSideFieldRef().stkFieldRef();
-    const auto boundarySelector =
-        metaData.universal_part() & stk::mesh::selectUnion(boundaryParts) &
-        stk::mesh::selectField(nodeSideH0STKFieldRef) &
-        stk::mesh::selectField(nodeSideUSTKFieldRef);
+    // Shift every node carrying an h0 side value, contracting Omega x r with
+    // the velocity that built it: node-side U at walls, nodal U at inlets.
+    const auto h0SideNodes = metaData.universal_part() &
+                             stk::mesh::selectUnion(boundaryParts) &
+                             stk::mesh::selectField(nodeSideH0STKFieldRef);
+    const auto hasNodeSideU = stk::mesh::selectField(nodeSideUSTKFieldRef);
+
+    applyFrameWork(h0SideNodes & hasNodeSideU,
+                   nodeSideH0STKFieldRef,
+                   nodeSideUSTKFieldRef);
     applyFrameWork(
-        boundarySelector, nodeSideH0STKFieldRef, nodeSideUSTKFieldRef);
+        h0SideNodes & !hasNodeSideU, nodeSideH0STKFieldRef, USTKFieldRef);
 
     for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
          ++iBoundary)

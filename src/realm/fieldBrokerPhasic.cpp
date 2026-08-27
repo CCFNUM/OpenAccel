@@ -371,8 +371,25 @@ void fieldBroker::initializeCompressibility(
 void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain,
                                          label iPhase)
 {
-    // interior
-    initializeMassFlowRateInterior_(domain, iPhase);
+    const bool is_restart = realmPtr_->meshRef()
+                                .controlsRef()
+                                .solverRef()
+                                .restartControl_.isRestart_;
+
+    if (is_restart)
+    {
+        // The mass flux and its divergence carry iteration history through the
+        // Rhie-Chow interpolation. Restore them on a continuation instead of a
+        // raw reconstruction (see coupledFlowEquations/fieldBroker.cpp).
+        mDotRef(iPhase).initializeField(domain->index());
+        mDotRef(iPhase).divRef().initialize(domain->index());
+        mDotRef(iPhase).restoreSideField(domain->index());
+    }
+    else
+    {
+        // interior
+        initializeMassFlowRateInterior_(domain, iPhase);
+    }
 
     // Interfaces
     for (const interface* interf : domain->zonePtr()->interfacesRef())
@@ -395,12 +412,15 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain,
         }
     }
 
-    // Boundary
-    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
-         iBoundary++)
+    // Boundary (restored on a continuation; see restoreSideField above)
+    if (!is_restart)
     {
-        initializeMassFlowRateBoundaryField_(
-            domain, domain->zonePtr()->boundaryPtr(iBoundary), iPhase);
+        for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+             iBoundary++)
+        {
+            initializeMassFlowRateBoundaryField_(
+                domain, domain->zonePtr()->boundaryPtr(iBoundary), iPhase);
+        }
     }
 }
 
