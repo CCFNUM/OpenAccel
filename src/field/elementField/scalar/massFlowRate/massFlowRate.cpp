@@ -36,6 +36,12 @@ massFlowRate::massFlowRate(realm* realmPtr,
     divFieldPtr_ = std::make_unique<nodeField<1>>(
         this->meshPtr(), divergenceFieldName, 1, false);
 
+    // The mass flux and its divergence carry iteration history through the
+    // Rhie-Chow interpolation; persist them so a restart resumes with the
+    // correct (consistently assembled) state instead of a raw reconstruction.
+    realmPtr->registerRestartField(name);
+    realmPtr->registerRestartField(divergenceFieldName);
+
     // set size of massFlowRateFraction
     sideMassFlowRateFraction_.resize(this->meshPtr()->nZones());
     for (label iZone = 0; iZone < this->meshPtr()->nZones(); iZone++)

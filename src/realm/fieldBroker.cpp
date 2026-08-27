@@ -3522,6 +3522,27 @@ void fieldBroker::initializeTurbulentDissipationRate(
     }
 }
 
+void fieldBroker::initializeTurbulentDynamicViscosity(
+    const std::shared_ptr<domain> domain)
+{
+    // The turbulent eddy viscosity (mut) carries under-relaxation history and
+    // is derived from the resolved turbulence quantities. On an explicit
+    // restart the field is registered and stored but was never restored, so it
+    // would be recomputed from its zero initial value, dropping the relaxation
+    // history and corrupting the residual at the first restarted iteration.
+    if (realmPtr_->tRealm_->mut_)
+    {
+        // mut has no dedicated setup routine (it is a derived property), so we
+        // lazily enable it on the zone before restoring.
+        if (mutRef().isZoneUnset(domain->index()))
+        {
+            mutRef().setZone(domain->index());
+        }
+
+        mutRef().initialize(domain->index());
+    }
+}
+
 void fieldBroker::initializeTransitionOnsetReynoldsNumber(
     const std::shared_ptr<domain> domain)
 {
@@ -3647,8 +3668,26 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain)
 {
     if (realmPtr_->mDot_)
     {
-        // interior
-        initializeMassFlowRateInterior_(domain);
+        const bool is_restart = realmPtr_->meshRef()
+                                    .controlsRef()
+                                    .solverRef()
+                                    .restartControl_.isRestart_;
+
+        if (is_restart)
+        {
+            // The mass flux and its divergence carry iteration history through
+            // the Rhie-Chow interpolation.  Restore them on a continuation; a
+            // raw reconstruction here would not match the consistently
+            // assembled state produced at the end of the previous run.
+            mDotRef().initializeField(domain->index());
+            mDotRef().divRef().initialize(domain->index());
+            mDotRef().restoreSideField(domain->index());
+        }
+        else
+        {
+            // interior
+            initializeMassFlowRateInterior_(domain);
+        }
 
         // Interfaces
         for (const interface* interf : domain->zonePtr()->interfacesRef())
@@ -3674,12 +3713,16 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain)
             }
         }
 
-        // Boundary
-        for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
-             iBoundary++)
+        // Boundary (restored on a continuation; see restoreSideField above)
+        if (!is_restart)
         {
-            initializeMassFlowRateBoundaryField_(
-                domain, domain->zonePtr()->boundaryPtr(iBoundary));
+            for (label iBoundary = 0;
+                 iBoundary < domain->zonePtr()->nBoundaries();
+                 iBoundary++)
+            {
+                initializeMassFlowRateBoundaryField_(
+                    domain, domain->zonePtr()->boundaryPtr(iBoundary));
+            }
         }
     }
 }

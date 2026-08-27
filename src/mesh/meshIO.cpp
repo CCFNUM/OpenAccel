@@ -35,7 +35,7 @@ void mesh::read(const YAML::Node& inputNode)
         // automatic domain decomposition and restarts
         auto& decomposition_ctrl =
             this->controlsRef()
-                .solverRefMutable()
+                .solverRef()
                 .solverControl_.advancedOptions_.domainDecomposition_;
         if (mesh_node["automatic_decomposition_type"])
         {
@@ -81,6 +81,12 @@ void mesh::read(const YAML::Node& inputNode)
 
         ioBrokerPtr_ = new stk::io::StkMeshIoBroker(pm);
         ioBrokerPtr_->set_bulk_data(bulkDataPtr_);
+
+        // Allow long field names (e.g. phase-specific quantities such as
+        // `volume_fraction.water_blending_factor`) beyond the default 32
+        // character Exodus limit.  This must match the name length used when
+        // writing the results and restart databases (see simulationIO.cpp).
+        ioBrokerPtr_->property_add(Ioss::Property("MAXIMUM_NAME_LENGTH", 256));
 
         if (this->controlsRef().useAutomaticDomainDecomposition())
         {
@@ -1263,9 +1269,9 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
 
         // helper: is a sideset referenced anywhere in the YAML input?
         // (a domain boundary or an interface region)
-        auto isReferencedAnywhere =
-            [&domainBoundarySidesets,
-             &interfaceSidesets](const std::string& sidesetName) -> bool
+        auto isReferencedAnywhere = [&domainBoundarySidesets,
+                                     &interfaceSidesets
+        ](const std::string& sidesetName) -> bool
         {
             if (interfaceSidesets.count(sidesetName) > 0)
             {

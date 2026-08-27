@@ -373,6 +373,11 @@ void elementField<T, N>::registerSideField(label iZone, label iBoundary)
 
         // copy some properties to side field
         sideFieldPtr_->setURF(this->urf());
+
+        // boundary side mass flux carries the Rhie-Chow iteration history as
+        // well
+        this->meshRef().controlsRef().registerRestartField(this->name() +
+                                                           "_side");
     }
 
     // Put the side field on the corresponding boundary part
@@ -507,6 +512,45 @@ void elementField<T, N>::initialize(label iZone, bool force)
 template <class T, size_t N>
 void elementField<T, N>::initializeField(label iZone)
 {
+    const auto& restart_ctrl =
+        this->meshRef().controlsRef().solverRef().restartControl_;
+
+    // restore field data for explicit restarts
+    if (restart_ctrl.isRestart_)
+    {
+        stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
+            this->name(), this->meshRef().metaDataRef());
+        stk::io::MeshField mf(
+            theField, theField->name(), restart_ctrl.timeMatchOption_);
+
+        scalar restart_time = restart_ctrl.restartTime_;
+        if (restart_time == 0.0)
+        {
+            restart_time = this->meshRef().ioBrokerRef().get_max_time();
+        }
+        mf.set_read_time(restart_time);
+        mf.set_single_state(false);
+
+        // limit initialized parts to current zone's
+        for (const stk::mesh::Part* part :
+             this->meshPtr()->zonePtr(iZone)->interiorParts())
+        {
+            mf.add_subset(*part);
+        }
+
+        // restore
+        this->meshRef().ioBrokerRef().read_input_field(mf);
+        assert(mf.field_restored());
+
+        stk::mesh::communicate_field_data(this->bulkDataRef(),
+                                          {this->stkFieldPtr_});
+
+        if (messager::master())
+        {
+            std::cout << "Field " + this->name() + " has been restored at time "
+                      << std::scientific << mf.time_restored() << std::endl;
+        }
+    }
 }
 
 template <class T, size_t N>
@@ -562,6 +606,47 @@ template <class T, size_t N>
 void elementField<T, N>::initializeBoundarySideField(label iZone,
                                                      label iBoundary)
 {
+}
+
+template <class T, size_t N>
+void elementField<T, N>::restoreSideField(label iZone)
+{
+    if (sideFieldPtr_ == nullptr)
+        return;
+
+    const auto& restart_ctrl =
+        this->meshRef().controlsRef().solverRef().restartControl_;
+
+    stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
+        this->sideFieldRef().name(), this->meshRef().metaDataRef());
+    stk::io::MeshField mf(
+        theField, theField->name(), restart_ctrl.timeMatchOption_);
+
+    scalar restart_time = restart_ctrl.restartTime_;
+    if (restart_time == 0.0)
+    {
+        restart_time = this->meshRef().ioBrokerRef().get_max_time();
+    }
+    mf.set_read_time(restart_time);
+    mf.set_single_state(false);
+
+    // add the boundary parts this side field is defined on
+    zone* zonePtr = this->meshPtr()->zonePtr(iZone);
+    for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
+    {
+        if (!this->sideFieldRef().definedOn(
+                zonePtr->boundaryPtr(iBoundary)->parts()))
+            continue;
+
+        for (const stk::mesh::Part* part :
+             zonePtr->boundaryPtr(iBoundary)->parts())
+        {
+            mf.add_subset(*part);
+        }
+    }
+
+    this->meshRef().ioBrokerRef().read_input_field(mf);
+    assert(mf.field_restored());
 }
 
 // Update

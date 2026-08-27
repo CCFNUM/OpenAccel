@@ -72,14 +72,14 @@ void bulkPressureCorrectionEquation::initialize()
     // update gradient
     FOREACH_DOMAIN(model_->updatePressureGradientField);
 
-    // update scale: model-based
-    model_->updatePressureScale();
-
     equation::isInitialized_ = true;
 }
 
 void bulkPressureCorrectionEquation::postInitialize()
 {
+    // update scale: depends on rhoRef().scale() and URef().scale().  This call
+    // must happen after the postInitialize() call that sets these scales!
+    model_->updatePressureScale();
 }
 
 void bulkPressureCorrectionEquation::preSolve()

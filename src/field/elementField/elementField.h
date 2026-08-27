@@ -92,6 +92,11 @@ public:
 
     virtual void initializeSideField(label iZone);
 
+    // restore the boundary side field from the restart database (used only for
+    // derived side fields that carry iteration history, e.g. the Rhie-Chow
+    // interpolated boundary mass flux)
+    void restoreSideField(label iZone);
+
     virtual void
     initializeInterfaceSideField(const interfaceSideInfo* interfaceSideInfoPtr);
 

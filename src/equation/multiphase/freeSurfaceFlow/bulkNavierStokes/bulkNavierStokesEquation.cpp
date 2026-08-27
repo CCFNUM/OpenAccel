@@ -69,7 +69,8 @@ void bulkNavierStokesEquation::postInitialize()
         FOREACH_DOMAIN(model_->transformMassFlowRateToRelative, phaseIndex);
 
         // in case of transient, old density must be updated before div update
-        if (model_->controlsRef().isTransient())
+        if (!model_->controlsRef().solverRef().restartControl_.isRestart_ &&
+            model_->controlsRef().isTransient())
         {
             FOREACH_DOMAIN(model_->updateDensityPrevTimeField, phaseIndex);
         }
@@ -91,7 +92,8 @@ void bulkNavierStokesEquation::postInitialize()
     FOREACH_DOMAIN(model_->updateMassFlowRate);
 
     // in case of transient, old density must be updated before div update
-    if (model_->controlsRef().isTransient())
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_ &&
+        model_->controlsRef().isTransient())
     {
         FOREACH_DOMAIN(model_->updateDensityPrevTimeField);
     }

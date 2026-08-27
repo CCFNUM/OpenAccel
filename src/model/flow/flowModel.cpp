@@ -811,6 +811,11 @@ void flowModel::initializePressure(const std::shared_ptr<domain> domain)
     // raw initialization
     fieldBroker::initializePressure(domain);
 
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        return;
+    }
+
     // area-weighted boundary average; zero absolute pressure is singular
     const bool automaticWithoutDatabaseField =
         domain->isMaterialCompressible() &&
@@ -1676,6 +1681,11 @@ void flowModel::initializeVelocity(const std::shared_ptr<domain> domain)
     // raw initialization
     fieldBroker::initializeVelocity(domain);
 
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        return;
+    }
+
     // A geometry-only database gives "automatic" no velocity field to import.
     // Starting a compressible pressure-driven case from exactly zero velocity
     // can select a stagnant operating branch, particularly in an MRF rotor.
@@ -1873,6 +1883,11 @@ void flowModel::initializeDensity(const std::shared_ptr<domain> domain)
     // raw initialization
     fieldBroker::initializeDensity(domain);
 
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        return;
+    }
+
     auto option =
         domain->materialRef().thermodynamicProperties_.equationOfState_.option_;
 
@@ -1894,6 +1909,12 @@ void flowModel::initializeDensity(const std::shared_ptr<domain> domain)
 
 void flowModel::initializeDynamicViscosity(const std::shared_ptr<domain> domain)
 {
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        fieldBroker::initializeDynamicViscosity(domain);
+        return;
+    }
+
     auto option =
         domain->materialRef().transportProperties_.dynamicViscosity_.option_;
 

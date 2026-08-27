@@ -71,14 +71,14 @@ void pressureCorrectionEquation::initialize()
     // update gradient
     FOREACH_DOMAIN(model_->updatePressureGradientField);
 
-    // update scale: model-based
-    model_->updatePressureScale();
-
     equation::isInitialized_ = true;
 }
 
 void pressureCorrectionEquation::postInitialize()
 {
+    // update scale: depends on rhoRef().scale() and URef().scale().  This call
+    // must happen after the postInitialize() call that sets these scales!
+    model_->updatePressureScale();
 }
 
 void pressureCorrectionEquation::preSolve()

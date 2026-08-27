@@ -24,15 +24,7 @@ namespace accel
 controls::controls(fs::path cwd)
     : workingDirectory_(cwd), profiler_(messager::comm())
 {
-    // required states for correct restart
-    restartParameter_.set_param("timeStepCount",
-                                analysisType_.timeStepCount_,
-                                false, /* to output */
-                                true /* to restart */);
-    restartParameter_.set_param("globalIter", globalIter, false, true);
-    std::vector<scalar> dt_history(analysisType_.timestep_.begin(),
-                                   analysisType_.timestep_.end());
-    restartParameter_.set_param("dt_history", dt_history, false, true);
+    defineRestartParam_();
 }
 
 // Destructor
@@ -88,11 +80,11 @@ label controls::getNumberOfStates() const
         switch (solver_.solverControl_.basicSettings_.transientScheme_)
         {
             case transientSchemeType::firstOrderBackwardEuler:
-                numberOfStates = 2;
+                numberOfStates = 3; // +1 state because STK restart drops last
                 break;
 
             case transientSchemeType::secondOrderBackwardEuler:
-                numberOfStates = 3;
+                numberOfStates = 4; // +1 state because STK restart drops last
                 break;
 
             default:
@@ -108,6 +100,32 @@ stk::util::ParameterList& controls::getRestartParam()
     return restartParameter_;
 }
 
+void controls::defineRestartParam_()
+{
+    // required global states for restart
+    constexpr bool to_output = false;
+    constexpr bool to_restart = true;
+    restartParameter_.set_param(
+        "timeStepCount", analysisType_.timeStepCount_, to_output, to_restart);
+    restartParameter_.set_param(
+        "globalIter", globalIter, to_output, to_restart);
+    std::vector<scalar> dt_history(analysisType_.timestep_.begin(),
+                                   analysisType_.timestep_.end());
+    restartParameter_.set_param(
+        "dt_history", dt_history, to_output, to_restart);
+
+    const auto& io = solver_.outputControl_;
+    restartParameter_.set_param(
+        "io_lastResults", io.lastResults_, to_output, to_restart);
+    restartParameter_.set_param(
+        "io_lastResultsTime", io.lastResultsTime_, to_output, to_restart);
+    restartParameter_.set_param(
+        "io_lastRestart", io.lastRestart_, to_output, to_restart);
+
+    restartParameter_.set_param(
+        "maxCourant", maxCourant_, to_output, to_restart);
+}
+
 void controls::setRestartParam()
 {
     restartParameter_.set_value("timeStepCount", analysisType_.timeStepCount_);
@@ -115,6 +133,13 @@ void controls::setRestartParam()
     std::vector<scalar> dt_history(analysisType_.timestep_.begin(),
                                    analysisType_.timestep_.end());
     restartParameter_.set_value("dt_history", dt_history);
+
+    const auto& io = solver_.outputControl_;
+    restartParameter_.set_value("io_lastResults", io.lastResults_);
+    restartParameter_.set_value("io_lastResultsTime", io.lastResultsTime_);
+    restartParameter_.set_value("io_lastRestart", io.lastRestart_);
+
+    restartParameter_.set_value("maxCourant", maxCourant_);
 }
 
 void controls::deserializeRestartParam(
@@ -136,6 +161,19 @@ void controls::deserializeRestartParam(
     assert(dt_history.size() == analysisTypeDictionary::DT_ENTRIES);
     std::copy(
         dt_history.begin(), dt_history.end(), analysisType_.timestep_.begin());
+
+    auto& io = solver_.outputControl_;
+    io_broker.get_global("io_lastResults", io.lastResults_);
+    io_broker.get_global("io_lastResultsTime", io.lastResultsTime_);
+    io_broker.get_global("io_lastRestart", io.lastRestart_);
+
+    io_broker.get_global("maxCourant", maxCourant_);
+}
+
+void controls::registerRestartField(const std::string& fieldName)
+{
+    auto& restart = solver_.restartControl_;
+    restart.fields_.insert(fieldName);
 }
 
 scalar controls::getTotalTime() const

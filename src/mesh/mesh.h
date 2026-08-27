@@ -136,6 +136,9 @@ private:
 
     void initializeGeometricFields_();
 
+    // One area per GGI contact surface, agreed by both sides (needs geometry)
+    void harmonizeGgiInterfaceAreas_();
+
     void lazyInitializeNodeGraph_();
 
     void updateZones_(bool force = false);

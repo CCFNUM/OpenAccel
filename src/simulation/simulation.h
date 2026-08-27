@@ -80,29 +80,15 @@ private:
     std::unique_ptr<overrides> overridesPtr_ = nullptr;
 
     // IO
-    std::set<std::string> restartFields_;
-    label io_last_restart_;
-    label io_last_results_;
-    label io_write_counter_;
-    scalar io_write_time_;
-    scalar io_last_results_time_{-1.0};
-
-    std::vector<complementFunc> complement_results_;
-    std::vector<complementFunc> complement_restart_;
+    std::vector<complementFunc> complementResults_;
+    std::vector<complementFunc> complementRestart_;
 
     // path to input file: file contains all information of simulation
     fs::path inputFilePath_;
 
     YAML::Node inputNode_;
 
-    // manage the output exodus file
-    std::unique_ptr<Ioss::PropertyManager> resultsPropertyManagerPtr_ = nullptr;
-    std::unique_ptr<Ioss::PropertyManager> restartPropertyManagerPtr_;
-
-    // index of the results file
-    size_t resultsFileIndex_;
-    size_t restartFileIndex_;
-
+    // residual plotting
     bool plotRes_ = false;
     bool plotResInitialized_ = false;
 
@@ -114,9 +100,9 @@ private:
     std::chrono::high_resolution_clock::time_point wallTimeStart_ =
         std::chrono::high_resolution_clock::now();
 
-    std::unique_ptr<Gnuplot> gp_ptr_ = nullptr;
+    std::unique_ptr<Gnuplot> gpPtr_ = nullptr;
 
-    std::vector<residualPlotItem> plot_items_;
+    std::vector<residualPlotItem> plotItems_;
 
     stk::ParsedOptions args_;
 
@@ -202,16 +188,20 @@ public:
 
     bool writeNow(const label freq)
     {
-        return (freq > 0) && (io_write_counter_ % freq == 0);
+        const auto& io = controlsRef().solverRef().outputControl_;
+        return (freq > 0) && (io.writeCounter_ % freq == 0);
     }
 
     bool writeNowTime(const scalar interval)
     {
         // Use small tolerance to handle floating-point accumulation errors
         const scalar tolerance = interval * 1.0e-6;
-        return (interval > 0.0) && (io_last_results_time_ < 0.0 ||
-                                    (io_write_time_ - io_last_results_time_) >=
-                                        (interval - tolerance));
+        const auto& io = controlsRef().solverRef().outputControl_;
+        const bool write =
+            (interval > 0.0) &&
+            (io.lastResultsTime_ < 0.0 ||
+             (io.writeTime_ - io.lastResultsTime_) >= (interval - tolerance));
+        return write;
     }
 
     void writeResults(const bool write_condition);
@@ -282,7 +272,7 @@ public:
 
     void registerRestartField(const std::string& fieldName)
     {
-        restartFields_.insert(fieldName);
+        controlsRef().registerRestartField(fieldName);
     }
 
     void registerMaterial(const std::string& materialName)

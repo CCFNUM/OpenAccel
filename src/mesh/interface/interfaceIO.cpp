@@ -5,6 +5,7 @@
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "dgInterfaceSideInfo.h"
+#include "controls.h"
 #include "interface.h"
 #include "messager.h"
 #include "zone.h"
