@@ -312,6 +312,13 @@ void fieldBroker::setupVolumeFraction(const std::shared_ptr<domain> domain,
                     }
                     break;
 
+                case boundaryPhysicalType::outlet:
+                    // An outlet has no prescribed phase fraction.  This is
+                    // the direct OpenFOAM `zeroGradient` equivalent and is
+                    // independent of any optional fluid_values block.
+                    bc.setType(boundaryConditionType::zeroGradient);
+                    break;
+
                 case boundaryPhysicalType::opening:
                     {
                         if (!fluidValues.IsMap())
@@ -346,6 +353,13 @@ void fieldBroker::setupVolumeFraction(const std::shared_ptr<domain> domain,
                                             "volume_fraction");
                                 alphaRef(iPhase).registerSideFields(
                                     domain->index(), iBoundary);
+                            }
+                            else if (option == "zero_gradient")
+                            {
+                                // Match OpenFOAM's explicit zeroGradient
+                                // outlet alpha: no prescribed entrainment
+                                // value is installed on this phase.
+                                bc.setType(boundaryConditionType::zeroGradient);
                             }
                             else
                             {

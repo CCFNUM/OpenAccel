@@ -122,8 +122,25 @@ void phasicContinuityEquation::solve()
 
         alpha.synchronizeGhostedEntities(domain->index());
         model_->updateVolumeFraction(domain, phaseIndex_);
-        model_->updatePhaseMassFlux(domain, phaseIndex_, true);
+        // The pressure correction has already produced a conservative
+        // intrinsic flux.  Alpha transport must keep it and refresh only the
+        // phase weighting; reconstructing from U loses the p' correction.
+        model_->updatePhaseMassFluxWeighting(domain, phaseIndex_);
         model_->updatePhaseFluxDivergence(domain, phaseIndex_);
+
+        if (domain->multiphase_.eulerEulerFCT_.fluxCorrectedTransport_)
+        {
+            // Locally bounded, exactly conservative correction -- see
+            // eulerEulerModel::correctVolumeFractionFCT. Deliberately not
+            // followed by the projection loop below: that loop's non-local,
+            // shared-factor redistribution is exactly the mechanism FCT
+            // replaces, so running both would undo the fix.
+            model_->correctVolumeFractionFCT(domain, phaseIndex_);
+            model_->updateVolumeFraction(domain, phaseIndex_);
+            model_->updatePhaseMassFluxWeighting(domain, phaseIndex_);
+            model_->updatePhaseFluxDivergence(domain, phaseIndex_);
+            continue;
+        }
 
         // Retain the transported phase's old-time maximum. This is a global
         // discrete maximum principle, analogous to using the old solution as
@@ -290,6 +307,11 @@ void phasicContinuityEquation::solve()
     FOREACH_DOMAIN(model_->updateVolumeFractionBlendingFactorField,
                    phaseIndex_);
     model_->alphaRef(phaseIndex_).updateScale();
+
+    // Do not feed the algebraic alpha-transport residual into momentum as a
+    // mass-transfer source.  Boundedness/projection can alter alpha after
+    // its linear solve, so ddt(alpha*rho)+div(mDot) is not a physical source
+    // unless both are updated by one fully consistent transport operator.
 }
 
 void phasicContinuityEquation::preTimeStep()

@@ -676,6 +676,18 @@ void linearSystem<N>::convergenceReport_()
     for (int i = 0; i < LinearSolver::BLOCKSIZE; i++)
     {
         residual[i] = cdata.scaled_initial_res[i] * residual_scales[i];
+        // A finite linear-solver return is a prerequisite for accepting a
+        // segregated correction.  Without this check an overflowing residual
+        // can be labelled "ok" by its relative drop and be applied to the
+        // physical fields for many more iterations, eventually concealing the
+        // original failure behind NaNs elsewhere in the solve.
+        STK_ThrowRequireMsg(
+            std::isfinite(residual[i]) &&
+                std::isfinite(control_residual[i]) &&
+                std::isfinite(cdata.solver_initial_res[i]) &&
+                std::isfinite(cdata.solver_final_res[i]),
+            "Linear solve returned a non-finite residual for system `" +
+                ctx->getSystemName() + "`");
         rms_rate[i] = control_residual[i] / residual[i];
         // clip
         cdata.solver_final_res[i] = std::max(cdata.solver_final_res[i], 0.0);

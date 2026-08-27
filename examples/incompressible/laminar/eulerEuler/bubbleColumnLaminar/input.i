@@ -27,11 +27,11 @@ simulation:
     physical_analysis:
         analysis_type:
             option: transient
-            total_time: 10
+            total_time: 8
             time_steps:
                 option: constant
                 # Segregated Euler-Euler with buoyancy-driven phase slip is
-                # transient-stability limited, not just accuracy limited: the
+                # transient-stability limited, not just accuracy limited:the
                 # air phase sees alpha*(rho_air - rho_ref)*g against a
                 # transient coefficient of only alpha*rho_air, so its
                 # acceleration is O(1e3 m/s^2) until drag balances it. 2.5e-3

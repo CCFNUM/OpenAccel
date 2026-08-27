@@ -67,44 +67,6 @@ void bulkEulerEulerPressureCorrectionEquation::preSolve()
     FOREACH_DOMAIN(model_->updatePressure);
 }
 
-stk::mesh::PartVector
-bulkEulerEulerPressureCorrectionEquation::collectSpecifiedPressureParts_() const
-{
-    stk::mesh::PartVector parts;
-    for (const auto& domain : domainVector_)
-    {
-        const zone* zonePtr = domain->zonePtr();
-        for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries();
-             ++iBoundary)
-        {
-            const auto& boundaryRef = zonePtr->boundaryRef(iBoundary);
-            const auto type = boundaryRef.type();
-            if (type != boundaryPhysicalType::outlet &&
-                type != boundaryPhysicalType::opening)
-            {
-                continue;
-            }
-            // Only when the pressure is genuinely prescribed. A mass-flow or
-            // velocity-driven outlet leaves the level free and must not be
-            // pinned here.
-            const auto bcType =
-                model_->pRef()
-                    .boundaryConditionRef(domain->index(), iBoundary)
-                    .type();
-            if (bcType != boundaryConditionType::staticPressure &&
-                bcType != boundaryConditionType::totalPressure)
-            {
-                continue;
-            }
-            for (auto* part : boundaryRef.parts())
-            {
-                parts.push_back(part);
-            }
-        }
-    }
-    return parts;
-}
-
 void bulkEulerEulerPressureCorrectionEquation::storePressureCorrection_(
     const domain* domain,
     ::linearSolver::coefficients<linearSystem::BLOCKSIZE>* coefficients)
@@ -148,18 +110,6 @@ void bulkEulerEulerPressureCorrectionEquation::solve()
                           domain->pressureLevelRequired(),
                           ctx.get());
     assembler_->fix(collectInactiveInteriorParts(), {}, ctx.get(), {});
-
-    // Pin p' = 0 where the pressure is prescribed. domain::pressureLevelRequired
-    // is false as soon as an inlet/outlet/opening exists, on the assumption
-    // that such a boundary anchors the level -- so if we do not impose the
-    // Dirichlet here, nothing does, and the level drifts monotonically.
-    {
-        const auto pressureParts = collectSpecifiedPressureParts_();
-        if (!pressureParts.empty())
-        {
-            assembler_->fix(pressureParts, {}, ctx.get(), {});
-        }
-    }
 
     if (ctx->getGraph()->isGraphMember())
     {

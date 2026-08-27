@@ -30,14 +30,21 @@ void bulkEulerEulerPressureCorrectionAssembler::assembleSideFlux_(
     std::vector<label> scratchIds(1);
     std::vector<scalar> scratchValues(1);
     std::vector<stk::mesh::Entity> connectedNodes(1);
+    std::vector<scalar> shapeFunction;
+    std::vector<scalar> shiftedShapeFunction;
 
     for (const stk::mesh::Bucket* bucketPtr : buckets)
     {
         const auto& bucket = *bucketPtr;
         MasterElement* meFC =
             MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label nodesPerSide = bucket.topology().num_nodes();
         const label numScsIp = meFC->numIntPoints_;
         const label* ipNodeMap = meFC->ipNodeMap();
+        shapeFunction.resize(numScsIp * nodesPerSide);
+        shiftedShapeFunction.resize(numScsIp * nodesPerSide);
+        meFC->shape_fcn(shapeFunction.data());
+        meFC->shifted_shape_fcn(shiftedShapeFunction.data());
         for (stk::mesh::Bucket::size_type sideIndex = 0;
              sideIndex < bucket.size();
              ++sideIndex)
@@ -64,9 +71,18 @@ void bulkEulerEulerPressureCorrectionAssembler::assembleSideFlux_(
                         continue;
                     }
                     hasFlux = true;
-                    const scalar rho = *stk::mesh::field_data(
-                        model_->rhoRef(phaseIndex).stkFieldRef(),
-                        nodes[ipNodeMap[ip]]);
+                    scalar rho = 0.0;
+                    const auto& rhoField =
+                        model_->rhoRef(phaseIndex).stkFieldRef();
+                    const auto& phaseShape =
+                        model_->URef(phaseIndex).isShifted()
+                            ? shiftedShapeFunction
+                            : shapeFunction;
+                    for (label node = 0; node < nodesPerSide; ++node)
+                    {
+                        rho += phaseShape[ip * nodesPerSide + node] *
+                               *stk::mesh::field_data(rhoField, nodes[node]);
+                    }
                     volumeFlux += flux[ip] / (rho + SMALL);
                 }
                 if (!hasFlux)
@@ -110,7 +126,7 @@ void bulkEulerEulerPressureCorrectionAssembler::assembleElemTermsBoundary_(
             boundary.type() == boundaryPhysicalType::opening)
         {
             assembleSpecifiedPressureCorrection_(
-                domain, boundary.parts(), ctx);
+                domain, &boundary, ctx);
         }
     }
 }
@@ -118,9 +134,10 @@ void bulkEulerEulerPressureCorrectionAssembler::assembleElemTermsBoundary_(
 void bulkEulerEulerPressureCorrectionAssembler::
     assembleSpecifiedPressureCorrection_(
         const domain* domain,
-        const stk::mesh::PartVector& parts,
+        const boundary* boundary,
         Context* ctx)
 {
+    const auto& parts = boundary->parts();
     if (parts.empty())
     {
         return;
@@ -143,9 +160,9 @@ void bulkEulerEulerPressureCorrectionAssembler::
     std::vector<stk::topology> parentTopologies;
     std::vector<scalar> coordinates;
     std::vector<scalar> shapeFunction;
+    std::vector<scalar> shiftedShapeFunction;
     std::vector<scalar> dndx;
     std::vector<scalar> detJ;
-    std::vector<scalar> du;
     std::vector<scalar> lhs;
     std::vector<scalar> rhs;
     std::vector<label> scratchIds;
@@ -160,7 +177,9 @@ void bulkEulerEulerPressureCorrectionAssembler::
         const label nodesPerSide = bucket.topology().num_nodes();
         const label numFaceIps = meFC->numIntPoints_;
         shapeFunction.resize(numFaceIps * nodesPerSide);
+        shiftedShapeFunction.resize(numFaceIps * nodesPerSide);
         meFC->shape_fcn(shapeFunction.data());
+        meFC->shifted_shape_fcn(shiftedShapeFunction.data());
 
         bucket.parent_topology(stk::topology::ELEMENT_RANK,
                                parentTopologies);
@@ -172,7 +191,6 @@ void bulkEulerEulerPressureCorrectionAssembler::
         coordinates.resize(nodesPerElement * SPATIAL_DIM);
         dndx.resize(numFaceIps * nodesPerElement * SPATIAL_DIM);
         detJ.resize(numFaceIps);
-        du.resize(nodesPerSide * SPATIAL_DIM);
         lhs.resize(nodesPerElement * nodesPerElement);
         rhs.resize(nodesPerElement);
         scratchIds.resize(nodesPerElement);
@@ -220,43 +238,92 @@ void bulkEulerEulerPressureCorrectionAssembler::
                                 &error);
 
             const auto* sideNodes = bulkData.begin_nodes(side);
-            std::fill(du.begin(), du.end(), 0.0);
-            for (label sideNode = 0; sideNode < nodesPerSide; ++sideNode)
-            {
-                for (const label phaseIndex : phaseIndices)
-                {
-                    const auto& phaseAlpha =
-                        model_->alphaRef(phaseIndex).stkFieldRef();
-                    const auto& duField =
-                        (consistent
-                             ? model_->duTildeRef(phaseIndex).stkFieldRef()
-                             : model_->duRef(phaseIndex).stkFieldRef());
-                    const scalar phaseAlphaValue = *stk::mesh::field_data(
-                        phaseAlpha, sideNodes[sideNode]);
-                    const scalar* phaseDu = stk::mesh::field_data(
-                        duField, sideNodes[sideNode]);
-                    for (label component = 0; component < SPATIAL_DIM;
-                         ++component)
-                    {
-                        du[sideNode * SPATIAL_DIM + component] +=
-                            phaseAlphaValue * phaseDu[component];
-                    }
-                }
-            }
-
             for (label ip = 0; ip < numFaceIps; ++ip)
             {
                 scalar alphaDu[SPATIAL_DIM] = {};
-                for (label sideNode = 0; sideNode < nodesPerSide;
-                     ++sideNode)
+                for (const label phaseIndex : phaseIndices)
                 {
-                    const scalar shape =
-                        shapeFunction[ip * nodesPerSide + sideNode];
+                    const auto* reversalField =
+                        model_->URef(phaseIndex).reversalFlagPtr();
+                    const label* reversed =
+                        reversalField
+                            ? stk::mesh::field_data(
+                                  reversalField->stkFieldRef(), side)
+                            : nullptr;
+                    if (boundary->type() == boundaryPhysicalType::outlet &&
+                        reversed && reversed[ip] == 1)
+                    {
+                        continue;
+                    }
+                    if (model_->URef(phaseIndex)
+                            .boundaryConditionRef(domain->index(),
+                                                  boundary->index())
+                            .type() == boundaryConditionType::specifiedValue)
+                    {
+                        continue;
+                    }
+                    const auto& phaseAlphaField =
+                        model_->alphaRef(phaseIndex).stkFieldRef();
+                    const auto& phaseDuField =
+                        (consistent
+                             ? model_->duTildeRef(phaseIndex).stkFieldRef()
+                             : model_->duRef(phaseIndex).stkFieldRef());
+                    const auto* sideAlphaField =
+                        model_->alphaRef(phaseIndex).sideFieldPtr()
+                            ? model_->alphaRef(phaseIndex)
+                                  .sideFieldRef()
+                                  .stkFieldPtr()
+                            : nullptr;
+                    const auto* intrinsicFluxField =
+                        model_->intrinsicMDotRef(phaseIndex).sideFieldPtr()
+                            ? &model_->intrinsicMDotRef(phaseIndex)
+                                   .sideFieldRef()
+                                   .stkFieldRef()
+                            : nullptr;
+                    const scalar* specifiedAlpha =
+                        sideAlphaField
+                            ? stk::mesh::field_data(*sideAlphaField, side)
+                            : nullptr;
+                    const scalar* intrinsicFlux =
+                        intrinsicFluxField
+                            ? stk::mesh::field_data(*intrinsicFluxField, side)
+                            : nullptr;
+                    const auto& phaseShape =
+                        model_->URef(phaseIndex).isShifted()
+                            ? shiftedShapeFunction
+                            : shapeFunction;
+
+                    scalar phaseAlphaIp = 0.0;
+                    scalar phaseDuIp[SPATIAL_DIM] = {};
+                    for (label sideNode = 0; sideNode < nodesPerSide;
+                         ++sideNode)
+                    {
+                        const scalar shape =
+                            phaseShape[ip * nodesPerSide + sideNode];
+                        phaseAlphaIp +=
+                            shape * *stk::mesh::field_data(
+                                        phaseAlphaField,
+                                        sideNodes[sideNode]);
+                        const scalar* phaseDu = stk::mesh::field_data(
+                            phaseDuField, sideNodes[sideNode]);
+                        for (label component = 0;
+                             component < SPATIAL_DIM;
+                             ++component)
+                        {
+                            phaseDuIp[component] +=
+                                shape * phaseDu[component];
+                        }
+                    }
+                    if (specifiedAlpha && intrinsicFlux &&
+                        intrinsicFlux[ip] < 0.0)
+                    {
+                        phaseAlphaIp = specifiedAlpha[ip];
+                    }
                     for (label component = 0; component < SPATIAL_DIM;
                          ++component)
                     {
                         alphaDu[component] +=
-                            shape * du[sideNode * SPATIAL_DIM + component];
+                            phaseAlphaIp * phaseDuIp[component];
                     }
                 }
 

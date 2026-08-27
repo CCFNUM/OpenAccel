@@ -39,13 +39,6 @@ protected:
     void setResidualScales_() override;
 
 private:
-    // Nodes on boundaries where the pressure itself is prescribed (a
-    // static-pressure outlet, or an opening whose total pressure is set). The
-    // correction must vanish there, otherwise the p' system is pure Neumann
-    // and its constant mode is unconstrained -- the level then drifts even
-    // though the pressure *shape* is converged.
-    stk::mesh::PartVector collectSpecifiedPressureParts_() const;
-
     void storePressureCorrection_(
         const domain* domain,
         ::linearSolver::coefficients<linearSystem::BLOCKSIZE>* coefficients);

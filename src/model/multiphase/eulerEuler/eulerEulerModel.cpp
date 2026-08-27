@@ -7,6 +7,9 @@
 #include "simulation.h"
 #include "zoneTransformation.h"
 
+#include <array>
+#include <set>
+
 namespace accel
 {
 
@@ -62,6 +65,7 @@ eulerEulerModel::eulerEulerModel(realm* realm) : multiphaseModel(realm)
     }
 
     phaseSmoothedAlpha_.reserve(phases_.size());
+    coupledDu_.reserve(phases_.size());
     for (const auto& currentPhase : phases_)
     {
         phaseSmoothedAlpha_.push_back(std::make_unique<nodeField<1>>(
@@ -69,7 +73,333 @@ eulerEulerModel::eulerEulerModel(realm* realm) : multiphaseModel(realm)
             "euler_euler_smoothed_volume_fraction." + currentPhase.name_,
             1,
             false));
+        coupledDu_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(),
+            "euler_euler_coupled_du." + currentPhase.name_,
+            1,
+            false));
     }
+
+    std::set<std::pair<label, label>> pairKeys;
+    for (const auto& domain : realm->simulationRef().domainVector())
+    {
+        for (const auto& pair : domain->fluidPairModels_)
+        {
+            const label a = std::min(pair.globalIndexA_, pair.globalIndexB_);
+            const label b = std::max(pair.globalIndexA_, pair.globalIndexB_);
+            if (a != b)
+            {
+                pairKeys.emplace(a, b);
+            }
+        }
+    }
+    for (const auto& key : pairKeys)
+    {
+        const auto findName = [&](label index) -> std::string
+        {
+            const auto iter = std::find_if(
+                phases_.begin(), phases_.end(),
+                [index](const phase& current) {
+                    return current.index_ == index;
+                });
+            STK_ThrowRequireMsg(iter != phases_.end(),
+                                "Unknown Euler-Euler phase pair index");
+            return iter->name_;
+        };
+        pairDragFields_.push_back({
+            key.first,
+            key.second,
+            std::make_unique<nodeField<1>>(
+                realm->meshPtr(),
+                "euler_euler_drag." + findName(key.first) + "." +
+                    findName(key.second),
+                1,
+                false)});
+    }
+
+
+    fctFL_.reserve(phases_.size());
+    fctFH_.reserve(phases_.size());
+    fctA_.reserve(phases_.size());
+    fctLambda_.reserve(phases_.size());
+    fctQPlus_.reserve(phases_.size());
+    fctQMinus_.reserve(phases_.size());
+    fctPPlus_.reserve(phases_.size());
+    fctPMinus_.reserve(phases_.size());
+    fctSumAPlus_.reserve(phases_.size());
+    fctSumAMinus_.reserve(phases_.size());
+    fctLimiterPlus_.reserve(phases_.size());
+    fctLimiterMinus_.reserve(phases_.size());
+    fctLocalAlphaMax_.reserve(phases_.size());
+    fctLocalAlphaMin_.reserve(phases_.size());
+    for (const auto& currentPhase : phases_)
+    {
+        const std::string suffix = "." + currentPhase.name_;
+        fctFL_.push_back(std::make_unique<elementScalarField>(
+            realm, "euler_euler_fct_FL" + suffix, 1));
+        fctFH_.push_back(std::make_unique<elementScalarField>(
+            realm, "euler_euler_fct_FH" + suffix, 1));
+        fctA_.push_back(std::make_unique<elementScalarField>(
+            realm, "euler_euler_fct_A" + suffix, 1));
+        fctLambda_.push_back(std::make_unique<elementScalarField>(
+            realm, "euler_euler_fct_lambda" + suffix, 1));
+        fctQPlus_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(), "euler_euler_fct_Qplus" + suffix, 1, false));
+        fctQMinus_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(), "euler_euler_fct_Qminus" + suffix, 1, false));
+        fctPPlus_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(), "euler_euler_fct_Pplus" + suffix, 1, false));
+        fctPMinus_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(), "euler_euler_fct_Pminus" + suffix, 1, false));
+        fctSumAPlus_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(), "euler_euler_fct_sumAplus" + suffix, 1, false));
+        fctSumAMinus_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(),
+            "euler_euler_fct_sumAminus" + suffix,
+            1,
+            false));
+        fctLimiterPlus_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(),
+            "euler_euler_fct_limiterPlus" + suffix,
+            1,
+            false));
+        fctLimiterMinus_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(),
+            "euler_euler_fct_limiterMinus" + suffix,
+            1,
+            false));
+        fctLocalAlphaMax_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(),
+            "euler_euler_fct_local_alpha_max" + suffix,
+            1,
+            false));
+        fctLocalAlphaMin_.push_back(std::make_unique<nodeField<1>>(
+            realm->meshPtr(),
+            "euler_euler_fct_local_alpha_min" + suffix,
+            1,
+            false));
+    }
+}
+
+nodeField<1>& eulerEulerModel::coupledDuRef(label phaseIndex)
+{
+    for (label phase = 0; phase < nPhases(); ++phase)
+    {
+        if (this->phaseIndex(phase) == phaseIndex)
+        {
+            return *coupledDu_[phase];
+        }
+    }
+    STK_ThrowRequireMsg(false, "Unknown Euler-Euler phase index");
+    return *coupledDu_.front();
+}
+
+const nodeField<1>& eulerEulerModel::coupledDuRef(label phaseIndex) const
+{
+    for (label phase = 0; phase < nPhases(); ++phase)
+    {
+        if (this->phaseIndex(phase) == phaseIndex)
+        {
+            return *coupledDu_[phase];
+        }
+    }
+    STK_ThrowRequireMsg(false, "Unknown Euler-Euler phase index");
+    return *coupledDu_.front();
+}
+
+nodeField<1>& eulerEulerModel::pairDragRef(label phaseA, label phaseB)
+{
+    const label a = std::min(phaseA, phaseB);
+    const label b = std::max(phaseA, phaseB);
+    for (auto& pair : pairDragFields_)
+    {
+        if (pair.phaseA == a && pair.phaseB == b)
+        {
+            return *pair.coefficient;
+        }
+    }
+    STK_ThrowRequireMsg(false, "Unknown Euler-Euler phase pair");
+    return *pairDragFields_.front().coefficient;
+}
+
+void eulerEulerModel::updateCoupledPressureResponse(
+    const std::shared_ptr<domain> domain)
+{
+    const auto phases = activePhaseIndices(domain);
+    if (phases.empty())
+    {
+        return;
+    }
+
+    const auto& metaData = meshRef().metaDataRef();
+    const auto& bulkData = meshRef().bulkDataRef();
+    const auto* volumeField = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
+    const auto selection =
+        metaData.locally_owned_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& buckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selection);
+    const label n = static_cast<label>(phases.size());
+
+    for (const auto phaseIndex : phases)
+    {
+        coupledDuRef(phaseIndex).setToValue(
+            {0.0}, domain->zonePtr()->interiorParts());
+    }
+
+    std::vector<const scalar*> alpha(n);
+    std::vector<const scalar*> du(n);
+    std::vector<const scalar*> drag(n);
+    std::vector<scalar*> coupled(n);
+    std::vector<std::vector<const scalar*>> pairK(
+        n, std::vector<const scalar*>(n, nullptr));
+    for (label i = 0; i < n; ++i)
+    {
+        alpha[i] = nullptr;
+        du[i] = nullptr;
+        drag[i] = nullptr;
+        coupled[i] = nullptr;
+        for (label j = 0; j < n; ++j)
+        {
+            if (i != j)
+            {
+                pairK[i][j] = nullptr;
+            }
+        }
+    }
+
+    for (const stk::mesh::Bucket* bucketPtr : buckets)
+    {
+        const auto& bucket = *bucketPtr;
+        const scalar* volume = stk::mesh::field_data(*volumeField, bucket);
+        for (label i = 0; i < n; ++i)
+        {
+            alpha[i] = stk::mesh::field_data(
+                alphaRef(phases[i]).stkFieldRef(), bucket);
+            du[i] = stk::mesh::field_data(
+                duRef(phases[i]).stkFieldRef(), bucket);
+            drag[i] = stk::mesh::field_data(
+                dragDiagonalRef(phases[i]).stkFieldRef(), bucket);
+            coupled[i] = stk::mesh::field_data(
+                coupledDuRef(phases[i]).stkFieldRef(), bucket);
+            for (label j = i + 1; j < n; ++j)
+            {
+                const auto& field =
+                    pairDragRef(phases[i], phases[j]).stkFieldRef();
+                pairK[i][j] = stk::mesh::field_data(field, bucket);
+                pairK[j][i] = pairK[i][j];
+            }
+        }
+
+        std::vector<scalar> matrix(n * n);
+        std::vector<scalar> rhs(n);
+        for (stk::mesh::Bucket::size_type node = 0;
+             node < bucket.size(); ++node)
+        {
+            std::fill(matrix.begin(), matrix.end(), 0.0);
+            for (label i = 0; i < n; ++i)
+            {
+                const scalar independent = du[i][node];
+                const scalar diagonal =
+                    independent > SMALL
+                        ? alpha[i][node] * volume[node] /
+                              (independent + SMALL)
+                        : drag[i][node];
+                matrix[i * n + i] = std::max(diagonal, SMALL);
+                rhs[i] = alpha[i][node] * volume[node];
+                for (label j = 0; j < n; ++j)
+                {
+                    if (i != j && pairK[i][j])
+                    {
+                        // Drag is assembled into momentum as K_ij times the
+                        // nodal control volume; retain the same scaling in
+                        // the local phase-coupling matrix.
+                        matrix[i * n + j] = -pairK[i][j][node] * volume[node];
+                    }
+                }
+            }
+
+            // Small dense Gaussian elimination; the number of phases is a
+            // model property, so this remains general and avoids a
+            // two-phase-specific closed form.
+            for (label pivot = 0; pivot < n; ++pivot)
+            {
+                label pivotRow = pivot;
+                scalar pivotValue = std::abs(matrix[pivot * n + pivot]);
+                for (label row = pivot + 1; row < n; ++row)
+                {
+                    const scalar candidate =
+                        std::abs(matrix[row * n + pivot]);
+                    if (candidate > pivotValue)
+                    {
+                        pivotValue = candidate;
+                        pivotRow = row;
+                    }
+                }
+                if (pivotValue <= SMALL || !std::isfinite(pivotValue))
+                {
+                    for (label i = 0; i < n; ++i)
+                    {
+                        coupled[i][node] = du[i][node];
+                    }
+                    break;
+                }
+                if (pivotRow != pivot)
+                {
+                    for (label column = pivot; column < n; ++column)
+                    {
+                        std::swap(matrix[pivot * n + column],
+                                  matrix[pivotRow * n + column]);
+                    }
+                    std::swap(rhs[pivot], rhs[pivotRow]);
+                }
+                for (label row = pivot + 1; row < n; ++row)
+                {
+                    const scalar factor =
+                        matrix[row * n + pivot] /
+                        (matrix[pivot * n + pivot] + SMALL);
+                    for (label column = pivot; column < n; ++column)
+                    {
+                        matrix[row * n + column] -=
+                            factor * matrix[pivot * n + column];
+                    }
+                    rhs[row] -= factor * rhs[pivot];
+                }
+            }
+            for (label i = n - 1; i >= 0; --i)
+            {
+                scalar value = rhs[i];
+                for (label column = i + 1; column < n; ++column)
+                {
+                    value -= matrix[i * n + column] * coupled[column][node];
+                }
+                coupled[i][node] = value /
+                    (matrix[i * n + i] + SMALL);
+                STK_ThrowRequireMsg(
+                    std::isfinite(coupled[i][node]),
+                    "Euler-Euler coupled pressure response became non-finite");
+            }
+        }
+    }
+
+    for (const auto phaseIndex : phases)
+    {
+        coupledDuRef(phaseIndex).synchronizeGhostedEntities(domain->index());
+    }
+}
+
+label eulerEulerModel::fctLocalPhaseIndex_(label phaseIndex) const
+{
+    for (label phase = 0; phase < nPhases(); ++phase)
+    {
+        if (this->phaseIndex(phase) == phaseIndex)
+        {
+            return phase;
+        }
+    }
+    STK_ThrowRequireMsg(false, "Unknown Euler-Euler phase index");
+    return 0;
 }
 
 nodeField<1>& eulerEulerModel::phaseSmoothedAlphaRef(label phaseIndex)
@@ -533,6 +863,18 @@ void eulerEulerModel::setupEulerEulerAuxiliaryFields_(
     {
         dragDiagonalRef(phaseIndex).setZone(domain->index());
     }
+    if (coupledDuRef(phaseIndex).isZoneUnset(domain->index()))
+    {
+        coupledDuRef(phaseIndex).setZone(domain->index());
+    }
+    for (auto& pair : pairDragFields_)
+    {
+        if ((pair.phaseA == phaseIndex || pair.phaseB == phaseIndex) &&
+            pair.coefficient->isZoneUnset(domain->index()))
+        {
+            pair.coefficient->setZone(domain->index());
+        }
+    }
 }
 
 void eulerEulerModel::updatePhaseMassCoefficient(
@@ -588,6 +930,16 @@ void eulerEulerModel::updateInterphaseMomentumSources(
         ops::zero(interphaseMomentumSourceRef(phaseIndex).stkFieldPtr(), parts);
         ops::zero(dragDiagonalRef(phaseIndex).stkFieldPtr(), parts);
     }
+    for (auto& pairField : pairDragFields_)
+    {
+        if (std::find(phaseIndices.begin(), phaseIndices.end(),
+                      pairField.phaseA) != phaseIndices.end() &&
+            std::find(phaseIndices.begin(), phaseIndices.end(),
+                      pairField.phaseB) != phaseIndices.end())
+        {
+            ops::zero(pairField.coefficient->stkFieldPtr(), parts);
+        }
+    }
 
     const auto& mesh = meshRef();
     const auto& metaData = mesh.metaDataRef();
@@ -612,6 +964,7 @@ void eulerEulerModel::updateInterphaseMomentumSources(
             interphaseMomentumSourceRef(phaseB).stkFieldRef();
         auto& diagonalAField = dragDiagonalRef(phaseA).stkFieldRef();
         auto& diagonalBField = dragDiagonalRef(phaseB).stkFieldRef();
+        auto& pairCoefficientField = pairDragRef(phaseA, phaseB).stkFieldRef();
         const auto& velocityAField = URef(phaseA).stkFieldRef();
         const auto& velocityBField = URef(phaseB).stkFieldRef();
         // Smoothed alpha, matching the body force -- see
@@ -619,6 +972,12 @@ void eulerEulerModel::updateInterphaseMomentumSources(
         // same volume fraction the buoyancy does.
         const auto& alphaAField = phaseSmoothedAlphaRef(phaseA).stkFieldRef();
         const auto& alphaBField = phaseSmoothedAlphaRef(phaseB).stkFieldRef();
+        // The Marschall segregated-drag model uses the physical phase
+        // fractions in muAlphaI.  Keep the smoothed fields above for the
+        // regular dispersed-drag blend, but do not turn the residual-alpha
+        // safeguard into a material-property contribution here.
+        const auto& rawAlphaAField = alphaRef(phaseA).stkFieldRef();
+        const auto& rawAlphaBField = alphaRef(phaseB).stkFieldRef();
         const auto& alphaGradientAField =
             alphaRef(phaseA).gradRef().stkFieldRef();
         const auto& alphaGradientBField =
@@ -681,6 +1040,8 @@ void eulerEulerModel::updateInterphaseMomentumSources(
                 stk::mesh::field_data(diagonalAField, bucket);
             scalar* diagonalB =
                 stk::mesh::field_data(diagonalBField, bucket);
+            scalar* pairCoefficient =
+                stk::mesh::field_data(pairCoefficientField, bucket);
             const scalar* velocityA =
                 stk::mesh::field_data(velocityAField, bucket);
             const scalar* velocityB =
@@ -689,6 +1050,10 @@ void eulerEulerModel::updateInterphaseMomentumSources(
                 stk::mesh::field_data(alphaAField, bucket);
             const scalar* alphaB =
                 stk::mesh::field_data(alphaBField, bucket);
+            const scalar* rawAlphaA =
+                stk::mesh::field_data(rawAlphaAField, bucket);
+            const scalar* rawAlphaB =
+                stk::mesh::field_data(rawAlphaBField, bucket);
             const scalar* alphaGradientA =
                 stk::mesh::field_data(alphaGradientAField, bucket);
             const scalar* alphaGradientB =
@@ -724,6 +1089,11 @@ void eulerEulerModel::updateInterphaseMomentumSources(
                 }
                 const scalar relativeSpeed =
                     std::sqrt(relativeSpeedSquared);
+
+                STK_ThrowRequireMsg(
+                    std::isfinite(relativeSpeed),
+                    "Euler-Euler interphase drag received a non-finite "
+                    "relative phase velocity");
 
                 scalar coefficient = pair.drag_.coefficient_;
                 if (pair.drag_.option_ ==
@@ -832,17 +1202,23 @@ void eulerEulerModel::updateInterphaseMomentumSources(
                                 (rhoA[node] + rhoB[node] + SMALL),
                             residualAlpha / (2.0 * characteristicLength));
                         const scalar limitedAlphaA = std::max(
-                            alphaA[node], residualAlpha);
+                            rawAlphaA[node], residualAlpha);
                         const scalar limitedAlphaB = std::max(
-                            alphaB[node], residualAlpha);
+                            rawAlphaB[node], residualAlpha);
+                        // OpenFOAM segregated::K: muAlphaI has the *raw*
+                        // alphaA*muA*alphaB*muB numerator and a denominator
+                        // limited independently by each phase.  Using clipped
+                        // fractions in the numerator, or crossing muA/muB in
+                        // the denominator, artificially raises the viscous
+                        // interface drag in dilute cells.
                         const scalar alphaWeightedViscosity =
-                            limitedAlphaA * muA[node] * limitedAlphaB *
+                            rawAlphaA[node] * muA[node] * rawAlphaB[node] *
                             muB[node] /
-                            (limitedAlphaB * muA[node] +
-                             limitedAlphaA * muB[node] + SMALL);
+                            (limitedAlphaA * muA[node] +
+                             limitedAlphaB * muB[node] + SMALL);
                         const scalar mixtureDensity =
-                            alphaA[node] * rhoA[node] +
-                            alphaB[node] * rhoB[node];
+                            rawAlphaA[node] * rhoA[node] +
+                            rawAlphaB[node] * rhoB[node];
                         const scalar segregatedCoefficient =
                             segregatedM * mixtureDensity * relativeSpeed *
                                 gradientMagnitude /
@@ -855,8 +1231,13 @@ void eulerEulerModel::updateInterphaseMomentumSources(
                 }
 
                 coefficient = std::max(0.0, coefficient);
+                STK_ThrowRequireMsg(
+                    std::isfinite(coefficient),
+                    "Euler-Euler interphase drag coefficient became "
+                    "non-finite");
                 diagonalA[node] += coefficient;
                 diagonalB[node] += coefficient;
+                pairCoefficient[node] = coefficient;
                 for (label component = 0; component < SPATIAL_DIM;
                      ++component)
                 {
@@ -864,6 +1245,10 @@ void eulerEulerModel::updateInterphaseMomentumSources(
                         coefficient *
                         (velocityB[SPATIAL_DIM * node + component] -
                          velocityA[SPATIAL_DIM * node + component]);
+                    STK_ThrowRequireMsg(
+                        std::isfinite(force),
+                        "Euler-Euler interphase drag force became "
+                        "non-finite");
                     sourceA[SPATIAL_DIM * node + component] += force;
                     sourceB[SPATIAL_DIM * node + component] -= force;
                 }
@@ -877,6 +1262,17 @@ void eulerEulerModel::updateInterphaseMomentumSources(
             .synchronizeGhostedEntities(domain->index());
         dragDiagonalRef(phaseIndex)
             .synchronizeGhostedEntities(domain->index());
+    }
+    for (auto& pairField : pairDragFields_)
+    {
+        if (std::find(phaseIndices.begin(), phaseIndices.end(),
+                      pairField.phaseA) != phaseIndices.end() &&
+            std::find(phaseIndices.begin(), phaseIndices.end(),
+                      pairField.phaseB) != phaseIndices.end())
+        {
+            pairField.coefficient->synchronizeGhostedEntities(
+                domain->index());
+        }
     }
 }
 
@@ -998,6 +1394,489 @@ void eulerEulerModel::updatePhaseMassFlux(
             domain,
             phaseIndex,
             domain->zonePtr()->boundaryRef(iBoundary).parts());
+    }
+    updatePhaseFlowReversalFlags_(domain, phaseIndex);
+}
+
+void eulerEulerModel::updatePhaseMassFluxWeighting(
+    const std::shared_ptr<domain> domain,
+    label phaseIndex)
+{
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const auto& alphaField = alphaRef(phaseIndex).stkFieldRef();
+    auto& totalFlux = mDotRef(phaseIndex);
+    auto& intrinsicFlux = intrinsicMDotRef(phaseIndex);
+    auto& totalElementField = totalFlux.stkFieldRef();
+    const auto& intrinsicElementField = intrinsicFlux.stkFieldRef();
+    const bool shifted = URef(phaseIndex).isShifted();
+
+    const auto elementSelection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets = bulkData.get_buckets(
+        stk::topology::ELEMENT_RANK, elementSelection);
+    std::vector<scalar> shapeFunction;
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScsIp = meSCS->numIntPoints_;
+        shapeFunction.resize(numScsIp * nodesPerElement);
+        if (shifted)
+        {
+            meSCS->shifted_shape_fcn(shapeFunction.data());
+        }
+        else
+        {
+            meSCS->shape_fcn(shapeFunction.data());
+        }
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size(); ++elementIndex)
+        {
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+            scalar* weighted = stk::mesh::field_data(
+                totalElementField, bucket, elementIndex);
+            const scalar* intrinsic = stk::mesh::field_data(
+                intrinsicElementField, bucket, elementIndex);
+            if (!weighted || !intrinsic)
+            {
+                continue;
+            }
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                scalar alphaIp = 0.0;
+                for (label node = 0; node < nodesPerElement; ++node)
+                {
+                    alphaIp +=
+                        shapeFunction[ip * nodesPerElement + node] *
+                        *stk::mesh::field_data(alphaField, nodes[node]);
+                }
+                weighted[ip] = alphaIp * intrinsic[ip];
+            }
+        }
+    }
+
+    if (totalFlux.sideFieldPtr() && intrinsicFlux.sideFieldPtr())
+    {
+        auto& totalSideField = totalFlux.sideFieldRef().stkFieldRef();
+        const auto& intrinsicSideField =
+            intrinsicFlux.sideFieldRef().stkFieldRef();
+        const auto* prescribedAlphaField =
+            alphaRef(phaseIndex).sideFieldPtr()
+                ? alphaRef(phaseIndex).sideFieldRef().stkFieldPtr()
+                : nullptr;
+
+        const auto reweightSideParts = [&](const stk::mesh::PartVector& parts)
+        {
+            if (parts.empty())
+            {
+                return;
+            }
+            const auto selection =
+                metaData.universal_part() & stk::mesh::selectUnion(parts);
+            const auto& buckets =
+                bulkData.get_buckets(metaData.side_rank(), selection);
+            std::vector<scalar> sideShapeFunction;
+            for (const stk::mesh::Bucket* bucketPtr : buckets)
+            {
+                const auto& bucket = *bucketPtr;
+                MasterElement* meFC =
+                    MasterElementRepo::get_surface_master_element(
+                        bucket.topology());
+                const label nodesPerSide = bucket.topology().num_nodes();
+                const label numScsIp = meFC->numIntPoints_;
+                sideShapeFunction.resize(numScsIp * nodesPerSide);
+                if (shifted)
+                {
+                    meFC->shifted_shape_fcn(sideShapeFunction.data());
+                }
+                else
+                {
+                    meFC->shape_fcn(sideShapeFunction.data());
+                }
+
+                for (stk::mesh::Bucket::size_type sideIndex = 0;
+                     sideIndex < bucket.size(); ++sideIndex)
+                {
+                    const auto side = bucket[sideIndex];
+                    scalar* weighted =
+                        stk::mesh::field_data(totalSideField, side);
+                    const scalar* intrinsic =
+                        stk::mesh::field_data(intrinsicSideField, side);
+                    const scalar* prescribedAlpha =
+                        prescribedAlphaField
+                            ? stk::mesh::field_data(*prescribedAlphaField, side)
+                            : nullptr;
+                    if (!weighted || !intrinsic)
+                    {
+                        continue;
+                    }
+                    const auto* nodes = bucket.begin_nodes(sideIndex);
+                    for (label ip = 0; ip < numScsIp; ++ip)
+                    {
+                        scalar alphaIp = 0.0;
+                        for (label node = 0; node < nodesPerSide; ++node)
+                        {
+                            alphaIp +=
+                                sideShapeFunction[ip * nodesPerSide + node] *
+                                *stk::mesh::field_data(alphaField,
+                                                       nodes[node]);
+                        }
+                        if (prescribedAlpha && intrinsic[ip] < 0.0)
+                        {
+                            alphaIp = prescribedAlpha[ip];
+                        }
+                        weighted[ip] = alphaIp * intrinsic[ip];
+                    }
+                }
+            }
+        };
+
+        for (const interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType())
+            {
+                continue;
+            }
+            if (interf->isInternal())
+            {
+                reweightSideParts(interf->masterInfoRef().currentPartVec_);
+                reweightSideParts(interf->slaveInfoRef().currentPartVec_);
+            }
+            else
+            {
+                reweightSideParts(
+                    interf->interfaceSideInfoPtr(domain->index())
+                        ->currentPartVec_);
+            }
+        }
+        for (label boundaryIndex = 0;
+             boundaryIndex < domain->zonePtr()->nBoundaries();
+             ++boundaryIndex)
+        {
+            reweightSideParts(
+                domain->zonePtr()->boundaryRef(boundaryIndex).parts());
+        }
+    }
+    updatePhaseFlowReversalFlags_(domain, phaseIndex);
+}
+
+void eulerEulerModel::correctPhaseMassFlux(
+    const std::shared_ptr<domain> domain,
+    label phaseIndex)
+{
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    auto& totalFluxField = mDotRef(phaseIndex).stkFieldRef();
+    auto& intrinsicFluxField = intrinsicMDotRef(phaseIndex).stkFieldRef();
+    const auto& pressureCorrectionField = pCorrRef().stkFieldRef();
+    const auto& alphaField = alphaRef(phaseIndex).stkFieldRef();
+    const auto& rhoField = rhoRef(phaseIndex).stkFieldRef();
+    const auto* sideAlphaField =
+        alphaRef(phaseIndex).sideFieldPtr()
+            ? alphaRef(phaseIndex).sideFieldRef().stkFieldPtr()
+            : nullptr;
+    const bool consistent = controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& responseField =
+        consistent ? duTildeRef(phaseIndex).stkFieldRef()
+                   : duRef(phaseIndex).stkFieldRef();
+    const auto& coordinatesField = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, mesh::coordinates_ID);
+
+    const auto selection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& buckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selection);
+    std::vector<scalar> coordinates;
+    std::vector<scalar> shapeFunction;
+    std::vector<scalar> areaVector;
+    std::vector<scalar> dndx;
+    std::vector<scalar> deriv;
+    std::vector<scalar> detJ;
+    std::vector<scalar> pressureCorrection;
+    std::vector<scalar> alpha;
+    std::vector<scalar> rho;
+    std::vector<scalar> response;
+    for (const stk::mesh::Bucket* bucketPtr : buckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScsIp = meSCS->numIntPoints_;
+        coordinates.resize(nodesPerElement * SPATIAL_DIM);
+        shapeFunction.resize(numScsIp * nodesPerElement);
+        areaVector.resize(numScsIp * SPATIAL_DIM);
+        dndx.resize(numScsIp * nodesPerElement * SPATIAL_DIM);
+        deriv.resize(numScsIp * nodesPerElement * SPATIAL_DIM);
+        detJ.resize(numScsIp);
+        pressureCorrection.resize(nodesPerElement);
+        alpha.resize(nodesPerElement);
+        rho.resize(nodesPerElement);
+        response.resize(nodesPerElement * SPATIAL_DIM);
+        meSCS->shape_fcn(shapeFunction.data());
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size(); ++elementIndex)
+        {
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+            for (label node = 0; node < nodesPerElement; ++node)
+            {
+                const scalar* nodeCoordinates =
+                    stk::mesh::field_data(coordinatesField, nodes[node]);
+                const scalar* nodeResponse =
+                    stk::mesh::field_data(responseField, nodes[node]);
+                pressureCorrection[node] = *stk::mesh::field_data(
+                    pressureCorrectionField, nodes[node]);
+                alpha[node] = *stk::mesh::field_data(alphaField, nodes[node]);
+                rho[node] = *stk::mesh::field_data(rhoField, nodes[node]);
+                for (label component = 0; component < SPATIAL_DIM;
+                     ++component)
+                {
+                    const label offset = node * SPATIAL_DIM + component;
+                    coordinates[offset] = nodeCoordinates[component];
+                    response[offset] = nodeResponse[component];
+                }
+            }
+            scalar error = 0.0;
+            meSCS->determinant(
+                1, coordinates.data(), areaVector.data(), &error);
+            meSCS->grad_op(1, coordinates.data(), dndx.data(), deriv.data(),
+                           detJ.data(), &error);
+            scalar* totalFlux = stk::mesh::field_data(
+                totalFluxField, bucket, elementIndex);
+            scalar* intrinsicFlux = stk::mesh::field_data(
+                intrinsicFluxField, bucket, elementIndex);
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                scalar alphaIp = 0.0;
+                scalar rhoIp = 0.0;
+                scalar normalCorrection = 0.0;
+                for (label component = 0; component < SPATIAL_DIM;
+                     ++component)
+                {
+                    scalar responseIp = 0.0;
+                    scalar compactGradient = 0.0;
+                    for (label node = 0; node < nodesPerElement; ++node)
+                    {
+                        const scalar shape =
+                            shapeFunction[ip * nodesPerElement + node];
+                        responseIp +=
+                            shape * response[node * SPATIAL_DIM + component];
+                        compactGradient +=
+                            dndx[(ip * nodesPerElement + node) *
+                                     SPATIAL_DIM + component] *
+                            pressureCorrection[node];
+                    }
+                    normalCorrection -= responseIp * compactGradient *
+                                        areaVector[ip * SPATIAL_DIM + component];
+                }
+                for (label node = 0; node < nodesPerElement; ++node)
+                {
+                    const scalar shape =
+                        shapeFunction[ip * nodesPerElement + node];
+                    alphaIp += shape * alpha[node];
+                    rhoIp += shape * rho[node];
+                }
+                intrinsicFlux[ip] += rhoIp * normalCorrection;
+                totalFlux[ip] += alphaIp * rhoIp * normalCorrection;
+            }
+        }
+    }
+
+    auto& totalFlux = mDotRef(phaseIndex);
+    auto& intrinsicFlux = intrinsicMDotRef(phaseIndex);
+    if (totalFlux.sideFieldPtr() && intrinsicFlux.sideFieldPtr())
+    {
+        auto& totalSideField = totalFlux.sideFieldRef().stkFieldRef();
+        auto& intrinsicSideField = intrinsicFlux.sideFieldRef().stkFieldRef();
+        const auto& areaField = *metaData.get_field<scalar>(
+            metaData.side_rank(), mesh::exposed_area_vector_ID);
+        for (label boundaryIndex = 0;
+             boundaryIndex < domain->zonePtr()->nBoundaries();
+             ++boundaryIndex)
+        {
+            const auto& boundary =
+                domain->zonePtr()->boundaryRef(boundaryIndex);
+            if (boundary.type() != boundaryPhysicalType::outlet &&
+                boundary.type() != boundaryPhysicalType::opening)
+            {
+                continue;
+            }
+            if (URef(phaseIndex)
+                    .boundaryConditionRef(domain->index(), boundaryIndex)
+                    .type() == boundaryConditionType::specifiedValue)
+            {
+                continue;
+            }
+            const auto boundarySelection =
+                metaData.universal_part() &
+                stk::mesh::selectUnion(boundary.parts());
+            const auto& boundaryBuckets =
+                bulkData.get_buckets(metaData.side_rank(), boundarySelection);
+            const auto* reversalField = URef(phaseIndex).reversalFlagPtr();
+            std::vector<stk::topology> parentTopologies;
+            std::vector<scalar> boundaryCoordinates;
+            std::vector<scalar> sideShape;
+            std::vector<scalar> faceDndx;
+            std::vector<scalar> faceDetJ;
+            for (const stk::mesh::Bucket* bucketPtr : boundaryBuckets)
+            {
+                const auto& bucket = *bucketPtr;
+                MasterElement* meFC =
+                    MasterElementRepo::get_surface_master_element(
+                        bucket.topology());
+                const label nodesPerSide = bucket.topology().num_nodes();
+                const label numFaceIps = meFC->numIntPoints_;
+                sideShape.resize(numFaceIps * nodesPerSide);
+                if (URef(phaseIndex).isShifted())
+                    meFC->shifted_shape_fcn(sideShape.data());
+                else
+                    meFC->shape_fcn(sideShape.data());
+                bucket.parent_topology(stk::topology::ELEMENT_RANK,
+                                       parentTopologies);
+                STK_ThrowAssert(parentTopologies.size() == 1);
+                MasterElement* meSCS =
+                    MasterElementRepo::get_surface_master_element(
+                        parentTopologies[0]);
+                const label nodesPerElement = meSCS->nodesPerElement_;
+                boundaryCoordinates.resize(nodesPerElement * SPATIAL_DIM);
+                faceDndx.resize(numFaceIps * nodesPerElement * SPATIAL_DIM);
+                faceDetJ.resize(numFaceIps);
+                for (stk::mesh::Bucket::size_type sideIndex = 0;
+                     sideIndex < bucket.size(); ++sideIndex)
+                {
+                    const auto side = bucket[sideIndex];
+                    scalar* total = stk::mesh::field_data(totalSideField, side);
+                    scalar* intrinsic =
+                        stk::mesh::field_data(intrinsicSideField, side);
+                    const scalar* specifiedAlpha =
+                        sideAlphaField
+                            ? stk::mesh::field_data(*sideAlphaField, side)
+                            : nullptr;
+                    if (!total || !intrinsic)
+                        continue;
+                    const auto* elementRelations = bulkData.begin_elements(side);
+                    STK_ThrowAssert(bulkData.num_elements(side) == 1);
+                    const auto element = elementRelations[0];
+                    const auto* elementOrdinals =
+                        bulkData.begin_element_ordinals(side);
+                    const label faceOrdinal = elementOrdinals[0];
+                    const label* faceNodeOrdinals =
+                        meSCS->side_node_ordinals(faceOrdinal);
+                    const auto* elementNodes = bulkData.begin_nodes(element);
+                    for (label node = 0; node < nodesPerElement; ++node)
+                    {
+                        const scalar* nodeCoordinates = stk::mesh::field_data(
+                            coordinatesField, elementNodes[node]);
+                        for (label component = 0; component < SPATIAL_DIM;
+                             ++component)
+                            boundaryCoordinates[node * SPATIAL_DIM + component] =
+                                nodeCoordinates[component];
+                    }
+                    scalar error = 0.0;
+                    meSCS->face_grad_op(1, faceOrdinal,
+                                        boundaryCoordinates.data(),
+                                        faceDndx.data(), faceDetJ.data(),
+                                        &error);
+                    const auto* sideNodes = bulkData.begin_nodes(side);
+                    const scalar* area = stk::mesh::field_data(areaField, side);
+                    const label* reversed =
+                        reversalField
+                            ? stk::mesh::field_data(
+                                  reversalField->stkFieldRef(), side)
+                            : nullptr;
+                    for (label ip = 0; ip < numFaceIps; ++ip)
+                    {
+                        if (boundary.type() == boundaryPhysicalType::outlet &&
+                            reversed && reversed[ip] == 1)
+                        {
+                            continue;
+                        }
+                        scalar alphaIp = 0.0;
+                        scalar rhoIp = 0.0;
+                        std::array<scalar, SPATIAL_DIM> responseIp{};
+                        for (label sideNode = 0; sideNode < nodesPerSide;
+                             ++sideNode)
+                        {
+                            const scalar shape =
+                                sideShape[ip * nodesPerSide + sideNode];
+                            alphaIp += shape * *stk::mesh::field_data(
+                                                   alphaField,
+                                                   sideNodes[sideNode]);
+                            rhoIp += shape * *stk::mesh::field_data(
+                                                 rhoField,
+                                                 sideNodes[sideNode]);
+                            const scalar* nodeResponse =
+                                stk::mesh::field_data(responseField,
+                                                      sideNodes[sideNode]);
+                            for (label component = 0;
+                                 component < SPATIAL_DIM; ++component)
+                                responseIp[component] +=
+                                    shape * nodeResponse[component];
+                        }
+                        scalar normalCorrection = 0.0;
+                        for (label component = 0; component < SPATIAL_DIM;
+                             ++component)
+                        {
+                            scalar compactGradient = 0.0;
+                            for (label node = 0; node < nodesPerElement;
+                                 ++node)
+                            {
+                                bool boundaryNode = false;
+                                for (label sideNode = 0;
+                                     sideNode < nodesPerSide; ++sideNode)
+                                    boundaryNode = boundaryNode ||
+                                        faceNodeOrdinals[sideNode] == node;
+                                if (!boundaryNode)
+                                    compactGradient +=
+                                        faceDndx[(ip * nodesPerElement + node) *
+                                                     SPATIAL_DIM + component] *
+                                        *stk::mesh::field_data(
+                                            pressureCorrectionField,
+                                            elementNodes[node]);
+                            }
+                            normalCorrection -= responseIp[component] *
+                                compactGradient * area[ip * SPATIAL_DIM + component];
+                        }
+                        intrinsic[ip] += rhoIp * normalCorrection;
+                        if (specifiedAlpha && intrinsic[ip] < 0.0)
+                            alphaIp = specifiedAlpha[ip];
+                        total[ip] = alphaIp * intrinsic[ip];
+                    }
+                }
+            }
+        }
+    }
+
+    // Physical pressure boundaries use the conservative correction above.
+    // Interfaces retain their established velocity-based treatment.
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isFluidSolidType())
+            continue;
+        if (interf->isInternal())
+        {
+            updatePhaseMassFluxSideParts_(
+                domain, phaseIndex, interf->masterInfoRef().currentPartVec_);
+            updatePhaseMassFluxSideParts_(
+                domain, phaseIndex, interf->slaveInfoRef().currentPartVec_);
+        }
+        else
+        {
+            updatePhaseMassFluxSideParts_(
+                domain, phaseIndex,
+                interf->interfaceSideInfoPtr(domain->index())->currentPartVec_);
+        }
     }
     updatePhaseFlowReversalFlags_(domain, phaseIndex);
 }
@@ -1230,6 +2109,7 @@ void eulerEulerModel::updatePhaseMassFluxSideParts_(
         nodalVelocity.resize(nodesPerSide * SPATIAL_DIM);
         nodalAlpha.resize(nodesPerSide);
         nodalRho.resize(nodesPerSide);
+
         if (URef(phaseIndex).isShifted())
         {
             meFC->shifted_shape_fcn(shapeFunction.data());
@@ -1268,6 +2148,7 @@ void eulerEulerModel::updatePhaseMassFluxSideParts_(
                         nodeVelocity[component];
                 }
             }
+
 
             const scalar* specifiedVelocity =
                 sideVelocityField
@@ -1320,6 +2201,7 @@ void eulerEulerModel::updatePhaseMassFluxSideParts_(
                         velocityIp[component] *
                         area[ip * SPATIAL_DIM + component];
                 }
+
                 // A side alpha value on an inlet/opening is an entrainment
                 // value, not a permanent boundary value. Outflow must carry
                 // the interior phase fraction; using the prescribed value on
@@ -1573,6 +2455,982 @@ void eulerEulerModel::updatePhaseFluxDivergence(
     accumulate(mDotRef(phaseIndex));
 }
 
+
+// --- Flux-corrected transport (ported from freeSurfaceFlowModel) ---------
+//
+// Scope: interior SCS faces only. Boundary and interface faces keep exactly
+// the low-order (upwind) flux the existing pipeline already computes via
+// mDotRef/updatePhaseFluxDivergence -- no antidiffusive correction is added
+// there. This is a deliberate simplification: the conservation drift this
+// is fixing comes from the *interior* redistribution mechanism (the old
+// global clip-and-redistribute mixing mass across unrelated nodes), which
+// this replaces; boundary flux was already being accounted for correctly
+// and unconditionally in the flux divergence used by both the old and new
+// path. Also not ported: the VOF interface-compression term and NVD-blended
+// high-order flux (see eulerEulerModel.h for why).
+
+void eulerEulerModel::computeFctFL_(const std::shared_ptr<domain> domain,
+                                    label phaseIndex)
+{
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+
+    const auto& alphaField = alphaRef(phaseIndex).stkFieldRef();
+    const auto& intrinsicMDotField = intrinsicMDotRef(phaseIndex).stkFieldRef();
+    auto& FLField = fctFL_[local]->stkFieldRef();
+
+    const auto selection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* adjacentNodes = meSCS->adjacentNodes();
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size();
+             ++elementIndex)
+        {
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+            const scalar* intrinsicFlux = stk::mesh::field_data(
+                intrinsicMDotField, bucket, elementIndex);
+            scalar* FL = stk::mesh::field_data(FLField, bucket, elementIndex);
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const scalar tmDot = intrinsicFlux[ip];
+                const auto upwindNode = tmDot > 0.0
+                                             ? nodes[adjacentNodes[2 * ip]]
+                                             : nodes[adjacentNodes[2 * ip + 1]];
+                const scalar alphaUpwind =
+                    *stk::mesh::field_data(alphaField, upwindNode);
+                FL[ip] = tmDot * alphaUpwind;
+            }
+        }
+    }
+}
+
+void eulerEulerModel::computeFctFH_(const std::shared_ptr<domain> domain,
+                                    label phaseIndex)
+{
+    // High-order flux via a van Leer TVD reconstruction -- NOT raw central.
+    //
+    // This is the piece that was missing and that made the whole FCT path
+    // destabilising. Measured: with a raw central FH, ~90% of faces ended up
+    // with limiter lambda == 1, i.e. the MULES layer almost never engaged,
+    // so FL + 1*(FH - FL) == FH left alpha advected by pure central
+    // differencing -- unbounded for advection, and it grew grid-scale
+    // oscillations that fed drag/buoyancy and blew the phase velocities up
+    // (max|U.air| 0.4 -> 6 m/s by t=3.5, then overflow).
+    //
+    // That mirrors how OpenFOAM and the free-surface model actually work:
+    // OpenFOAM's alpha equation uses `div(phi,alpha) Gauss vanLeer` -- its
+    // high-order flux is already TVD-limited -- and MULES is only a second
+    // safety layer on top. freeSurfaceFlowModel::computeFH_ likewise blends
+    // with its NVD blending factor. A bounded high-order flux is a
+    // requirement, not an optional refinement.
+    //
+    // r is built from the upwind nodal gradient along the face vector, the
+    // standard unstructured TVD form:
+    //   r   = 2*(grad_up . d)/(phi_down - phi_up) - 1
+    //   psi = (r + |r|)/(1 + |r|)                     (van Leer)
+    //   phi_face = phi_up + 0.5*psi*(phi_down - phi_up)
+    // psi = 0 recovers upwind, psi = 1 recovers central. The result is also
+    // clipped to the two adjacent nodal values, so the face value can never
+    // introduce a new extremum even if the gradient is stale.
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+
+    const auto& alphaField = alphaRef(phaseIndex).stkFieldRef();
+    const auto& gradAlphaField = alphaRef(phaseIndex).gradRef().stkFieldRef();
+    const auto& intrinsicMDotField = intrinsicMDotRef(phaseIndex).stkFieldRef();
+    const auto& coordsField = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, mesh::coordinates_ID);
+    auto& FHField = fctFH_[local]->stkFieldRef();
+
+    const auto selection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* adjacentNodes = meSCS->adjacentNodes();
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size();
+             ++elementIndex)
+        {
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+            const scalar* intrinsicFlux = stk::mesh::field_data(
+                intrinsicMDotField, bucket, elementIndex);
+            scalar* FH = stk::mesh::field_data(FHField, bucket, elementIndex);
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const scalar tmDot = intrinsicFlux[ip];
+                const label il = adjacentNodes[2 * ip];
+                const label ir = adjacentNodes[2 * ip + 1];
+                const auto nodeUp = tmDot > 0.0 ? nodes[il] : nodes[ir];
+                const auto nodeDown = tmDot > 0.0 ? nodes[ir] : nodes[il];
+
+                const scalar alphaUp =
+                    *stk::mesh::field_data(alphaField, nodeUp);
+                const scalar alphaDown =
+                    *stk::mesh::field_data(alphaField, nodeDown);
+                const scalar deltaAlpha = alphaDown - alphaUp;
+
+                scalar alphaFace = alphaUp;
+                if (std::abs(deltaAlpha) > SMALL)
+                {
+                    const scalar* coordUp =
+                        stk::mesh::field_data(coordsField, nodeUp);
+                    const scalar* coordDown =
+                        stk::mesh::field_data(coordsField, nodeDown);
+                    const scalar* gradUp =
+                        stk::mesh::field_data(gradAlphaField, nodeUp);
+
+                    scalar gradDotD = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        gradDotD += gradUp[j] * (coordDown[j] - coordUp[j]);
+                    }
+
+                    const scalar r = 2.0 * gradDotD / deltaAlpha - 1.0;
+                    const scalar psi =
+                        (r + std::abs(r)) / (1.0 + std::abs(r));
+                    alphaFace = alphaUp + 0.5 * psi * deltaAlpha;
+
+                    // Never let the reconstruction step outside the two
+                    // nodal values (guards a stale or noisy gradient).
+                    const scalar lo = std::min(alphaUp, alphaDown);
+                    const scalar hi = std::max(alphaUp, alphaDown);
+                    alphaFace = std::max(lo, std::min(hi, alphaFace));
+                }
+
+                FH[ip] = tmDot * alphaFace;
+            }
+        }
+    }
+}
+
+void eulerEulerModel::computeFctA_(const std::shared_ptr<domain> domain,
+                                   label phaseIndex)
+{
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+
+    const auto& FLField = fctFL_[local]->stkFieldRef();
+    const auto& FHField = fctFH_[local]->stkFieldRef();
+    auto& AField = fctA_[local]->stkFieldRef();
+
+    const auto selection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size();
+             ++elementIndex)
+        {
+            const scalar* FL =
+                stk::mesh::field_data(FLField, bucket, elementIndex);
+            const scalar* FH =
+                stk::mesh::field_data(FHField, bucket, elementIndex);
+            scalar* A = stk::mesh::field_data(AField, bucket, elementIndex);
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                A[ip] = FH[ip] - FL[ip];
+            }
+        }
+    }
+}
+
+void eulerEulerModel::computeFctQ_(const std::shared_ptr<domain> domain,
+                                   label phaseIndex)
+{
+    // Local (neighbour) alpha extrema, reimplementing nodeField::
+    // updateMinMaxFields's own neighbour-scan directly rather than calling
+    // it: that accessor depends on setupMinMaxFields() having been invoked,
+    // which only happens automatically for the highResolution advection
+    // scheme (see nodeField.hpp's constructor) -- Euler-Euler's alpha uses
+    // upwind, so those fields are never constructed and maxValueRef()/
+    // minValueRef() dereference null pointers there. A first version used
+    // fixed global bounds only, with no local cap: alpha near the inlet
+    // could jump straight to the global ceiling in one step and cascade
+    // outward, saturating the whole domain -- exactly what a local
+    // neighbour bound exists to prevent.
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+
+    const auto& alphaField = alphaRef(phaseIndex).stkFieldRef();
+    const auto& rhoField = rhoRef(phaseIndex).stkFieldRef();
+    const auto* dualVolumeField = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
+    const scalar dt = controlsRef().getTimestep();
+    const scalar alphaMin = domain->multiphase_.residualVolumeFraction_;
+    const scalar alphaMax = 1.0 - alphaMin;
+
+    fctLocalAlphaMax_[local]->setToValue({alphaMin},
+                                        domain->zonePtr()->interiorParts());
+    fctLocalAlphaMin_[local]->setToValue({alphaMax},
+                                        domain->zonePtr()->interiorParts());
+
+    auto& localMaxField = fctLocalAlphaMax_[local]->stkFieldRef();
+    auto& localMinField = fctLocalAlphaMin_[local]->stkFieldRef();
+
+    const auto elementSelection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, elementSelection);
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* adjacentNodes = meSCS->adjacentNodes();
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size();
+             ++elementIndex)
+        {
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const auto nodeL = nodes[adjacentNodes[2 * ip]];
+                const auto nodeR = nodes[adjacentNodes[2 * ip + 1]];
+                const scalar alphaL =
+                    *stk::mesh::field_data(alphaField, nodeL);
+                const scalar alphaR =
+                    *stk::mesh::field_data(alphaField, nodeR);
+
+                scalar* localMaxL = stk::mesh::field_data(localMaxField, nodeL);
+                scalar* localMinL = stk::mesh::field_data(localMinField, nodeL);
+                scalar* localMaxR = stk::mesh::field_data(localMaxField, nodeR);
+                scalar* localMinR = stk::mesh::field_data(localMinField, nodeR);
+
+                *localMaxL = std::max(*localMaxL, alphaR);
+                *localMinL = std::min(*localMinL, alphaR);
+                *localMaxR = std::max(*localMaxR, alphaL);
+                *localMinR = std::min(*localMinR, alphaL);
+            }
+        }
+    }
+
+    // Boundary/opening faces: fold the same inflow/outflow alpha selection
+    // updatePhaseMassFluxSideParts_ already uses into the adjacent node's
+    // local extrema, so a node right at the inlet has its bound informed by
+    // what's actually entering there, not just its interior neighbours.
+    // Without this, a fast-filling boundary node's own correction is capped
+    // by a ceiling that ignores the one real "neighbour" driving it --
+    // exactly the kind of gap that let the interior-only version drift.
+    {
+        const auto& intrinsicMDot = intrinsicMDotRef(phaseIndex);
+        if (intrinsicMDot.sideFieldPtr())
+        {
+            const auto& intrinsicSideField =
+                intrinsicMDot.sideFieldRef().stkFieldRef();
+            const auto* specifiedAlphaField =
+                alphaRef(phaseIndex).sideFieldPtr()
+                    ? alphaRef(phaseIndex).sideFieldRef().stkFieldPtr()
+                    : nullptr;
+
+            for (label iBoundary = 0;
+                 iBoundary < domain->zonePtr()->nBoundaries();
+                 ++iBoundary)
+            {
+                const auto& boundaryParts =
+                    domain->zonePtr()->boundaryRef(iBoundary).parts();
+                if (boundaryParts.empty())
+                {
+                    continue;
+                }
+                const auto sideSelection =
+                    metaData.universal_part() &
+                    stk::mesh::selectUnion(boundaryParts);
+                const auto& sideBuckets = bulkData.get_buckets(
+                    metaData.side_rank(), sideSelection);
+
+                for (const stk::mesh::Bucket* sideBucketPtr : sideBuckets)
+                {
+                    const auto& sideBucket = *sideBucketPtr;
+                    MasterElement* meFC =
+                        MasterElementRepo::get_surface_master_element(
+                            sideBucket.topology());
+                    const label numScsBip = meFC->numIntPoints_;
+                    const label* ipNodeMap = meFC->ipNodeMap();
+
+                    for (stk::mesh::Bucket::size_type sideIndex = 0;
+                         sideIndex < sideBucket.size();
+                         ++sideIndex)
+                    {
+                        const auto side = sideBucket[sideIndex];
+                        const scalar* intrinsicSide = stk::mesh::field_data(
+                            intrinsicSideField, side);
+                        if (!intrinsicSide)
+                        {
+                            continue;
+                        }
+                        const scalar* specifiedAlpha =
+                            specifiedAlphaField
+                                ? stk::mesh::field_data(*specifiedAlphaField,
+                                                        side)
+                                : nullptr;
+                        const auto* nodes = sideBucket.begin_nodes(sideIndex);
+
+                        for (label ip = 0; ip < numScsBip; ++ip)
+                        {
+                            const auto node = nodes[ipNodeMap[ip]];
+                            const scalar normalVelocitySign =
+                                intrinsicSide[ip];
+                            const scalar boundaryAlpha =
+                                (specifiedAlpha && normalVelocitySign < 0.0)
+                                    ? specifiedAlpha[ip]
+                                    : *stk::mesh::field_data(alphaField, node);
+
+                            scalar* localMax =
+                                stk::mesh::field_data(localMaxField, node);
+                            scalar* localMin =
+                                stk::mesh::field_data(localMinField, node);
+                            *localMax = std::max(*localMax, boundaryAlpha);
+                            *localMin = std::min(*localMin, boundaryAlpha);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fctLocalAlphaMax_[local]->synchronizeGhostedEntities(domain->index());
+    fctLocalAlphaMin_[local]->synchronizeGhostedEntities(domain->index());
+
+    auto& QplusField = fctQPlus_[local]->stkFieldRef();
+    auto& QminusField = fctQMinus_[local]->stkFieldRef();
+
+    const auto selection =
+        metaData.locally_owned_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& buckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : buckets)
+    {
+        const auto& bucket = *bucketPtr;
+        const scalar* alphaVal = stk::mesh::field_data(alphaField, bucket);
+        const scalar* rho = stk::mesh::field_data(rhoField, bucket);
+        const scalar* vol = stk::mesh::field_data(*dualVolumeField, bucket);
+        const scalar* localMax = stk::mesh::field_data(localMaxField, bucket);
+        const scalar* localMin = stk::mesh::field_data(localMinField, bucket);
+        scalar* Qplus = stk::mesh::field_data(QplusField, bucket);
+        scalar* Qminus = stk::mesh::field_data(QminusField, bucket);
+
+        for (stk::mesh::Bucket::size_type node = 0; node < bucket.size();
+             ++node)
+        {
+            const scalar clippedMax =
+                std::max(alphaMin, std::min(localMax[node], alphaMax));
+            const scalar clippedMin =
+                std::max(alphaMin, std::min(localMin[node], alphaMax));
+            const scalar rhoVdt = rho[node] * vol[node] / dt;
+            Qplus[node] = rhoVdt * (clippedMax - alphaVal[node]);
+            Qminus[node] = rhoVdt * (alphaVal[node] - clippedMin);
+        }
+    }
+}
+
+void eulerEulerModel::computeFctP_(const std::shared_ptr<domain> domain,
+                                   label phaseIndex)
+{
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+    fctPPlus_[local]->setToValue({0.0}, domain->zonePtr()->interiorParts());
+    fctPMinus_[local]->setToValue({0.0}, domain->zonePtr()->interiorParts());
+
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+
+    const auto& AField = fctA_[local]->stkFieldRef();
+    auto& PplusField = fctPPlus_[local]->stkFieldRef();
+    auto& PminusField = fctPMinus_[local]->stkFieldRef();
+
+    const auto selection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* adjacentNodes = meSCS->adjacentNodes();
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size();
+             ++elementIndex)
+        {
+            const scalar* A =
+                stk::mesh::field_data(AField, bucket, elementIndex);
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const auto nodeL = nodes[adjacentNodes[2 * ip]];
+                const auto nodeR = nodes[adjacentNodes[2 * ip + 1]];
+                scalar* PplusL = stk::mesh::field_data(PplusField, nodeL);
+                scalar* PplusR = stk::mesh::field_data(PplusField, nodeR);
+                scalar* PminusL = stk::mesh::field_data(PminusField, nodeL);
+                scalar* PminusR = stk::mesh::field_data(PminusField, nodeR);
+
+                if (A[ip] > 0.0)
+                {
+                    *PminusL += A[ip];
+                    *PplusR += A[ip];
+                }
+                else
+                {
+                    *PminusR -= A[ip];
+                    *PplusL -= A[ip];
+                }
+            }
+        }
+    }
+
+    fctPPlus_[local]->synchronizeGhostedEntities(domain->index());
+    fctPMinus_[local]->synchronizeGhostedEntities(domain->index());
+}
+
+scalar eulerEulerModel::computeFctLambdaNode_(
+    const std::shared_ptr<domain> domain, label phaseIndex, label iter)
+{
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+
+    const auto& PplusField = fctPPlus_[local]->stkFieldRef();
+    const auto& PminusField = fctPMinus_[local]->stkFieldRef();
+    const auto& QplusField = fctQPlus_[local]->stkFieldRef();
+    const auto& QminusField = fctQMinus_[local]->stkFieldRef();
+    const auto& sumAPlusField = fctSumAPlus_[local]->stkFieldRef();
+    const auto& sumAMinusField = fctSumAMinus_[local]->stkFieldRef();
+    auto& limiterPlusField = fctLimiterPlus_[local]->stkFieldRef();
+    auto& limiterMinusField = fctLimiterMinus_[local]->stkFieldRef();
+
+    scalar maxChange = 0.0;
+
+    const auto selection =
+        metaData.locally_owned_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& buckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : buckets)
+    {
+        const auto& bucket = *bucketPtr;
+        const scalar* Pplus = stk::mesh::field_data(PplusField, bucket);
+        const scalar* Pminus = stk::mesh::field_data(PminusField, bucket);
+        const scalar* Qplus = stk::mesh::field_data(QplusField, bucket);
+        const scalar* Qminus = stk::mesh::field_data(QminusField, bucket);
+        const scalar* sumAPlus = stk::mesh::field_data(sumAPlusField, bucket);
+        const scalar* sumAMinus =
+            stk::mesh::field_data(sumAMinusField, bucket);
+        scalar* limiterPlus = stk::mesh::field_data(limiterPlusField, bucket);
+        scalar* limiterMinus =
+            stk::mesh::field_data(limiterMinusField, bucket);
+
+        for (stk::mesh::Bucket::size_type node = 0; node < bucket.size();
+             ++node)
+        {
+            const scalar oldPlus = limiterPlus[node];
+            const scalar oldMinus = limiterMinus[node];
+
+            if (iter == 0)
+            {
+                limiterPlus[node] =
+                    Pplus[node] <= SMALL
+                        ? 1.0
+                        : std::min(1.0,
+                                   std::max(0.0,
+                                            Qplus[node] /
+                                                (Pplus[node] + SMALL)));
+                limiterMinus[node] =
+                    Pminus[node] <= SMALL
+                        ? 1.0
+                        : std::min(1.0,
+                                   std::max(0.0,
+                                            Qminus[node] /
+                                                (Pminus[node] + SMALL)));
+            }
+            else
+            {
+                limiterPlus[node] =
+                    Pplus[node] <= SMALL
+                        ? 1.0
+                        : std::min(
+                              1.0,
+                              std::max(0.0,
+                                       (sumAMinus[node] + Qplus[node]) /
+                                           (Pplus[node] + SMALL)));
+                limiterMinus[node] =
+                    Pminus[node] <= SMALL
+                        ? 1.0
+                        : std::min(
+                              1.0,
+                              std::max(0.0,
+                                       (sumAPlus[node] + Qminus[node]) /
+                                           (Pminus[node] + SMALL)));
+            }
+
+            maxChange =
+                std::max(maxChange,
+                         std::max(std::abs(limiterPlus[node] - oldPlus),
+                                  std::abs(limiterMinus[node] - oldMinus)));
+        }
+    }
+
+    return maxChange;
+}
+
+void eulerEulerModel::computeFctLambdaIP_(const std::shared_ptr<domain> domain,
+                                          label phaseIndex)
+{
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+
+    const auto& limiterPlusField = fctLimiterPlus_[local]->stkFieldRef();
+    const auto& limiterMinusField = fctLimiterMinus_[local]->stkFieldRef();
+    const auto& AField = fctA_[local]->stkFieldRef();
+    auto& lambdaField = fctLambda_[local]->stkFieldRef();
+
+    const auto selection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* adjacentNodes = meSCS->adjacentNodes();
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size();
+             ++elementIndex)
+        {
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+            const scalar* A =
+                stk::mesh::field_data(AField, bucket, elementIndex);
+            scalar* lambda =
+                stk::mesh::field_data(lambdaField, bucket, elementIndex);
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const auto nodeL = nodes[adjacentNodes[2 * ip]];
+                const auto nodeR = nodes[adjacentNodes[2 * ip + 1]];
+                const scalar limiterPlusL =
+                    *stk::mesh::field_data(limiterPlusField, nodeL);
+                const scalar limiterMinusL =
+                    *stk::mesh::field_data(limiterMinusField, nodeL);
+                const scalar limiterPlusR =
+                    *stk::mesh::field_data(limiterPlusField, nodeR);
+                const scalar limiterMinusR =
+                    *stk::mesh::field_data(limiterMinusField, nodeR);
+
+                lambda[ip] = A[ip] > 0.0
+                                 ? std::min(limiterMinusL, limiterPlusR)
+                                 : std::min(limiterPlusL, limiterMinusR);
+            }
+        }
+    }
+}
+
+void eulerEulerModel::computeFctSumA_(const std::shared_ptr<domain> domain,
+                                      label phaseIndex)
+{
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+    fctSumAPlus_[local]->setToValue({0.0}, domain->zonePtr()->interiorParts());
+    fctSumAMinus_[local]->setToValue({0.0},
+                                     domain->zonePtr()->interiorParts());
+
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+
+    const auto& AField = fctA_[local]->stkFieldRef();
+    const auto& lambdaField = fctLambda_[local]->stkFieldRef();
+    auto& sumAPlusField = fctSumAPlus_[local]->stkFieldRef();
+    auto& sumAMinusField = fctSumAMinus_[local]->stkFieldRef();
+
+    const auto selection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* adjacentNodes = meSCS->adjacentNodes();
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size();
+             ++elementIndex)
+        {
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+            const scalar* A =
+                stk::mesh::field_data(AField, bucket, elementIndex);
+            const scalar* lambda =
+                stk::mesh::field_data(lambdaField, bucket, elementIndex);
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const auto nodeL = nodes[adjacentNodes[2 * ip]];
+                const auto nodeR = nodes[adjacentNodes[2 * ip + 1]];
+                scalar* sumAPlusL = stk::mesh::field_data(sumAPlusField, nodeL);
+                scalar* sumAPlusR = stk::mesh::field_data(sumAPlusField, nodeR);
+                scalar* sumAMinusL =
+                    stk::mesh::field_data(sumAMinusField, nodeL);
+                scalar* sumAMinusR =
+                    stk::mesh::field_data(sumAMinusField, nodeR);
+
+                const scalar limitedA = lambda[ip] * A[ip];
+                if (A[ip] > 0.0)
+                {
+                    *sumAMinusL += limitedA;
+                    *sumAPlusR += limitedA;
+                }
+                else
+                {
+                    *sumAPlusL -= limitedA;
+                    *sumAMinusR -= limitedA;
+                }
+            }
+        }
+    }
+
+    fctSumAPlus_[local]->synchronizeGhostedEntities(domain->index());
+    fctSumAMinus_[local]->synchronizeGhostedEntities(domain->index());
+}
+
+void eulerEulerModel::applyFctCorrection_(const std::shared_ptr<domain> domain,
+                                          label phaseIndex)
+{
+    const auto& mesh = meshRef();
+    const auto& metaData = mesh.metaDataRef();
+    const auto& bulkData = mesh.bulkDataRef();
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+
+    auto& alpha = alphaRef(phaseIndex);
+    auto& alphaField = alpha.stkFieldRef();
+    const auto& rhoField = rhoRef(phaseIndex).stkFieldRef();
+    const auto* dualVolumeField = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
+    const scalar dt = controlsRef().getTimestep();
+
+    const auto& AField = fctA_[local]->stkFieldRef();
+    const auto& lambdaField = fctLambda_[local]->stkFieldRef();
+
+    const auto selection =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selection);
+
+    for (const stk::mesh::Bucket* bucketPtr : elementBuckets)
+    {
+        const auto& bucket = *bucketPtr;
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(bucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* adjacentNodes = meSCS->adjacentNodes();
+
+        for (stk::mesh::Bucket::size_type elementIndex = 0;
+             elementIndex < bucket.size();
+             ++elementIndex)
+        {
+            const auto* nodes = bucket.begin_nodes(elementIndex);
+            const scalar* A =
+                stk::mesh::field_data(AField, bucket, elementIndex);
+            const scalar* lambda =
+                stk::mesh::field_data(lambdaField, bucket, elementIndex);
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const auto nodeL = nodes[adjacentNodes[2 * ip]];
+                const auto nodeR = nodes[adjacentNodes[2 * ip + 1]];
+                const scalar* rhoL = stk::mesh::field_data(rhoField, nodeL);
+                const scalar* rhoR = stk::mesh::field_data(rhoField, nodeR);
+                const scalar* volL =
+                    stk::mesh::field_data(*dualVolumeField, nodeL);
+                const scalar* volR =
+                    stk::mesh::field_data(*dualVolumeField, nodeR);
+                scalar* alphaL = stk::mesh::field_data(alphaField, nodeL);
+                scalar* alphaR = stk::mesh::field_data(alphaField, nodeR);
+
+                const scalar limitedA = lambda[ip] * A[ip];
+                *alphaL -= (dt / (rhoL[0] * volL[0] + SMALL)) * limitedA;
+                *alphaR += (dt / (rhoR[0] * volR[0] + SMALL)) * limitedA;
+            }
+        }
+    }
+
+    alpha.synchronizeGhostedEntities(domain->index());
+}
+
+void eulerEulerModel::applyGlobalMassSafetyNet_(
+    const std::shared_ptr<domain> domain, label phaseIndex)
+{
+    const auto& meshRefLocal = meshRef();
+    const auto& metaData = meshRefLocal.metaDataRef();
+    const auto& bulkData = meshRefLocal.bulkDataRef();
+
+    const scalar alphaMin = domain->multiphase_.residualVolumeFraction_;
+    const scalar alphaMax = 1.0 - alphaMin;
+    const scalar dt = controlsRef().getTimestep();
+
+    auto& alpha = alphaRef(phaseIndex);
+    auto& alphaField = alpha.stkFieldRef();
+    const auto& alphaOldField = alpha.prevTimeRef().stkFieldRef();
+    const auto& rhoField = rhoRef(phaseIndex).stkFieldRef();
+    const auto& fluxDivergenceField =
+        mDotRef(phaseIndex).divRef().stkFieldRef();
+    const auto* dualVolumeField = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
+
+    const auto selection =
+        metaData.locally_owned_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    const auto& buckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selection);
+
+    // Old-time maximum, same discrete maximum principle the previous
+    // projection loop used -- not case- or phase-specific.
+    scalar oldMaximum = alphaMin;
+    for (const stk::mesh::Bucket* bucketPtr : buckets)
+    {
+        const auto& bucket = *bucketPtr;
+        const scalar* oldAlphaValues =
+            stk::mesh::field_data(alphaOldField, bucket);
+        for (stk::mesh::Bucket::size_type node = 0; node < bucket.size();
+             ++node)
+        {
+            oldMaximum = std::max(oldMaximum, oldAlphaValues[node]);
+        }
+    }
+    messager::maxReduce(oldMaximum);
+    const scalar projectionMax =
+        std::max(alphaMin, std::min(alphaMax, oldMaximum));
+
+    scalar oldMass = 0.0;
+    scalar currentMass = 0.0;
+    scalar boundaryRate = 0.0;
+    scalar minimumMass = 0.0;
+    scalar maximumMass = 0.0;
+    for (const stk::mesh::Bucket* bucketPtr : buckets)
+    {
+        const auto& bucket = *bucketPtr;
+        scalar* alphaValues = stk::mesh::field_data(alphaField, bucket);
+        const scalar* oldAlphaValues =
+            stk::mesh::field_data(alphaOldField, bucket);
+        const scalar* rhoValues = stk::mesh::field_data(rhoField, bucket);
+        const scalar* divergenceValues =
+            stk::mesh::field_data(fluxDivergenceField, bucket);
+        const scalar* volumes =
+            stk::mesh::field_data(*dualVolumeField, bucket);
+        for (stk::mesh::Bucket::size_type node = 0; node < bucket.size();
+             ++node)
+        {
+            alphaValues[node] =
+                std::max(alphaMin, std::min(projectionMax, alphaValues[node]));
+            const scalar rhoVolume = rhoValues[node] * volumes[node];
+            oldMass += rhoVolume * oldAlphaValues[node];
+            currentMass += rhoVolume * alphaValues[node];
+            boundaryRate += divergenceValues[node];
+            minimumMass += rhoVolume * alphaMin;
+            maximumMass += rhoVolume * projectionMax;
+        }
+    }
+    messager::sumReduce(oldMass);
+    messager::sumReduce(currentMass);
+    messager::sumReduce(boundaryRate);
+    messager::sumReduce(minimumMass);
+    messager::sumReduce(maximumMass);
+
+    const scalar targetMass = std::max(
+        minimumMass, std::min(maximumMass, oldMass - dt * boundaryRate));
+
+
+    for (label projection = 0; projection < 8; ++projection)
+    {
+        const scalar remaining = targetMass - currentMass;
+        if (std::abs(remaining) <= 1.0e-12 * (std::abs(targetMass) + 1.0))
+        {
+            break;
+        }
+
+        scalar activeWeight = 0.0;
+        for (const stk::mesh::Bucket* bucketPtr : buckets)
+        {
+            const auto& bucket = *bucketPtr;
+            const scalar* alphaValues =
+                stk::mesh::field_data(alphaField, bucket);
+            const scalar* oldAlphaValues =
+                stk::mesh::field_data(alphaOldField, bucket);
+            const scalar* rhoValues = stk::mesh::field_data(rhoField, bucket);
+            const scalar* volumes =
+                stk::mesh::field_data(*dualVolumeField, bucket);
+            for (stk::mesh::Bucket::size_type node = 0; node < bucket.size();
+                 ++node)
+            {
+                const scalar profileWeight =
+                    remaining > 0.0
+                        ? (alphaValues[node] < projectionMax
+                               ? std::max(oldAlphaValues[node] -
+                                              alphaValues[node],
+                                          0.0) *
+                                     std::max(oldAlphaValues[node], alphaMin)
+                               : 0.0)
+                        : std::max(alphaValues[node] - alphaMin, 0.0);
+                activeWeight += rhoValues[node] * volumes[node] * profileWeight;
+            }
+        }
+        messager::sumReduce(activeWeight);
+        if (activeWeight <= SMALL)
+        {
+            break;
+        }
+
+        const scalar factor = remaining / activeWeight;
+        currentMass = 0.0;
+        for (const stk::mesh::Bucket* bucketPtr : buckets)
+        {
+            const auto& bucket = *bucketPtr;
+            scalar* alphaValues = stk::mesh::field_data(alphaField, bucket);
+            const scalar* oldAlphaValues =
+                stk::mesh::field_data(alphaOldField, bucket);
+            const scalar* rhoValues = stk::mesh::field_data(rhoField, bucket);
+            const scalar* volumes =
+                stk::mesh::field_data(*dualVolumeField, bucket);
+            for (stk::mesh::Bucket::size_type node = 0; node < bucket.size();
+                 ++node)
+            {
+                const scalar profileWeight =
+                    remaining > 0.0
+                        ? (alphaValues[node] < projectionMax
+                               ? std::max(oldAlphaValues[node] -
+                                              alphaValues[node],
+                                          0.0) *
+                                     std::max(oldAlphaValues[node], alphaMin)
+                               : 0.0)
+                        : std::max(alphaValues[node] - alphaMin, 0.0);
+                alphaValues[node] = std::max(
+                    alphaMin,
+                    std::min(projectionMax,
+                             alphaValues[node] + factor * profileWeight));
+                currentMass += rhoValues[node] * volumes[node] * alphaValues[node];
+            }
+        }
+        messager::sumReduce(currentMass);
+
+        alpha.synchronizeGhostedEntities(domain->index());
+    }
+
+}
+
+void eulerEulerModel::correctVolumeFractionFCT(
+    const std::shared_ptr<domain> domain, label phaseIndex)
+{
+    const auto& fct = domain->multiphase_.eulerEulerFCT_;
+    const label nOuter = std::max(label(1), fct.nAlphaCorrections_);
+    constexpr label maxLambdaIterations = 3;
+    const label local = fctLocalPhaseIndex_(phaseIndex);
+
+    // nAlphaCorrections > 1 is not fully equivalent to the ported
+    // freeSurfaceFlowModel behaviour (that version rolls the limited
+    // correction into FL between outer passes via updateFL_; this version
+    // recomputes FL fresh from the current alpha each outer pass instead).
+    // Untested and not recommended beyond the default of 1.
+    for (label outer = 0; outer < nOuter; ++outer)
+    {
+        // Refresh alpha's gradient so the TVD reconstruction in
+        // computeFctFH_ sees this iterate's slope, matching what
+        // freeSurfaceFlowModel::correctFCT does inside its own loop.
+        updateVolumeFractionGradientField(domain, phaseIndex);
+        computeFctFL_(domain, phaseIndex);
+        computeFctFH_(domain, phaseIndex);
+        computeFctA_(domain, phaseIndex);
+        computeFctQ_(domain, phaseIndex);
+        computeFctP_(domain, phaseIndex);
+
+        fctLimiterPlus_[local]->setToValue(
+            {1.0}, domain->zonePtr()->interiorParts());
+        fctLimiterMinus_[local]->setToValue(
+            {1.0}, domain->zonePtr()->interiorParts());
+        fctSumAPlus_[local]->setToValue(
+            {0.0}, domain->zonePtr()->interiorParts());
+        fctSumAMinus_[local]->setToValue(
+            {0.0}, domain->zonePtr()->interiorParts());
+
+        for (label iter = 0; iter < maxLambdaIterations; ++iter)
+        {
+            computeFctLambdaNode_(domain, phaseIndex, iter);
+            if (messager::parallel())
+            {
+                fctLimiterPlus_[local]->synchronizeGhostedEntities(
+                    domain->index());
+                fctLimiterMinus_[local]->synchronizeGhostedEntities(
+                    domain->index());
+            }
+            computeFctLambdaIP_(domain, phaseIndex);
+            computeFctSumA_(domain, phaseIndex);
+        }
+
+        applyFctCorrection_(domain, phaseIndex);
+    }
+
+    applyGlobalMassSafetyNet_(domain, phaseIndex);
+}
 
 void eulerEulerModel::updatePressure(const std::shared_ptr<domain> domain)
 {

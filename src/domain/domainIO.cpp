@@ -565,6 +565,25 @@ void domain::read_()
                                 name());
                         }
 
+                        if (multiphaseBlock["flux_corrected_transport"])
+                        {
+                            multiphase_.eulerEulerFCT_.fluxCorrectedTransport_ =
+                                multiphaseBlock["flux_corrected_transport"]
+                                    .template as<bool>();
+                        }
+                        if (multiphaseBlock["n_alpha_corrections"])
+                        {
+                            multiphase_.eulerEulerFCT_.nAlphaCorrections_ =
+                                multiphaseBlock["n_alpha_corrections"]
+                                    .template as<label>();
+                        }
+                        if (multiphase_.eulerEulerFCT_.nAlphaCorrections_ < 1)
+                        {
+                            errorMsg("Euler-Euler `n_alpha_corrections` must "
+                                     "be at least 1 in domain " +
+                                     name());
+                        }
+
                         equations_[static_cast<int>(
                             equationID::segregatedEulerEulerFlow)] = true;
                         equations_[static_cast<int>(

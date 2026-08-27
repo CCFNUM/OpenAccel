@@ -75,11 +75,10 @@ Open `results.e`. Available nodal fields:
 `pressure`, `velocity.air`, `velocity.water`,
 `volume_fraction.air`, `volume_fraction.water`.
 
-**Pressure needs a conversion before comparing with OpenFOAM.** OpenAccel
-stores the *reduced* (piezometric) pressure, `p - rho_ref*g*(y - y_ref)`, so it
-is flat through the water and rises at `rho_ref*g = 9810 Pa/m` through the gas
-cap. OpenFOAM's `p` is absolute and falls with height. They look opposite but
-both are correct. To plot the same variable, add a Calculator filter:
+**Pressure needs a hydrostatic conversion before comparing with OpenFOAM.**
+OpenAccel stores the piezometric pressure with the same `1e5 Pa` reference
+level configured in `input.i`. To remove the reference-density hydrostatic
+contribution, add a Calculator filter:
 
 ```
 pressure - 9810*coordsY
@@ -88,8 +87,8 @@ pressure - 9810*coordsY
 The buoyancy reference height is y = 0, which is why the expression subtracts
 `9810*coordsY` and not `9810*(coordsY - 0.5)`.
 
-Add 1e5 Pa after this conversion to compare directly with OpenFOAM's absolute
-`p` rather than gauge pressure.
+The `1e5 Pa` offset is already included, so do not add another pressure offset
+when comparing with OpenFOAM's absolute `p`.
 
 `volume_fraction.*` and `velocity.*` are directly comparable with no conversion.
 

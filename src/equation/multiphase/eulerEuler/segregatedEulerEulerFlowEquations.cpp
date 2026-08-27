@@ -203,6 +203,10 @@ void segregatedEulerEulerFlowEquations::solve()
             }
             fieldBroker::updateDynamicViscosity(domain, phaseIndex);
             updatePhaseMassCoefficient(domain, phaseIndex);
+            // Keep the intrinsic phase flux obtained from the preceding
+            // pressure correction.  Only alpha weighting changes here.
+            updatePhaseMassFluxWeighting(domain, phaseIndex);
+            updatePhaseFluxDivergence(domain, phaseIndex);
         }
         // Must precede the drag: it supplies the volume fraction the drag
         // law shares with the body force.
@@ -225,6 +229,9 @@ void segregatedEulerEulerFlowEquations::solve()
             for (const label phaseIndex : activePhaseIndices(domain))
             {
                 updatePhaseMassFlux(domain, phaseIndex, true);
+            }
+            for (const label phaseIndex : activePhaseIndices(domain))
+            {
                 updatePhaseFluxDivergence(domain, phaseIndex);
             }
         }
@@ -241,7 +248,9 @@ void segregatedEulerEulerFlowEquations::solve()
             {
                 for (const label phaseIndex : activePhaseIndices(domain))
                 {
-                    updatePhaseMassFlux(domain, phaseIndex, true);
+                    // Add p' to the predictor flux. Rebuilding from U here
+                    // would erase precisely the correction just solved for.
+                    correctPhaseMassFlux(domain, phaseIndex);
                     updatePhaseFluxDivergence(domain, phaseIndex);
                     correctPhaseVelocity(domain, phaseIndex);
                 }
@@ -276,7 +285,7 @@ void segregatedEulerEulerFlowEquations::solve()
         {
             updateVolumeFractionGradientField(domain, phaseIndex);
             updatePhaseMassCoefficient(domain, phaseIndex);
-            updatePhaseMassFlux(domain, phaseIndex, true);
+            updatePhaseMassFluxWeighting(domain, phaseIndex);
             updatePhaseFluxDivergence(domain, phaseIndex);
             updateVelocityGradientField(domain, phaseIndex);
             updateVelocityBlendingFactorField(domain, phaseIndex);

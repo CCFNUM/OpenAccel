@@ -55,6 +55,15 @@ struct multiphase
         label nAlphaCorrections_ = 1; // FCT outer corrections
     };
 
+    // Independent of freeSurfaceModel above: a separate switch for Euler-
+    // Euler's own (ported) flux-corrected transport, see
+    // eulerEulerModel::correctVolumeFractionFCT.
+    struct eulerEulerFCT
+    {
+        bool fluxCorrectedTransport_ = false;
+        label nAlphaCorrections_ = 1;
+    };
+
     multiphaseModelOption option_ = multiphaseModelOption::none;
     bool homogeneous_ = true;
     std::string primaryPhaseName_;
@@ -63,6 +72,7 @@ struct multiphase
     // bounding. Cases may override this to match their phase model.
     scalar residualVolumeFraction_ = 1.0e-6;
     freeSurfaceModel freeSurfaceModel_;
+    eulerEulerFCT eulerEulerFCT_;
 };
 
 struct solidMechanics

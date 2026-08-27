@@ -28,6 +28,8 @@ void phasicNavierStokesAssembler::assembleSources_(const domain* domain,
     const auto& alphaField = model_->alphaRef(phaseIndex_).stkFieldRef();
     const auto& rhoField = model_->rhoRef(phaseIndex_).stkFieldRef();
     const auto& velocityField = model_->URef(phaseIndex_).stkFieldRef();
+    const auto& velocityOldField =
+        model_->URef(phaseIndex_).prevTimeRef().stkFieldRef();
     const auto& pressureGradientField =
         model_->pRef().gradRef().stkFieldRef();
     const auto& dragSourceField =
@@ -55,6 +57,10 @@ void phasicNavierStokesAssembler::assembleSources_(const domain* domain,
     const auto& phaseBodyForceField =
         model_->phaseBodyForceRef(phaseIndex_).stkFieldRef();
     const auto& generalSource = domain->generalMomentumSourceRef().value_;
+    const bool transient = model_->controlsRef().isTransient();
+    const scalar dt = transient ? model_->controlsRef().getTimestep() : 0.0;
+    const scalar residualAlpha =
+        domain->multiphase_.residualVolumeFraction_;
 
     const auto selection =
         metaData.locally_owned_part() &
@@ -75,6 +81,8 @@ void phasicNavierStokesAssembler::assembleSources_(const domain* domain,
         const scalar* rho = stk::mesh::field_data(rhoField, bucket);
         const scalar* velocity =
             stk::mesh::field_data(velocityField, bucket);
+        const scalar* velocityOld =
+            stk::mesh::field_data(velocityOldField, bucket);
         const scalar* pressureGradient =
             stk::mesh::field_data(pressureGradientField, bucket);
         const scalar* dragSource =
@@ -95,6 +103,21 @@ void phasicNavierStokesAssembler::assembleSources_(const domain* domain,
             const scalar alphaRho = alpha[nodeIndex] * rho[nodeIndex];
             const scalar nodalVolume = volume[nodeIndex];
 
+            // Match OpenFOAM's Euler-Euler residual-alpha momentum
+            // stabilization.  When a phase becomes very dilute, alpha*rho
+            // alone makes the momentum diagonal (and therefore du) nearly
+            // singular.  OpenFOAM adds
+            // max(residualAlpha-alpha,0)*rho/dt to the diagonal and carries
+            // the corresponding old-time velocity in the predictor.  In
+            // correction form this is residualAlpha*rho/dt*(U-Uold).
+            const scalar alphaResidual =
+                transient
+                    ? std::max(residualAlpha - alpha[nodeIndex], 0.0)
+                    : 0.0;
+            const scalar residualTransient =
+                alphaResidual * rho[nodeIndex] * nodalVolume /
+                (dt + SMALL);
+
             for (label row = 0; row < SPATIAL_DIM; ++row)
             {
                 rhs[row] -=
@@ -114,6 +137,14 @@ void phasicNavierStokesAssembler::assembleSources_(const domain* domain,
 
                 lhs[row * SPATIAL_DIM + row] +=
                     dragDiagonal[nodeIndex] * nodalVolume;
+                if (residualTransient > 0.0)
+                {
+                    lhs[row * SPATIAL_DIM + row] += residualTransient;
+                    rhs[row] -= residualTransient *
+                                 (velocity[SPATIAL_DIM * nodeIndex + row] -
+                                  velocityOld[SPATIAL_DIM * nodeIndex + row]);
+                }
+
                 for (label column = 0; column < SPATIAL_DIM; ++column)
                 {
                     const scalar coefficient =

@@ -54,7 +54,7 @@ private:
                            Context* ctx);
     void assembleSpecifiedPressureCorrection_(
         const domain* domain,
-        const stk::mesh::PartVector& parts,
+        const boundary* boundary,
         Context* ctx);
 
     eulerEulerModel* model_;

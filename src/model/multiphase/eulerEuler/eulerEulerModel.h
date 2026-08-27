@@ -4,7 +4,12 @@
 #ifndef EULEREULERMODEL_H
 #define EULEREULERMODEL_H
 
+#include "elementScalarField.h"
 #include "multiphaseModel.h"
+
+#include <map>
+#include <memory>
+#include <utility>
 
 namespace accel
 {
@@ -26,6 +31,15 @@ public:
     using fieldBroker::updateDensity;
     using fieldBroker::updateDynamicViscosity;
     using fieldBroker::updateVelocity;
+
+    // Pressure-response coefficient after local phase/drag coupling.  This
+    // replaces the uncoupled du coefficient in the Euler-Euler pressure and
+    // flux corrections; free-surface fields do not use it.
+    nodeField<1>& coupledDuRef(label phaseIndex);
+    const nodeField<1>& coupledDuRef(label phaseIndex) const;
+
+    // Build the local OpenFOAM-style phase/drag pressure response matrix.
+    void updateCoupledPressureResponse(const std::shared_ptr<domain> domain);
 
     std::vector<label>
     activePhaseIndices(const std::shared_ptr<domain> domain) const;
@@ -97,6 +111,16 @@ public:
                              label phaseIndex,
                              bool includeRhieChow = true);
 
+    // Refresh alpha weighting without reconstructing the intrinsic flux that
+    // pressure correction has already made conservative.
+    void updatePhaseMassFluxWeighting(
+        const std::shared_ptr<domain> domain,
+        label phaseIndex);
+
+    // Add the pressure-correction contribution to the predictor phase flux.
+    void correctPhaseMassFlux(const std::shared_ptr<domain> domain,
+                              label phaseIndex);
+
     void updatePhaseFluxDivergence(const std::shared_ptr<domain> domain,
                                    label phaseIndex);
 
@@ -142,8 +166,166 @@ public:
     // an eulerEulerModel*, so this override is selected statically.
     void updatePressure(const std::shared_ptr<domain> domain);
 
+    // Flux-corrected (Zalesak/MULES-style) alpha update: replaces the
+    // implicit predictor's diagonal boundedness stabilizer and the global
+    // clip-and-redistribute step with a locally bounded, exactly
+    // conservative correction. See phasicContinuityEquation::solve() for
+    // the call site and domain->multiphase_.eulerEulerFCT_.fluxCorrectedTransport_
+    // for the switch that enables it.
+    //
+    // Ported from freeSurfaceFlowModel's correctFCT -- same algorithm, same
+    // CVFEM SCS-face structure (MasterElementRepo/adjacentNodes()).
+    //
+    // The high-order flux IS limited (van Leer TVD, see computeFctFH_).
+    // An earlier version used a raw shape-function/central FH on the theory
+    // that the MULES layer alone would bound it; that was wrong and is the
+    // single thing that made this path destabilising. Measured: ~90% of
+    // faces ran with lambda == 1, so the limiter never engaged and alpha
+    // was advected by pure central differencing, growing grid-scale
+    // oscillations that drove max|U.air| from 0.4 to 6 m/s by t=3.5 and
+    // then to overflow. OpenFOAM's alpha equation is `Gauss vanLeer` with
+    // MULES as a second layer; freeSurfaceFlowModel blends with its NVD
+    // factor. A bounded high-order flux is a requirement, not a refinement.
+    //
+    // Still deliberately not ported: the VOF interface-compression term
+    // (needs an interface-normal field Euler-Euler has no equivalent of).
+    // FL is a genuine upwind reconstruction (computeFctFL_) -- mDotRef is
+    // NOT the low-order upwind flux it was first assumed to be (verified:
+    // reusing it made A == 0 everywhere).
+    void correctVolumeFractionFCT(const std::shared_ptr<domain> domain,
+                                  label phaseIndex);
+
 private:
+    struct pairDragField
+    {
+        label phaseA;
+        label phaseB;
+        std::unique_ptr<nodeField<1>> coefficient;
+    };
+
+    nodeField<1>& pairDragRef(label phaseA, label phaseB);
+
     std::vector<std::unique_ptr<nodeField<1>>> phaseSmoothedAlpha_;
+    std::vector<std::unique_ptr<nodeField<1>>> coupledDu_;
+    std::vector<pairDragField> pairDragFields_;
+
+    // Flux-corrected transport scratch fields, one set per phase.
+    std::vector<std::unique_ptr<elementScalarField>> fctFL_;
+    std::vector<std::unique_ptr<elementScalarField>> fctFH_;
+    std::vector<std::unique_ptr<elementScalarField>> fctA_;
+    std::vector<std::unique_ptr<elementScalarField>> fctLambda_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctQPlus_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctQMinus_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctPPlus_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctPMinus_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctSumAPlus_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctSumAMinus_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctLimiterPlus_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctLimiterMinus_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctLocalAlphaMax_;
+    std::vector<std::unique_ptr<nodeField<1>>> fctLocalAlphaMin_;
+
+    // Index of phaseIndex within phases_/the fct*_ vectors above.
+    label fctLocalPhaseIndex_(label phaseIndex) const;
+
+    // Low-order flux: intrinsicMDot (alpha-independent) times the upwind
+    // nodal alpha at each SCS integration point (alpha[left] if the
+    // intrinsic flux is positive, alpha[right] otherwise) -- the actual
+    // low-order/bounded candidate FCT needs. Not mDotRef(phaseIndex):
+    // that field turned out to already be a shape-function-weighted
+    // (central-like) reconstruction, not upwind -- see class-level comment.
+    void computeFctFL_(const std::shared_ptr<domain> domain,
+                       label phaseIndex);
+
+    // High-order candidate flux: intrinsicMDot times a van Leer TVD
+    // reconstruction of alpha at each SCS integration point (NOT raw
+    // central). A bounded high-order flux is a requirement here, not a
+    // refinement: with raw central, ~90% of faces ran with limiter
+    // lambda == 1, so the MULES layer never engaged and alpha was advected
+    // by pure central differencing -- unbounded, and it grew grid-scale
+    // oscillations that blew the phase velocities up. OpenFOAM uses
+    // `div(phi,alpha) Gauss vanLeer` for exactly this reason, with MULES
+    // only as a second safety layer; freeSurfaceFlowModel blends with its
+    // NVD factor. See the .cpp for the reconstruction itself.
+    void computeFctFH_(const std::shared_ptr<domain> domain,
+                       label phaseIndex);
+
+    // Antidiffusive correction A = FH - FL.
+    void computeFctA_(const std::shared_ptr<domain> domain,
+                      label phaseIndex);
+
+    // Per-node max allowable change Q+/Q-, from local (neighbour) alpha
+    // extrema -- the max/min of each node's directly-connected neighbours
+    // via SCS faces, clipped to the global [residualVolumeFraction,
+    // 1-residualVolumeFraction] bounds -- following the corrector-MULES
+    // form: alpha here is already the implicit predictor's (bounded)
+    // result. This mirrors nodeField::updateMinMaxFields's own neighbour-
+    // scan, reimplemented directly rather than called: that accessor
+    // depends on setupMinMaxFields() having been invoked, which only
+    // happens automatically for the highResolution advection scheme (see
+    // the .cpp history/comments) -- Euler-Euler's alpha uses upwind, so
+    // those fields are never constructed there. A first version used fixed
+    // global bounds only, which was NOT enough on its own: without a local
+    // cap, alpha near the inlet could jump straight to the global ceiling
+    // in one step and then cascade outward, saturating the whole domain --
+    // exactly the failure a local neighbour bound is supposed to prevent.
+    //
+    // The neighbour scan also folds in boundary/opening faces, using the
+    // same inflow/outflow alpha selection updatePhaseMassFluxSideParts_
+    // already uses -- a boundary-adjacent node's bound needs to see what's
+    // actually entering there, not just its interior neighbours, or its
+    // own correction stays capped by a ceiling that ignores the one real
+    // "neighbour" driving it (measured cause of a large, unphysical
+    // domain-mean drift when this was interior-only).
+    void computeFctQ_(const std::shared_ptr<domain> domain,
+                      label phaseIndex);
+
+    // Per-node unlimited pending antidiffusive flux P+/P- (computed once,
+    // from the unlimited A).
+    void computeFctP_(const std::shared_ptr<domain> domain,
+                      label phaseIndex);
+
+    // One Zalesak limiter iteration: lambda+/- = Q/P on iter 0, or
+    // (sumA+Q)/P on later iterations (already-limited flux frees up
+    // capacity on the opposite sign). Returns the max change, for an
+    // optional early exit.
+    scalar computeFctLambdaNode_(const std::shared_ptr<domain> domain,
+                                 label phaseIndex,
+                                 label iter);
+
+    // Interpolate the per-node limiter to each SCS face:
+    // lambda_ip = min(lambda-[donor], lambda+[receiver]).
+    void computeFctLambdaIP_(const std::shared_ptr<domain> domain,
+                             label phaseIndex);
+
+    // Accumulate the limited flux actually used this iteration, so the next
+    // iteration's lambda computation can see how much capacity it consumed.
+    void computeFctSumA_(const std::shared_ptr<domain> domain,
+                         label phaseIndex);
+
+    // Apply the fully-limited correction:
+    // alpha -= dt/(rho*V) * sum_faces(lambda*A).
+    void applyFctCorrection_(const std::shared_ptr<domain> domain,
+                             label phaseIndex);
+
+    // Final global safety net after the locally-conservative FCT
+    // correction above. applyFctCorrection_ is proven exactly conservative
+    // *for whatever alpha it's handed* (checked directly: total domain
+    // alpha*volume before/after a single call matches to float precision)
+    // -- but that says nothing about whether the alpha it's handed, straight
+    // out of the implicit predictor solve, already tracks the true physical
+    // total. The old clip-and-redistribute step this whole path replaces
+    // also forced the domain total to exactly match
+    // oldMass - dt*boundaryRate (the value boundary in/outflow implies),
+    // independent of what the assembled matrix's own boundary handling
+    // produced -- correcting for whatever approximation error is in that,
+    // which otherwise compounds over thousands of steps. Reuses that same
+    // computation and weighted redistribution here, as a residual correction
+    // on top of the FCT result rather than the primary mechanism (measured
+    // necessary: FCT alone left the domain drifting to ~95% water by t=8 on
+    // bubbleColumnLaminar, vs OpenFOAM's flat ~69%).
+    void applyGlobalMassSafetyNet_(const std::shared_ptr<domain> domain,
+                                   label phaseIndex);
 
     // Opening total-pressure side field. A configured reference phase supplies
     // rho, U, and mDot directly; otherwise reconstruct mixture quantities:
