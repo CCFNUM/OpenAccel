@@ -117,7 +117,6 @@ protected:
     void rebuildMatchingPairsFromIds_();
 
 public:
-
     // Constructors
 
     interface(mesh* meshPtr, label index, std::string name);

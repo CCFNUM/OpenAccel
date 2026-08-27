@@ -1269,9 +1269,9 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
 
         // helper: is a sideset referenced anywhere in the YAML input?
         // (a domain boundary or an interface region)
-        auto isReferencedAnywhere = [&domainBoundarySidesets,
-                                     &interfaceSidesets
-        ](const std::string& sidesetName) -> bool
+        auto isReferencedAnywhere =
+            [&domainBoundarySidesets,
+             &interfaceSidesets](const std::string& sidesetName) -> bool
         {
             if (interfaceSidesets.count(sidesetName) > 0)
             {
