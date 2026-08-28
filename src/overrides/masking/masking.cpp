@@ -164,7 +164,8 @@ void masking::buildGraph_()
          bulkData.get_buckets(stk::topology::ELEMENT_RANK, selDomains))
     {
         nodesPerElement_ = std::max<label>(
-            nodesPerElement_, static_cast<label>(bucketPtr->topology().num_nodes()));
+            nodesPerElement_,
+            static_cast<label>(bucketPtr->topology().num_nodes()));
         elementCount += static_cast<label>(bucketPtr->size());
     }
 
@@ -235,12 +236,13 @@ void masking::computeLayers_(const std::vector<uint8_t>& seeds,
 
     ptrdiff_t* n2ePtr = nullptr;
     label* elementIndex = nullptr;
-    ssdf::create_n2e<label, ptrdiff_t, label>(nelements,
-                                              npoints,
-                                              static_cast<int>(nodesPerElement_),
-                                              elementNodeColumns_.data(),
-                                              &n2ePtr,
-                                              &elementIndex);
+    ssdf::create_n2e<label, ptrdiff_t, label>(
+        nelements,
+        npoints,
+        static_cast<int>(nodesPerElement_),
+        elementNodeColumns_.data(),
+        &n2ePtr,
+        &elementIndex);
 
     std::vector<label> queue(npoints);
 
@@ -315,12 +317,15 @@ void masking::collect_()
 
         const label offset = static_cast<label>(sx_.size());
 
-        sx_.insert(
-            sx_.end(), regionPtr->surfaceX().begin(), regionPtr->surfaceX().end());
-        sy_.insert(
-            sy_.end(), regionPtr->surfaceY().begin(), regionPtr->surfaceY().end());
-        sz_.insert(
-            sz_.end(), regionPtr->surfaceZ().begin(), regionPtr->surfaceZ().end());
+        sx_.insert(sx_.end(),
+                   regionPtr->surfaceX().begin(),
+                   regionPtr->surfaceX().end());
+        sy_.insert(sy_.end(),
+                   regionPtr->surfaceY().begin(),
+                   regionPtr->surfaceY().end());
+        sz_.insert(sz_.end(),
+                   regionPtr->surfaceZ().begin(),
+                   regionPtr->surfaceZ().end());
 
         for (label f = 0; f < regionPtr->facetCount(); ++f)
         {
@@ -339,7 +344,8 @@ void masking::setAtCovered(STKScalarField& field, scalar value)
     }
 }
 
-void masking::copyAtCovered(STKScalarField& target, const STKScalarField& source)
+void masking::copyAtCovered(STKScalarField& target,
+                            const STKScalarField& source)
 {
     for (const auto& regionPtr : regionVector_)
     {
