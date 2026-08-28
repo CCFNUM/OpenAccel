@@ -7,8 +7,8 @@
 // code
 #include "maskedRegion.h"
 #include "domain.h"
-#include "masking.h"
 #include "macros.h"
+#include "masking.h"
 #include "messager.h"
 #include "realm.h"
 #include "simulation.h"
@@ -21,10 +21,10 @@ namespace accel
 {
 
 scalar maskFrictionVelocity(const scalar uTangential,
-                                     const scalar distance,
-                                     const scalar nu,
-                                     const scalar kappa,
-                                     const scalar E)
+                            const scalar distance,
+                            const scalar nu,
+                            const scalar kappa,
+                            const scalar E)
 {
     const scalar yPlusLimit = 11.06;
 
@@ -117,46 +117,47 @@ void maskedRegion::read(const YAML::Node& regionNode)
     switch (shape_)
     {
         case maskShape::mesh:
-        {
-            if (!shapeNode["path"])
             {
-                errorMsg("maskedRegion `" + name_ + "`: shape mesh requires path");
-            }
+                if (!shapeNode["path"])
+                {
+                    errorMsg("maskedRegion `" + name_ +
+                             "`: shape mesh requires path");
+                }
 
-            surfaceFilePath_ = shapeNode["path"].template as<std::string>();
+                surfaceFilePath_ = shapeNode["path"].template as<std::string>();
 
-            if (shapeNode["scale_factor"])
-            {
-                scaleFactor_ =
-                    shapeNode["scale_factor"].template as<scalar>();
+                if (shapeNode["scale_factor"])
+                {
+                    scaleFactor_ =
+                        shapeNode["scale_factor"].template as<scalar>();
+                }
+                break;
             }
-            break;
-        }
 
         case maskShape::box:
-        {
-            readPoint("min", boxMin_);
-            readPoint("max", boxMax_);
-            break;
-        }
+            {
+                readPoint("min", boxMin_);
+                readPoint("max", boxMax_);
+                break;
+            }
 
         case maskShape::sphere:
-        {
-            readPoint("centre", centre_);
-            readScalar("radius", radius_);
-            break;
-        }
+            {
+                readPoint("centre", centre_);
+                readScalar("radius", radius_);
+                break;
+            }
 
         case maskShape::cylinder:
-        {
-            readPoint("centre", centre_);
-            readScalar("radius", radius_);
+            {
+                readPoint("centre", centre_);
+                readScalar("radius", radius_);
 #if SPATIAL_DIM == 3
-            readPoint("axis", axis_);
-            readScalar("height", height_);
+                readPoint("axis", axis_);
+                readScalar("height", height_);
 #endif
-            break;
-        }
+                break;
+            }
     }
 
     if (shapeNode["resolution"])
@@ -233,8 +234,6 @@ void maskedRegion::initialize()
 {
     buildSurface_();
 }
-
-
 
 void maskedRegion::buildSurface_()
 {
@@ -391,7 +390,8 @@ void maskedRegion::tessellateCylinder_()
 
     // orthonormal frame around the axis
     scalar e3[3] = {axis_[0], axis_[1], axis_[2]};
-    const scalar norm = std::sqrt(e3[0] * e3[0] + e3[1] * e3[1] + e3[2] * e3[2]);
+    const scalar norm =
+        std::sqrt(e3[0] * e3[0] + e3[1] * e3[1] + e3[2] * e3[2]);
     if (norm < SMALL)
     {
         errorMsg("maskedRegion `" + name_ + "`: cylinder axis is degenerate");
@@ -445,9 +445,10 @@ void maskedRegion::tessellateCylinder_()
         addSurfacePoint_(centre_[0] - 0.5 * height_ * e3[0],
                          centre_[1] - 0.5 * height_ * e3[1],
                          centre_[2] - 0.5 * height_ * e3[2]);
-    const label topCentre = addSurfacePoint_(centre_[0] + 0.5 * height_ * e3[0],
-                                             centre_[1] + 0.5 * height_ * e3[1],
-                                             centre_[2] + 0.5 * height_ * e3[2]);
+    const label topCentre =
+        addSurfacePoint_(centre_[0] + 0.5 * height_ * e3[0],
+                         centre_[1] + 0.5 * height_ * e3[1],
+                         centre_[2] + 0.5 * height_ * e3[2]);
 
     for (label i = 0; i < resolution_; ++i)
     {
@@ -491,7 +492,8 @@ void maskedRegion::readSurfaceMesh_()
     for (const stk::mesh::Bucket* bucketPtr :
          bulk.get_buckets(stk::topology::ELEMENT_RANK, meta.universal_part()))
     {
-        if (static_cast<label>(bucketPtr->topology().dimension()) == SPATIAL_DIM)
+        if (static_cast<label>(bucketPtr->topology().dimension()) ==
+            SPATIAL_DIM)
         {
             isVolumeMesh = true;
             break;
@@ -581,7 +583,6 @@ void maskedRegion::readSurfaceMesh_()
         errorMsg("maskedRegion `" + name_ + "`: mesh `" + surfaceFilePath_ +
                  "` produced no surface facets");
     }
-
 }
 
 void maskedRegion::computeBoundingBox_()
@@ -634,7 +635,7 @@ bool maskedRegion::isCovered_(const scalar* point) const
     // an analytic region is tested exactly, a meshed body by ray casting on
     // its facets
     return (shape_ == maskShape::mesh) ? isCoveredByFacets_(point)
-                                           : isCoveredByShape_(point);
+                                       : isCoveredByShape_(point);
 }
 
 bool maskedRegion::isCoveredByShape_(const scalar* point) const
@@ -650,61 +651,62 @@ bool maskedRegion::isCoveredByShape_(const scalar* point) const
     switch (shape_)
     {
         case maskShape::box:
-        {
-            const scalar p[3] = {px, py, pz};
-            for (label d = 0; d < SPATIAL_DIM; ++d)
             {
-                if (p[d] < boxMin_[d] || p[d] > boxMax_[d])
+                const scalar p[3] = {px, py, pz};
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    if (p[d] < boxMin_[d] || p[d] > boxMax_[d])
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+        case maskShape::sphere:
+            {
+                scalar distanceSq = (px - centre_[0]) * (px - centre_[0]) +
+                                    (py - centre_[1]) * (py - centre_[1]);
+#if SPATIAL_DIM == 3
+                distanceSq += (pz - centre_[2]) * (pz - centre_[2]);
+#endif
+                return distanceSq <= radius_ * radius_;
+            }
+
+        case maskShape::cylinder:
+            {
+#if SPATIAL_DIM == 2
+                const scalar distanceSq =
+                    (px - centre_[0]) * (px - centre_[0]) +
+                    (py - centre_[1]) * (py - centre_[1]);
+                return distanceSq <= radius_ * radius_;
+#else
+                scalar e3[3] = {axis_[0], axis_[1], axis_[2]};
+                const scalar norm =
+                    std::sqrt(e3[0] * e3[0] + e3[1] * e3[1] + e3[2] * e3[2]);
+                for (label d = 0; d < 3; ++d)
+                {
+                    e3[d] /= std::max(norm, SMALL);
+                }
+
+                const scalar r[3] = {
+                    px - centre_[0], py - centre_[1], pz - centre_[2]};
+                const scalar along = r[0] * e3[0] + r[1] * e3[1] + r[2] * e3[2];
+
+                if (std::abs(along) > 0.5 * height_)
                 {
                     return false;
                 }
-            }
-            return true;
-        }
 
-        case maskShape::sphere:
-        {
-            scalar distanceSq = (px - centre_[0]) * (px - centre_[0]) +
-                                (py - centre_[1]) * (py - centre_[1]);
-#if SPATIAL_DIM == 3
-            distanceSq += (pz - centre_[2]) * (pz - centre_[2]);
+                scalar radialSq = 0.0;
+                for (label d = 0; d < 3; ++d)
+                {
+                    const scalar radial = r[d] - along * e3[d];
+                    radialSq += radial * radial;
+                }
+                return radialSq <= radius_ * radius_;
 #endif
-            return distanceSq <= radius_ * radius_;
-        }
-
-        case maskShape::cylinder:
-        {
-#if SPATIAL_DIM == 2
-            const scalar distanceSq = (px - centre_[0]) * (px - centre_[0]) +
-                                      (py - centre_[1]) * (py - centre_[1]);
-            return distanceSq <= radius_ * radius_;
-#else
-            scalar e3[3] = {axis_[0], axis_[1], axis_[2]};
-            const scalar norm =
-                std::sqrt(e3[0] * e3[0] + e3[1] * e3[1] + e3[2] * e3[2]);
-            for (label d = 0; d < 3; ++d)
-            {
-                e3[d] /= std::max(norm, SMALL);
             }
-
-            const scalar r[3] = {
-                px - centre_[0], py - centre_[1], pz - centre_[2]};
-            const scalar along = r[0] * e3[0] + r[1] * e3[1] + r[2] * e3[2];
-
-            if (std::abs(along) > 0.5 * height_)
-            {
-                return false;
-            }
-
-            scalar radialSq = 0.0;
-            for (label d = 0; d < 3; ++d)
-            {
-                const scalar radial = r[d] - along * e3[d];
-                radialSq += radial * radial;
-            }
-            return radialSq <= radius_ * radius_;
-#endif
-        }
 
         case maskShape::mesh:
             return isCoveredByFacets_(point);
@@ -806,8 +808,8 @@ bool maskedRegion::isCoveredByFacets_(const scalar* point) const
 }
 
 void maskedRegion::closestFacet(const scalar* point,
-                                 scalar& distance,
-                                 scalar* normal) const
+                                scalar& distance,
+                                scalar* normal) const
 {
     const scalar px = point[0];
     const scalar py = point[1];
@@ -985,7 +987,8 @@ void maskedRegion::takeLayers_(const std::vector<uint8_t>& layers)
         }
 
         ringReferenceNodes_.push_back(reference);
-        ringReferenceDistances_.push_back(std::max(referenceDistance, distance));
+        ringReferenceDistances_.push_back(
+            std::max(referenceDistance, distance));
     }
 
     ringVelocities_.assign(SPATIAL_DIM * ringNodes_.size(), 0.0);
@@ -1031,7 +1034,7 @@ void maskedRegion::setAtCovered(STKScalarField& field, scalar value) const
 }
 
 void maskedRegion::copyAtCovered(STKScalarField& target,
-                                  const STKScalarField& source) const
+                                 const STKScalarField& source) const
 {
     const auto& bulkData = realmPtr_->meshRef().bulkDataRef();
 
@@ -1050,11 +1053,11 @@ void maskedRegion::copyAtCovered(STKScalarField& target,
 }
 
 scalar maskedRegion::frictionVelocity(size_t i,
-                                       const STKScalarField& U,
-                                       const STKScalarField& rho,
-                                       const STKScalarField& mu,
-                                       scalar kappa,
-                                       scalar B) const
+                                      const STKScalarField& U,
+                                      const STKScalarField& rho,
+                                      const STKScalarField& mu,
+                                      scalar kappa,
+                                      scalar B) const
 {
     const stk::mesh::Entity node = ringNodes_[i];
     const stk::mesh::Entity reference = ringReferenceNodes_[i];
@@ -1086,10 +1089,10 @@ scalar maskedRegion::frictionVelocity(size_t i,
     }
 
     return maskFrictionVelocity(tangentialMagnitude,
-                                         ringReferenceDistances_[i],
-                                         nu,
-                                         kappa,
-                                         std::exp(kappa * B));
+                                ringReferenceDistances_[i],
+                                nu,
+                                kappa,
+                                std::exp(kappa * B));
 }
 
 void maskedRegion::computeRingVelocities(const STKScalarField& U,

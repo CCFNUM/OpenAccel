@@ -28,7 +28,8 @@ wallDistance::wallDistance(realm* realm) : fieldBroker(realm)
             meshWavePtr_ = std::make_unique<meshWave>(this);
             break;
         case wallDistanceMethod::signedDistanceFunction:
-            signedDistanceFunctionPtr_ = std::make_unique<signedDistanceFunction>(this);
+            signedDistanceFunctionPtr_ =
+                std::make_unique<signedDistanceFunction>(this);
             break;
     }
 }
@@ -75,7 +76,7 @@ void wallDistance::reset()
         case wallDistanceMethod::signedDistanceFunction:
             assert(signedDistanceFunctionPtr_);
             break;
-            }
+    }
 }
 
 void wallDistance::initialize()

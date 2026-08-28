@@ -25,10 +25,10 @@ enum class maskState : int
 
 // friction velocity that reproduces a tangential velocity at a given distance
 scalar maskFrictionVelocity(const scalar uTangential,
-                                     const scalar distance,
-                                     const scalar nu,
-                                     const scalar kappa,
-                                     const scalar E);
+                            const scalar distance,
+                            const scalar nu,
+                            const scalar kappa,
+                            const scalar E);
 
 // A solid body that is not part of the fluid mesh. It masks the fluid nodes it
 // covers, contributes its surface to the wall distance, and imposes a wall
@@ -67,10 +67,10 @@ private:
     label forcedLayers_ = 1;
     label referenceLayer_ = 2;
 
-    maskWallTreatment wallTreatment_ =
-        maskWallTreatment::wallFunction;
+    maskWallTreatment wallTreatment_ = maskWallTreatment::wallFunction;
 
-    // body surface as an SSDF triangle soup (a 2D side is a degenerate triangle)
+    // body surface as an SSDF triangle soup (a 2D side is a degenerate
+    // triangle)
     std::vector<scalar> sx_;
     std::vector<scalar> sy_;
     std::vector<scalar> sz_;
@@ -165,10 +165,10 @@ public:
         return referenceLayer_;
     }
 
-    // closest point on the body surface: distance and unit normal into the fluid
-    void closestFacet(const scalar* point,
-                      scalar& distance,
-                      scalar* normal) const;
+    // closest point on the body surface: distance and unit normal into the
+    // fluid
+    void
+    closestFacet(const scalar* point, scalar& distance, scalar* normal) const;
 
     // hold a node field at a constant value inside the body
     void setAtCovered(STKScalarField& field, scalar value) const;
