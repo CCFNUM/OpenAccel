@@ -33,227 +33,235 @@ void solidDisplacementAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
 {
     if (field_broker_->controlsRef().isCvfemSolidMechanics())
     {
-    // ========================================================================
-    // Second-order time discretization for structural dynamics:
-    // ρ * d²D/dt² ≈ ρ/dt² * (D^{n+1} - 2*D^n + D^{n-1})
-    //
-    // For constant density (typical for solid mechanics):
-    // LHS diagonal: ρ*V/dt²
-    // RHS: ρ*V/dt² * (D - 2*D_old + D_old_old)
-    //
-    // Note: Uses reference volume V₀ for total Lagrangian formulation
-    //
-    // Optional mass-proportional Rayleigh damping adds α*ρ*dD/dt, discretized
-    // BDF1
-    // ========================================================================
+        // ========================================================================
+        // Second-order time discretization for structural dynamics:
+        // ρ * d²D/dt² ≈ ρ/dt² * (D^{n+1} - 2*D^n + D^{n-1})
+        //
+        // For constant density (typical for solid mechanics):
+        // LHS diagonal: ρ*V/dt²
+        // RHS: ρ*V/dt² * (D - 2*D_old + D_old_old)
+        //
+        // Note: Uses reference volume V₀ for total Lagrangian formulation
+        //
+        // Optional mass-proportional Rayleigh damping adds α*ρ*dD/dt,
+        // discretized BDF1
+        // ========================================================================
 
-    auto& mesh = field_broker_->meshRef();
-    Matrix& A = ctx->getAMatrix();
-    Vector& b = ctx->getBVector();
+        auto& mesh = field_broker_->meshRef();
+        Matrix& A = ctx->getAMatrix();
+        Vector& b = ctx->getBVector();
 
-    stk::mesh::MetaData& metaData = mesh.metaDataRef();
-    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+        stk::mesh::MetaData& metaData = mesh.metaDataRef();
+        stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
-    // Space for LHS/RHS (single node)
-    const label lhsSize = SPATIAL_DIM * SPATIAL_DIM;
-    const label rhsSize = SPATIAL_DIM;
-    std::vector<scalar> lhs(lhsSize);
-    std::vector<scalar> rhs(rhsSize);
-    std::vector<label> scratchIds(rhsSize);
-    std::vector<scalar> scratchVals(rhsSize);
-    std::vector<stk::mesh::Entity> connectedNodes(1);
+        // Space for LHS/RHS (single node)
+        const label lhsSize = SPATIAL_DIM * SPATIAL_DIM;
+        const label rhsSize = SPATIAL_DIM;
+        std::vector<scalar> lhs(lhsSize);
+        std::vector<scalar> rhs(rhsSize);
+        std::vector<label> scratchIds(rhsSize);
+        std::vector<scalar> scratchVals(rhsSize);
+        std::vector<stk::mesh::Entity> connectedNodes(1);
 
-    // Pointers
-    scalar* p_lhs = &lhs[0];
-    scalar* p_rhs = &rhs[0];
+        // Pointers
+        scalar* p_lhs = &lhs[0];
+        scalar* p_rhs = &rhs[0];
 
-    // Get displacement fields
-    const STKScalarField* DSTKFieldPtr = phi_->stkFieldPtr();
-    const STKScalarField* DSTKFieldPtrOld = phi_->prevTimeRef().stkFieldPtr();
-    const STKScalarField* DSTKFieldPtrOldOld =
-        phi_->prevTimeRef().prevTimeRef().stkFieldPtr();
+        // Get displacement fields
+        const STKScalarField* DSTKFieldPtr = phi_->stkFieldPtr();
+        const STKScalarField* DSTKFieldPtrOld =
+            phi_->prevTimeRef().stkFieldPtr();
+        const STKScalarField* DSTKFieldPtrOldOld =
+            phi_->prevTimeRef().prevTimeRef().stkFieldPtr();
 
-    // Rayleigh mass-proportional damping coefficient [1/s]
-    const scalar dampingCoeff = domain->solidMechanics_.dampingCoeff_;
-    const bool useDamping = (dampingCoeff > 0.0);
+        // Rayleigh mass-proportional damping coefficient [1/s]
+        const scalar dampingCoeff = domain->solidMechanics_.dampingCoeff_;
+        const bool useDamping = (dampingCoeff > 0.0);
 
-    // Get density field (constant for solid mechanics)
-    const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
+        // Get density field (constant for solid mechanics)
+        const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
 
-    // Geometric fields - use original volume for total Lagrangian
-    const auto* volSTKFieldPtr = metaData.get_field<scalar>(
-        stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
+        // Geometric fields - use original volume for total Lagrangian
+        const auto* volSTKFieldPtr = metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
 
-    // Time step
-    const scalar dt = mesh.controlsRef().getTimestep();
-    const scalar rDeltaT2 = 1.0 / (dt * dt);
-    const scalar rDeltaT = 1.0 / dt; // first time derivative of the damping
+        // Time step
+        const scalar dt = mesh.controlsRef().getTimestep();
+        const scalar rDeltaT2 = 1.0 / (dt * dt);
+        const scalar rDeltaT = 1.0 / dt; // first time derivative of the damping
 
-    // Get interior parts
-    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+        // Get interior parts
+        const stk::mesh::PartVector& partVec =
+            domain->zonePtr()->interiorParts();
 
-    // Select owned nodes
-    stk::mesh::Selector selOwnedNodes =
-        metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
+        // Select owned nodes
+        stk::mesh::Selector selOwnedNodes =
+            metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
 
-    stk::mesh::BucketVector const& nodeBuckets =
-        bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
 
-    for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
-         ib != nodeBuckets.end();
-         ++ib)
-    {
-        stk::mesh::Bucket& nodeBucket = **ib;
-        const stk::mesh::Bucket::size_type nNodesPerBucket = nodeBucket.size();
-
-        // Field chunks in bucket
-        scalar* Db = stk::mesh::field_data(*DSTKFieldPtr, nodeBucket);
-        scalar* DbOld = stk::mesh::field_data(*DSTKFieldPtrOld, nodeBucket);
-        scalar* DbOldOld =
-            stk::mesh::field_data(*DSTKFieldPtrOldOld, nodeBucket);
-        scalar* rhob = stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
-        scalar* volb = stk::mesh::field_data(*volSTKFieldPtr, nodeBucket);
-
-        for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
-             ++iNode)
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
         {
-            // Get node
-            stk::mesh::Entity node = nodeBucket[iNode];
-            connectedNodes[0] = node;
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
 
-            // Zero lhs/rhs
-            for (label i = 0; i < lhsSize; ++i)
+            // Field chunks in bucket
+            scalar* Db = stk::mesh::field_data(*DSTKFieldPtr, nodeBucket);
+            scalar* DbOld = stk::mesh::field_data(*DSTKFieldPtrOld, nodeBucket);
+            scalar* DbOldOld =
+                stk::mesh::field_data(*DSTKFieldPtrOldOld, nodeBucket);
+            scalar* rhob = stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
+            scalar* volb = stk::mesh::field_data(*volSTKFieldPtr, nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
             {
-                p_lhs[i] = 0.0;
-            }
-            for (label i = 0; i < rhsSize; ++i)
-            {
-                p_rhs[i] = 0.0;
-            }
+                // Get node
+                stk::mesh::Entity node = nodeBucket[iNode];
+                connectedNodes[0] = node;
 
-            // Get nodal values
-            const scalar rho = rhob[iNode];
-            const scalar vol = volb[iNode];
-
-            // LHS coefficient: ρ*V/dt²
-            const scalar lhsfac = rho * vol * rDeltaT2;
-
-            // damping LHS coefficient: α*ρ*V/dt
-            const scalar lhsfacDamp =
-                useDamping ? (dampingCoeff * rho * vol * rDeltaT) : 0.0;
-
-            for (label i = 0; i < SPATIAL_DIM; ++i)
-            {
-                const scalar Di = Db[SPATIAL_DIM * iNode + i];
-                const scalar DiOld = DbOld[SPATIAL_DIM * iNode + i];
-                const scalar DiOldOld = DbOldOld[SPATIAL_DIM * iNode + i];
-
-                // LHS: add to diagonal
-                p_lhs[i * SPATIAL_DIM + i] += lhsfac;
-
-                // RHS: ρ*V/dt² * (D - 2*D_old + D_old_old)
-                p_rhs[i] -= lhsfac * (Di - 2.0 * DiOld + DiOldOld);
-
-                // damping: α*ρ*V/dt on the diagonal, α*ρ*V/dt * (D - D_old)
-                // on the residual
-                if (useDamping)
+                // Zero lhs/rhs
+                for (label i = 0; i < lhsSize; ++i)
                 {
-                    p_lhs[i * SPATIAL_DIM + i] += lhsfacDamp;
-                    p_rhs[i] -= lhsfacDamp * (Di - DiOld);
+                    p_lhs[i] = 0.0;
                 }
-            }
+                for (label i = 0; i < rhsSize; ++i)
+                {
+                    p_rhs[i] = 0.0;
+                }
 
-            Base::applyCoeff_(
-                A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+                // Get nodal values
+                const scalar rho = rhob[iNode];
+                const scalar vol = volb[iNode];
+
+                // LHS coefficient: ρ*V/dt²
+                const scalar lhsfac = rho * vol * rDeltaT2;
+
+                // damping LHS coefficient: α*ρ*V/dt
+                const scalar lhsfacDamp =
+                    useDamping ? (dampingCoeff * rho * vol * rDeltaT) : 0.0;
+
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    const scalar Di = Db[SPATIAL_DIM * iNode + i];
+                    const scalar DiOld = DbOld[SPATIAL_DIM * iNode + i];
+                    const scalar DiOldOld = DbOldOld[SPATIAL_DIM * iNode + i];
+
+                    // LHS: add to diagonal
+                    p_lhs[i * SPATIAL_DIM + i] += lhsfac;
+
+                    // RHS: ρ*V/dt² * (D - 2*D_old + D_old_old)
+                    p_rhs[i] -= lhsfac * (Di - 2.0 * DiOld + DiOldOld);
+
+                    // damping: α*ρ*V/dt on the diagonal, α*ρ*V/dt * (D - D_old)
+                    // on the residual
+                    if (useDamping)
+                    {
+                        p_lhs[i * SPATIAL_DIM + i] += lhsfacDamp;
+                        p_rhs[i] -= lhsfacDamp * (Di - DiOld);
+                    }
+                }
+
+                Base::applyCoeff_(
+                    A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+            }
         }
-    }
     }
     else
     {
-     // Reuse the same lumped nodal inertia assembly as the CVFEM solid path.
-    // The transient contribution is assembled from nodal density and nodal
-    // control volume, while the FEM stiffness remains in the element terms.
-    auto& mesh = field_broker_->meshRef();
-    Matrix& A = ctx->getAMatrix();
-    Vector& b = ctx->getBVector();
+        // Reuse the same lumped nodal inertia assembly as the CVFEM solid path.
+        // The transient contribution is assembled from nodal density and nodal
+        // control volume, while the FEM stiffness remains in the element terms.
+        auto& mesh = field_broker_->meshRef();
+        Matrix& A = ctx->getAMatrix();
+        Vector& b = ctx->getBVector();
 
-    stk::mesh::MetaData& metaData = mesh.metaDataRef();
-    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+        stk::mesh::MetaData& metaData = mesh.metaDataRef();
+        stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
-    const label lhsSize = SPATIAL_DIM * SPATIAL_DIM;
-    const label rhsSize = SPATIAL_DIM;
-    std::vector<scalar> lhs(lhsSize);
-    std::vector<scalar> rhs(rhsSize);
-    std::vector<label> scratchIds(rhsSize);
-    std::vector<scalar> scratchVals(rhsSize);
-    std::vector<stk::mesh::Entity> connectedNodes(1);
+        const label lhsSize = SPATIAL_DIM * SPATIAL_DIM;
+        const label rhsSize = SPATIAL_DIM;
+        std::vector<scalar> lhs(lhsSize);
+        std::vector<scalar> rhs(rhsSize);
+        std::vector<label> scratchIds(rhsSize);
+        std::vector<scalar> scratchVals(rhsSize);
+        std::vector<stk::mesh::Entity> connectedNodes(1);
 
-    scalar* p_lhs = &lhs[0];
-    scalar* p_rhs = &rhs[0];
+        scalar* p_lhs = &lhs[0];
+        scalar* p_rhs = &rhs[0];
 
-    const STKScalarField* DSTKFieldPtr = phi_->stkFieldPtr();
-    const STKScalarField* DSTKFieldPtrOld = phi_->prevTimeRef().stkFieldPtr();
-    const STKScalarField* DSTKFieldPtrOldOld =
-        phi_->prevTimeRef().prevTimeRef().stkFieldPtr();
+        const STKScalarField* DSTKFieldPtr = phi_->stkFieldPtr();
+        const STKScalarField* DSTKFieldPtrOld =
+            phi_->prevTimeRef().stkFieldPtr();
+        const STKScalarField* DSTKFieldPtrOldOld =
+            phi_->prevTimeRef().prevTimeRef().stkFieldPtr();
 
-    const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
-    const auto* volSTKFieldPtr = metaData.get_field<scalar>(
-        stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
+        const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
+        const auto* volSTKFieldPtr = metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, this->getDualNodalVolumeID_(domain));
 
-    const scalar dt = mesh.controlsRef().getTimestep();
-    const scalar rDeltaT2 = 1.0 / (dt * dt);
+        const scalar dt = mesh.controlsRef().getTimestep();
+        const scalar rDeltaT2 = 1.0 / (dt * dt);
 
-    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+        const stk::mesh::PartVector& partVec =
+            domain->zonePtr()->interiorParts();
 
-    stk::mesh::Selector selOwnedNodes =
-        metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
+        stk::mesh::Selector selOwnedNodes =
+            metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
 
-    stk::mesh::BucketVector const& nodeBuckets =
-        bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selOwnedNodes);
 
-    for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
-         ib != nodeBuckets.end();
-         ++ib)
-    {
-        stk::mesh::Bucket& nodeBucket = **ib;
-        const stk::mesh::Bucket::size_type nNodesPerBucket = nodeBucket.size();
-
-        scalar* Db = stk::mesh::field_data(*DSTKFieldPtr, nodeBucket);
-        scalar* DbOld = stk::mesh::field_data(*DSTKFieldPtrOld, nodeBucket);
-        scalar* DbOldOld =
-            stk::mesh::field_data(*DSTKFieldPtrOldOld, nodeBucket);
-        scalar* rhob = stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
-        scalar* volb = stk::mesh::field_data(*volSTKFieldPtr, nodeBucket);
-
-        for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
-             ++iNode)
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
         {
-            stk::mesh::Entity node = nodeBucket[iNode];
-            connectedNodes[0] = node;
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
 
-            for (label i = 0; i < lhsSize; ++i)
-                p_lhs[i] = 0.0;
-            for (label i = 0; i < rhsSize; ++i)
-                p_rhs[i] = 0.0;
+            scalar* Db = stk::mesh::field_data(*DSTKFieldPtr, nodeBucket);
+            scalar* DbOld = stk::mesh::field_data(*DSTKFieldPtrOld, nodeBucket);
+            scalar* DbOldOld =
+                stk::mesh::field_data(*DSTKFieldPtrOldOld, nodeBucket);
+            scalar* rhob = stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
+            scalar* volb = stk::mesh::field_data(*volSTKFieldPtr, nodeBucket);
 
-            const scalar rho = rhob[iNode];
-            const scalar vol = volb[iNode];
-            const scalar lhsfac = rho * vol * rDeltaT2;
-
-            for (label i = 0; i < SPATIAL_DIM; ++i)
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
             {
-                const scalar Di = Db[SPATIAL_DIM * iNode + i];
-                const scalar DiOld = DbOld[SPATIAL_DIM * iNode + i];
-                const scalar DiOldOld = DbOldOld[SPATIAL_DIM * iNode + i];
+                stk::mesh::Entity node = nodeBucket[iNode];
+                connectedNodes[0] = node;
 
-                p_lhs[i * SPATIAL_DIM + i] += lhsfac;
-                p_rhs[i] -= lhsfac * (Di - 2.0 * DiOld + DiOldOld);
+                for (label i = 0; i < lhsSize; ++i)
+                    p_lhs[i] = 0.0;
+                for (label i = 0; i < rhsSize; ++i)
+                    p_rhs[i] = 0.0;
+
+                const scalar rho = rhob[iNode];
+                const scalar vol = volb[iNode];
+                const scalar lhsfac = rho * vol * rDeltaT2;
+
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    const scalar Di = Db[SPATIAL_DIM * iNode + i];
+                    const scalar DiOld = DbOld[SPATIAL_DIM * iNode + i];
+                    const scalar DiOldOld = DbOldOld[SPATIAL_DIM * iNode + i];
+
+                    p_lhs[i * SPATIAL_DIM + i] += lhsfac;
+                    p_rhs[i] -= lhsfac * (Di - 2.0 * DiOld + DiOldOld);
+                }
+
+                Base::applyCoeff_(
+                    A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
             }
-
-            Base::applyCoeff_(
-                A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
-    }
     }
 }
 

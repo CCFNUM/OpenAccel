@@ -267,8 +267,7 @@ struct solverDictionary
             nonconformalMethod nonconformalMethod_ =
                 nonconformalMethod::discontinuousGalerkin;
             gradientAveragingType cvpgType_ = gradientAveragingType::arithAver;
-            solidAssemblerType solidAssemblerType_ =
-                solidAssemblerType::cvfem;
+            solidAssemblerType solidAssemblerType_ = solidAssemblerType::cvfem;
         };
 
         basicSettingsDictionary basicSettings_;

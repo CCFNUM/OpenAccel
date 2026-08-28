@@ -27,8 +27,8 @@ void convertYoungPoissonToMooneyRivlin(scalar E,
                                        scalar& kappa)
 {
     const scalar muEff = E / (2.0 * (1.0 + nu));
-    c1 = muEff / 2.0;    // C10
-    c2 = 0.0;            // C01 (pure neo-Hookean split if not specified)
+    c1 = muEff / 2.0; // C10
+    c2 = 0.0;         // C01 (pure neo-Hookean split if not specified)
     kappa = E / (3.0 * (1.0 - 2.0 * nu));
 }
 
@@ -370,8 +370,7 @@ void domain::read_()
                 {
                     mat.mechanicalProperties_.youngModulus_.option_ =
                         convertYoungModulusOptionFromString(
-                            mechanicalPropertiesBlock["young_modulus"]
-                                                     ["option"]
+                            mechanicalPropertiesBlock["young_modulus"]["option"]
                                 .template as<std::string>());
                 }
 
@@ -379,8 +378,7 @@ void domain::read_()
                 {
                     mat.mechanicalProperties_.poissonRatio_.option_ =
                         convertPoissonRatioOptionFromString(
-                            mechanicalPropertiesBlock["poisson_ratio"]
-                                                     ["option"]
+                            mechanicalPropertiesBlock["poisson_ratio"]["option"]
                                 .template as<std::string>());
                 }
 
@@ -1142,14 +1140,14 @@ void domain::read_()
 
                     if (hasYoungPoisson)
                     {
-                        const scalar E = mechanicalPropertiesBlock
-                                             ["young_modulus"]
-                                             ["young_modulus"]
-                                                 .template as<scalar>();
-                        const scalar nu = mechanicalPropertiesBlock
-                                              ["poisson_ratio"]
-                                              ["poisson_ratio"]
-                                                  .template as<scalar>();
+                        const scalar E =
+                            mechanicalPropertiesBlock["young_modulus"]
+                                                     ["young_modulus"]
+                                                         .template as<scalar>();
+                        const scalar nu =
+                            mechanicalPropertiesBlock["poisson_ratio"]
+                                                     ["poisson_ratio"]
+                                                         .template as<scalar>();
 
                         convertYoungPoissonToMooneyRivlin(E,
                                                           nu,
@@ -1164,9 +1162,8 @@ void domain::read_()
                     // would silently run with zero stiffness.
                     if (mechProps.c1_ == 0.0 && !hasYoungPoisson)
                     {
-                        errorMsg(
-                            "mooney_rivlin requires either c1/c2/kappa or "
-                            "young_modulus/poisson_ratio");
+                        errorMsg("mooney_rivlin requires either c1/c2/kappa or "
+                                 "young_modulus/poisson_ratio");
                     }
                 }
             }

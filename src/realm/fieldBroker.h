@@ -1406,8 +1406,8 @@ protected:
             (EField).setZone((domain)->index());                               \
             if ((materialBlock)["mechanical_properties"]["young_modulus"] &&   \
                 domain->materialRef(__VA_ARGS__)                               \
-                    .mechanicalProperties_.youngModulus_.option_ ==            \
-                youngModulusOption::value)                                     \
+                        .mechanicalProperties_.youngModulus_.option_ ==        \
+                    youngModulusOption::value)                                 \
             {                                                                  \
                 initialCondition::                                             \
                     setupFieldInitializationOverDomainFromConfig(              \
@@ -1427,8 +1427,8 @@ protected:
             (nuField).setZone((domain)->index());                              \
             if ((materialBlock)["mechanical_properties"]["poisson_ratio"] &&   \
                 domain->materialRef(__VA_ARGS__)                               \
-                    .mechanicalProperties_.poissonRatio_.option_ ==            \
-                poissonRatioOption::value)                                     \
+                        .mechanicalProperties_.poissonRatio_.option_ ==        \
+                    poissonRatioOption::value)                                 \
             {                                                                  \
                 initialCondition::                                             \
                     setupFieldInitializationOverDomainFromConfig(              \

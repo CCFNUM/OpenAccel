@@ -1201,7 +1201,7 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 stk::mesh::field_data(*originalExposedAreaVecSTKFieldPtr, side);
             const scalar* deformedAreaVecForSide =
                 (followerPressure && hasPressure) ? &deformedAreaVec[ipOffset]
-                                                   : nullptr;
+                                                  : nullptr;
 
             // Loop over integration points
             for (label ip = 0; ip < numScsBip; ++ip)
@@ -1495,10 +1495,9 @@ void solidMechanicsModel::updateStressAndStrain_(
 #if SPATIAL_DIM == 2
                         const scalar J = F[0] * F[3] - F[1] * F[2];
 #elif SPATIAL_DIM == 3
-                        const scalar J =
-                            F[0] * (F[4] * F[8] - F[5] * F[7]) -
-                            F[1] * (F[3] * F[8] - F[5] * F[6]) +
-                            F[2] * (F[3] * F[7] - F[4] * F[6]);
+                        const scalar J = F[0] * (F[4] * F[8] - F[5] * F[7]) -
+                                         F[1] * (F[3] * F[8] - F[5] * F[6]) +
+                                         F[2] * (F[3] * F[7] - F[4] * F[6]);
 #endif
                         const scalar lnJ = std::log(J);
 
@@ -1518,9 +1517,9 @@ void solidMechanicsModel::updateStressAndStrain_(
                                 for (label kk = 0; kk < SPATIAL_DIM; ++kk)
                                 {
                                     b_ij += F[i * SPATIAL_DIM + kk] *
-                                           F[j * SPATIAL_DIM + kk];
+                                            F[j * SPATIAL_DIM + kk];
                                     c_ij += F[kk * SPATIAL_DIM + i] *
-                                           F[kk * SPATIAL_DIM + j];
+                                            F[kk * SPATIAL_DIM + j];
                                 }
 
                                 p_stress[i * SPATIAL_DIM + j] +=
@@ -1551,10 +1550,9 @@ void solidMechanicsModel::updateStressAndStrain_(
 #if SPATIAL_DIM == 2
                         const scalar J = F[0] * F[3] - F[1] * F[2];
 #elif SPATIAL_DIM == 3
-                        const scalar J =
-                            F[0] * (F[4] * F[8] - F[5] * F[7]) -
-                            F[1] * (F[3] * F[8] - F[5] * F[6]) +
-                            F[2] * (F[3] * F[7] - F[4] * F[6]);
+                        const scalar J = F[0] * (F[4] * F[8] - F[5] * F[7]) -
+                                         F[1] * (F[3] * F[8] - F[5] * F[6]) +
+                                         F[2] * (F[3] * F[7] - F[4] * F[6]);
 #endif
                         const scalar lnJ = std::log(J);
                         const scalar Jm23 = std::pow(J, -2.0 / 3.0);
@@ -1572,7 +1570,7 @@ void solidMechanicsModel::updateStressAndStrain_(
                                 for (label kk = 0; kk < SPATIAL_DIM; ++kk)
                                 {
                                     b_ij += F[i * SPATIAL_DIM + kk] *
-                                           F[j * SPATIAL_DIM + kk];
+                                            F[j * SPATIAL_DIM + kk];
                                 }
                                 b[i * SPATIAL_DIM + j] = b_ij;
                             }
@@ -1607,7 +1605,7 @@ void solidMechanicsModel::updateStressAndStrain_(
                                 for (label kk = 0; kk < SPATIAL_DIM; ++kk)
                                 {
                                     b2_ij += b[i * SPATIAL_DIM + kk] *
-                                            b[kk * SPATIAL_DIM + j];
+                                             b[kk * SPATIAL_DIM + j];
                                 }
                                 b2[i * SPATIAL_DIM + j] = b2_ij;
                             }
@@ -1639,9 +1637,8 @@ void solidMechanicsModel::updateStressAndStrain_(
                             {
                                 const scalar delta_ij = (i == j) ? 1.0 : 0.0;
 
-                                const scalar devB_ij =
-                                    b[i * SPATIAL_DIM + j] -
-                                    (I1 / 3.0) * delta_ij;
+                                const scalar devB_ij = b[i * SPATIAL_DIM + j] -
+                                                       (I1 / 3.0) * delta_ij;
 
                                 const scalar X_ij =
                                     I1 * b[i * SPATIAL_DIM + j] -
@@ -1650,9 +1647,8 @@ void solidMechanicsModel::updateStressAndStrain_(
                                     X_ij - (trX / 3.0) * delta_ij;
 
                                 p_stress[i * SPATIAL_DIM + j] +=
-                                    ((2.0 / J) *
-                                         (mooneyC1 * Jm23 * devB_ij +
-                                          mooneyC2 * Jm43 * devX_ij) +
+                                    ((2.0 / J) * (mooneyC1 * Jm23 * devB_ij +
+                                                  mooneyC2 * Jm43 * devX_ij) +
                                      (mooneyKappa / J) * lnJ * delta_ij) /
                                     numScvIp;
 
@@ -1660,7 +1656,7 @@ void solidMechanicsModel::updateStressAndStrain_(
                                 for (label kk = 0; kk < SPATIAL_DIM; ++kk)
                                 {
                                     c_ij += F[kk * SPATIAL_DIM + i] *
-                                           F[kk * SPATIAL_DIM + j];
+                                            F[kk * SPATIAL_DIM + j];
                                 }
                                 p_strain[i * SPATIAL_DIM + j] +=
                                     0.5 * (c_ij - delta_ij) / numScvIp;

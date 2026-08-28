@@ -328,10 +328,10 @@ public:
     // selectUnion(parts)) yields -- i.e. the same order a caller iterating
     // that identical selector will see, so per-side offsets can be tracked
     // in lockstep between the two.
-    void computeDeformedExposedAreaVector(
-        const stk::mesh::PartVector& parts,
-        const STKScalarField& displacementField,
-        std::vector<scalar>& deformedAreaVec);
+    void
+    computeDeformedExposedAreaVector(const stk::mesh::PartVector& parts,
+                                     const STKScalarField& displacementField,
+                                     std::vector<scalar>& deformedAreaVec);
 
     controls& controlsRef();
 

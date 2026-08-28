@@ -17,7 +17,8 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
     {
         // CVFEM has no dedicated specified-flux boundary treatment for solid
         // displacement; fall back to the generic phiAssembler implementation.
-        Base::assembleElemTermsBoundaryWallSpecifiedFlux_(domain, boundary, ctx);
+        Base::assembleElemTermsBoundaryWallSpecifiedFlux_(
+            domain, boundary, ctx);
         return;
     }
 
@@ -39,16 +40,15 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
     // Newton tangent needs an extra "pressure stiffness" contribution here,
     // in addition to the interior material/geometric stiffness. See the
     // guarded TODO below -- not yet implemented (Picard for now).
-    auto& bc = model_->DRef().boundaryConditionRef(domain->index(),
-                                                    boundary->index());
+    auto& bc =
+        model_->DRef().boundaryConditionRef(domain->index(), boundary->index());
     auto& followerPressureData = bc.template data<1>("follower_pressure");
     const bool followerPressure =
         (followerPressureData.type() == inputDataType::constant) &&
         (*followerPressureData.value() > 0.5);
 
     const stk::mesh::Selector selectedSides =
-        metaData.universal_part() &
-        stk::mesh::selectUnion(boundary->parts());
+        metaData.universal_part() & stk::mesh::selectUnion(boundary->parts());
     const auto& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selectedSides);
 
@@ -101,12 +101,10 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
                 scalar areaMagnitudeSquared = 0.0;
                 for (label dim = 0; dim < SPATIAL_DIM; ++dim)
                 {
-                    const scalar area =
-                        areaVector[ip * SPATIAL_DIM + dim];
+                    const scalar area = areaVector[ip * SPATIAL_DIM + dim];
                     areaMagnitudeSquared += area * area;
                 }
-                const scalar areaMagnitude =
-                    std::sqrt(areaMagnitudeSquared);
+                const scalar areaMagnitude = std::sqrt(areaMagnitudeSquared);
 
                 for (label node = 0; node < nodesPerSide; ++node)
                 {
@@ -173,10 +171,8 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
                             integratedForce.data(),
                             globalIntegratedForce.data(),
                             SPATIAL_DIM);
-        stk::all_reduce_sum(bulkData.parallel(),
-                            &assembledFaces,
-                            &globalAssembledFaces,
-                            1);
+        stk::all_reduce_sum(
+            bulkData.parallel(), &assembledFaces, &globalAssembledFaces, 1);
 
         if (messager::myProcNo() == 0)
         {
