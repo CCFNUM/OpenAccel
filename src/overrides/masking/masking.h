@@ -11,8 +11,8 @@
 #include "fieldBroker.h"
 #include "maskedRegion.h"
 
-#include <cstdint>
 #include "types.h"
+#include <cstdint>
 
 namespace accel
 {
