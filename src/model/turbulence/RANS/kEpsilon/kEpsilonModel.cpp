@@ -468,11 +468,15 @@ void kEpsilonModel::updateTurbulentDynamicViscosity(
     // get fields
     STKScalarField* mutSTKFieldPtr = this->mutRef().stkFieldPtr();
     const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
+    const STKScalarField* muSTKFieldPtr = this->muRef().stkFieldPtr();
     const STKScalarField& kSTKFieldRef = this->kRef().stkFieldRef();
     const STKScalarField& epsilonSTKFieldRef = this->epsilonRef().stkFieldRef();
 
     // other
     scalar Cmu = this->Cmu();
+
+    // eddy-viscosity ratio limit: contains mut blow-up when eps undershoots
+    constexpr scalar maxViscosityRatio = 1.0e5;
 
     // define some common selectors
     stk::mesh::Selector selAllNodes =
@@ -489,6 +493,7 @@ void kEpsilonModel::updateTurbulentDynamicViscosity(
         const stk::mesh::Bucket::size_type length = b.size();
 
         const scalar* rho = stk::mesh::field_data(*rhoSTKFieldPtr, b);
+        const scalar* mu = stk::mesh::field_data(*muSTKFieldPtr, b);
         const scalar* tke = stk::mesh::field_data(kSTKFieldRef, b);
         const scalar* tdr = stk::mesh::field_data(epsilonSTKFieldRef, b);
         scalar* mut = stk::mesh::field_data(*mutSTKFieldPtr, b);
@@ -496,6 +501,7 @@ void kEpsilonModel::updateTurbulentDynamicViscosity(
         for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
         {
             scalar mut_val = Cmu * rho[k] * tke[k] * tke[k] / (tdr[k] + SMALL);
+            mut_val = std::min(mut_val, maxViscosityRatio * mu[k]);
 
             mut[k] = 0.75 * mut_val + 0.25 * mut[k];
         }
