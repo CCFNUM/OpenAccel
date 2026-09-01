@@ -125,14 +125,14 @@ simulation:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-                                coarsen_type: 10
-                                interp_type: 6
-                                relax_type: 18
-                                strong_threshold: 0.25
-                                num_sweeps: 1
-                                max_levels: 20
-                                aggressive_levels: 1
-                                trunc_factor: 0.3
+                                coarsentype: 10
+                                interptype: 6
+                                relaxtype: 18
+                                strongthreshold: 0.25
+                                numsweeps: 1
+                                maxlevels: 20
+                                aggnumlevels: 1
+                                truncfactor: 0.3
             expert_parameters:
                 body_force_redistribution: true
                 relax_gradients: true
