@@ -91,14 +91,14 @@ simulation:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-                                coarsen_type: 10 # HMIS (Excellent parallel scaling)
-                                interp_type: 6 # Extended+i (Robust for stretched grids)
-                                relax_type: 18 # L1-Gauss-Seidel (Stable/Smooth)
-                                strong_threshold: 0.25
-                                num_sweeps: 1
-                                max_levels: 20
-                                aggressive_levels: 1 # Reduces memory overhead
-                                trunc_factor: 0.3 # Keeps the solver lean
+                                coarsentype: 10 # HMIS (Excellent parallel scaling)
+                                interptype: 6 # Extended+i (Robust for stretched grids)
+                                relaxtype: 18 # L1-Gauss-Seidel (Stable/Smooth)
+                                strongthreshold: 0.25
+                                numsweeps: 1
+                                maxlevels: 20
+                                aggnumlevels: 1 # Reduces memory overhead
+                                truncfactor: 0.3 # Keeps the solver lean
             expert_parameters:
                 consistent: true
                 relax_gradients: false

@@ -178,14 +178,14 @@ simulation:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-                                coarsen_type: 6 # Falgout — robust for jumps
-                                interp_type: 6
-                                relax_type: 18 # Symmetric hybrid SOR
-                                strong_threshold: 0.5
-                                num_sweeps: 3
-                                max_levels: 25
-                                aggressive_levels: 0
-                                trunc_factor: 0.1
+                                coarsentype: 6 # Falgout — robust for jumps
+                                interptype: 6
+                                relaxtype: 18 # Symmetric hybrid SOR
+                                strongthreshold: 0.5
+                                numsweeps: 3
+                                maxlevels: 25
+                                aggnumlevels: 0
+                                truncfactor: 0.1
             expert_parameters:
                 body_force_redistribution: false
                 force_full_node_graph: false

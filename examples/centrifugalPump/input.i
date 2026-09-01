@@ -128,8 +128,8 @@ simulation:
                             pc_type: bjacobi
                     pressure_correction:
                         family: HYPRE
-                        min_iterations: 3
-                        max_iterations: 20
+                        min_iterations: 1
+                        max_iterations: 1
                         rtol: 1.0e-3
                         atol: 1.0e-12
                         options:
@@ -137,14 +137,14 @@ simulation:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-                                coarsen_type: 10
-                                interp_type: 6
-                                relax_type: 18
-                                strong_threshold: 0.25
-                                num_sweeps: 1
-                                max_levels: 20
-                                aggressive_levels: 1
-                                trunc_factor: 0.3
+                                coarsentype: 10
+                                interptype: 6
+                                relaxtype: 18
+                                strongthreshold: 0.25
+                                numsweeps: 1
+                                maxlevels: 20
+                                aggnumlevels: 1
+                                truncfactor: 0.3
         output_control:
             file_path: results.e
             output_frequency: 10
