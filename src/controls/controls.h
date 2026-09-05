@@ -187,6 +187,11 @@ struct solverDictionary
                 label verbose_ = 0;
             };
 
+            struct solidMechanicsDictionary
+            {
+                label verbose_ = 0;
+            };
+
             struct equationControlsDictionary
             {
                 struct subIterationsDictionary
@@ -228,6 +233,7 @@ struct solverDictionary
 
             pressureLevelInformationDictionary pressureLevelInformation_;
             interfaceTransferDictionary interfaceTransfer_;
+            solidMechanicsDictionary solidMechanics_;
             equationControlsDictionary equationControls_;
             domainDecompositionDictionary domainDecomposition_;
         };

@@ -1024,12 +1024,10 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                     }
                 }
 
-                static bool femDebugPrinted = false;
-                const char* femDebug = std::getenv("OPENACCEL_FEM_DEBUG");
-                if (!femDebugPrinted && femDebug && std::atoi(femDebug) > 0 &&
-                    messager::myProcNo() == 0)
+                if (messager::master()
+                    && field_broker_->controlsRef().solverRef().solverControl_
+                           .advancedOptions_.solidMechanics_.verbose_ > 1)
                 {
-                    femDebugPrinted = true;
                     scalar maxEntry = 0.0;
                     scalar maxAsymmetry = 0.0;
                     scalar maxTranslationResidual = 0.0;

@@ -770,6 +770,18 @@ void controls::read(YAML::Node inputNode)
                 }
             }
 
+            if (advancedOptions["solid_mechanics"])
+            {
+                const auto& solidMechanics = advancedOptions["solid_mechanics"];
+
+                if (solidMechanics["verbose"])
+                {
+                    solver_.solverControl_.advancedOptions_.solidMechanics_
+                        .verbose_ =
+                        solidMechanics["verbose"].template as<label>();
+                }
+            }
+
             if (advancedOptions["equation_controls"])
             {
                 if (advancedOptions["equation_controls"]["sub_iterations"])
