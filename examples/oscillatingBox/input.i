@@ -1,5 +1,5 @@
 # vim: ft=yaml
-# This is a 3D case and must be run with a 3D-compiled binary.
+# This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
     file_path: mesh.e
     automatic_decomposition_type: rcb
@@ -40,17 +40,14 @@ simulation:
                     option: periodic_displacement
                     displacement:
                         frequency: 1
-                        value: [0, 0.1, 0]
+                        value: [0, 0.1]
           - name: walls
             type: wall
             location: [left, right, bottom, top]
-          - name: symmetry
-            type: symmetry
-            location: [symmetry]
           initialization:
             velocity:
                 option: value
-                velocity: [0, 0, 0]
+                velocity: [0, 0]
             pressure:
                 option: value
                 pressure: 0
@@ -71,7 +68,7 @@ simulation:
             advanced_options:
                 pressure_level_information:
                     option: cartesian_coordinates
-                    cartesian_coordinates: [-0.5, -0.3, 0]
+                    cartesian_coordinates: [-0.5, -0.3]
                     relative_pressure_level: 0
                 linear_solver_settings:
                     default:
