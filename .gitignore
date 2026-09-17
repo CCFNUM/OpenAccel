@@ -26,6 +26,9 @@ build*
 *.jpg*
 *.avi*
 
+# regression artifacts
+tools/python/regression_tests/results
+
 # Ignore example outputs and assets, retaining only input/configuration files.
 examples/**
 !examples/**/
