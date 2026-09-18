@@ -614,10 +614,6 @@ void simulation::initializeOutput_()
 
     // results
     io.propertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
-    // Allow long field names (e.g. phase-specific quantities such as
-    // `volume_fraction.water_blending_factor`) beyond the default 32 character
-    // Exodus limit.
-    io.propertyManagerPtr_->add(Ioss::Property("MAXIMUM_NAME_LENGTH", 256));
     io.fileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
         io.filePath_, io.writeMode_, *io.propertyManagerPtr_.get());
     meshRef().ioBrokerPtr()->use_nodeset_for_part_nodes_fields(io.fileIndex_,
@@ -683,11 +679,6 @@ void simulation::initializeOutput_()
     restart_path /= io.restartFileName_;
 
     restart.propertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
-    // Allow long field names (e.g. phase-specific quantities such as
-    // `volume_fraction.water_blending_factor`) beyond the default 32 character
-    // Exodus limit.
-    restart.propertyManagerPtr_->add(
-        Ioss::Property("MAXIMUM_NAME_LENGTH", 256));
     restart.fileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
         restart_path,
         stk::io::WRITE_RESTART,
@@ -698,7 +689,9 @@ void simulation::initializeOutput_()
             stk::mesh::get_field_by_name(field_name, metaData);
         assert(field);
         meshRef().ioBrokerPtr()->add_field(
-            restart.fileIndex_, *field, field_name);
+            restart.fileIndex_,
+            *field,
+            std::to_string(std::hash<std::string>{}(field_name)));
     }
 
     for (const auto& param : controlsRef().getRestartParam())
