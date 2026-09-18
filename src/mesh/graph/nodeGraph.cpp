@@ -21,6 +21,95 @@ using namespace linearSolver;
 namespace accel
 {
 
+namespace
+{
+
+// ship each owned conformal pair row's columns to the split partner's owner
+template <typename GatherRow, typename AddColumn>
+void exchangeConformalPairRows(mesh* meshPtr,
+                               const stk::mesh::BulkData& bulkData,
+                               const GatherRow& gatherRow,
+                               const AddColumn& addColumn)
+{
+    if (!messager::parallel())
+        return;
+
+    const int myProc = messager::myProcNo();
+    std::vector<stk::mesh::EntityId> cols;
+
+    for (label iI = 0; iI < meshPtr->nInterfaces(); ++iI)
+    {
+        const interface& interf = meshPtr->interfaceRef(iI);
+        if (!interf.isConformalTreatment())
+            continue;
+
+        stk::CommSparse comm(messager::comm());
+        auto packFn = [&]()
+        {
+            for (const auto& nodePair : interf.matchingNodePairVector())
+            {
+                const stk::mesh::Entity node[2] = {nodePair.first,
+                                                   nodePair.second};
+                const int owner[2] = {bulkData.parallel_owner_rank(node[0]),
+                                      bulkData.parallel_owner_rank(node[1])};
+                if (owner[0] == owner[1])
+                    continue; // co-owned: local union covered it
+
+                // each side ships its owned row to the partner's owner
+                for (int k = 0; k < 2; ++k)
+                {
+                    if (owner[k] != myProc || !gatherRow(node[k], cols))
+                        continue;
+                    stk::CommBuffer& buf = comm.send_buffer(owner[1 - k]);
+                    buf.pack<stk::mesh::EntityId>(
+                        bulkData.identifier(node[1 - k]));
+                    buf.pack<unsigned>(static_cast<unsigned>(cols.size()));
+                    for (const stk::mesh::EntityId c : cols)
+                        buf.pack<stk::mesh::EntityId>(c);
+                }
+            }
+        };
+        stk::pack_and_communicate(comm, packFn);
+
+        label nMissingColumns = 0;
+        stk::unpack_communications(comm,
+                                   [&](label fromProc)
+        {
+            stk::CommBuffer& buf = comm.recv_buffer(fromProc);
+            while (buf.remaining())
+            {
+                stk::mesh::EntityId destId;
+                buf.unpack(destId);
+                unsigned nc;
+                buf.unpack(nc);
+
+                const stk::mesh::Entity dest =
+                    bulkData.get_entity(stk::topology::NODE_RANK, destId);
+                for (unsigned c = 0; c < nc; ++c)
+                {
+                    stk::mesh::EntityId colId;
+                    buf.unpack(colId);
+                    const stk::mesh::Entity col =
+                        bulkData.get_entity(stk::topology::NODE_RANK, colId);
+                    if (bulkData.is_valid(col))
+                        addColumn(dest, col);
+                    else
+                        ++nMissingColumns;
+                }
+            }
+        });
+
+        if (nMissingColumns > 0)
+            errorMsg("conformal row-merge: " + std::to_string(nMissingColumns) +
+                     " exchanged stencil columns are not visible "
+                     "on the receiving rank (interface: " +
+                     interf.name() +
+                     "); extend the conformal coupling ghosting");
+    }
+}
+
+} // namespace
+
 nodeGraph::nodeGraph(const MPI_Comm comm,
                      mesh* meshPtr,
                      const GraphLayout layout)
@@ -336,6 +425,27 @@ void nodeGraph::buildGraph_()
                 }
             }
         }
+
+        // split pairs: addElemNbrs cannot rebuild a partner's DG/GGI columns
+        exchangeConformalPairRows(
+            meshPtr_,
+            bulkData,
+            [&](const stk::mesh::Entity n, std::vector<stk::mesh::EntityId>& c)
+        {
+            const ulabel lid = bulkData.local_id(n);
+            if (lid >= static_cast<ulabel>(n_owned_nodes_))
+                return false;
+            c.clear();
+            for (const stk::mesh::Entity e : crsRowStencil[lid])
+                c.push_back(bulkData.identifier(e));
+            return true;
+        },
+            [&](const stk::mesh::Entity dest, const stk::mesh::Entity col)
+        {
+            const ulabel lid = bulkData.local_id(dest);
+            STK_ThrowAssert(lid < static_cast<ulabel>(n_owned_nodes_));
+            crsRowStencil[lid].insert(col);
+        });
     }
 
     // create CRS structure
@@ -814,6 +924,30 @@ void nodeGraph::buildSubsetGraph_()
                 }
             }
         }
+
+        // split pairs: addElemNbrs cannot rebuild a partner's DG/GGI columns
+        exchangeConformalPairRows(
+            meshPtr_,
+            bulkData,
+            [&](const stk::mesh::Entity n, std::vector<stk::mesh::EntityId>& c)
+        {
+            const int64_t r = rowOf(n);
+            if (r < 0 || r >= static_cast<int64_t>(n_owned_nodes_))
+                return false; // pair row outside this sub-graph
+            c.clear();
+            for (const Index e : crsRowStencil[r])
+                c.push_back(bulkData.identifier(rowEntity[e]));
+            return true;
+        },
+            [&](const stk::mesh::Entity dest, const stk::mesh::Entity col)
+        {
+            const int64_t r = rowOf(dest);
+            if (r < 0 || r >= static_cast<int64_t>(n_owned_nodes_))
+                return;
+            const int64_t rc = rowOf(col);
+            if (rc >= 0) // columns outside the subset are dropped by design
+                insertSorted(crsRowStencil[r], static_cast<Index>(rc));
+        });
     }
 
     // untouched ghost marks revert to -1 (localToRow contract: row or -1)

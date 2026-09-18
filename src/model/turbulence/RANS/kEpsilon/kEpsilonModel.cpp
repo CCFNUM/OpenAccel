@@ -508,4 +508,54 @@ void kEpsilonModel::updateTurbulentDynamicViscosity(
     }
 }
 
+void kEpsilonModel::limitTurbulentLengthScale(
+    const std::shared_ptr<domain> domain)
+{
+    stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+
+    const STKScalarField& kSTKFieldRef = this->kRef().stkFieldRef();
+    STKScalarField& epsilonSTKFieldRef = this->epsilonRef().stkFieldRef();
+    const STKScalarField* yMinSTKFieldPtr = yMinRef().stkFieldPtr();
+
+    stk::mesh::Selector selAllNodes =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+
+    // no eddy can be larger than the farthest point from a wall
+    scalar lMax = domain->turbulence_.maxTurbulentLengthScale_;
+    if (lMax <= 0.0)
+    {
+        for (const stk::mesh::Bucket* b : nodeBuckets)
+        {
+            const scalar* yMin = stk::mesh::field_data(*yMinSTKFieldPtr, *b);
+            for (stk::mesh::Bucket::size_type k = 0; k < b->size(); ++k)
+            {
+                lMax = std::max(lMax, yMin[k]);
+            }
+        }
+        messager::maxReduce(lMax);
+    }
+    if (lMax <= 0.0)
+    {
+        return;
+    }
+
+    // eps floor: an eps stuck at the clip value would otherwise never recover
+    const scalar coeff = std::pow(this->Cmu(), 0.75) / lMax;
+    for (const stk::mesh::Bucket* b : nodeBuckets)
+    {
+        const scalar* tke = stk::mesh::field_data(kSTKFieldRef, *b);
+        scalar* tdr = stk::mesh::field_data(epsilonSTKFieldRef, *b);
+        for (stk::mesh::Bucket::size_type k = 0; k < b->size(); ++k)
+        {
+            const scalar kPos = std::max(tke[k], 0.0);
+            tdr[k] = std::max(tdr[k], coeff * kPos * std::sqrt(kPos));
+        }
+    }
+    this->epsilonRef().synchronizeGhostedEntities(domain->index());
+}
+
 } /* namespace accel */

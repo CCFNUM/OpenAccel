@@ -251,6 +251,16 @@ void meshMotion::updateMeshVelocityField_()
     {
         if (this->meshRef().zoneRef(iZone).meshMoving())
         {
+            const auto& zone = this->meshRef().zoneRef(iZone);
+            // chord velocity (D - D_old)/dt has divergence 2(cos(w dt)-1)/dt: a
+            // spurious compression of the whole block that grows with w dt
+            if (!zone.meshDeforming() &&
+                zone.transformationRef().type() == meshMotionType::rotating)
+            {
+                updateRigidRotationMeshVelocity_(iZone);
+                continue;
+            }
+
             auto& mesh = this->meshRef();
             stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
             stk::mesh::MetaData& metaData = mesh.metaDataRef();
@@ -309,6 +319,51 @@ void meshMotion::updateMeshVelocityField_()
                             dt;
                     }
                 }
+            }
+        }
+    }
+}
+
+void meshMotion::updateRigidRotationMeshVelocity_(label iZone)
+{
+    auto& mesh = this->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const auto& zone = mesh.zoneRef(iZone);
+
+    const STKScalarField* coordsSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, metaData.coordinate_field_name());
+    auto& UmSTKFieldRef = UmRef().stkFieldRef();
+
+    const scalar* p_mat =
+        zone.transformationRef().rotation().coriolisMatrix_.data();
+    const scalar* p_ori = zone.transformationRef().rotation().origin_.data();
+
+    const stk::mesh::Selector selStationary =
+        stk::mesh::selectUnion(zone.stationaryParts());
+    stk::mesh::Selector selNodes = metaData.universal_part() &
+                                   stk::mesh::selectUnion(zone.interiorParts());
+
+    for (const stk::mesh::Bucket* b :
+         bulkData.get_buckets(stk::topology::NODE_RANK, selNodes))
+    {
+        const bool stationary = selStationary(*b);
+        const scalar* x = stk::mesh::field_data(*coordsSTKFieldPtr, *b);
+        scalar* Um = stk::mesh::field_data(UmSTKFieldRef, *b);
+        for (stk::mesh::Bucket::size_type k = 0; k < b->size(); ++k)
+        {
+            for (label i = 0; i < SPATIAL_DIM; i++)
+            {
+                scalar v = 0.0;
+                if (!stationary)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; j++)
+                    {
+                        v += p_mat[i * SPATIAL_DIM + j] *
+                             (x[SPATIAL_DIM * k + j] - p_ori[j]);
+                    }
+                }
+                Um[SPATIAL_DIM * k + i] = v;
             }
         }
     }

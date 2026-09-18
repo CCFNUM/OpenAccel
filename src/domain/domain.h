@@ -46,6 +46,9 @@ struct turbulence
 
     // prescribed eddy length scale; zero selects the default
     scalar eddyLengthScale_ = 0.0;
+
+    // upper bound on the turbulent length scale; zero selects the default
+    scalar maxTurbulentLengthScale_ = 0.0;
 };
 
 struct multiphase

@@ -45,6 +45,10 @@ protected:
 
     void updateMeshVelocityField_();
 
+    // exact w x r on a rigidly rotating zone (the BDF chord velocity is not
+    // divergence-free)
+    void updateRigidRotationMeshVelocity_(label iZone);
+
     void updateMeshVelocityDivergenceField_();
 };
 

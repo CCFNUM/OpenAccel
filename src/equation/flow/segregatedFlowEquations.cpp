@@ -101,7 +101,7 @@ void segregatedFlowEquations::solve()
         return;
     }
 
-    // corrrector step: solve pressure correction
+    // corrector step: solve pressure correction
     {
         if (messager::master() && pCorr_eq_->subIters() > 1)
         {

@@ -24,6 +24,7 @@ public:
                         const stk::mesh::PartVector currentPartVec,
                         const stk::mesh::PartVector opposingPartVec,
                         interfaceModelOption option,
+                        interfaceMeshMotionOption meshMotionOption,
                         const scalar expandBoxPercentage,
                         const std::string& searchMethodName,
                         const bool clipIsoParametricCoords,

@@ -154,6 +154,15 @@ void equation::initializeAcceleration_()
     {
         cfg.aitkenOmegaMax = eqAccel["omega_max"].template as<scalar>();
     }
+    if (eqAccel["iqn_ils_filter"])
+    {
+        cfg.iqnIlsFilter = eqAccel["iqn_ils_filter"].template as<scalar>();
+    }
+    if (eqAccel["iqn_ils_windows_reused"])
+    {
+        cfg.iqnIlsWindowsReused =
+            eqAccel["iqn_ils_windows_reused"].template as<label>();
+    }
     if (eqAccel["iqn_ils_window"])
     {
         cfg.iqnIlsWindow = eqAccel["iqn_ils_window"].template as<label>();
@@ -173,9 +182,11 @@ void equation::disableAcceleration_()
     accelerationInitialized_ = true;
 }
 
-const Vector& equation::applyAcceleration_(const Vector& correction,
-                                           const scalar relaxValue,
-                                           scalar& outRelaxValue)
+const Vector&
+equation::applyAcceleration_(const Vector& correction,
+                             const scalar relaxValue,
+                             scalar& outRelaxValue,
+                             const std::function<void(Vector&)>& gatherCompact)
 {
     outRelaxValue = relaxValue;
 
@@ -208,8 +219,23 @@ const Vector& equation::applyAcceleration_(const Vector& correction,
         return lastAccelUsesScratch_ ? accelerationScratch_[0] : correction;
     }
 
-    const Vector& result = accelerationPtr_->apply(
-        correction, relaxValue, accelerationScratch_, outRelaxValue);
+    const Vector* resultPtr = &correction;
+    if (accelerationPtr_->type() == accelerationType::aitken && gatherCompact)
+    {
+        // Aitken only produces a relaxation factor: evaluate it on the
+        // layout-independent compact vector and keep the full correction.
+        gatherCompact(accelerationCompact_);
+        accelerationPtr_->apply(accelerationCompact_,
+                                relaxValue,
+                                accelerationScratch_,
+                                outRelaxValue);
+    }
+    else
+    {
+        resultPtr = &accelerationPtr_->apply(
+            correction, relaxValue, accelerationScratch_, outRelaxValue);
+    }
+    const Vector& result = *resultPtr;
 
     lastAccelCorrectionPtr_ = &correction;
     lastAccelIter_ = iter;

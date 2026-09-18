@@ -194,7 +194,6 @@ void solidDisplacementEquation::solve()
         linearSystem::solve();
     }
     messager::barrier();
-
     // Compute relaxation factor (acceleration handled in base equation)
     scalar relaxationFactor = DRef().urf();
 
@@ -211,7 +210,6 @@ void solidDisplacementEquation::solve()
         // synchronize
         DRef().synchronizeGhostedEntities(domain->index());
     }
-
     // post correction
 
     // 1) update gradient

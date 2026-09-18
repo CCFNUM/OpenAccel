@@ -47,7 +47,8 @@ void navierStokesEquation::checkDomain(const std::shared_ptr<domain> domain)
 
 bool navierStokesEquation::isConverged() const
 {
-    return linearSystem::isConverged();
+    bool converged = linearSystem::isConverged();
+    return converged;
 }
 
 void navierStokesEquation::setup()
@@ -131,7 +132,10 @@ void navierStokesEquation::postInitialize()
     }
 
     // now update div field
-    FOREACH_DOMAIN(model_->updateMassDivergenceField);
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->updateMassDivergenceField);
+    }
 
     equation::isInitialized_ = true;
 }

@@ -63,6 +63,9 @@ protected:
 
     virtual void updateTurbulentDynamicViscosity(
         const std::shared_ptr<domain> domain) override;
+
+    // raise eps so that k^1.5/eps <= L_max (default: largest wall distance)
+    void limitTurbulentLengthScale(const std::shared_ptr<domain> domain);
 };
 
 } /* namespace accel */

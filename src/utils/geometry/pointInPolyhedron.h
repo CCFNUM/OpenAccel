@@ -57,6 +57,13 @@ private:
 
     scalar referencePoint_[3] = {0, 0, 0};
 
+    scalar minCorner_[3] = {0, 0, 0};
+
+    scalar maxCorner_[3] = {0, 0, 0};
+
+    // absolute tolerance derived from the envelope size
+    scalar geomTol_ = 0.0;
+
     label referenceRank_ = -1;
 
     bool convexPolyhedron_ = true;
@@ -110,14 +117,66 @@ bool lineTriangleIntersection(const scalar* O,
                               const scalar* D,
                               const scalar* A,
                               const scalar* B,
-                              const scalar* C);
+                              const scalar* C,
+                              const scalar tol);
 
 bool lineQuadIntersection(const scalar* O,
                           const scalar* D,
                           const scalar* A,
                           const scalar* B,
                           const scalar* C,
-                          const scalar* D_quad);
+                          const scalar* D_quad,
+                          const scalar tol);
+
+} // namespace utils
+
+#else /* SPATIAL_DIM == 2 */
+
+namespace utils
+{
+
+// 2D point-in-polygon test; points on the boundary count as inside.
+class pointInPolygon
+{
+private:
+    stk::mesh::BulkData& bulkData_;
+
+    stk::mesh::MetaData& metaData_;
+
+    stk::mesh::ConstPartVector& polygon_;
+
+    stk::mesh::ConstPartVector& envelope_;
+
+    stk::mesh::Field<scalar>* coordsSTKFieldPtr_;
+
+    // envelope edges as x0,y0,x1,y1 per segment, replicated on every rank
+    std::vector<scalar> segments_;
+
+    // per-segment axis-aligned bounds, minx,miny,maxx,maxy, grown by geomTol_
+    std::vector<scalar> segBounds_;
+
+    // bounds of the whole envelope, grown by geomTol_
+    scalar envMin_[2] = {0.0, 0.0};
+
+    scalar envMax_[2] = {0.0, 0.0};
+
+    scalar geomTol_ = 0.0;
+
+    void gatherEnvelopeSegments_();
+
+    bool onEnvelope_(const scalar* p) const;
+
+public:
+    pointInPolygon(stk::mesh::ConstPartVector& polygon,
+                   stk::mesh::ConstPartVector& envelope);
+
+    void filter(const std::vector<scalar>& scatter,
+                std::vector<label>& inliers);
+};
+
+// the overset code refers to the containment test by one name in both
+// dimensions
+using pointInPolyhedron = pointInPolygon;
 
 } // namespace utils
 

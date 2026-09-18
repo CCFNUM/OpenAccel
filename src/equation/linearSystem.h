@@ -134,6 +134,10 @@ protected:
 
     LinearSolver* lsolver_;
 
+    // true: keep original rows where interpolation constraints would
+    // replace them (per-grid equations like mesh deformation)
+    bool interpolationFreeGraph_ = false;
+
     virtual void setResidualScales_() = 0;
     virtual void convergenceReport_();
 
@@ -147,7 +151,6 @@ protected:
     void recoverLambda_();
 
     // residual I/O
-    static constexpr char COMMENT[] = "# ";
     std::shared_ptr<std::ostream> residual_stream_;
     std::string residual_file_name_;
     void initializeHistory_();
@@ -434,12 +437,14 @@ linearSystem<N>::setupSolver(const std::string system_name,
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local:
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local |
             ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(this->system_name_,
-                                          mesh.getLocalOrderGraphPtr());
+            ctx = lsolver_->createContext(
+                this->system_name_,
+                mesh.getLocalOrderGraphPtr(!interpolationFreeGraph_));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(this->system_name_,
-                                          mesh.getGlobalOrderGraphPtr());
+            ctx = lsolver_->createContext(
+                this->system_name_,
+                mesh.getGlobalOrderGraphPtr(!interpolationFreeGraph_));
             break;
     }
 
@@ -478,12 +483,14 @@ linearSystem<N>::setupSolver(const std::string system_name,
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local:
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local |
             ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(
-                this->system_name_, mesh.getCustomLocalOrderGraphPtr(zones));
+            ctx = lsolver_->createContext(this->system_name_,
+                                          mesh.getCustomLocalOrderGraphPtr(
+                                              zones, !interpolationFreeGraph_));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(
-                this->system_name_, mesh.getCustomGlobalOrderGraphPtr(zones));
+            ctx = lsolver_->createContext(this->system_name_,
+                                          mesh.getCustomGlobalOrderGraphPtr(
+                                              zones, !interpolationFreeGraph_));
             break;
     }
 
@@ -684,7 +691,7 @@ void linearSystem<N>::convergenceReport_()
         const double overall_rate = rms_rate[i];
 
         std::string hint = "ok";
-        if (this->is_converged_)
+        if (sim_.getIterationCount() != 1 && this->is_converged_)
         {
             hint = "CONV";
         }

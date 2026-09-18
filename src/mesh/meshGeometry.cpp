@@ -492,6 +492,15 @@ void mesh::initializeInterfaces_()
         {
             interfaceRef(iInterface).initialize();
         }
+
+        // conformal pair ghosting needs every other interface searched
+        if (messager::parallel())
+        {
+            for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
+            {
+                interfaceRef(iInterface).finalizeConformalGhosting();
+            }
+        }
     }
 }
 
@@ -963,6 +972,15 @@ void mesh::updateInterfaces_(bool force)
             }
 #endif
             interfaceRef(iInterface).update();
+        }
+    }
+
+    // conformal pair ghosting needs every other interface searched
+    if (hasInterfaces() && messager::parallel())
+    {
+        for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
+        {
+            interfaceRef(iInterface).finalizeConformalGhosting();
         }
     }
 }
