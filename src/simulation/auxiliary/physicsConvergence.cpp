@@ -271,16 +271,17 @@ void physicsConvergence::initializeResidualFile_(
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
 
     auto& fout = *stream;
-    fout << "# Accel solver timestamp: "
+    fout << COMMENT << "Accel solver timestamp: "
          << std::put_time(std::localtime(&in_time_t), "%c\n");
-    fout << "# Version: " << accel::PROJECT_VERSION << '\n';
-    fout << "# Git hash: " << accel::GIT_HASH << '\n';
-    fout << "# Git describe: " << accel::GIT_DESCRIBE << '\n';
-    fout << "# Physics convergence residual history — interface: " << interfName
+    fout << COMMENT << "Version: " << accel::PROJECT_VERSION << '\n';
+    fout << COMMENT << "Git hash: " << accel::GIT_HASH << '\n';
+    fout << COMMENT << "Git describe: " << accel::GIT_DESCRIBE << '\n';
+    fout << COMMENT
+         << "Physics convergence residual history — interface: " << interfName
          << '\n';
-    fout << "# Criterion: " << criterionName << '\n';
-    fout << "# \n";
-    fout << "# " << "global_iterations" << '\t' << "inner_iterations" << '\t'
+    fout << COMMENT << "Criterion: " << criterionName << '\n';
+    fout << COMMENT << '\n';
+    fout << COMMENT << "global_iterations" << '\t' << "inner_iterations" << '\t'
          << "sim_time[s]" << '\t' << "residual_norm" << '\n';
 
     residualStreams_[criterionName][interfIdx] = stream;

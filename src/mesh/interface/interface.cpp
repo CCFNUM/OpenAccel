@@ -360,6 +360,14 @@ void interface::determineGeometricRelations_()
     }
 #endif
 
+    // fluid-solid interfaces are bonded: the pairing found at
+    // initialization survives mesh motion, so skip the re-search
+    if (geometricRelationsDone_ && type_ == interfaceType::fluid_solid)
+    {
+        return;
+    }
+    geometricRelationsDone_ = true;
+
     // check if the interface is conformal and fill the matching node pairs
     isConformal_ = cmp.checkConformality(matchingNodePairVector_,
                                          conformalityTolerance_,
@@ -628,6 +636,77 @@ void interface::populateConformalElemsToGhost_()
             for (int t : targets)
                 elemsToGhost_.push_back(stk::mesh::EntityProc(elem, t));
         }
+}
+
+void interface::populateConformalCouplingGhosts_()
+{
+    const stk::mesh::BulkData& bulkData = meshPtr_->bulkDataRef();
+    const label myProc = messager::myProcNo();
+
+    // conformalPairIds_ is replicated, so partner owners are known locally
+    std::map<stk::mesh::EntityId, std::vector<int>> partnerOwners;
+    for (const auto& p : conformalPairIds_)
+    {
+        if (p.owner1 == p.owner2)
+            continue; // co-owned: local path handles it, no ghosting
+        partnerOwners[p.id1].push_back(p.owner2);
+        partnerOwners[p.id2].push_back(p.owner1);
+    }
+    if (partnerOwners.empty())
+        return;
+
+    // split pair rows carry other interfaces' cross-side columns; ghost them
+    for (label j = 0; j < meshPtr_->nInterfaces(); ++j)
+    {
+        const interface& other = meshPtr_->interfaceRef(j);
+        if (&other == this || other.isConformalTreatment())
+            continue; // conformal sides carry no DG/GGI couplings
+
+        for (int side = 0; side < 2; ++side)
+        {
+            const interfaceSideInfo& info =
+                side ? other.slaveInfoRef() : other.masterInfoRef();
+            for (const auto& faceIpVec : info.ipInfoVec())
+                for (const ipInfo* ip : faceIpVec)
+                {
+                    if (ip == nullptr || ip->isExposed_)
+                        continue;
+
+                    std::set<int> targets;
+                    const stk::mesh::Entity* cn =
+                        bulkData.begin_nodes(ip->currentElement_);
+                    const unsigned nn = bulkData.num_nodes(ip->currentElement_);
+                    for (unsigned i = 0; i < nn; ++i)
+                    {
+                        auto it =
+                            partnerOwners.find(bulkData.identifier(cn[i]));
+                        if (it == partnerOwners.end())
+                            continue;
+                        for (int o : it->second)
+                            if (o != myProc)
+                                targets.insert(o);
+                    }
+                    for (int t : targets)
+                        elemsToGhost_.push_back(
+                            stk::mesh::EntityProc(ip->opposingElement_, t));
+                }
+        }
+    }
+}
+
+void interface::finalizeConformalGhosting()
+{
+    if (!isConformalTreatment() || !messager::parallel())
+        return;
+
+    // rebuild from scratch: updateGhostings_ filters elemsToGhost_ to a delta
+    elemsToGhost_.clear();
+    populateConformalElemsToGhost_();
+    populateConformalCouplingGhosts_();
+    updateGhostings_();
+
+    // re-resolve the pair handles against the current bulk data
+    rebuildMatchingPairsFromIds_();
 }
 
 void interface::rebuildMatchingPairsFromIds_()

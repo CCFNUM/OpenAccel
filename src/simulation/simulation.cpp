@@ -13,6 +13,10 @@
 #include "realm.h"
 #include "version.h"
 
+#include <csignal>
+
+extern volatile sig_atomic_t g_signalSent;
+
 namespace accel
 {
 
@@ -238,6 +242,13 @@ void simulation::runSteadyState()
 
         // post work: post-process and write
         postWork();
+
+        // break iteration loop after signal sent once
+        if (g_signalSent)
+        {
+            MPI_Barrier(messager::comm());
+            break;
+        }
     }
 }
 
@@ -335,10 +346,22 @@ void simulation::runTransient()
 
                 break;
             }
+
+            if (g_signalSent)
+            {
+                break;
+            }
         }
 
         // post work: post-process and write
         postWork();
+
+        // break iteration loop after signal sent once
+        if (g_signalSent)
+        {
+            MPI_Barrier(messager::comm());
+            break;
+        }
     }
 }
 

@@ -7,6 +7,7 @@
 #include "displacementDiffusionEquation.h"
 #include "initialConditions.h"
 #include "meshMotion.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -305,6 +306,9 @@ void displacementDiffusionEquation::setup()
         }
     });
 
+    // mesh deformation is solved per grid on its own stencils
+    linearSystem::interpolationFreeGraph_ = true;
+
     // setup linear solver
     // FIXME: Consider passing mesh argument or
     // connectivity arrays passed to initialize() directly is more flexible
@@ -401,46 +405,10 @@ displacementDiffusionEquation::collectDirichletBoundaryParts_()
     stk::mesh::PartVector incPartVec;
     for (const auto& domain : domainVector_)
     {
-        for (const interface* interf : domain->interfacesRef())
-        {
-            if (interf->isFluidSolidType())
-            {
-                for (auto part : interf->interfaceSideInfoPtr(domain->index())
-                                     ->currentPartVec_)
-                {
-                    incPartVec.push_back(part);
-                }
-            }
-        }
-
-        for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
-             iBoundary++)
-        {
-            boundaryConditionType bcType =
-                this->DRef()
-                    .boundaryConditionRef(domain->index(), iBoundary)
-                    .type();
-
-            switch (bcType)
-            {
-                case boundaryConditionType::specifiedValue:
-                case boundaryConditionType::periodicDisplacement:
-                case boundaryConditionType::rigidBodySolution:
-                    {
-                        const auto& boundaryRef =
-                            domain->zonePtr()->boundaryRef(iBoundary);
-
-                        for (auto part : boundaryRef.parts())
-                        {
-                            incPartVec.push_back(part);
-                        }
-                    }
-                    break;
-
-                default:
-                    break;
-            }
-        }
+        const auto parts =
+            displacementDiffusionModel::collectDirichletBoundaryParts_(
+                domain.get());
+        incPartVec.insert(incPartVec.end(), parts.begin(), parts.end());
     }
 
     return incPartVec;

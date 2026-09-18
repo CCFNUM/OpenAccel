@@ -102,7 +102,6 @@ protected:
     STKScalarField* FSTKFieldPtr_;
     STKScalarField* FOriginalSTKFieldPtr_; // workspace for balanced force
 
-    static constexpr char COMMENT[] = "# ";
     std::unique_ptr<std::ostream> mDot_stream_; // file stream for mass flux
 
     void reportFlowData_();

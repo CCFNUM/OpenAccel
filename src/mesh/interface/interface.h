@@ -66,6 +66,9 @@ protected:
 
     bool isForceNonconformalTreatment_ = false;
 
+    // pairing established; fluid-solid interfaces keep it across motion
+    bool geometricRelationsDone_ = false;
+
     bool isSlipNonOverlap_ = true;
 
     scalar overlapTolerance_ = 1e-3;
@@ -112,6 +115,9 @@ protected:
     // the other side's rank, so split pairs are visible for graph/mapping
     void populateConformalElemsToGhost_();
 
+    // ghost opposing elements of couplings that touch split conformal pairs
+    void populateConformalCouplingGhosts_();
+
     // re-resolve matchingNodePairVector_ entity handles from conformalPairIds_
     // (call after the persistent ghosting makes both sides visible)
     void rebuildMatchingPairsFromIds_();
@@ -130,6 +136,9 @@ public:
     void initialize();
 
     void update();
+
+    // rebuild the conformal ghost request; needs every other interface searched
+    void finalizeConformalGhosting();
 
     // Operations
 

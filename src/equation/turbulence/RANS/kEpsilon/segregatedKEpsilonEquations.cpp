@@ -100,6 +100,7 @@ void segregatedKEpsilonEquations::solve()
 
     tke_eq_->solve();
     tdr_eq_->solve();
+    FOREACH_DOMAIN(limitTurbulentLengthScale);
 
     // correction in solve() done using old gradient values -> update gradients
     // of both fields here post-correction

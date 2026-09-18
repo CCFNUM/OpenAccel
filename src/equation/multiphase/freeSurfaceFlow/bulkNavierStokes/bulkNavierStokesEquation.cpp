@@ -76,7 +76,10 @@ void bulkNavierStokesEquation::postInitialize()
         }
 
         // update div for mass of the current phase
-        FOREACH_DOMAIN(model_->updateMassDivergenceField, phaseIndex);
+        if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+        {
+            FOREACH_DOMAIN(model_->updateMassDivergenceField, phaseIndex);
+        }
     }
 
     // initialize bulk density and viscosity
@@ -99,7 +102,10 @@ void bulkNavierStokesEquation::postInitialize()
     }
 
     // update div for the bulk mass flux
-    FOREACH_DOMAIN(model_->flowModel::updateMassDivergenceField);
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->flowModel::updateMassDivergenceField);
+    }
 }
 
 void bulkNavierStokesEquation::preSolve()

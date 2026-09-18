@@ -92,6 +92,8 @@
 
 namespace fs = std::filesystem;
 
+constexpr char COMMENT[] = "# "; // comment char used in ASCII output files
+
 namespace accel
 {
 
@@ -693,6 +695,20 @@ enum class meshMotionType
 
 meshMotionType convertMeshMotionTypeFromString(std::string s);
 
+// Mesh motion of an interface side in a deforming mesh
+enum class interfaceMeshMotionOption
+{
+    unspecified, // free to deform with the mesh motion solve
+    stationary,
+    specifiedDisplacement,
+    periodicDisplacement
+};
+
+interfaceMeshMotionOption
+convertInterfaceMeshMotionOptionFromString(std::string s);
+
+std::string toString(interfaceMeshMotionOption option);
+
 // Mesh deformation option
 enum class meshDeformationSpecificationType
 {
@@ -711,6 +727,15 @@ enum class meshDeformationModel
 };
 
 meshDeformationModel convertMeshDeformationModelTypeFromString(std::string s);
+
+// Mesh deformation backend (expert parameter)
+enum class meshDeformationBackend
+{
+    displacementDiffusion,
+    lithe
+};
+
+meshDeformationBackend convertMeshDeformationBackendFromString(std::string s);
 
 // Mesh stiffness specification
 enum class meshStiffnessSpecificationType

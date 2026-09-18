@@ -160,6 +160,20 @@ void interface::read(const YAML::Node& inputNode)
         slaveParts.push_back(meshRef().metaDataRef().get_part(locationName));
     }
 
+    // per-side mesh motion type in a deforming mesh; the displacement data is
+    // read by the displacement diffusion model
+    auto readMeshMotionOption = [](const YAML::Node& sideNode)
+    {
+        if (!sideNode["mesh_motion"])
+            return interfaceMeshMotionOption::unspecified;
+        return convertInterfaceMeshMotionOptionFromString(
+            sideNode["mesh_motion"]["option"].template as<std::string>());
+    };
+    const interfaceMeshMotionOption masterMeshMotion =
+        readMeshMotionOption(inputNode["side1"]);
+    const interfaceMeshMotionOption slaveMeshMotion =
+        readMeshMotionOption(inputNode["side2"]);
+
     switch (nonconformalMethod_)
     {
         case nonconformalMethod::discontinuousGalerkin:
@@ -219,6 +233,7 @@ void interface::read(const YAML::Node& inputNode)
                     masterParts,
                     slaveParts,
                     option_,
+                    masterMeshMotion,
                     expandBoxPercentage / 100.0,
                     searchMethodName,
                     clipIsoParametricCoords,
@@ -233,6 +248,7 @@ void interface::read(const YAML::Node& inputNode)
                     slaveParts,
                     masterParts,
                     option_,
+                    slaveMeshMotion,
                     expandBoxPercentage / 100.0,
                     searchMethodName,
                     clipIsoParametricCoords,

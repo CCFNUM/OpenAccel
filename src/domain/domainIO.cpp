@@ -753,6 +753,19 @@ void domain::read_()
                 }
             }
 
+            if (turbulence_.option_ != turbulenceOption::laminar &&
+                turbulenceBlock["max_turbulent_length_scale"])
+            {
+                turbulence_.maxTurbulentLengthScale_ =
+                    turbulenceBlock["max_turbulent_length_scale"]
+                        .template as<scalar>();
+
+                if (turbulence_.maxTurbulentLengthScale_ <= 0.0)
+                {
+                    errorMsg("max_turbulent_length_scale must be positive");
+                }
+            }
+
             // if heat transfer model enabled, a turbulent flux closure for heat
             // transfer is required
             if (turbulence_.option_ != turbulenceOption::laminar &&

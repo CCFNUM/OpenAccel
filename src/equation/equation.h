@@ -239,6 +239,8 @@ protected:
 private:
     std::unique_ptr<convergenceAcceleration> accelerationPtr_;
     std::vector<Vector> accelerationScratch_;
+    // correction on owned nodes in global-id order for Aitken products
+    Vector accelerationCompact_;
     const Vector* lastAccelCorrectionPtr_ = nullptr;
     label lastAccelIter_ = -1;
     label lastAccelTimeStep_ = -1;
@@ -248,9 +250,11 @@ private:
 
     void initializeAcceleration_();
 
-    const Vector& applyAcceleration_(const Vector& correction,
-                                     const scalar relaxValue,
-                                     scalar& outRelaxValue);
+    const Vector&
+    applyAcceleration_(const Vector& correction,
+                       const scalar relaxValue,
+                       scalar& outRelaxValue,
+                       const std::function<void(Vector&)>& gatherCompact = {});
 
 protected:
     // Prevent this equation from modifying its solved correction through the
@@ -297,8 +301,41 @@ protected:
 
         const Vector& correction = coeffs->getXVector();
         scalar effectiveRelaxValue = relaxValue;
-        const Vector& effectiveCorrection =
-            applyAcceleration_(correction, relaxValue, effectiveRelaxValue);
+        // Aitken needs the same dofs in the same order every iteration:
+        // gather the owned nodes of the domains in global-id order
+        auto gatherCompact = [&](Vector& out)
+        {
+            out.clear();
+            std::vector<std::pair<stk::mesh::EntityId, stk::mesh::Entity>> ids;
+            for (const auto& dom : domainVector_)
+            {
+                const stk::mesh::Selector sel =
+                    metaData.locally_owned_part() &
+                    stk::mesh::selectUnion(dom->zonePtr()->interiorParts());
+                for (const Bucket* b : bulkData.get_buckets(entityRank, sel))
+                {
+                    for (Bucket::size_type i = 0; i < b->size(); ++i)
+                    {
+                        ids.emplace_back(bulkData.identifier((*b)[i]), (*b)[i]);
+                    }
+                }
+            }
+            std::sort(ids.begin(), ids.end());
+            out.reserve(ids.size() * BLOCKSIZE);
+            for (const auto& idEnt : ids)
+            {
+                const int64_t row = coeffs->getGraph()->localToRow(
+                    bulkData.local_id(idEnt.second));
+                if (row < 0)
+                    continue;
+                for (int k = 0; k < BLOCKSIZE; ++k)
+                {
+                    out.push_back(correction[row * BLOCKSIZE + k]);
+                }
+            }
+        };
+        const Vector& effectiveCorrection = applyAcceleration_(
+            correction, relaxValue, effectiveRelaxValue, gatherCompact);
 
         for (size_t ib = 0; ib < buckets.size(); ib++)
         {

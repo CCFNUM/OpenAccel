@@ -6,6 +6,7 @@
 
 #include "wallScaleDiffusionEquation.h"
 #include "realm.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -111,9 +112,11 @@ void wallScaleDiffusionEquation::solve()
     FOREACH_DOMAIN_PTR(assembler_->assemble, ctx.get());
     FOREACH_DOMAIN_PTR(assembler_->postAssemble, ctx.get());
 
-    // fix system in domains where the model is not active
+    // fix system in domains where the model is not active; with overset the
+    // normalization waits until the hole rows get their identity below
+    bool normalise = true;
     assembler_->fix(
-        this->collectInactiveInteriorParts(), {}, ctx.get(), {}, true);
+        this->collectInactiveInteriorParts(), {}, ctx.get(), {}, normalise);
 
     // fix system on all dirichlet boundaries if required
     if (this->yScaleRef().correctedBoundaryNodeValues())

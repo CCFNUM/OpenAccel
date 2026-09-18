@@ -983,6 +983,91 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["cvpg_type"].template as<std::string>());
             }
 
+            if (expertParameters["mesh_deformation_backend"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .meshDeformationBackend_ =
+                    convertMeshDeformationBackendFromString(
+                        expertParameters["mesh_deformation_backend"]
+                            .template as<std::string>());
+#ifndef HAS_LITHE
+                if (solver_.solverControl_.expertParameters_
+                        .meshDeformationBackend_ ==
+                    meshDeformationBackend::lithe)
+                {
+                    errorMsg("mesh_deformation_backend lithe requires a build "
+                             "with WITH_LITHE=ON");
+                }
+#endif /* HAS_LITHE */
+            }
+
+            if (expertParameters["lithe"])
+            {
+                const auto& litheNode = expertParameters["lithe"];
+                auto& lithe = solver_.solverControl_.expertParameters_.lithe_;
+
+                if (litheNode["a_exp"])
+                {
+                    lithe.aExp_ = litheNode["a_exp"].template as<scalar>();
+                }
+                if (litheNode["b_exp"])
+                {
+                    lithe.bExp_ = litheNode["b_exp"].template as<scalar>();
+                }
+                if (litheNode["alpha"])
+                {
+                    lithe.alpha_ = litheNode["alpha"].template as<scalar>();
+                }
+                if (litheNode["ldef_factor"])
+                {
+                    lithe.LdefFact_ =
+                        litheNode["ldef_factor"].template as<scalar>();
+                }
+                if (litheNode["error_tolerance"])
+                {
+                    lithe.errTol_ =
+                        litheNode["error_tolerance"].template as<scalar>();
+                }
+                if (litheNode["exact"])
+                {
+                    lithe.exact_ = litheNode["exact"].template as<bool>();
+                }
+                if (litheNode["use_rotations"])
+                {
+                    lithe.useRotations_ =
+                        litheNode["use_rotations"].template as<bool>();
+                }
+                if (litheNode["zero_corner_rotations"])
+                {
+                    lithe.zeroCornerRotations_ =
+                        litheNode["zero_corner_rotations"].template as<bool>();
+                }
+                if (litheNode["corner_angle"])
+                {
+                    lithe.cornerAngle_ =
+                        litheNode["corner_angle"].template as<scalar>();
+                }
+                if (litheNode["bucket_size"])
+                {
+                    lithe.bucketSize_ =
+                        litheNode["bucket_size"].template as<label>();
+                }
+                if (litheNode["symmetry_planes"])
+                {
+                    lithe.symmetryPlanes_ =
+                        litheNode["symmetry_planes"].template as<bool>();
+                }
+                if (litheNode["reanchor_interval"])
+                {
+                    lithe.reanchorInterval_ =
+                        litheNode["reanchor_interval"].template as<label>();
+                    if (lithe.reanchorInterval_ < 0)
+                    {
+                        errorMsg("lithe: reanchor_interval must be >= 0");
+                    }
+                }
+            }
+
             if (expertParameters["false_mass_accumulation"])
             {
                 solver_.solverControl_.expertParameters_

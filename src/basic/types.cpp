@@ -992,6 +992,46 @@ meshMotionType convertMeshMotionTypeFromString(std::string s)
     return meshMotionType::stationary; // useless
 }
 
+// Interface mesh motion option
+
+std::unordered_map<std::string, interfaceMeshMotionOption>
+    interfaceMeshMotionOptionMap{
+        {"unspecified", interfaceMeshMotionOption::unspecified},
+        {"stationary", interfaceMeshMotionOption::stationary},
+        {"specified_displacement",
+         interfaceMeshMotionOption::specifiedDisplacement},
+        {"periodic_displacement",
+         interfaceMeshMotionOption::periodicDisplacement}};
+
+interfaceMeshMotionOption
+convertInterfaceMeshMotionOptionFromString(std::string s)
+{
+    auto it = interfaceMeshMotionOptionMap.find(s);
+    if (it != interfaceMeshMotionOptionMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid interface mesh_motion option: " + s);
+    }
+
+    return interfaceMeshMotionOption::unspecified; // useless
+}
+
+std::string toString(interfaceMeshMotionOption option)
+{
+    for (const auto& pair : interfaceMeshMotionOptionMap)
+    {
+        if (pair.second == option)
+        {
+            return pair.first;
+        }
+    }
+    errorMsg("interface mesh_motion option not available");
+    return "";
+}
+
 // Mesh deformation option
 
 std::unordered_map<std::string, meshDeformationSpecificationType>
@@ -1036,6 +1076,30 @@ meshDeformationModel convertMeshDeformationModelTypeFromString(std::string s)
     }
 
     return meshDeformationModel::displacementDiffusion; // useless
+}
+
+// Mesh deformation backend
+
+std::unordered_map<std::string, meshDeformationBackend>
+    meshDeformationBackendMap{{"displacement_diffusion",
+                               meshDeformationBackend::displacementDiffusion},
+                              {"lithe", meshDeformationBackend::lithe},
+                              {"idw", meshDeformationBackend::lithe}};
+
+meshDeformationBackend convertMeshDeformationBackendFromString(std::string s)
+{
+    auto it = meshDeformationBackendMap.find(s);
+    if (it != meshDeformationBackendMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid mesh deformation backend: " + s +
+                 " (displacement_diffusion or lithe)");
+    }
+
+    return meshDeformationBackend::displacementDiffusion; // useless
 }
 
 // Mesh stiffness specification
