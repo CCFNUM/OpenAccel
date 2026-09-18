@@ -521,7 +521,9 @@ void elementField<T, N>::initializeField(label iZone)
         stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
             this->name(), this->meshRef().metaDataRef());
         stk::io::MeshField mf(
-            theField, theField->name(), restart_ctrl.timeMatchOption_);
+            theField,
+            std::to_string(std::hash<std::string>{}(theField->name())),
+            restart_ctrl.timeMatchOption_);
 
         scalar restart_time = restart_ctrl.restartTime_;
         if (restart_time == 0.0)
@@ -616,11 +618,14 @@ void elementField<T, N>::restoreSideField(label iZone)
 
     const auto& restart_ctrl =
         this->meshRef().controlsRef().solverRef().restartControl_;
+    assert(restart_ctrl.isRestart_);
 
     stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
         this->sideFieldRef().name(), this->meshRef().metaDataRef());
     stk::io::MeshField mf(
-        theField, theField->name(), restart_ctrl.timeMatchOption_);
+        theField,
+        std::to_string(std::hash<std::string>{}(theField->name())),
+        restart_ctrl.timeMatchOption_);
 
     scalar restart_time = restart_ctrl.restartTime_;
     if (restart_time == 0.0)

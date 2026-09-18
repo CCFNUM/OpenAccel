@@ -23,21 +23,15 @@
 #include "macros.h"
 #include "simulation.h"
 
-namespace
-{
-// Global pointer used by the signal handler to trigger a clean shutdown.
-::accel::simulation* g_realm = nullptr;
+volatile sig_atomic_t g_signalSent = 0;
+volatile sig_atomic_t g_signalID = 0;
 
-void handleSignal(int sig)
+extern "C" void handleSignal(int signal)
 {
-    delete g_realm;
-    g_realm = nullptr;
-    // Restore the default handler and re-raise so the process exits with the
-    // correct status (e.g. SIGINT still shows as interrupted to the shell).
-    std::signal(sig, SIG_DFL);
-    std::raise(sig);
+    g_signalSent = 1;
+    g_signalID = signal;
+    std::signal(signal, SIG_DFL); // next one kills immediately (no cleanup)
 }
-} // namespace
 
 int main(int argc, char* argv[])
 {
@@ -45,6 +39,10 @@ int main(int argc, char* argv[])
     assert(SPATIAL_DIM >= 2);
 
     using Sim = ::accel::simulation;
+
+    // register handlers
+    std::signal(SIGINT, handleSignal);
+    std::signal(SIGTERM, handleSignal);
 
     int provided;
     MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &provided);
@@ -60,26 +58,15 @@ int main(int argc, char* argv[])
 #ifdef HAS_HYPRE
     HYPRE_Initialize();
 #endif /* HAS_HYPRE */
-
     Kokkos::initialize(argc, argv);
     {
         // create and run simulation
         Sim* realm = new Sim(argc, const_cast<const char**>(argv));
 
-        // Register signal handlers so that SIGINT/SIGTERM trigger the
-        // simulation destructor (which closes any open gnuplot windows).
-        g_realm = realm;
-        std::signal(SIGINT, handleSignal);
-        std::signal(SIGTERM, handleSignal);
-
         realm->run();
 
-        g_realm = nullptr;
-        std::signal(SIGINT, SIG_DFL);
-        std::signal(SIGTERM, SIG_DFL);
         delete realm;
     }
-
     Kokkos::finalize();
 
 #ifdef HAS_HYPRE
@@ -89,8 +76,14 @@ int main(int argc, char* argv[])
 #ifdef HAS_PETSC
     // Finalize the Petsc environment.
     ErrorWrapPetscCall(PetscFinalize());
-#endif /* HAS_PETSC */    
+#endif /* HAS_PETSC */
     MPI_Finalize();
+
+    if (g_signalSent != 0)
+    {
+        std::signal(g_signalID, SIG_DFL);
+        std::raise(g_signalID);
+    }
 
     return 0;
 }

@@ -6,6 +6,7 @@
 
 #include "interface.h"
 #include "controls.h"
+#include "ipInfo.h"
 #include "messager.h"
 #include "surfaceComparator.h"
 
