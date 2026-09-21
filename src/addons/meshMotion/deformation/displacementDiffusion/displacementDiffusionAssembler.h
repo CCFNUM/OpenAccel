@@ -16,6 +16,8 @@ class displacementDiffusionAssembler : public phiAssembler<SPATIAL_DIM>
 {
 public:
     using Base = phiAssembler<SPATIAL_DIM>;
+    using Matrix = typename Base::Matrix;
+    using Vector = typename Base::Vector;
 
     using Base::phiAssembler;
 
