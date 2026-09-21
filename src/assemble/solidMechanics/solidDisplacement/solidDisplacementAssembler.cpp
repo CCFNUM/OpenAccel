@@ -56,10 +56,10 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
         return;
 
     // fixed-size containers
-    std::vector<scalar> n(SPATIAL_DIM);
+    scalar n[SPATIAL_DIM];
 
-    // pointers ..
-    scalar* p_n = &n[0];
+    // we require diagonal offsets
+    const auto& diagOffsets = A.diagOffsetRef();
 
     stk::mesh::Selector selOwnedNodes =
         metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
@@ -80,57 +80,56 @@ void solidDisplacementAssembler::applySymmetryConditions_(const domain* domain,
                 stk::mesh::field_data(assembledSymmSTKFieldRef, node);
             scalar amagSq = 0.0;
             for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
                 amagSq += aarea[j] * aarea[j];
-            }
 
             if (amagSq < 1.0e-30)
                 continue;
             const scalar amag = std::sqrt(amagSq);
 
-            // 1. Compute Unit Normal n
-            scalar n[SPATIAL_DIM];
+            // unit symmetry normal
             for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
-                p_n[j] = aarea[j] / amag;
-            }
+                n[j] = aarea[j] / amag;
 
-            // 2. Identify the characteristic scale (stiffness) for this node
-            scalar* const diag = A.diag(lid);
+            auto vals = A.rowVals(lid);
+            const label nBlocks =
+                static_cast<label>(vals.size()) / (SPATIAL_DIM * SPATIAL_DIM);
+            const label diagBk = diagOffsets[lid];
+
+            // normal stiffness scale = n^T D n
+            scalar* Dblk = &vals[SPATIAL_DIM * SPATIAL_DIM * diagBk];
             scalar scale = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
-                scale = std::max(scale, std::abs(diag[BLOCKSIZE * j + j]));
-            }
-
-            // 3. Project the RHS: b = b - (b \cdot n)n
-            // This removes any "force" component pushing out of the plane.
-            scalar b_dot_n = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
-                b_dot_n += b[BLOCKSIZE * lid + j] * p_n[j];
-            }
-
-            for (label j = 0; j < SPATIAL_DIM; ++j)
-            {
-                b[BLOCKSIZE * lid + j] -= b_dot_n * p_n[j];
-            }
-
-            // 4. Modify the Diagonal Block to enforce u \cdot n = 0
-            // We use a "Penalty-lite" approach:
-            // We strip the diagonal's normal stiffness and replace it with
-            // 'scale'. This is equivalent to u_n = 0 without biasing a specific
-            // Cartesian axis.
             for (label i = 0; i < SPATIAL_DIM; ++i)
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                    scale += n[i] * Dblk[i * SPATIAL_DIM + j] * n[j];
+            if (std::abs(scale) < SMALL)
+                scale = amag;
+
+            for (label bk = 0; bk < nBlocks; ++bk)
             {
+                scalar* B = &vals[SPATIAL_DIM * SPATIAL_DIM * bk];
+                scalar colProj[SPATIAL_DIM];
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    // This creates a contribution proportional to n_i * n_j
-                    // effectively adding stiffness only in the normal
-                    // direction.
-                    diag[BLOCKSIZE * i + j] += scale * p_n[i] * p_n[j];
+                    scalar s = 0.0;
+                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                        s += n[k] * B[k * SPATIAL_DIM + j];
+                    colProj[j] = s;
                 }
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        B[i * SPATIAL_DIM + j] -= n[i] * colProj[j];
+                if (bk == diagBk)
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                            B[i * SPATIAL_DIM + j] += scale * n[i] * n[j];
             }
+
+            // RHS: remove the normal component
+            scalar bproj = 0.0;
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                bproj += n[i] * b[BLOCKSIZE * lid + i];
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                b[BLOCKSIZE * lid + i] -= n[i] * bproj;
         }
     }
 #else
