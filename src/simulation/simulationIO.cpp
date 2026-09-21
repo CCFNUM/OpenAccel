@@ -683,16 +683,28 @@ void simulation::initializeOutput_()
         restart_path,
         stk::io::WRITE_RESTART,
         *restart.propertyManagerPtr_.get());
+    std::set<std::string> sanitized_fields;
     for (const auto& field_name : restart.fields_)
     {
         stk::mesh::FieldBase* field =
             stk::mesh::get_field_by_name(field_name, metaData);
-        assert(field);
+        if (!field)
+        {
+            // NOTE [faw 2026-09-19]: Different execution paths are implemented
+            // to treat conditional side field allocations required for restarts
+            // depending on a given boundary/interface configuration.  To
+            // simplify the registration process, unconditional registration is
+            // used in constructors and then sanitized here to ensure all fields
+            // registered in the restart list are valid fields only.
+            continue;
+        }
+        sanitized_fields.insert(field_name);
         meshRef().ioBrokerPtr()->add_field(
             restart.fileIndex_,
             *field,
             std::to_string(std::hash<std::string>{}(field_name)));
     }
+    restart.fields_.swap(sanitized_fields);
 
     for (const auto& param : controlsRef().getRestartParam())
     {
