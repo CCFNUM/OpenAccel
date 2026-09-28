@@ -248,6 +248,7 @@ struct solverDictionary
             bool correctGradients_ = false;
             bool incrementalGradientChange_ = true;
             bool relaxGradients_ = true;
+            scalar gradientURF_ = 0.5625;
             bool falseMassAccumulation_ = true;
             bool fractionalStepMethod_ = false;
             bool coriolisProductionTurbulence_ = false;

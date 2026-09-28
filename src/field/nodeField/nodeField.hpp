@@ -97,10 +97,12 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
                 .controlsRef()
                 .solverRef()
                 .solverControl_.expertParameters_.relaxGradients_;
-        if (!relaxGradients)
-        {
-            gradURF_ = 1.0;
-        }
+        gradURF_ = relaxGradients
+                       ? this->meshRef()
+                             .controlsRef()
+                             .solverRef()
+                             .solverControl_.expertParameters_.gradientURF_
+                       : 1.0;
 
         // setup the gradient
         this->setupGradientField();

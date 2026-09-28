@@ -501,9 +501,10 @@ enum class vofAdvectionSchemeType
 {
     barthJespersen,
     vanLeer,
-    mstoic,
-    msuperbee,
+    stoic,
+    superbee,
     hyperC,
+    ultimateQuickest,
     stacs,
     cicsam
 };
