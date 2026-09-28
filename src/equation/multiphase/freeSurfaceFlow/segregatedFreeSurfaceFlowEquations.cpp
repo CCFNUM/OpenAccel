@@ -159,6 +159,8 @@ void segregatedFreeSurfaceFlowEquations::solve()
         {
             if (!this->phaseRef(iPhase).primaryPhase_)
             {
+                FOREACH_DOMAIN(updateVofCourantField, phaseIndex(iPhase));
+
                 assert(alpha_eq_[iPhase]);
                 alpha_eq_[iPhase]->preSolve();
             }

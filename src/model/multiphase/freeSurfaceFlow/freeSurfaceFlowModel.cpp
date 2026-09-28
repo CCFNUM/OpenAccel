@@ -120,6 +120,26 @@ freeSurfaceFlowModel::freeSurfaceFlowModel(realm* realm)
         }
     }
 
+    {
+        stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+        vofCourantSTKFieldPtr_ = &metaData.declare_field<scalar>(
+            stk::topology::NODE_RANK, "vof_courant");
+        stk::io::set_field_output_type(*vofCourantSTKFieldPtr_, fieldType[1]);
+        for (const auto& domain : realm->simulationRef().domainVector())
+        {
+            const stk::mesh::PartVector& partVec =
+                domain->zonePtr()->interiorParts();
+            for (const stk::mesh::Part* part : partVec)
+            {
+                if (!vofCourantSTKFieldPtr_->defined_on(*part))
+                {
+                    stk::mesh::put_field_on_mesh(
+                        *vofCourantSTKFieldPtr_, *part, nullptr);
+                }
+            }
+        }
+    }
+
     // setup per-pair curvature fields for surface tension (CSF model)
     stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
     for (const auto& domain : realm->simulationRef().domainVector())
@@ -3556,7 +3576,7 @@ void freeSurfaceFlowModel::computeFL_(const std::shared_ptr<domain> domain,
 namespace
 {
 
-inline scalar vofProfileMstoic(const scalar t)
+inline scalar vofProfileStoic(const scalar t)
 {
     if (t <= 0.2)
     {
@@ -3566,26 +3586,9 @@ inline scalar vofProfileMstoic(const scalar t)
     {
         return 0.5 * t + 0.5;
     }
-    else if (t <= 0.7)
+    else if (t <= 5.0 / 6.0)
     {
         return 0.75 * t + 0.375;
-    }
-    return t / 3.0 + 2.0 / 3.0;
-}
-
-inline scalar vofProfileMsuperbee(const scalar t)
-{
-    if (t <= 1.0 / 3.0)
-    {
-        return 2.0 * t;
-    }
-    else if (t <= 0.5)
-    {
-        return 0.5 * t + 0.5;
-    }
-    else if (t <= 2.0 / 3.0)
-    {
-        return 1.5 * t;
     }
     return 1.0;
 }
@@ -3601,10 +3604,46 @@ inline scalar vofProfileUltimateQuickest(const scalar t, const scalar Co)
     return std::min(uq, vofProfileHyperC(t, Co));
 }
 
-inline scalar vofCosTheta2(const scalar* gradAlpha,
-                           const scalar* coordinates,
-                           const label iu,
-                           const label id)
+inline scalar vofProfileSuperbeeCapped(const scalar t)
+{
+    return std::min(2.0 * t, 0.85 + 0.15 * t);
+}
+
+inline scalar vofProfileSmartCapped(const scalar t)
+{
+    return std::min(std::min(3.0 * t, 0.375 + 0.75 * t), 0.9 + 0.1 * t);
+}
+
+inline scalar vofCosTheta2Ip(const scalar* gradAlpha,
+                             const scalar* shapeFunction,
+                             const label offSetSF,
+                             const label nodesPerElement,
+                             const scalar* coordinates,
+                             const label iu,
+                             const label id)
+{
+    scalar gg = 0.0, dd = 0.0, gd = 0.0;
+    for (label j = 0; j < SPATIAL_DIM; ++j)
+    {
+        scalar gj = 0.0;
+        for (label ic = 0; ic < nodesPerElement; ++ic)
+        {
+            gj += shapeFunction[offSetSF + ic] *
+                  gradAlpha[ic * SPATIAL_DIM + j];
+        }
+        const scalar dj = coordinates[id * SPATIAL_DIM + j] -
+                          coordinates[iu * SPATIAL_DIM + j];
+        gg += gj * gj;
+        dd += dj * dj;
+        gd += gj * dj;
+    }
+    return (gd * gd) / (gg * dd + 1.0e-16);
+}
+
+inline scalar vofCosTheta2Node(const scalar* gradAlpha,
+                               const scalar* coordinates,
+                               const label iu,
+                               const label id)
 {
     scalar gg = 0.0, dd = 0.0, gd = 0.0;
     for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -3640,6 +3679,7 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             this->alphaRef(iPhase).gradRef().stkFieldPtr();
         const STKScalarField* rhoSTKFieldPtr =
             this->rhoRef(iPhase).stkFieldPtr();
+        const STKScalarField* vofCourantSTKFieldPtr = vofCourantSTKFieldPtr_;
         const STKScalarField* USTKFieldPtr = this->URef().stkFieldPtr();
         const STKScalarField& betaSTKFieldRef =
             this->alphaRef(iPhase).blendingFactorRef().stkFieldRef();
@@ -3659,14 +3699,13 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
 
         const vofAdvectionSchemeType vofScheme =
             domain->multiphase_.freeSurfaceModel_.advectionScheme_;
-        const bool needCo = (vofScheme == vofAdvectionSchemeType::hyperC ||
-                             vofScheme == vofAdvectionSchemeType::cicsam);
-        const scalar dt = mesh.controlsRef().getTimestep();
+
 
         // Define Scratch Spaces
         std::vector<scalar> ws_alpha;
         std::vector<scalar> ws_rho;
         std::vector<scalar> ws_beta;
+        std::vector<scalar> ws_vofCo;
         std::vector<scalar> ws_shape_function;
         std::vector<scalar> ws_coordinate_shape_function;
         std::vector<scalar> ws_U;
@@ -3674,7 +3713,6 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
         std::vector<scalar> ws_nHat;
         std::vector<scalar> ws_coordinates;
         std::vector<scalar> ws_scs_areav;
-        std::vector<scalar> ws_scv_volume;
 
         // ip values
         std::vector<scalar> uIp(SPATIAL_DIM);
@@ -3710,18 +3748,16 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             MasterElement* meSCS =
                 MasterElementRepo::get_surface_master_element(
                     elementBucket.topology());
-            MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
-                elementBucket.topology());
 
             const label nodesPerElement = meSCS->nodesPerElement_;
             const label numScsIp = meSCS->numIntPoints_;
             const label* lrscv = meSCS->adjacentNodes();
-            const label numScvIp = meSCV->numIntPoints_;
 
             // allocate space for scratch spaces
             ws_alpha.resize(nodesPerElement);
             ws_rho.resize(nodesPerElement);
             ws_beta.resize(nodesPerElement);
+            ws_vofCo.resize(nodesPerElement);
             ws_shape_function.resize(numScsIp * nodesPerElement);
             ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
             ws_U.resize(nodesPerElement * SPATIAL_DIM);
@@ -3729,12 +3765,12 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             ws_nHat.resize(nodesPerElement * SPATIAL_DIM);
             ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
             ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
-            ws_scv_volume.resize(numScvIp);
 
             // get pointers
             scalar* p_alpha = &ws_alpha[0];
             scalar* p_rho = &ws_rho[0];
             scalar* p_beta = &ws_beta[0];
+            scalar* p_vofCo = &ws_vofCo[0];
             scalar* p_shape_function = &ws_shape_function[0];
             scalar* p_coordinate_shape_function =
                 &ws_coordinate_shape_function[0];
@@ -3743,7 +3779,6 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             scalar* p_nHat = &ws_nHat[0];
             scalar* p_coordinates = &ws_coordinates[0];
             scalar* p_scs_areav = &ws_scs_areav[0];
-            scalar* p_scv_volume = &ws_scv_volume[0];
 
             if (isAlphaShifted)
             {
@@ -3781,6 +3816,8 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                         *stk::mesh::field_data(*rhoSTKFieldPtr, node);
                     p_beta[iNode] =
                         *stk::mesh::field_data(betaSTKFieldRef, node);
+                    p_vofCo[iNode] = *stk::mesh::field_data(
+                        *vofCourantSTKFieldPtr, node);
 
                     // gather vectors
                     scalar* coords =
@@ -3806,12 +3843,6 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                 meSCS->determinant(
                     1, &p_coordinates[0], &p_scs_areav[0], &scs_error);
 
-                if (needCo)
-                {
-                    scalar scv_error = 0.0;
-                    meSCV->determinant(
-                        1, &p_coordinates[0], &p_scv_volume[0], &scv_error);
-                }
 
                 for (label ip = 0; ip < numScsIp; ++ip)
                 {
@@ -3887,81 +3918,73 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                 }
                             case vofAdvectionSchemeType::vanLeer:
                                 {
-                                    // virtual far-upwind: phiU = phiD -
-                                    // 2*grad(alpha)_U . d_UD
-                                    scalar gradCd = 0.0;
+                                    const scalar dphi = p_alpha[ir] - p_alpha[il];
+                                    scalar gradDotEdge = 0.0;
+                                    scalar gradDotIp = 0.0;
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
-                                        const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[il * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
+                                        const scalar gC =
+                                            p_gradAlpha[il * SPATIAL_DIM + j];
+                                        gradDotEdge +=
+                                            (p_coordinates[ir * SPATIAL_DIM + j] -
+                                             p_coordinates[il * SPATIAL_DIM + j]) *
+                                            gC;
+                                        gradDotIp +=
+                                            (p_coordIp[j] -
+                                             p_coordinates[il * SPATIAL_DIM + j]) *
+                                            gC;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar phiFTilde =
-                                            phiTilde * (2.0 - phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
+                                    const scalar a = 2.0 * gradDotEdge - dphi;
+                                    const scalar ab = a * dphi;
+                                    const scalar psi =
+                                        2.0 * (ab + std::abs(ab)) /
+                                        ((a + dphi) * (a + dphi) + 1.0e-16);
+                                    dcorr = psi * gradDotIp;
                                     break;
                                 }
-                            case vofAdvectionSchemeType::mstoic:
+                            case vofAdvectionSchemeType::stoic:
                                 {
                                     scalar gradCd = 0.0;
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[ir * SPATIAL_DIM + j] -
                                             p_coordinates[il * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
                                         const scalar phiFTilde =
-                                            vofProfileMstoic(phiTilde);
+                                            vofProfileStoic(phiTilde);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
                                 }
-                            case vofAdvectionSchemeType::msuperbee:
+                            case vofAdvectionSchemeType::superbee:
                                 {
                                     scalar gradCd = 0.0;
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[ir * SPATIAL_DIM + j] -
                                             p_coordinates[il * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
-                                        const scalar phiFTilde =
-                                            vofProfileMsuperbee(phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
+                                        dcorr = (1.0 - phiTilde) * dq;
                                     }
                                     break;
                                 }
@@ -3971,26 +3994,46 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[ir * SPATIAL_DIM + j] -
                                             p_coordinates[il * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
-                                        const scalar Co =
-                                            std::abs(tmDot) * dt /
-                                            (p_rho[il] * p_scv_volume[il] +
-                                             1.0e-16);
+                                        const scalar Co = p_vofCo[il];
                                         const scalar phiFTilde =
                                             vofProfileHyperC(phiTilde, Co);
+                                        dcorr = (phiFTilde - phiTilde) * dq;
+                                    }
+                                    break;
+                                }
+                            case vofAdvectionSchemeType::ultimateQuickest:
+                                {
+                                    scalar gradCd = 0.0;
+                                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                                    {
+                                        const scalar dj =
+                                            p_coordinates[ir * SPATIAL_DIM + j] -
+                                            p_coordinates[il * SPATIAL_DIM + j];
+                                        gradCd +=
+                                            p_gradAlpha[il * SPATIAL_DIM + j] * dj;
+                                    }
+                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar phiTilde =
+                                        1.0 - (p_alpha[ir] - p_alpha[il]) /
+                                              (dq + 1.0e-16);
+
+                                    if (phiTilde > 0.0 && phiTilde < 1.0)
+                                    {
+                                        const scalar Co = p_vofCo[il];
+                                        const scalar phiFTilde =
+                                            vofProfileUltimateQuickest(phiTilde, Co);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
@@ -4001,28 +4044,26 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[ir * SPATIAL_DIM + j] -
                                             p_coordinates[il * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
-                                        const scalar cos2 = vofCosTheta2(
-                                            p_gradAlpha, p_coordinates, il, ir);
+                                        const scalar cos2 = vofCosTheta2Ip(
+                                            p_gradAlpha, p_shape_function, offSetSF,
+                                            nodesPerElement, p_coordinates, il, ir);
                                         const scalar gamma = cos2 * cos2;
                                         const scalar phiFTilde =
-                                            gamma *
-                                                vofProfileMsuperbee(phiTilde) +
+                                            gamma * vofProfileSuperbeeCapped(phiTilde) +
                                             (1.0 - gamma) *
-                                                vofProfileMstoic(phiTilde);
+                                                vofProfileSmartCapped(phiTilde);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
@@ -4033,36 +4074,27 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[ir * SPATIAL_DIM + j] -
                                             p_coordinates[il * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
-                                        const scalar Co =
-                                            std::abs(tmDot) * dt /
-                                            (p_rho[il] * p_scv_volume[il] +
-                                             1.0e-16);
-                                        const scalar gamma =
-                                            std::min(vofCosTheta2(p_gradAlpha,
-                                                                  p_coordinates,
-                                                                  il,
-                                                                  ir),
-                                                     1.0);
+                                        const scalar Co = p_vofCo[il];
+                                        const scalar gamma = std::min(
+                                            vofCosTheta2Node(p_gradAlpha,
+                                                             p_coordinates, il, ir),
+                                            1.0);
                                         const scalar phiFTilde =
-                                            gamma *
-                                                vofProfileHyperC(phiTilde, Co) +
+                                            gamma * vofProfileHyperC(phiTilde, Co) +
                                             (1.0 - gamma) *
-                                                vofProfileUltimateQuickest(
-                                                    phiTilde, Co);
+                                                vofProfileUltimateQuickest(phiTilde, Co);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
@@ -4091,81 +4123,73 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                 }
                             case vofAdvectionSchemeType::vanLeer:
                                 {
-                                    // virtual far-upwind: phiU = phiD -
-                                    // 2*grad(alpha)_U . d_UD
-                                    scalar gradCd = 0.0;
+                                    const scalar dphi = p_alpha[il] - p_alpha[ir];
+                                    scalar gradDotEdge = 0.0;
+                                    scalar gradDotIp = 0.0;
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
-                                        const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[ir * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
+                                        const scalar gC =
+                                            p_gradAlpha[ir * SPATIAL_DIM + j];
+                                        gradDotEdge +=
+                                            (p_coordinates[il * SPATIAL_DIM + j] -
+                                             p_coordinates[ir * SPATIAL_DIM + j]) *
+                                            gC;
+                                        gradDotIp +=
+                                            (p_coordIp[j] -
+                                             p_coordinates[ir * SPATIAL_DIM + j]) *
+                                            gC;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar phiFTilde =
-                                            phiTilde * (2.0 - phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
+                                    const scalar a = 2.0 * gradDotEdge - dphi;
+                                    const scalar ab = a * dphi;
+                                    const scalar psi =
+                                        2.0 * (ab + std::abs(ab)) /
+                                        ((a + dphi) * (a + dphi) + 1.0e-16);
+                                    dcorr = psi * gradDotIp;
                                     break;
                                 }
-                            case vofAdvectionSchemeType::mstoic:
+                            case vofAdvectionSchemeType::stoic:
                                 {
                                     scalar gradCd = 0.0;
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[il * SPATIAL_DIM + j] -
                                             p_coordinates[ir * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
                                         const scalar phiFTilde =
-                                            vofProfileMstoic(phiTilde);
+                                            vofProfileStoic(phiTilde);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
                                 }
-                            case vofAdvectionSchemeType::msuperbee:
+                            case vofAdvectionSchemeType::superbee:
                                 {
                                     scalar gradCd = 0.0;
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[il * SPATIAL_DIM + j] -
                                             p_coordinates[ir * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
-                                        const scalar phiFTilde =
-                                            vofProfileMsuperbee(phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
+                                        dcorr = (1.0 - phiTilde) * dq;
                                     }
                                     break;
                                 }
@@ -4175,26 +4199,46 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[il * SPATIAL_DIM + j] -
                                             p_coordinates[ir * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
-                                        const scalar Co =
-                                            std::abs(tmDot) * dt /
-                                            (p_rho[ir] * p_scv_volume[ir] +
-                                             1.0e-16);
+                                        const scalar Co = p_vofCo[ir];
                                         const scalar phiFTilde =
                                             vofProfileHyperC(phiTilde, Co);
+                                        dcorr = (phiFTilde - phiTilde) * dq;
+                                    }
+                                    break;
+                                }
+                            case vofAdvectionSchemeType::ultimateQuickest:
+                                {
+                                    scalar gradCd = 0.0;
+                                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                                    {
+                                        const scalar dj =
+                                            p_coordinates[il * SPATIAL_DIM + j] -
+                                            p_coordinates[ir * SPATIAL_DIM + j];
+                                        gradCd +=
+                                            p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
+                                    }
+                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar phiTilde =
+                                        1.0 - (p_alpha[il] - p_alpha[ir]) /
+                                              (dq + 1.0e-16);
+
+                                    if (phiTilde > 0.0 && phiTilde < 1.0)
+                                    {
+                                        const scalar Co = p_vofCo[ir];
+                                        const scalar phiFTilde =
+                                            vofProfileUltimateQuickest(phiTilde, Co);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
@@ -4205,28 +4249,26 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[il * SPATIAL_DIM + j] -
                                             p_coordinates[ir * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
-                                        const scalar cos2 = vofCosTheta2(
-                                            p_gradAlpha, p_coordinates, ir, il);
+                                        const scalar cos2 = vofCosTheta2Ip(
+                                            p_gradAlpha, p_shape_function, offSetSF,
+                                            nodesPerElement, p_coordinates, ir, il);
                                         const scalar gamma = cos2 * cos2;
                                         const scalar phiFTilde =
-                                            gamma *
-                                                vofProfileMsuperbee(phiTilde) +
+                                            gamma * vofProfileSuperbeeCapped(phiTilde) +
                                             (1.0 - gamma) *
-                                                vofProfileMstoic(phiTilde);
+                                                vofProfileSmartCapped(phiTilde);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
@@ -4237,36 +4279,27 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     for (label j = 0; j < SPATIAL_DIM; ++j)
                                     {
                                         const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
+                                            p_coordinates[il * SPATIAL_DIM + j] -
                                             p_coordinates[ir * SPATIAL_DIM + j];
                                         gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
+                                            p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
                                     const scalar dq = 2.0 * gradCd;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
+                                              (dq + 1.0e-16);
 
                                     if (phiTilde > 0.0 && phiTilde < 1.0)
                                     {
-                                        const scalar Co =
-                                            std::abs(tmDot) * dt /
-                                            (p_rho[ir] * p_scv_volume[ir] +
-                                             1.0e-16);
-                                        const scalar gamma =
-                                            std::min(vofCosTheta2(p_gradAlpha,
-                                                                  p_coordinates,
-                                                                  ir,
-                                                                  il),
-                                                     1.0);
+                                        const scalar Co = p_vofCo[ir];
+                                        const scalar gamma = std::min(
+                                            vofCosTheta2Node(p_gradAlpha,
+                                                             p_coordinates, ir, il),
+                                            1.0);
                                         const scalar phiFTilde =
-                                            gamma *
-                                                vofProfileHyperC(phiTilde, Co) +
+                                            gamma * vofProfileHyperC(phiTilde, Co) +
                                             (1.0 - gamma) *
-                                                vofProfileUltimateQuickest(
-                                                    phiTilde, Co);
+                                                vofProfileUltimateQuickest(phiTilde, Co);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
@@ -5132,6 +5165,106 @@ void freeSurfaceFlowModel::computeP_(const std::shared_ptr<domain> domain,
             default:
                 break;
         }
+    }
+}
+
+void freeSurfaceFlowModel::updateVofCourantField(
+    const std::shared_ptr<domain> domain, label iPhase)
+{
+    auto& mesh = this->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    const scalar dt = mesh.controlsRef().getTimestep();
+
+    ops::zero(vofCourantSTKFieldPtr_, domain->zonePtr()->interiorParts());
+
+    const STKScalarField* mDotSTKFieldPtr =
+        this->mDotRef(iPhase).stkFieldPtr();
+
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+    stk::mesh::Selector selAllElements =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+
+    stk::mesh::BucketVector const& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
+    for (stk::mesh::BucketVector::const_iterator ib = elementBuckets.begin();
+         ib != elementBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& elementBucket = **ib;
+        const stk::mesh::Bucket::size_type nElemPerBucket =
+            elementBucket.size();
+
+        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
+            elementBucket.topology());
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* lrscv = meSCS->adjacentNodes();
+
+        for (stk::mesh::Bucket::size_type iElement = 0;
+             iElement < nElemPerBucket;
+             ++iElement)
+        {
+            stk::mesh::Entity const* nodeRels =
+                elementBucket.begin_nodes(iElement);
+            const scalar* mDot = stk::mesh::field_data(
+                *mDotSTKFieldPtr, elementBucket, iElement);
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const label il = lrscv[2 * ip];
+                const label ir = lrscv[2 * ip + 1];
+                const scalar tmDot = mDot[ip];
+                if (tmDot > 0.0)
+                {
+                    scalar* co = stk::mesh::field_data(
+                        *vofCourantSTKFieldPtr_, nodeRels[il]);
+                    co[0] += tmDot;
+                }
+                else
+                {
+                    scalar* co = stk::mesh::field_data(
+                        *vofCourantSTKFieldPtr_, nodeRels[ir]);
+                    co[0] -= tmDot;
+                }
+            }
+        }
+    }
+
+    {
+        const STKScalarField* rhoSTKFieldPtr =
+            this->rhoRef(iPhase).stkFieldPtr();
+        const auto* volSTKFieldPtr = metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
+
+        stk::mesh::Selector selNodes =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selNodes);
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+            scalar* co =
+                stk::mesh::field_data(*vofCourantSTKFieldPtr_, nodeBucket);
+            const scalar* rho =
+                stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
+            const scalar* vol =
+                stk::mesh::field_data(*volSTKFieldPtr, nodeBucket);
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nodeBucket.size();
+                 ++iNode)
+            {
+                co[iNode] =
+                    co[iNode] * dt / (rho[iNode] * vol[iNode] + SMALL);
+            }
+        }
+    }
+
+    if (messager::parallel())
+    {
+        stk::mesh::parallel_sum(bulkData, {vofCourantSTKFieldPtr_});
     }
 }
 

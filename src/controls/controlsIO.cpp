@@ -971,6 +971,12 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["relax_gradients"].template as<bool>();
             }
 
+            if (expertParameters["gradient_urf"])
+            {
+                solver_.solverControl_.expertParameters_.gradientURF_ =
+                    expertParameters["gradient_urf"].template as<scalar>();
+            }
+
             if (expertParameters["high_speed_blend_damping"])
             {
                 solver_.solverControl_.expertParameters_

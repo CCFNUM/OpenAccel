@@ -538,9 +538,11 @@ std::unordered_map<std::string, vofAdvectionSchemeType>
     vofAdvectionSchemeTypeMap{
         {"BarthJespersen", vofAdvectionSchemeType::barthJespersen},
         {"VanLeer", vofAdvectionSchemeType::vanLeer},
-        {"MSTOIC", vofAdvectionSchemeType::mstoic},
-        {"MSUPERBEE", vofAdvectionSchemeType::msuperbee},
+        {"STOIC", vofAdvectionSchemeType::stoic},
+        {"SUPERBEE", vofAdvectionSchemeType::superbee},
         {"HYPERC", vofAdvectionSchemeType::hyperC},
+        {"UQ", vofAdvectionSchemeType::ultimateQuickest},
+        {"UltimateQuickest", vofAdvectionSchemeType::ultimateQuickest},
         {"STACS", vofAdvectionSchemeType::stacs},
         {"CICSAM", vofAdvectionSchemeType::cicsam}};
 
@@ -573,12 +575,14 @@ std::string toString(vofAdvectionSchemeType type)
             return "BarthJespersen";
         case vofAdvectionSchemeType::vanLeer:
             return "VanLeer";
-        case vofAdvectionSchemeType::mstoic:
-            return "MSTOIC";
-        case vofAdvectionSchemeType::msuperbee:
-            return "MSUPERBEE";
+        case vofAdvectionSchemeType::stoic:
+            return "STOIC";
+        case vofAdvectionSchemeType::superbee:
+            return "SUPERBEE";
         case vofAdvectionSchemeType::hyperC:
             return "HYPERC";
+        case vofAdvectionSchemeType::ultimateQuickest:
+            return "UQ";
         case vofAdvectionSchemeType::stacs:
             return "STACS";
         case vofAdvectionSchemeType::cicsam:
