@@ -69,6 +69,9 @@ public:
 
     using fieldBroker::nHatRef;
 
+    void updateVofCourantField(const std::shared_ptr<domain> domain,
+                               label iPhase);
+
     // Body forces override (adds CSF surface tension after base class forces)
     void computeBodyForces(const std::shared_ptr<domain> domain) override;
 
@@ -296,6 +299,7 @@ protected:
     STKScalarField* ASTKFieldPtr_ = nullptr;
     STKScalarField* sideASTKFieldPtr_ = nullptr;
     STKScalarField* lambdaSTKFieldPtr_ = nullptr;
+    STKScalarField* vofCourantSTKFieldPtr_ = nullptr;
     STKScalarField* sideLambdaSTKFieldPtr_ = nullptr;
     STKScalarField* QplusSTKFieldPtr_ = nullptr;
     STKScalarField* QminusSTKFieldPtr_ = nullptr;

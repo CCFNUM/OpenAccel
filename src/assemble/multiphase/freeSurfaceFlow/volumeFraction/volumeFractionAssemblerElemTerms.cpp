@@ -12,7 +12,7 @@ namespace accel
 namespace
 {
 
-inline scalar vofProfileMstoic(const scalar t)
+inline scalar vofProfileStoic(const scalar t)
 {
     if (t <= 0.2)
     {
@@ -22,26 +22,9 @@ inline scalar vofProfileMstoic(const scalar t)
     {
         return 0.5 * t + 0.5;
     }
-    else if (t <= 0.7)
+    else if (t <= 5.0 / 6.0)
     {
         return 0.75 * t + 0.375;
-    }
-    return t / 3.0 + 2.0 / 3.0;
-}
-
-inline scalar vofProfileMsuperbee(const scalar t)
-{
-    if (t <= 1.0 / 3.0)
-    {
-        return 2.0 * t;
-    }
-    else if (t <= 0.5)
-    {
-        return 0.5 * t + 0.5;
-    }
-    else if (t <= 2.0 / 3.0)
-    {
-        return 1.5 * t;
     }
     return 1.0;
 }
@@ -57,10 +40,46 @@ inline scalar vofProfileUltimateQuickest(const scalar t, const scalar Co)
     return std::min(uq, vofProfileHyperC(t, Co));
 }
 
-inline scalar vofCosTheta2(const scalar* gradAlpha,
-                           const scalar* coordinates,
-                           const label iu,
-                           const label id)
+inline scalar vofProfileSuperbeeCapped(const scalar t)
+{
+    return std::min(2.0 * t, 0.85 + 0.15 * t);
+}
+
+inline scalar vofProfileSmartCapped(const scalar t)
+{
+    return std::min(std::min(3.0 * t, 0.375 + 0.75 * t), 0.9 + 0.1 * t);
+}
+
+inline scalar vofCosTheta2Ip(const scalar* gradAlpha,
+                             const scalar* shapeFunction,
+                             const label offSetSF,
+                             const label nodesPerElement,
+                             const scalar* coordinates,
+                             const label iu,
+                             const label id)
+{
+    scalar gg = 0.0, dd = 0.0, gd = 0.0;
+    for (label j = 0; j < SPATIAL_DIM; ++j)
+    {
+        scalar gj = 0.0;
+        for (label ic = 0; ic < nodesPerElement; ++ic)
+        {
+            gj += shapeFunction[offSetSF + ic] *
+                  gradAlpha[ic * SPATIAL_DIM + j];
+        }
+        const scalar dj = coordinates[id * SPATIAL_DIM + j] -
+                          coordinates[iu * SPATIAL_DIM + j];
+        gg += gj * gj;
+        dd += dj * dj;
+        gd += gj * dj;
+    }
+    return (gd * gd) / (gg * dd + 1.0e-16);
+}
+
+inline scalar vofCosTheta2Node(const scalar* gradAlpha,
+                               const scalar* coordinates,
+                               const label iu,
+                               const label id)
 {
     scalar gg = 0.0, dd = 0.0, gd = 0.0;
     for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -95,7 +114,7 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     // ip loop below only ever compares an integer
     const vofAdvectionSchemeType vofScheme =
         domain->multiphase_.freeSurfaceModel_.advectionScheme_;
-    const scalar dt = mesh.controlsRef().getTimestep();
+
 
     // NSO active only when not using FCT and enabled in expert params
     const bool NSO =
@@ -126,6 +145,7 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> ws_scv_volume;
     std::vector<scalar> ws_nHat;
     std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_vofCo;
 
     // geometry related to populate
     std::vector<scalar> ws_scs_areav;
@@ -161,6 +181,8 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     const auto& nHatSTKFieldRef = model_->nHatRef(phaseIndex_).stkFieldRef();
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
     const auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
+    const auto* vofCourantSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "vof_courant");
     const scalar gamma = model_->gamma(domain);
 
     // Get geometric fields
@@ -227,6 +249,7 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         ws_U.resize(nodesPerElement * SPATIAL_DIM);
         ws_magU.resize(nodesPerElement);
         ws_rho.resize(nodesPerElement);
+        ws_vofCo.resize(nodesPerElement);
         ws_scv_volume.resize(numScvIp);
         ws_nHat.resize(nodesPerElement * SPATIAL_DIM);
         ws_dndx_scv.resize(SPATIAL_DIM * numScvIp * nodesPerElement);
@@ -252,6 +275,7 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         scalar* p_scv_volume = &ws_scv_volume[0];
         scalar* p_nHat = &ws_nHat[0];
         scalar* p_rho = &ws_rho[0];
+        scalar* p_vofCo = &ws_vofCo[0];
         scalar* p_gijUp = &ws_gijUpper[0];
         scalar* p_gijLow = &ws_gijLower[0];
 
@@ -328,6 +352,8 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
 
                 p_alpha[ni] = phi[0];
                 p_beta[ni] = beta[0];
+                p_vofCo[ni] = *stk::mesh::field_data(*vofCourantSTKFieldPtr,
+                                                     node);
                 p_rho[ni] = rho[0];
 
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -460,31 +486,31 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                             }
                         case vofAdvectionSchemeType::vanLeer:
                             {
-                                // virtual far-upwind: phiU = phiD -
-                                // 2*grad(alpha)_U . d_UD
-                                scalar gradCd = 0.0;
+                                const scalar dphi = p_alpha[ir] - p_alpha[il];
+                                scalar gradDotEdge = 0.0;
+                                scalar gradDotIp = 0.0;
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
-                                    const scalar dj =
-                                        p_coordinates[ir * SPATIAL_DIM + j] -
-                                        p_coordinates[il * SPATIAL_DIM + j];
-                                    gradCd +=
-                                        p_gradAlpha[il * SPATIAL_DIM + j] * dj;
+                                    const scalar gC =
+                                        p_gradAlpha[il * SPATIAL_DIM + j];
+                                    gradDotEdge +=
+                                        (p_coordinates[ir * SPATIAL_DIM + j] -
+                                         p_coordinates[il * SPATIAL_DIM + j]) *
+                                        gC;
+                                    gradDotIp +=
+                                        (p_coordIp[j] -
+                                         p_coordinates[il * SPATIAL_DIM + j]) *
+                                        gC;
                                 }
-                                const scalar dq = 2.0 * gradCd;
-                                const scalar phiTilde =
-                                    1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                              (dq + 1.0e-16);
-
-                                if (phiTilde > 0.0 && phiTilde < 1.0)
-                                {
-                                    const scalar phiFTilde =
-                                        phiTilde * (2.0 - phiTilde);
-                                    dcorr = (phiFTilde - phiTilde) * dq;
-                                }
+                                const scalar a = 2.0 * gradDotEdge - dphi;
+                                const scalar ab = a * dphi;
+                                const scalar psi =
+                                    2.0 * (ab + std::abs(ab)) /
+                                    ((a + dphi) * (a + dphi) + 1.0e-16);
+                                dcorr = psi * gradDotIp;
                                 break;
                             }
-                        case vofAdvectionSchemeType::mstoic:
+                        case vofAdvectionSchemeType::stoic:
                             {
                                 scalar gradCd = 0.0;
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -498,17 +524,17 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
                                     const scalar phiFTilde =
-                                        vofProfileMstoic(phiTilde);
+                                        vofProfileStoic(phiTilde);
                                     dcorr = (phiFTilde - phiTilde) * dq;
                                 }
                                 break;
                             }
-                        case vofAdvectionSchemeType::msuperbee:
+                        case vofAdvectionSchemeType::superbee:
                             {
                                 scalar gradCd = 0.0;
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -522,13 +548,11 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
-                                    const scalar phiFTilde =
-                                        vofProfileMsuperbee(phiTilde);
-                                    dcorr = (phiFTilde - phiTilde) * dq;
+                                    dcorr = (1.0 - phiTilde) * dq;
                                 }
                                 break;
                             }
@@ -546,16 +570,38 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
-                                    const scalar Co =
-                                        std::abs(tmDot) * dt /
-                                        (p_rho[il] * p_scv_volume[il] +
-                                         1.0e-16);
+                                    const scalar Co = p_vofCo[il];
                                     const scalar phiFTilde =
                                         vofProfileHyperC(phiTilde, Co);
+                                    dcorr = (phiFTilde - phiTilde) * dq;
+                                }
+                                break;
+                            }
+                        case vofAdvectionSchemeType::ultimateQuickest:
+                            {
+                                scalar gradCd = 0.0;
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const scalar dj =
+                                        p_coordinates[ir * SPATIAL_DIM + j] -
+                                        p_coordinates[il * SPATIAL_DIM + j];
+                                    gradCd +=
+                                        p_gradAlpha[il * SPATIAL_DIM + j] * dj;
+                                }
+                                const scalar dq = 2.0 * gradCd;
+                                const scalar phiTilde =
+                                    1.0 - (p_alpha[ir] - p_alpha[il]) /
+                                          (dq + 1.0e-16);
+
+                                if (phiTilde > 0.0 && phiTilde < 1.0)
+                                {
+                                    const scalar Co = p_vofCo[il];
+                                    const scalar phiFTilde =
+                                        vofProfileUltimateQuickest(phiTilde, Co);
                                     dcorr = (phiFTilde - phiTilde) * dq;
                                 }
                                 break;
@@ -574,17 +620,18 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
-                                    const scalar cos2 = vofCosTheta2(
-                                        p_gradAlpha, p_coordinates, il, ir);
+                                    const scalar cos2 = vofCosTheta2Ip(
+                                        p_gradAlpha, p_shape_function, offSetSF,
+                                        nodesPerElement, p_coordinates, il, ir);
                                     const scalar gamma = cos2 * cos2;
                                     const scalar phiFTilde =
-                                        gamma * vofProfileMsuperbee(phiTilde) +
+                                        gamma * vofProfileSuperbeeCapped(phiTilde) +
                                         (1.0 - gamma) *
-                                            vofProfileMstoic(phiTilde);
+                                            vofProfileSmartCapped(phiTilde);
                                     dcorr = (phiFTilde - phiTilde) * dq;
                                 }
                                 break;
@@ -603,23 +650,19 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
-                                    const scalar Co =
-                                        std::abs(tmDot) * dt /
-                                        (p_rho[il] * p_scv_volume[il] +
-                                         1.0e-16);
+                                    const scalar Co = p_vofCo[il];
                                     const scalar gamma = std::min(
-                                        vofCosTheta2(
-                                            p_gradAlpha, p_coordinates, il, ir),
+                                        vofCosTheta2Node(p_gradAlpha,
+                                                         p_coordinates, il, ir),
                                         1.0);
                                     const scalar phiFTilde =
                                         gamma * vofProfileHyperC(phiTilde, Co) +
                                         (1.0 - gamma) *
-                                            vofProfileUltimateQuickest(phiTilde,
-                                                                       Co);
+                                            vofProfileUltimateQuickest(phiTilde, Co);
                                     dcorr = (phiFTilde - phiTilde) * dq;
                                 }
                                 break;
@@ -647,31 +690,31 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                             }
                         case vofAdvectionSchemeType::vanLeer:
                             {
-                                // virtual far-upwind: phiU = phiD -
-                                // 2*grad(alpha)_U . d_UD
-                                scalar gradCd = 0.0;
+                                const scalar dphi = p_alpha[il] - p_alpha[ir];
+                                scalar gradDotEdge = 0.0;
+                                scalar gradDotIp = 0.0;
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
                                 {
-                                    const scalar dj =
-                                        p_coordinates[il * SPATIAL_DIM + j] -
-                                        p_coordinates[ir * SPATIAL_DIM + j];
-                                    gradCd +=
-                                        p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
+                                    const scalar gC =
+                                        p_gradAlpha[ir * SPATIAL_DIM + j];
+                                    gradDotEdge +=
+                                        (p_coordinates[il * SPATIAL_DIM + j] -
+                                         p_coordinates[ir * SPATIAL_DIM + j]) *
+                                        gC;
+                                    gradDotIp +=
+                                        (p_coordIp[j] -
+                                         p_coordinates[ir * SPATIAL_DIM + j]) *
+                                        gC;
                                 }
-                                const scalar dq = 2.0 * gradCd;
-                                const scalar phiTilde =
-                                    1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                              (dq + 1.0e-16);
-
-                                if (phiTilde > 0.0 && phiTilde < 1.0)
-                                {
-                                    const scalar phiFTilde =
-                                        phiTilde * (2.0 - phiTilde);
-                                    dcorr = (phiFTilde - phiTilde) * dq;
-                                }
+                                const scalar a = 2.0 * gradDotEdge - dphi;
+                                const scalar ab = a * dphi;
+                                const scalar psi =
+                                    2.0 * (ab + std::abs(ab)) /
+                                    ((a + dphi) * (a + dphi) + 1.0e-16);
+                                dcorr = psi * gradDotIp;
                                 break;
                             }
-                        case vofAdvectionSchemeType::mstoic:
+                        case vofAdvectionSchemeType::stoic:
                             {
                                 scalar gradCd = 0.0;
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -685,17 +728,17 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
                                     const scalar phiFTilde =
-                                        vofProfileMstoic(phiTilde);
+                                        vofProfileStoic(phiTilde);
                                     dcorr = (phiFTilde - phiTilde) * dq;
                                 }
                                 break;
                             }
-                        case vofAdvectionSchemeType::msuperbee:
+                        case vofAdvectionSchemeType::superbee:
                             {
                                 scalar gradCd = 0.0;
                                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -709,13 +752,11 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
-                                    const scalar phiFTilde =
-                                        vofProfileMsuperbee(phiTilde);
-                                    dcorr = (phiFTilde - phiTilde) * dq;
+                                    dcorr = (1.0 - phiTilde) * dq;
                                 }
                                 break;
                             }
@@ -733,16 +774,38 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
-                                    const scalar Co =
-                                        std::abs(tmDot) * dt /
-                                        (p_rho[ir] * p_scv_volume[ir] +
-                                         1.0e-16);
+                                    const scalar Co = p_vofCo[ir];
                                     const scalar phiFTilde =
                                         vofProfileHyperC(phiTilde, Co);
+                                    dcorr = (phiFTilde - phiTilde) * dq;
+                                }
+                                break;
+                            }
+                        case vofAdvectionSchemeType::ultimateQuickest:
+                            {
+                                scalar gradCd = 0.0;
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const scalar dj =
+                                        p_coordinates[il * SPATIAL_DIM + j] -
+                                        p_coordinates[ir * SPATIAL_DIM + j];
+                                    gradCd +=
+                                        p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
+                                }
+                                const scalar dq = 2.0 * gradCd;
+                                const scalar phiTilde =
+                                    1.0 - (p_alpha[il] - p_alpha[ir]) /
+                                          (dq + 1.0e-16);
+
+                                if (phiTilde > 0.0 && phiTilde < 1.0)
+                                {
+                                    const scalar Co = p_vofCo[ir];
+                                    const scalar phiFTilde =
+                                        vofProfileUltimateQuickest(phiTilde, Co);
                                     dcorr = (phiFTilde - phiTilde) * dq;
                                 }
                                 break;
@@ -761,17 +824,18 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
-                                    const scalar cos2 = vofCosTheta2(
-                                        p_gradAlpha, p_coordinates, ir, il);
+                                    const scalar cos2 = vofCosTheta2Ip(
+                                        p_gradAlpha, p_shape_function, offSetSF,
+                                        nodesPerElement, p_coordinates, ir, il);
                                     const scalar gamma = cos2 * cos2;
                                     const scalar phiFTilde =
-                                        gamma * vofProfileMsuperbee(phiTilde) +
+                                        gamma * vofProfileSuperbeeCapped(phiTilde) +
                                         (1.0 - gamma) *
-                                            vofProfileMstoic(phiTilde);
+                                            vofProfileSmartCapped(phiTilde);
                                     dcorr = (phiFTilde - phiTilde) * dq;
                                 }
                                 break;
@@ -790,23 +854,19 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                 const scalar dq = 2.0 * gradCd;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                              (dq + 1.0e-16);
+                                          (dq + 1.0e-16);
 
                                 if (phiTilde > 0.0 && phiTilde < 1.0)
                                 {
-                                    const scalar Co =
-                                        std::abs(tmDot) * dt /
-                                        (p_rho[ir] * p_scv_volume[ir] +
-                                         1.0e-16);
+                                    const scalar Co = p_vofCo[ir];
                                     const scalar gamma = std::min(
-                                        vofCosTheta2(
-                                            p_gradAlpha, p_coordinates, ir, il),
+                                        vofCosTheta2Node(p_gradAlpha,
+                                                         p_coordinates, ir, il),
                                         1.0);
                                     const scalar phiFTilde =
                                         gamma * vofProfileHyperC(phiTilde, Co) +
                                         (1.0 - gamma) *
-                                            vofProfileUltimateQuickest(phiTilde,
-                                                                       Co);
+                                            vofProfileUltimateQuickest(phiTilde, Co);
                                     dcorr = (phiFTilde - phiTilde) * dq;
                                 }
                                 break;
