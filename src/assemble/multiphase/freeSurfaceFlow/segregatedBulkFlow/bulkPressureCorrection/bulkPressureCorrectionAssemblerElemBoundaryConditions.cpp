@@ -2388,6 +2388,7 @@ void bulkPressureCorrectionAssembler::
 
                 // gather scalars
                 p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_alpha[ni] = *stk::mesh::field_data(alphaSTKFieldRef, node);
 
                 // set 0 the boundary nodes
                 p_bcMultiplier[ic] = 0.0;
