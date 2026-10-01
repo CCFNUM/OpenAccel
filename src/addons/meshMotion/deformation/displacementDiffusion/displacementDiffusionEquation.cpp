@@ -269,12 +269,20 @@ void displacementDiffusionEquation::setup()
             // V_ref = mean control volume in domain
             volRef = volTotal / static_cast<scalar>(volCount);
 
-            // L_ref = 0.5 * (volume of domain)^(1/3)
+            // L_ref = 0.5 * (volume of domain)^(1/dim)
             const scalar domainVolume = domain->zonePtr()->stats().volume_;
+#if SPATIAL_DIM == 3
             const scalar L_ref = 0.5 * std::cbrt(domainVolume);
+#else
+            const scalar L_ref = 0.5 * std::sqrt(domainVolume);
+#endif
 
-            // d_wall = 10.0 * (minimum control volume in domain)^(1/3)
+            // d_wall = 10.0 * (minimum control volume in domain)^(1/dim)
+#if SPATIAL_DIM == 3
             const scalar d_wall = 10.0 * std::cbrt(volMin);
+#else
+            const scalar d_wall = 10.0 * std::sqrt(volMin);
+#endif
 
             for (size_t ib = 0; ib < nodeBuckets.size(); ib++)
             {
