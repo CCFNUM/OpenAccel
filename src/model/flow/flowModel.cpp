@@ -13836,8 +13836,9 @@ void flowModel::updateMassDivergenceField_(
     // Get fields
     STKScalarField* divSTKFieldPtr = divField.stkFieldPtr();
 
-    // Transient contribution: should include GCL term in case of zone
-    // motion
+    // No GCL term: this field only drives the -phi*div correction in transport
+    // equations, where it cancels their own GCL term, so both must omit it
+    // (pCorr node terms keep rho*divUm*vol; the old -= was wrong-sign).
     if (controlsRef().isTransient())
     {
         const scalar dt = controlsRef().getTimestep();
@@ -13845,8 +13846,6 @@ void flowModel::updateMassDivergenceField_(
         const auto scheme = controlsRef()
                                 .solverRef()
                                 .solverControl_.basicSettings_.transientScheme_;
-
-        const bool meshDeforming = domain->zonePtr()->meshDeforming();
 
         switch (scheme)
         {
@@ -13858,10 +13857,6 @@ void flowModel::updateMassDivergenceField_(
                         rhoField.stkFieldRef();
                     const STKScalarField& rhoSTKFieldRefOld =
                         rhoField.prevTimeRef().stkFieldRef();
-
-                    const STKScalarField* divUmSTKFieldPtr =
-                        meshDeforming ? this->divUmRef().stkFieldPtr()
-                                      : nullptr;
 
                     const auto& volSTKFieldRef = *metaData.get_field<scalar>(
                         stk::topology::NODE_RANK,
@@ -13901,14 +13896,6 @@ void flowModel::updateMassDivergenceField_(
 
                             divb[iNode] +=
                                 (c[0] * rho + c[1] * rhoOld) * vol / dt;
-
-                            // GCL
-                            if (meshDeforming)
-                            {
-                                scalar divUm = *stk::mesh::field_data(
-                                    *divUmSTKFieldPtr, nodeBucket, iNode);
-                                divb[iNode] -= rho * divUm * vol;
-                            }
                         }
                     }
                 }
@@ -13925,10 +13912,6 @@ void flowModel::updateMassDivergenceField_(
                         rhoField.prevTimeRef().stkFieldRef();
                     const STKScalarField& rhoSTKFieldRefOldOld =
                         rhoField.prevTimeRef().prevTimeRef().stkFieldRef();
-
-                    const STKScalarField* divUmSTKFieldPtr =
-                        meshDeforming ? this->divUmRef().stkFieldPtr()
-                                      : nullptr;
 
                     const auto& volSTKFieldRef = *metaData.get_field<scalar>(
                         stk::topology::NODE_RANK,
@@ -13972,14 +13955,6 @@ void flowModel::updateMassDivergenceField_(
                             divb[iNode] += (c[0] * rho + c[1] * rhoOld +
                                             c[2] * rhoOldOld) *
                                            vol / dt;
-
-                            // GCL
-                            if (meshDeforming)
-                            {
-                                scalar divUm = *stk::mesh::field_data(
-                                    *divUmSTKFieldPtr, nodeBucket, iNode);
-                                divb[iNode] -= rho * divUm * vol;
-                            }
                         }
                     }
                 }
