@@ -134,6 +134,12 @@ void totalEnergyAssembler::assembleElemTermsBoundarySymmetry_(
     const bool includeAdv = domain->type() == domainType::fluid;
     const bool includeViscousWork =
         domain->heatTransfer_.includeViscousWork_ && includeAdv;
+    // tau.U as a single face-average flux instead of a per-ip flux
+    const bool viscousWorkAtElement =
+        includeViscousWork && usesElementViscousWork_();
+    const bool laplacianViscousWork = usesLaplacianViscousWork_();
+    // the bulk term is dropped for an incompressible material
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     // space for LHS/RHS; nodesPerElement*nodesPerElement and
     // nodesPerElement
@@ -231,6 +237,7 @@ void totalEnergyAssembler::assembleElemTermsBoundarySymmetry_(
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
+        const scalar invNodesPerSide = 1.0 / nodesPerSide;
         const label numScsBip = meFC->numIntPoints_;
 
         // resize some things; matrix related
@@ -362,23 +369,39 @@ void totalEnergyAssembler::assembleElemTermsBoundarySymmetry_(
                         workVelocity[i] = U[i] - frameVelocity;
                     }
 
-                    scalar divU = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (laplacianViscousWork)
                     {
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    }
-
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * workVelocity[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                workVelocity[j];
+                            p_vw[ni * SPATIAL_DIM + i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff * dudx[j * SPATIAL_DIM + i] *
+                                    workVelocity[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += dudx[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_vw[ni * SPATIAL_DIM + i] = -2.0 / 3.0 * comp *
+                                                         muEff * divU *
+                                                         workVelocity[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff *
+                                    (dudx[i * SPATIAL_DIM + j] +
+                                     dudx[j * SPATIAL_DIM + i]) *
+                                    workVelocity[j];
+                            }
                         }
                     }
                 }
@@ -429,7 +452,9 @@ void totalEnergyAssembler::assembleElemTermsBoundarySymmetry_(
 
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
+                        p_vwBip[i] +=
+                            (viscousWorkAtElement ? invNodesPerSide : r) *
+                            p_vw[ic * SPATIAL_DIM + i];
                         p_omegaCrossRBip[i] +=
                             r * p_omegaCrossR[ic * SPATIAL_DIM + i];
                     }
@@ -503,6 +528,24 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
         }
     }
 
+    // wall-function shear replaces the element stress at a turbulent wall
+    const bool wallShearWork =
+        includeViscousWork &&
+        domain->turbulence_.option_ != turbulenceOption::laminar &&
+        wallViscousWorkModel_() != viscousWorkWallModel::elementStress;
+    const bool wallShearWorkAtVertex =
+        wallShearWork &&
+        wallViscousWorkModel_() == viscousWorkWallModel::vertexVelocity;
+    const auto* uWallCoeffsSTKFieldPtr =
+        wallShearWork ? model_->uWallCoeffsRef().stkFieldPtr() : nullptr;
+
+    // tau.U as a single face-average flux instead of a per-ip flux
+    const bool viscousWorkAtElement =
+        includeViscousWork && !wallShearWork && usesElementViscousWork_();
+    const bool laplacianViscousWork = usesLaplacianViscousWork_();
+    // the bulk term is dropped for an incompressible material
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+
     // space for LHS/RHS; nodesPerElement*nodesPerElement and
     // nodesPerElement
     std::vector<scalar> lhs;
@@ -513,6 +556,11 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
 
     // ip values
     std::vector<scalar> vwBip(SPATIAL_DIM);
+    std::vector<scalar> vwFace(SPATIAL_DIM);
+    std::vector<scalar> nxWall(SPATIAL_DIM);
+    std::vector<scalar> uNearWall(SPATIAL_DIM);
+    std::vector<scalar> relWorkVelocity(SPATIAL_DIM);
+    std::vector<scalar> coordBipWall(SPATIAL_DIM);
     std::vector<scalar> velocityBip(SPATIAL_DIM);
     std::vector<scalar> gradVelocityBip(SPATIAL_DIM * SPATIAL_DIM);
     std::vector<scalar> coordinateBip(SPATIAL_DIM);
@@ -521,6 +569,11 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
 
     // pointers to fixed values
     scalar* p_vwBip = &vwBip[0];
+    scalar* p_vwFace = &vwFace[0];
+    scalar* p_nxWall = &nxWall[0];
+    scalar* p_uNearWall = &uNearWall[0];
+    scalar* p_relWorkVelocity = &relWorkVelocity[0];
+    scalar* p_coordBipWall = &coordBipWall[0];
     scalar* p_velocityBip = &velocityBip[0];
     scalar* p_gradVelocityBip = &gradVelocityBip[0];
     scalar* p_coordinateBip = &coordinateBip[0];
@@ -784,8 +837,115 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
                 includeViscousWork
                     ? stk::mesh::field_data(*sideUSTKFieldPtr, side)
                     : nullptr;
-            const bool faceViscousWork =
-                includeViscousWork && boundaryVelocity != nullptr;
+            const bool faceViscousWork = includeViscousWork && !wallShearWork &&
+                                         boundaryVelocity != nullptr;
+            const bool faceViscousWorkAtIp =
+                faceViscousWork && !viscousWorkAtElement;
+            const bool faceViscousWorkAtFace =
+                faceViscousWork && viscousWorkAtElement;
+
+            // one flux vector for the whole face, dotted with every bip area
+            if (faceViscousWorkAtFace)
+            {
+                const scalar invNodesPerSide = 1.0 / nodesPerSide;
+                const scalar invNumBip = 1.0 / numScsBip;
+
+                scalar muEffFace = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_velocityBip[j] = 0.0;
+                    p_coordinateBip[j] = 0.0;
+                }
+                for (label j = 0; j < SPATIAL_DIM * SPATIAL_DIM; ++j)
+                {
+                    p_gradVelocityBip[j] = 0.0;
+                }
+
+                for (label ic = 0; ic < nodesPerSide; ++ic)
+                {
+                    const label elemNode = faceNodeOrdinals[ic];
+                    muEffFace += invNodesPerSide * p_muEff[elemNode];
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_coordinateBip[i] +=
+                            invNodesPerSide *
+                            p_coordinates[elemNode * SPATIAL_DIM + i];
+                    }
+                }
+
+                for (label ip = 0; ip < numScsBip; ++ip)
+                {
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_velocityBip[i] +=
+                            invNumBip * boundaryVelocity[ip * SPATIAL_DIM + i];
+                    }
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const label offSetDnDx =
+                            ip * nodesPerElement * SPATIAL_DIM +
+                            ic * SPATIAL_DIM;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            const scalar Ui = p_U[ic * SPATIAL_DIM + i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_gradVelocityBip[i * SPATIAL_DIM + j] +=
+                                    invNumBip * Ui * p_dndx[offSetDnDx + j];
+                            }
+                        }
+                    }
+                }
+
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    p_frameVelocityBip[i] = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_frameVelocityBip[i] +=
+                            p_rotationMatrix[i * SPATIAL_DIM + j] *
+                            (p_coordinateBip[j] - p_rotationOrigin[j]);
+                    }
+                }
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                    p_velocityBip[i] -= p_frameVelocityBip[i];
+
+                if (laplacianViscousWork)
+                {
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_vwFace[i] = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_vwFace[i] +=
+                                muEffFace *
+                                p_gradVelocityBip[j * SPATIAL_DIM + i] *
+                                p_velocityBip[j];
+                        }
+                    }
+                }
+                else
+                {
+                    scalar divU = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        divU += p_gradVelocityBip[i * SPATIAL_DIM + i];
+                    }
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_vwFace[i] = -2.0 / 3.0 * comp * muEffFace * divU *
+                                      p_velocityBip[i];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_vwFace[i] +=
+                                muEffFace *
+                                (p_gradVelocityBip[i * SPATIAL_DIM + j] +
+                                 p_gradVelocityBip[j * SPATIAL_DIM + i]) *
+                                p_velocityBip[j];
+                        }
+                    }
+                }
+            }
 
             // loop over side ip's
             for (label ip = 0; ip < numScsBip; ++ip)
@@ -797,8 +957,8 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
 
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    p_vwBip[j] = 0.0;
-                    p_velocityBip[j] = faceViscousWork
+                    p_vwBip[j] = faceViscousWorkAtFace ? p_vwFace[j] : 0.0;
+                    p_velocityBip[j] = faceViscousWorkAtIp
                                            ? boundaryVelocity[faceOffSet + j]
                                            : 0.0;
                     p_coordinateBip[j] = 0.0;
@@ -817,7 +977,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
                     const scalar r = p_shape_function[offSetSF_face + ic];
                     const label elemNode = faceNodeOrdinals[ic];
 
-                    if (faceViscousWork)
+                    if (faceViscousWorkAtIp)
                     {
                         muEffBip += r * p_muEff[elemNode];
                         for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -836,7 +996,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
                     }
                 }
 
-                if (faceViscousWork)
+                if (faceViscousWorkAtIp)
                 {
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
@@ -867,22 +1027,39 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
                         }
                     }
 
-                    scalar divU = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (laplacianViscousWork)
                     {
-                        divU += p_gradVelocityBip[i * SPATIAL_DIM + i];
-                    }
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vwBip[i] =
-                            -2.0 / 3.0 * muEffBip * divU * p_velocityBip[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vwBip[i] +=
-                                muEffBip *
-                                (p_gradVelocityBip[i * SPATIAL_DIM + j] +
-                                 p_gradVelocityBip[j * SPATIAL_DIM + i]) *
-                                p_velocityBip[j];
+                            p_vwBip[i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vwBip[i] +=
+                                    muEffBip *
+                                    p_gradVelocityBip[j * SPATIAL_DIM + i] *
+                                    p_velocityBip[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += p_gradVelocityBip[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_vwBip[i] = -2.0 / 3.0 * comp * muEffBip * divU *
+                                         p_velocityBip[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vwBip[i] +=
+                                    muEffBip *
+                                    (p_gradVelocityBip[i * SPATIAL_DIM + j] +
+                                     p_gradVelocityBip[j * SPATIAL_DIM + i]) *
+                                    p_velocityBip[j];
+                            }
                         }
                     }
                 }
@@ -890,13 +1067,95 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallZeroGradient_(
                 //================================
                 // Viscous Work
                 //================================
-                for (label j = 0; j < SPATIAL_DIM; ++j)
+                // wall-function shear against the wall/near-wall velocity
+                const scalar* uWallCoeffsBip =
+                    wallShearWork
+                        ? stk::mesh::field_data(*uWallCoeffsSTKFieldPtr, side)
+                        : nullptr;
+                if (wallShearWork && boundaryVelocity != nullptr &&
+                    uWallCoeffsBip != nullptr)
                 {
-                    // matrix entries
-                    label indexR = nearestNode;
+                    scalar aMag = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj = areaVec[faceOffSet + j];
+                        aMag += axj * axj;
+                    }
+                    aMag = std::sqrt(aMag);
 
-                    const scalar axj = areaVec[faceOffSet + j];
-                    p_rhs[indexR] += vwBip[j] * axj;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_nxWall[j] = areaVec[faceOffSet + j] / aMag;
+                        p_uNearWall[j] = 0.0;
+                    }
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        const scalar r = p_shape_function[offSetSF_face + ic];
+                        const label elemNode = faceNodeOrdinals[ic];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_uNearWall[j] +=
+                                r * p_U[elemNode * SPATIAL_DIM + j];
+                        }
+                    }
+
+                    // rothalpy contracts the shear with the relative velocity
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_coordinateBip[j] = 0.0;
+                    }
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        const scalar r = p_shape_function[offSetSF_face + ic];
+                        const label elemNode = faceNodeOrdinals[ic];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_coordinateBip[j] +=
+                                r * p_coordinates[elemNode * SPATIAL_DIM + j];
+                        }
+                    }
+                    const scalar* uWall = &boundaryVelocity[faceOffSet];
+                    const scalar* absWorkVelocity =
+                        wallShearWorkAtVertex ? &p_U[nearestNode * SPATIAL_DIM]
+                                              : uWall;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        scalar frameVelocity = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            frameVelocity +=
+                                p_rotationMatrix[i * SPATIAL_DIM + j] *
+                                (p_coordinateBip[j] - p_rotationOrigin[j]);
+                        }
+                        p_relWorkVelocity[i] =
+                            absWorkVelocity[i] - frameVelocity;
+                    }
+                    const scalar* workVelocity = p_relWorkVelocity;
+
+                    scalar wallWork = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        scalar uiTan = 0.0;
+                        scalar uiWallTan = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar ninj = p_nxWall[i] * p_nxWall[j];
+                            const scalar proj = (i == j) ? (1.0 - ninj) : -ninj;
+                            uiTan += proj * p_uNearWall[j];
+                            uiWallTan += proj * uWall[j];
+                        }
+                        wallWork -= uWallCoeffsBip[ip] * (uiTan - uiWallTan) *
+                                    workVelocity[i];
+                    }
+                    p_rhs[nearestNode] += wallWork;
+                }
+                else
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj = areaVec[faceOffSet + j];
+                        p_rhs[nearestNode] += vwBip[j] * axj;
+                    }
                 }
 
                 //================================
@@ -938,6 +1197,12 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
         const bool includeAdv = domain->type() == domainType::fluid;
         const bool includeViscousWork =
             domain->heatTransfer_.includeViscousWork_ && includeAdv;
+        // tau.U as a single face-average flux instead of a per-ip flux
+        const bool viscousWorkAtElement =
+            includeViscousWork && usesElementViscousWork_();
+        const bool laplacianViscousWork = usesLaplacianViscousWork_();
+        // the bulk term is dropped for an incompressible material
+        const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
         // space for LHS/RHS; nodesPerElement*nodesPerElement and
         // nodesPerElement
@@ -1062,6 +1327,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
             MasterElement* meFC = MasterElementRepo::get_surface_master_element(
                 sideBucket.topology());
             const label nodesPerSide = meFC->nodesPerElement_;
+            const scalar invNodesPerSide = 1.0 / nodesPerSide;
             const label numScsBip = meFC->numIntPoints_;
 
             // resize some things; matrix related
@@ -1245,23 +1511,39 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
                             workVelocity[i] = U[i] - frameVelocity;
                         }
 
-                        scalar divU = 0.0;
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        if (laplacianViscousWork)
                         {
-                            divU += dudx[i * SPATIAL_DIM + i];
-                        }
-
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_vw[ni * SPATIAL_DIM + i] =
-                                -2.0 / 3.0 * muEff * divU * workVelocity[i];
-                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
                             {
-                                p_vw[ni * SPATIAL_DIM + i] +=
-                                    muEff *
-                                    (dudx[i * SPATIAL_DIM + j] +
-                                     dudx[j * SPATIAL_DIM + i]) *
-                                    workVelocity[j];
+                                p_vw[ni * SPATIAL_DIM + i] = 0.0;
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    p_vw[ni * SPATIAL_DIM + i] +=
+                                        muEff * dudx[j * SPATIAL_DIM + i] *
+                                        workVelocity[j];
+                                }
+                            }
+                        }
+                        else
+                        {
+                            scalar divU = 0.0;
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                divU += dudx[i * SPATIAL_DIM + i];
+                            }
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] = -2.0 / 3.0 * comp *
+                                                             muEff * divU *
+                                                             workVelocity[i];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    p_vw[ni * SPATIAL_DIM + i] +=
+                                        muEff *
+                                        (dudx[i * SPATIAL_DIM + j] +
+                                         dudx[j * SPATIAL_DIM + i]) *
+                                        workVelocity[j];
+                                }
                             }
                         }
                     }
@@ -1337,7 +1619,9 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
 
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
+                            p_vwBip[i] +=
+                                (viscousWorkAtElement ? invNodesPerSide : r) *
+                                p_vw[ic * SPATIAL_DIM + i];
                             p_omegaCrossRBip[i] +=
                                 r * p_omegaCrossR[ic * SPATIAL_DIM + i];
                         }
@@ -1415,6 +1699,46 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
         const bool includeAdv = domain->type() == domainType::fluid;
         const bool includeViscousWork =
             domain->heatTransfer_.includeViscousWork_ && includeAdv;
+        // wall-function shear replaces the nodal stress at a turbulent wall
+        const stk::mesh::Field<scalar>* wallSideUSTKFieldPtr = nullptr;
+        bool wallShearWork =
+            includeViscousWork &&
+            domain->turbulence_.option_ != turbulenceOption::laminar &&
+            wallViscousWorkModel_() != viscousWorkWallModel::elementStress;
+        if (wallShearWork)
+        {
+            const auto* sideU = model_->URef().sideFieldPtr();
+            wallShearWork = sideU != nullptr &&
+                            model_->URef()
+                                    .boundaryConditionRef(domain->index(),
+                                                          boundary->index())
+                                    .type() == boundaryConditionType::noSlip;
+            if (wallShearWork)
+            {
+                wallSideUSTKFieldPtr = sideU->stkFieldPtr();
+                wallShearWork = wallSideUSTKFieldPtr != nullptr;
+            }
+        }
+        const bool wallShearWorkAtVertex =
+            wallShearWork &&
+            wallViscousWorkModel_() == viscousWorkWallModel::vertexVelocity;
+        const auto* uWallCoeffsSTKFieldPtr =
+            wallShearWork ? model_->uWallCoeffsRef().stkFieldPtr() : nullptr;
+        std::vector<scalar> nxWall(SPATIAL_DIM);
+        std::vector<scalar> uNearWall(SPATIAL_DIM);
+        std::vector<scalar> relWorkVelocity(SPATIAL_DIM);
+        std::vector<scalar> coordBipWall(SPATIAL_DIM);
+        scalar* p_nxWall = &nxWall[0];
+        scalar* p_uNearWall = &uNearWall[0];
+        scalar* p_relWorkVelocity = &relWorkVelocity[0];
+        scalar* p_coordBipWall = &coordBipWall[0];
+
+        // tau.U as a single face-average flux instead of a per-ip flux
+        const bool viscousWorkAtElement =
+            includeViscousWork && !wallShearWork && usesElementViscousWork_();
+        const bool laplacianViscousWork = usesLaplacianViscousWork_();
+        // the bulk term is dropped for an incompressible material
+        const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
         // space for LHS/RHS; nodesPerElement*nodesPerElement and
         // nodesPerElement
@@ -1436,6 +1760,8 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
         std::vector<scalar> ws_cp;
         std::vector<scalar> ws_T;
         std::vector<scalar> ws_vw;
+        std::vector<scalar> ws_wallU;
+        std::vector<scalar> ws_wallCoord;
         std::vector<scalar> ws_pressure;
         std::vector<scalar> ws_omegaCrossR;
 
@@ -1520,6 +1846,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
             MasterElement* meFC = MasterElementRepo::get_surface_master_element(
                 sideBucket.topology());
             const label nodesPerSide = meFC->nodesPerElement_;
+            const scalar invNodesPerSide = 1.0 / nodesPerSide;
             const label numScsBip = meFC->numIntPoints_;
 
             // mapping from ip to nodes for this ordinal; face perspective (use
@@ -1539,6 +1866,8 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
             ws_T.resize(nodesPerSide);
             ws_cp.resize(nodesPerSide);
             ws_vw.resize(nodesPerSide * SPATIAL_DIM);
+            ws_wallU.resize(nodesPerSide * SPATIAL_DIM);
+            ws_wallCoord.resize(nodesPerSide * SPATIAL_DIM);
             ws_pressure.resize(nodesPerSide);
             ws_omegaCrossR.resize(nodesPerSide * SPATIAL_DIM);
             ws_shape_function.resize(numScsBip * nodesPerSide);
@@ -1549,6 +1878,8 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
             scalar* p_T = &ws_T[0];
             scalar* p_cp = &ws_cp[0];
             scalar* p_vw = &ws_vw[0];
+            scalar* p_wallU = &ws_wallU[0];
+            scalar* p_wallCoord = &ws_wallCoord[0];
             scalar* p_pressure = &ws_pressure[0];
             scalar* p_omegaCrossR = &ws_omegaCrossR[0];
             scalar* p_shape_function = &ws_shape_function[0];
@@ -1620,6 +1951,11 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
                             stk::mesh::field_data(*gradUSTKFieldPtr, node);
                         const scalar* coordinates =
                             stk::mesh::field_data(coordsSTKFieldRef, node);
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_wallU[ni * SPATIAL_DIM + j] = U[j];
+                            p_wallCoord[ni * SPATIAL_DIM + j] = coordinates[j];
+                        }
 
                         // tau is invariant to a rigid-frame rotation because
                         // the symmetric gradient of Omega x r is zero.  Only
@@ -1641,23 +1977,39 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
                             workVelocity[i] = U[i] - frameVelocity;
                         }
 
-                        scalar divU = 0.0;
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        if (laplacianViscousWork)
                         {
-                            divU += dudx[i * SPATIAL_DIM + i];
-                        }
-
-                        for (label i = 0; i < SPATIAL_DIM; ++i)
-                        {
-                            p_vw[ni * SPATIAL_DIM + i] =
-                                -2.0 / 3.0 * muEff * divU * workVelocity[i];
-                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
                             {
-                                p_vw[ni * SPATIAL_DIM + i] +=
-                                    muEff *
-                                    (dudx[i * SPATIAL_DIM + j] +
-                                     dudx[j * SPATIAL_DIM + i]) *
-                                    workVelocity[j];
+                                p_vw[ni * SPATIAL_DIM + i] = 0.0;
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    p_vw[ni * SPATIAL_DIM + i] +=
+                                        muEff * dudx[j * SPATIAL_DIM + i] *
+                                        workVelocity[j];
+                                }
+                            }
+                        }
+                        else
+                        {
+                            scalar divU = 0.0;
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                divU += dudx[i * SPATIAL_DIM + i];
+                            }
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] = -2.0 / 3.0 * comp *
+                                                             muEff * divU *
+                                                             workVelocity[i];
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    p_vw[ni * SPATIAL_DIM + i] +=
+                                        muEff *
+                                        (dudx[i * SPATIAL_DIM + j] +
+                                         dudx[j * SPATIAL_DIM + i]) *
+                                        workVelocity[j];
+                                }
                             }
                         }
                     }
@@ -1722,7 +2074,9 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
 
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
+                            p_vwBip[i] +=
+                                (viscousWorkAtElement ? invNodesPerSide : r) *
+                                p_vw[ic * SPATIAL_DIM + i];
                             p_omegaCrossRBip[i] +=
                                 r * p_omegaCrossR[ic * SPATIAL_DIM + i];
                         }
@@ -1746,10 +2100,104 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallFixedValue_(
                     //================================
                     // Viscous Work
                     //================================
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    // wall-function shear working against the wall velocity
+                    const scalar* uWallCoeffsBip =
+                        wallShearWork ? stk::mesh::field_data(
+                                            *uWallCoeffsSTKFieldPtr, side)
+                                      : nullptr;
+                    const scalar* uWallVec =
+                        wallShearWork
+                            ? stk::mesh::field_data(*wallSideUSTKFieldPtr, side)
+                            : nullptr;
+                    if (uWallCoeffsBip != nullptr && uWallVec != nullptr)
                     {
-                        const scalar axj = areaVec[ip * SPATIAL_DIM + j];
-                        p_rhs[nearestNode] += vwBip[j] * axj;
+                        scalar asqWall = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+                            asqWall += axj * axj;
+                        }
+                        const scalar amagWall = std::sqrt(asqWall);
+
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_nxWall[j] =
+                                areaVec[ip * SPATIAL_DIM + j] / amagWall;
+                            p_uNearWall[j] = 0.0;
+                        }
+                        for (label ic = 0; ic < nodesPerSide; ++ic)
+                        {
+                            const scalar r =
+                                p_shape_function[offSetSF_face + ic];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_uNearWall[j] +=
+                                    r * p_wallU[ic * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // rothalpy contracts the shear with the relative
+                        // velocity
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_coordBipWall[j] = 0.0;
+                        }
+                        for (label ic = 0; ic < nodesPerSide; ++ic)
+                        {
+                            const scalar r =
+                                p_shape_function[offSetSF_face + ic];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_coordBipWall[j] +=
+                                    r * p_wallCoord[ic * SPATIAL_DIM + j];
+                            }
+                        }
+                        const scalar* uWall = &uWallVec[ip * SPATIAL_DIM];
+                        const scalar* absWorkVelocity =
+                            wallShearWorkAtVertex
+                                ? &p_wallU[nearestNode * SPATIAL_DIM]
+                                : uWall;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            scalar frameVelocity = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                frameVelocity +=
+                                    p_viscousWorkFrameMatrix[i * SPATIAL_DIM +
+                                                             j] *
+                                    (p_coordBipWall[j] -
+                                     p_viscousWorkFrameOrigin[j]);
+                            }
+                            p_relWorkVelocity[i] =
+                                absWorkVelocity[i] - frameVelocity;
+                        }
+                        const scalar* workVelocity = p_relWorkVelocity;
+
+                        scalar wallWork = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            scalar uiTan = 0.0;
+                            scalar uiWallTan = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar ninj = p_nxWall[i] * p_nxWall[j];
+                                const scalar proj =
+                                    (i == j) ? (1.0 - ninj) : -ninj;
+                                uiTan += proj * p_uNearWall[j];
+                                uiWallTan += proj * uWall[j];
+                            }
+                            wallWork -= uWallCoeffsBip[ip] *
+                                        (uiTan - uiWallTan) * workVelocity[i];
+                        }
+                        p_rhs[nearestNode] += wallWork;
+                    }
+                    else
+                    {
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+                            p_rhs[nearestNode] += vwBip[j] * axj;
+                        }
                     }
 
                     //================================
@@ -1785,6 +2233,46 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
     const bool includeAdv = domain->type() == domainType::fluid;
     const bool includeViscousWork =
         domain->heatTransfer_.includeViscousWork_ && includeAdv;
+    // wall-function shear replaces the nodal stress at a turbulent wall
+    const stk::mesh::Field<scalar>* wallSideUSTKFieldPtr = nullptr;
+    bool wallShearWork =
+        includeViscousWork &&
+        domain->turbulence_.option_ != turbulenceOption::laminar &&
+        wallViscousWorkModel_() != viscousWorkWallModel::elementStress;
+    if (wallShearWork)
+    {
+        const auto* sideU = model_->URef().sideFieldPtr();
+        wallShearWork =
+            sideU != nullptr &&
+            model_->URef()
+                    .boundaryConditionRef(domain->index(), boundary->index())
+                    .type() == boundaryConditionType::noSlip;
+        if (wallShearWork)
+        {
+            wallSideUSTKFieldPtr = sideU->stkFieldPtr();
+            wallShearWork = wallSideUSTKFieldPtr != nullptr;
+        }
+    }
+    const bool wallShearWorkAtVertex =
+        wallShearWork &&
+        wallViscousWorkModel_() == viscousWorkWallModel::vertexVelocity;
+    const auto* uWallCoeffsSTKFieldPtr =
+        wallShearWork ? model_->uWallCoeffsRef().stkFieldPtr() : nullptr;
+    std::vector<scalar> nxWall(SPATIAL_DIM);
+    std::vector<scalar> uNearWall(SPATIAL_DIM);
+    std::vector<scalar> relWorkVelocity(SPATIAL_DIM);
+    std::vector<scalar> coordBipWall(SPATIAL_DIM);
+    scalar* p_nxWall = &nxWall[0];
+    scalar* p_uNearWall = &uNearWall[0];
+    scalar* p_relWorkVelocity = &relWorkVelocity[0];
+    scalar* p_coordBipWall = &coordBipWall[0];
+
+    // tau.U as a single face-average flux instead of a per-ip flux
+    const bool viscousWorkAtElement =
+        includeViscousWork && !wallShearWork && usesElementViscousWork_();
+    const bool laplacianViscousWork = usesLaplacianViscousWork_();
+    // the bulk term is dropped for an incompressible material
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     // space for LHS/RHS; nodesPerElement*nodesPerElement and nodesPerElement
     std::vector<scalar> lhs;
@@ -1803,6 +2291,8 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
 
     // nodal fields to gather
     std::vector<scalar> ws_vw;
+    std::vector<scalar> ws_wallU;
+    std::vector<scalar> ws_wallCoord;
     std::vector<scalar> ws_pressure;
     std::vector<scalar> ws_omegaCrossR;
 
@@ -1876,6 +2366,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
+        const scalar invNodesPerSide = 1.0 / nodesPerSide;
         const label numScsBip = meFC->numIntPoints_;
 
         // mapping from ip to nodes for this ordinal; face perspective (use with
@@ -1893,6 +2384,8 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
 
         // algorithm related; element
         ws_vw.resize(nodesPerSide * SPATIAL_DIM);
+        ws_wallU.resize(nodesPerSide * SPATIAL_DIM);
+        ws_wallCoord.resize(nodesPerSide * SPATIAL_DIM);
         ws_pressure.resize(nodesPerSide);
         ws_omegaCrossR.resize(nodesPerSide * SPATIAL_DIM);
         ws_shape_function.resize(numScsBip * nodesPerSide);
@@ -1901,6 +2394,8 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
         scalar* p_lhs = &lhs[0];
         scalar* p_rhs = &rhs[0];
         scalar* p_vw = &ws_vw[0];
+        scalar* p_wallU = &ws_wallU[0];
+        scalar* p_wallCoord = &ws_wallCoord[0];
         scalar* p_pressure = &ws_pressure[0];
         scalar* p_omegaCrossR = &ws_omegaCrossR[0];
         scalar* p_shape_function = &ws_shape_function[0];
@@ -1966,6 +2461,11 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
                         stk::mesh::field_data(*gradUSTKFieldPtr, node);
                     const scalar* coordinates =
                         stk::mesh::field_data(coordsSTKFieldRef, node);
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_wallU[ni * SPATIAL_DIM + j] = U[j];
+                        p_wallCoord[ni * SPATIAL_DIM + j] = coordinates[j];
+                    }
 
                     // tau is invariant to a rigid-frame rotation because the
                     // symmetric gradient of Omega x r is zero.  Only the
@@ -1984,23 +2484,39 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
                         workVelocity[i] = U[i] - frameVelocity;
                     }
 
-                    scalar divU = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (laplacianViscousWork)
                     {
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    }
-
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * workVelocity[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                workVelocity[j];
+                            p_vw[ni * SPATIAL_DIM + i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff * dudx[j * SPATIAL_DIM + i] *
+                                    workVelocity[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += dudx[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_vw[ni * SPATIAL_DIM + i] = -2.0 / 3.0 * comp *
+                                                         muEff * divU *
+                                                         workVelocity[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff *
+                                    (dudx[i * SPATIAL_DIM + j] +
+                                     dudx[j * SPATIAL_DIM + i]) *
+                                    workVelocity[j];
+                            }
                         }
                     }
                 }
@@ -2058,7 +2574,9 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
 
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
+                        p_vwBip[i] +=
+                            (viscousWorkAtElement ? invNodesPerSide : r) *
+                            p_vw[ic * SPATIAL_DIM + i];
                         p_omegaCrossRBip[i] +=
                             r * p_omegaCrossR[ic * SPATIAL_DIM + i];
                     }
@@ -2077,10 +2595,97 @@ void totalEnergyAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
                 //================================
                 // Viscous Work
                 //================================
-                for (label j = 0; j < SPATIAL_DIM; ++j)
+                // wall-function shear against the wall/near-wall velocity
+                const scalar* uWallCoeffsBip =
+                    wallShearWork
+                        ? stk::mesh::field_data(*uWallCoeffsSTKFieldPtr, side)
+                        : nullptr;
+                const scalar* uWallVec =
+                    wallShearWork
+                        ? stk::mesh::field_data(*wallSideUSTKFieldPtr, side)
+                        : nullptr;
+                if (uWallCoeffsBip != nullptr && uWallVec != nullptr)
                 {
-                    const scalar axj = areaVec[ip * SPATIAL_DIM + j];
-                    p_rhs[indexR] += vwBip[j] * axj;
+                    scalar asqWall = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+                        asqWall += axj * axj;
+                    }
+                    const scalar amagWall = std::sqrt(asqWall);
+
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_nxWall[j] = areaVec[ip * SPATIAL_DIM + j] / amagWall;
+                        p_uNearWall[j] = 0.0;
+                    }
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        const scalar r = p_shape_function[offSetSF_face + ic];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_uNearWall[j] += r * p_wallU[ic * SPATIAL_DIM + j];
+                        }
+                    }
+
+                    // rothalpy contracts the shear with the relative velocity
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_coordBipWall[j] = 0.0;
+                    }
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        const scalar r = p_shape_function[offSetSF_face + ic];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_coordBipWall[j] +=
+                                r * p_wallCoord[ic * SPATIAL_DIM + j];
+                        }
+                    }
+                    const scalar* uWall = &uWallVec[ip * SPATIAL_DIM];
+                    const scalar* absWorkVelocity =
+                        wallShearWorkAtVertex
+                            ? &p_wallU[nearestNode * SPATIAL_DIM]
+                            : uWall;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        scalar frameVelocity = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            frameVelocity +=
+                                p_viscousWorkFrameMatrix[i * SPATIAL_DIM + j] *
+                                (p_coordBipWall[j] -
+                                 p_viscousWorkFrameOrigin[j]);
+                        }
+                        p_relWorkVelocity[i] =
+                            absWorkVelocity[i] - frameVelocity;
+                    }
+                    const scalar* workVelocity = p_relWorkVelocity;
+
+                    scalar wallWork = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        scalar uiTan = 0.0;
+                        scalar uiWallTan = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar ninj = p_nxWall[i] * p_nxWall[j];
+                            const scalar proj = (i == j) ? (1.0 - ninj) : -ninj;
+                            uiTan += proj * p_uNearWall[j];
+                            uiWallTan += proj * uWall[j];
+                        }
+                        wallWork -= uWallCoeffsBip[ip] * (uiTan - uiWallTan) *
+                                    workVelocity[i];
+                    }
+                    p_rhs[nearestNode] += wallWork;
+                }
+                else
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+                        p_rhs[nearestNode] += vwBip[j] * axj;
+                    }
                 }
 
                 //================================
@@ -2393,6 +2998,12 @@ void totalEnergyAssembler::assembleElemTermsBoundaryInletFixedValue_(
     const bool includeAdv = domain->type() == domainType::fluid;
     const bool includeViscousWork =
         domain->heatTransfer_.includeViscousWork_ && includeAdv;
+    // tau.U as a single face-average flux instead of a per-ip flux
+    const bool viscousWorkAtElement =
+        includeViscousWork && usesElementViscousWork_();
+    const bool laplacianViscousWork = usesLaplacianViscousWork_();
+    // the bulk term is dropped for an incompressible material
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     // space for LHS/RHS; nodesPerElement*nodesPerElement and nodesPerElement
     std::vector<scalar> lhs;
@@ -2507,6 +3118,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryInletFixedValue_(
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
+        const scalar invNodesPerSide = 1.0 / nodesPerSide;
         const label numScsBip = meFC->numIntPoints_;
 
         // resize some things; matrix related
@@ -2683,23 +3295,39 @@ void totalEnergyAssembler::assembleElemTermsBoundaryInletFixedValue_(
                         workVelocity[i] = U[i] - frameVelocity;
                     }
 
-                    scalar divU = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (laplacianViscousWork)
                     {
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    }
-
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * workVelocity[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                workVelocity[j];
+                            p_vw[ni * SPATIAL_DIM + i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff * dudx[j * SPATIAL_DIM + i] *
+                                    workVelocity[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += dudx[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_vw[ni * SPATIAL_DIM + i] = -2.0 / 3.0 * comp *
+                                                         muEff * divU *
+                                                         workVelocity[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff *
+                                    (dudx[i * SPATIAL_DIM + j] +
+                                     dudx[j * SPATIAL_DIM + i]) *
+                                    workVelocity[j];
+                            }
                         }
                     }
                 }
@@ -2775,7 +3403,9 @@ void totalEnergyAssembler::assembleElemTermsBoundaryInletFixedValue_(
 
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
+                        p_vwBip[i] +=
+                            (viscousWorkAtElement ? invNodesPerSide : r) *
+                            p_vw[ic * SPATIAL_DIM + i];
                         p_omegaCrossRBip[i] +=
                             r * p_omegaCrossR[ic * SPATIAL_DIM + i];
                     }
@@ -2883,6 +3513,12 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOutletZeroGradient_(
     const bool includeAdv = domain->type() == domainType::fluid;
     const bool includeViscousWork =
         domain->heatTransfer_.includeViscousWork_ && includeAdv;
+    // tau.U as a single face-average flux instead of a per-ip flux
+    const bool viscousWorkAtElement =
+        includeViscousWork && usesElementViscousWork_();
+    const bool laplacianViscousWork = usesLaplacianViscousWork_();
+    // the bulk term is dropped for an incompressible material
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     // space for LHS/RHS; nodesPerElement*nodesPerElement and nodesPerElement
     std::vector<scalar> lhs;
@@ -2980,6 +3616,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOutletZeroGradient_(
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
+        const scalar invNodesPerSide = 1.0 / nodesPerSide;
         const label numScsBip = meFC->numIntPoints_;
 
         // resize some things; matrix related
@@ -3110,23 +3747,39 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOutletZeroGradient_(
                         workVelocity[i] = U[i] - frameVelocity;
                     }
 
-                    scalar divU = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (laplacianViscousWork)
                     {
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    }
-
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * workVelocity[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                workVelocity[j];
+                            p_vw[ni * SPATIAL_DIM + i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff * dudx[j * SPATIAL_DIM + i] *
+                                    workVelocity[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += dudx[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_vw[ni * SPATIAL_DIM + i] = -2.0 / 3.0 * comp *
+                                                         muEff * divU *
+                                                         workVelocity[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff *
+                                    (dudx[i * SPATIAL_DIM + j] +
+                                     dudx[j * SPATIAL_DIM + i]) *
+                                    workVelocity[j];
+                            }
                         }
                     }
                 }
@@ -3183,7 +3836,9 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOutletZeroGradient_(
 
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
+                        p_vwBip[i] +=
+                            (viscousWorkAtElement ? invNodesPerSide : r) *
+                            p_vw[ic * SPATIAL_DIM + i];
                         p_omegaCrossRBip[i] +=
                             r * p_omegaCrossR[ic * SPATIAL_DIM + i];
                     }
@@ -3248,6 +3903,12 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOpening_(
     const bool includeAdv = domain->type() == domainType::fluid;
     const bool includeViscousWork =
         domain->heatTransfer_.includeViscousWork_ && includeAdv;
+    // tau.U as a single face-average flux instead of a per-ip flux
+    const bool viscousWorkAtElement =
+        includeViscousWork && usesElementViscousWork_();
+    const bool laplacianViscousWork = usesLaplacianViscousWork_();
+    // the bulk term is dropped for an incompressible material
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     // space for LHS/RHS; nodesPerElement*nodesPerElement and nodesPerElement
     std::vector<scalar> lhs;
@@ -3362,6 +4023,7 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOpening_(
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
         const label nodesPerSide = meFC->nodesPerElement_;
+        const scalar invNodesPerSide = 1.0 / nodesPerSide;
         const label numScsBip = meFC->numIntPoints_;
 
         // resize some things; matrix related
@@ -3540,23 +4202,39 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOpening_(
                         workVelocity[i] = U[i] - frameVelocity;
                     }
 
-                    scalar divU = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (laplacianViscousWork)
                     {
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    }
-
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * workVelocity[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                workVelocity[j];
+                            p_vw[ni * SPATIAL_DIM + i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff * dudx[j * SPATIAL_DIM + i] *
+                                    workVelocity[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += dudx[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_vw[ni * SPATIAL_DIM + i] = -2.0 / 3.0 * comp *
+                                                         muEff * divU *
+                                                         workVelocity[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff *
+                                    (dudx[i * SPATIAL_DIM + j] +
+                                     dudx[j * SPATIAL_DIM + i]) *
+                                    workVelocity[j];
+                            }
                         }
                     }
                 }
@@ -3641,7 +4319,9 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOpening_(
 
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
+                            p_vwBip[i] +=
+                                (viscousWorkAtElement ? invNodesPerSide : r) *
+                                p_vw[ic * SPATIAL_DIM + i];
                             p_omegaCrossRBip[i] +=
                                 r * p_omegaCrossR[ic * SPATIAL_DIM + i];
                         }
@@ -3710,7 +4390,9 @@ void totalEnergyAssembler::assembleElemTermsBoundaryOpening_(
 
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vwBip[i] += r * p_vw[ic * SPATIAL_DIM + i];
+                            p_vwBip[i] +=
+                                (viscousWorkAtElement ? invNodesPerSide : r) *
+                                p_vw[ic * SPATIAL_DIM + i];
                             p_omegaCrossRBip[i] +=
                                 r * p_omegaCrossR[ic * SPATIAL_DIM + i];
                         }

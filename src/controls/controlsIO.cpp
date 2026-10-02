@@ -963,6 +963,12 @@ void controls::read(YAML::Node inputNode)
                         .template as<bool>();
             }
 
+            if (expertParameters["mass_flux_refresh"])
+            {
+                solver_.solverControl_.expertParameters_.massFluxRefresh_ =
+                    expertParameters["mass_flux_refresh"].template as<bool>();
+            }
+
             if (expertParameters["blend_factor_max"])
             {
                 const scalar blendMax =
@@ -1066,6 +1072,31 @@ void controls::read(YAML::Node inputNode)
                         errorMsg("lithe: reanchor_interval must be >= 0");
                     }
                 }
+            }
+
+            if (expertParameters["viscous_work_type"])
+            {
+                solver_.solverControl_.expertParameters_.viscousWorkType_ =
+                    convertViscousWorkTypeFromString(
+                        expertParameters["viscous_work_type"]
+                            .template as<std::string>());
+            }
+
+            if (expertParameters["viscous_work_stress_type"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .viscousWorkStressType_ =
+                    convertViscousWorkStressTypeFromString(
+                        expertParameters["viscous_work_stress_type"]
+                            .template as<std::string>());
+            }
+
+            if (expertParameters["viscous_work_wall_model"])
+            {
+                solver_.solverControl_.expertParameters_.viscousWorkWallModel_ =
+                    convertViscousWorkWallModelFromString(
+                        expertParameters["viscous_work_wall_model"]
+                            .template as<std::string>());
             }
 
             if (expertParameters["false_mass_accumulation"])

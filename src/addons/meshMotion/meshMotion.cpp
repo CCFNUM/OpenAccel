@@ -254,7 +254,7 @@ void meshMotion::updateMeshVelocityField_()
             const auto& zone = this->meshRef().zoneRef(iZone);
             // chord velocity (D - D_old)/dt has divergence 2(cos(w dt)-1)/dt: a
             // spurious compression of the whole block that grows with w dt
-            if (!zone.meshDeforming() &&
+            if (zone.meshTransforming() && !zone.meshDeforming() &&
                 zone.transformationRef().type() == meshMotionType::rotating)
             {
                 updateRigidRotationMeshVelocity_(iZone);

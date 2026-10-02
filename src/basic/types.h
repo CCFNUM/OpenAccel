@@ -599,6 +599,34 @@ enum class gradientAveragingType
 
 gradientAveragingType convertGradientAveragingTypeFromString(std::string s);
 
+// Where the viscous-work flux tau.U of the total-enthalpy equation is formed
+enum class viscousWorkType
+{
+    ip,           // tau.U rebuilt at every integration point
+    elementCentre // one element/face-average tau.U dotted with each area vector
+};
+
+viscousWorkType convertViscousWorkTypeFromString(std::string s);
+
+// Stress carried by the total-enthalpy viscous work flux tau.U
+enum class viscousWorkStressType
+{
+    fullStress, // mu(grad U + grad U^T), less the bulk term when compressible
+    laplacian   // mu grad U only; contracted with U this is mu grad(U.U/2)
+};
+
+viscousWorkStressType convertViscousWorkStressTypeFromString(std::string s);
+
+// Viscous work carried by a no-slip wall
+enum class viscousWorkWallModel
+{
+    elementStress, // tau.U from the element (or nodal) velocity gradient
+    faceVelocity,  // wall shear force against the prescribed wall velocity
+    vertexVelocity // wall shear force against the near-wall nodal velocity
+};
+
+viscousWorkWallModel convertViscousWorkWallModelFromString(std::string s);
+
 // Wall-function type
 enum class wallFunctionType
 {

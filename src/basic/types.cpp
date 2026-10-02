@@ -772,6 +772,61 @@ gradientAveragingType convertGradientAveragingTypeFromString(std::string s)
     return it->second;
 }
 
+// Viscous work type
+
+std::unordered_map<std::string, viscousWorkType> viscousWorkTypeMap{
+    {"ip", viscousWorkType::ip},
+    {"integration_point", viscousWorkType::ip},
+    {"element_centre", viscousWorkType::elementCentre},
+    {"element_center", viscousWorkType::elementCentre},
+    {"centre", viscousWorkType::elementCentre},
+    {"center", viscousWorkType::elementCentre},
+};
+
+viscousWorkType convertViscousWorkTypeFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = viscousWorkTypeMap.find(s);
+    if (it == viscousWorkTypeMap.end())
+        errorMsg("viscous work type '" + s + "' not available");
+    return it->second;
+}
+
+// Viscous work stress type
+
+std::unordered_map<std::string, viscousWorkStressType> viscousWorkStressTypeMap{
+    {"full_stress", viscousWorkStressType::fullStress},
+    {"full", viscousWorkStressType::fullStress},
+    {"laplacian", viscousWorkStressType::laplacian},
+    {"laplacian_stresses", viscousWorkStressType::laplacian},
+};
+
+viscousWorkStressType convertViscousWorkStressTypeFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = viscousWorkStressTypeMap.find(s);
+    if (it == viscousWorkStressTypeMap.end())
+        errorMsg("viscous work stress type '" + s + "' not available");
+    return it->second;
+}
+
+// Viscous work wall model
+
+std::unordered_map<std::string, viscousWorkWallModel> viscousWorkWallModelMap{
+    {"element_stress", viscousWorkWallModel::elementStress},
+    {"face_velocity", viscousWorkWallModel::faceVelocity},
+    {"vertex_velocity", viscousWorkWallModel::vertexVelocity},
+};
+
+viscousWorkWallModel convertViscousWorkWallModelFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = viscousWorkWallModelMap.find(s);
+    if (it == viscousWorkWallModelMap.end())
+        errorMsg("viscous work wall model '" + s + "' not available");
+    return it->second;
+}
+
 // Wall-function type
 
 std::unordered_map<std::string, wallFunctionType> wallFunctionTypeMap{

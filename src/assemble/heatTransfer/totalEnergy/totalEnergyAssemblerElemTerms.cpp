@@ -22,6 +22,13 @@ void totalEnergyAssembler::assembleElemTermsInterior_(const domain* domain,
     const bool includeAdv = domain->type() == domainType::fluid;
     const bool includeViscousWork =
         domain->heatTransfer_.includeViscousWork_ && includeAdv;
+    // tau.U rebuilt at each ip, or one element-average flux for all ips
+    const bool viscousWorkAtElement =
+        includeViscousWork && usesElementViscousWork_();
+    const bool viscousWorkAtIp = includeViscousWork && !viscousWorkAtElement;
+    const bool laplacianViscousWork = usesLaplacianViscousWork_();
+    // the bulk term is dropped for an incompressible material, as in momentum
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
     // In a rotating zone, transport the algebraically equivalent rothalpy.
     // The public field is transformed back to absolute h0 after every solve.
     const bool steadyRotatingEnergyForm =
@@ -338,6 +345,103 @@ void totalEnergyAssembler::assembleElemTermsInterior_(const domain* domain,
                            &ws_deriv[0]);
             }
 
+            // vertex-averaged mu and U; gradient is the ip-gradient mean
+            if (viscousWorkAtElement)
+            {
+                const scalar invNodes = 1.0 / nodesPerElement;
+                const scalar invNumIp = 1.0 / numScsIp;
+
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordIp[j] = 0.0;
+                    p_velocityIp[j] = 0.0;
+                }
+                for (label j = 0; j < SPATIAL_DIM * SPATIAL_DIM; ++j)
+                {
+                    p_gradVelocityIp[j] = 0.0;
+                }
+
+                scalar muEffElem = 0.0;
+                for (label ic = 0; ic < nodesPerElement; ++ic)
+                {
+                    muEffElem += invNodes * p_muEff[ic];
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_velocityIp[i] += invNodes * p_U[ic * SPATIAL_DIM + i];
+                        p_coordIp[i] +=
+                            invNodes * p_coordinates[ic * SPATIAL_DIM + i];
+                    }
+                }
+
+                for (label ip = 0; ip < numScsIp; ++ip)
+                {
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const label offSetDnDx =
+                            SPATIAL_DIM * nodesPerElement * ip +
+                            ic * SPATIAL_DIM;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            const scalar Ui = p_U[ic * SPATIAL_DIM + i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_gradVelocityIp[i * SPATIAL_DIM + j] +=
+                                    invNumIp * Ui * p_dndx[offSetDnDx + j];
+                            }
+                        }
+                    }
+                }
+
+                // rothalpy contracts tau with the relative velocity
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    p_omegaCrossR[i] = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_omegaCrossR[i] +=
+                            p_viscousWorkFrameMatrix[i * SPATIAL_DIM + j] *
+                            (p_coordIp[j] - p_rotationOrigin[j]);
+                    }
+                }
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                    p_velocityIp[i] -= p_omegaCrossR[i];
+
+                if (laplacianViscousWork)
+                {
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_vwIp[i] = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_vwIp[i] += muEffElem *
+                                         p_gradVelocityIp[j * SPATIAL_DIM + i] *
+                                         p_velocityIp[j];
+                        }
+                    }
+                }
+                else
+                {
+                    scalar divU = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        divU += p_gradVelocityIp[i * SPATIAL_DIM + i];
+                    }
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        p_vwIp[i] = -2.0 / 3.0 * comp * muEffElem * divU *
+                                    p_velocityIp[i];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_vwIp[i] +=
+                                muEffElem *
+                                (p_gradVelocityIp[i * SPATIAL_DIM + j] +
+                                 p_gradVelocityIp[j * SPATIAL_DIM + i]) *
+                                p_velocityIp[j];
+                        }
+                    }
+                }
+            }
+
             for (label ip = 0; ip < numScsIp; ++ip)
             {
                 // left and right nodes for this ip
@@ -351,12 +455,18 @@ void totalEnergyAssembler::assembleElemTermsInterior_(const domain* domain,
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     p_coordIp[j] = 0.0;
-                    p_vwIp[j] = 0.0;
-                    p_velocityIp[j] = 0.0;
                 }
-                for (label j = 0; j < SPATIAL_DIM * SPATIAL_DIM; ++j)
+                if (viscousWorkAtIp)
                 {
-                    p_gradVelocityIp[j] = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_vwIp[j] = 0.0;
+                        p_velocityIp[j] = 0.0;
+                    }
+                    for (label j = 0; j < SPATIAL_DIM * SPATIAL_DIM; ++j)
+                    {
+                        p_gradVelocityIp[j] = 0.0;
+                    }
                 }
 
                 // save off ip values; offset to Shape Function
@@ -377,7 +487,7 @@ void totalEnergyAssembler::assembleElemTermsInterior_(const domain* domain,
                     {
                         pIp += r * p_p[ic];
                     }
-                    if (includeViscousWork)
+                    if (viscousWorkAtIp)
                     {
                         muEffIp += r * p_muEff[ic];
                     }
@@ -386,7 +496,7 @@ void totalEnergyAssembler::assembleElemTermsInterior_(const domain* domain,
                     {
                         p_coordIp[i] +=
                             r_coord * p_coordinates[ic * SPATIAL_DIM + i];
-                        if (includeViscousWork)
+                        if (viscousWorkAtIp)
                         {
                             p_velocityIp[i] += r * p_U[ic * SPATIAL_DIM + i];
                             const label offSetDnDx =
@@ -402,11 +512,8 @@ void totalEnergyAssembler::assembleElemTermsInterior_(const domain* domain,
                     }
                 }
 
-                // Form tau.U from the element-consistent velocity gradient at
-                // the SCS integration point.  The former nodal-gradient
-                // interpolation produces false strain for exact solid-body
-                // rotation, especially next to walls.
-                if (includeViscousWork)
+                // element-consistent gradient: a nodal one gives false strain
+                if (viscousWorkAtIp)
                 {
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
@@ -421,22 +528,39 @@ void totalEnergyAssembler::assembleElemTermsInterior_(const domain* domain,
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                         p_velocityIp[i] -= p_omegaCrossR[i];
 
-                    scalar divU = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (laplacianViscousWork)
                     {
-                        divU += p_gradVelocityIp[i * SPATIAL_DIM + i];
-                    }
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_vwIp[i] =
-                            -2.0 / 3.0 * muEffIp * divU * p_velocityIp[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_vwIp[i] +=
-                                muEffIp *
-                                (p_gradVelocityIp[i * SPATIAL_DIM + j] +
-                                 p_gradVelocityIp[j * SPATIAL_DIM + i]) *
-                                p_velocityIp[j];
+                            p_vwIp[i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vwIp[i] +=
+                                    muEffIp *
+                                    p_gradVelocityIp[j * SPATIAL_DIM + i] *
+                                    p_velocityIp[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += p_gradVelocityIp[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_vwIp[i] = -2.0 / 3.0 * comp * muEffIp * divU *
+                                        p_velocityIp[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_vwIp[i] +=
+                                    muEffIp *
+                                    (p_gradVelocityIp[i * SPATIAL_DIM + j] +
+                                     p_gradVelocityIp[j * SPATIAL_DIM + i]) *
+                                    p_velocityIp[j];
+                            }
                         }
                     }
                 }
@@ -672,11 +796,14 @@ void totalEnergyAssembler::assembleElemTermsInterior_(const domain* domain,
                 //================================
                 // Viscous Work
                 //================================
-                for (label j = 0; j < SPATIAL_DIM; ++j)
+                if (includeViscousWork)
                 {
-                    const scalar axj = p_scs_areav[ip * SPATIAL_DIM + j];
-                    p_rhs[il] += vwIp[j] * axj;
-                    p_rhs[ir] -= vwIp[j] * axj;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj = p_scs_areav[ip * SPATIAL_DIM + j];
+                        p_rhs[il] += p_vwIp[j] * axj;
+                        p_rhs[ir] -= p_vwIp[j] * axj;
+                    }
                 }
             }
 

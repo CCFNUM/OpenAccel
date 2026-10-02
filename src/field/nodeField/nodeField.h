@@ -158,6 +158,9 @@ protected:
     // flag to correct gradient at symmetry planes
     bool correctGradient_ = false;
 
+    // flag to take the gradient at overset receptors from their donors
+    bool interpolateOversetReceptorGradient_ = false;
+
     // flag to calculate gradient in terms of the incremental change relative to
     // the node: more accurate gradient
     bool incrementalGradientChange_ = false;

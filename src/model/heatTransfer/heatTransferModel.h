@@ -47,6 +47,7 @@ public:
     using fieldBroker::T0Ref;
     using fieldBroker::TRef;
     using fieldBroker::TWallCoeffsRef;
+    using fieldBroker::uWallCoeffsRef;
 
     // TODO: Implement utility methods for use in
     // equations that inherit from this model, e.g., computation of enthalpy

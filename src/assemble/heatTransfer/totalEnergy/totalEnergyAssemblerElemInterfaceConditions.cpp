@@ -81,6 +81,9 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
 
         const bool includeViscousWork =
             domain->heatTransfer_.includeViscousWork_ && includeAdv;
+        const bool laplacianViscousWork = usesLaplacianViscousWork_();
+        // the bulk term is dropped for an incompressible material
+        const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
         scalar penaltyFactor =
             interfaceSideInfoPtr->interfPtr()->penaltyFactor();
@@ -636,6 +639,7 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                 // Form tau.U on both sides from element-consistent gradients.
                 // Opposing velocities and coordinates have already been
                 // transformed into the current-side coordinate system.
+                // fragments share no element, so tau.U is always ip-evaluated
                 for (label i = 0; i < SPATIAL_DIM; ++i)
                 {
                     cvwBip[i] = 0.0;
@@ -713,31 +717,74 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSide_(
                         }
                     }
 
-                    scalar currentDivU = 0.0;
-                    scalar opposingDivU = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (laplacianViscousWork)
                     {
-                        currentDivU += currentGradUBip[i * SPATIAL_DIM + i];
-                        opposingDivU += opposingGradUBip[i * SPATIAL_DIM + i];
-                    }
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        cvwBip[i] = -2.0 / 3.0 * currentMuEffBip * currentDivU *
-                                    currentUBip[i];
-                        ovwBip[i] = -2.0 / 3.0 * opposingMuEffBip *
-                                    opposingDivU * opposingUBip[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            cvwBip[i] +=
-                                currentMuEffBip *
-                                (currentGradUBip[i * SPATIAL_DIM + j] +
-                                 currentGradUBip[j * SPATIAL_DIM + i]) *
-                                currentUBip[j];
-                            ovwBip[i] +=
-                                opposingMuEffBip *
-                                (opposingGradUBip[i * SPATIAL_DIM + j] +
-                                 opposingGradUBip[j * SPATIAL_DIM + i]) *
-                                opposingUBip[j];
+                            cvwBip[i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                cvwBip[i] +=
+                                    currentMuEffBip *
+                                    currentGradUBip[j * SPATIAL_DIM + i] *
+                                    currentUBip[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += currentGradUBip[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            cvwBip[i] = -2.0 / 3.0 * comp * currentMuEffBip *
+                                        divU * currentUBip[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                cvwBip[i] +=
+                                    currentMuEffBip *
+                                    (currentGradUBip[i * SPATIAL_DIM + j] +
+                                     currentGradUBip[j * SPATIAL_DIM + i]) *
+                                    currentUBip[j];
+                            }
+                        }
+                    }
+                    if (laplacianViscousWork)
+                    {
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            ovwBip[i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                ovwBip[i] +=
+                                    opposingMuEffBip *
+                                    opposingGradUBip[j * SPATIAL_DIM + i] *
+                                    opposingUBip[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += opposingGradUBip[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            ovwBip[i] = -2.0 / 3.0 * comp * opposingMuEffBip *
+                                        divU * opposingUBip[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                ovwBip[i] +=
+                                    opposingMuEffBip *
+                                    (opposingGradUBip[i * SPATIAL_DIM + j] +
+                                     opposingGradUBip[j * SPATIAL_DIM + i]) *
+                                    opposingUBip[j];
+                            }
                         }
                     }
                 }
@@ -976,6 +1023,12 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
     const bool includeAdv = domain->type() == domainType::fluid;
     const bool includeViscousWork =
         domain->heatTransfer_.includeViscousWork_ && includeAdv;
+    const bool laplacianViscousWork = usesLaplacianViscousWork_();
+    // the bulk term is dropped for an incompressible material
+    const scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
+    // tau.U as a single face-average flux instead of a per-ip flux
+    const bool viscousWorkAtElement =
+        includeViscousWork && usesElementViscousWork_();
 
     // space for LHS/RHS; nodesPerElem*nodesPerElem and nodesPerElem
     std::vector<scalar> lhs;
@@ -1130,27 +1183,38 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
                     const scalar* dudx =
                         stk::mesh::field_data(*gradUSTKFieldPtr, node);
 
-                    // calculate divergence of velocity
-                    scalar divU = 0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    // viscous work flux VW_i = tau_ij U_j
+                    if (laplacianViscousWork)
                     {
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    }
-
-                    // calculate viscous work: VW_i = Σⱼ τ_ji U_j
-                    // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3
-                    // δ_ji ∇·U)
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_c_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * U[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_c_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                U[j];
+                            p_c_vw[ni * SPATIAL_DIM + i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_c_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff * dudx[j * SPATIAL_DIM + i] * U[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += dudx[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_c_vw[ni * SPATIAL_DIM + i] =
+                                -2.0 / 3.0 * comp * muEff * divU * U[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_c_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff *
+                                    (dudx[i * SPATIAL_DIM + j] +
+                                     dudx[j * SPATIAL_DIM + i]) *
+                                    U[j];
+                            }
                         }
                     }
                 }
@@ -1186,27 +1250,38 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
                     const scalar* dudx =
                         stk::mesh::field_data(*gradUSTKFieldPtr, node);
 
-                    // calculate divergence of velocity
-                    scalar divU = 0;
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    // viscous work flux VW_i = tau_ij U_j
+                    if (laplacianViscousWork)
                     {
-                        divU += dudx[i * SPATIAL_DIM + i];
-                    }
-
-                    // calculate viscous work: VW_i = Σⱼ τ_ji U_j
-                    // where τ_ji = μ(∂U_j/∂x_i + ∂U_i/∂x_j - 2/3
-                    // δ_ji ∇·U)
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        p_o_vw[ni * SPATIAL_DIM + i] =
-                            -2.0 / 3.0 * muEff * divU * U[i];
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_o_vw[ni * SPATIAL_DIM + i] +=
-                                muEff *
-                                (dudx[i * SPATIAL_DIM + j] +
-                                 dudx[j * SPATIAL_DIM + i]) *
-                                U[j];
+                            p_o_vw[ni * SPATIAL_DIM + i] = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_o_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff * dudx[j * SPATIAL_DIM + i] * U[j];
+                            }
+                        }
+                    }
+                    else
+                    {
+                        scalar divU = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            divU += dudx[i * SPATIAL_DIM + i];
+                        }
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_o_vw[ni * SPATIAL_DIM + i] =
+                                -2.0 / 3.0 * comp * muEff * divU * U[i];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_o_vw[ni * SPATIAL_DIM + i] +=
+                                    muEff *
+                                    (dudx[i * SPATIAL_DIM + j] +
+                                     dudx[j * SPATIAL_DIM + i]) *
+                                    U[j];
+                            }
                         }
                     }
                 }
@@ -1293,12 +1368,39 @@ void totalEnergyAssembler::assembleElemTermsInterfaceSideHTC_(
             meFCOpposing->interpolatePoint(
                 1, &opposingIsoParCoords[0], &ws_o_cp[0], &opposingCpBip);
 
-            // interpolate pressure diffusivity
-            meFCCurrent->interpolatePoint(
-                SPATIAL_DIM, &currentIsoParCoords[0], &ws_c_vw[0], &cvwBip[0]);
+            // per-Gauss-point flux, or one face-average value per side
+            if (viscousWorkAtElement)
+            {
+                const scalar invCurrentNodes = 1.0 / current_num_face_nodes;
+                const scalar invOpposingNodes = 1.0 / opposing_num_face_nodes;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    cvwBip[i] = 0.0;
+                    ovwBip[i] = 0.0;
+                    for (label ni = 0; ni < current_num_face_nodes; ++ni)
+                    {
+                        cvwBip[i] +=
+                            invCurrentNodes * ws_c_vw[ni * SPATIAL_DIM + i];
+                    }
+                    for (label ni = 0; ni < opposing_num_face_nodes; ++ni)
+                    {
+                        ovwBip[i] +=
+                            invOpposingNodes * ws_o_vw[ni * SPATIAL_DIM + i];
+                    }
+                }
+            }
+            else
+            {
+                meFCCurrent->interpolatePoint(SPATIAL_DIM,
+                                              &currentIsoParCoords[0],
+                                              &ws_c_vw[0],
+                                              &cvwBip[0]);
 
-            meFCOpposing->interpolatePoint(
-                SPATIAL_DIM, &opposingIsoParCoords[0], &ws_o_vw[0], &ovwBip[0]);
+                meFCOpposing->interpolatePoint(SPATIAL_DIM,
+                                               &opposingIsoParCoords[0],
+                                               &ws_o_vw[0],
+                                               &ovwBip[0]);
+            }
 
             // zero lhs/rhs
             for (label p = 0; p < lhsSize; ++p)

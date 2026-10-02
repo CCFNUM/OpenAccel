@@ -95,6 +95,32 @@ protected:
                !usesSteadyRotatingEnergyForm_(domain, includeAdv);
     }
 
+    // tau.U as one element/face-average flux instead of a per-ip flux
+    bool usesElementViscousWork_() const
+    {
+        return model_->controlsRef()
+                   .solverRef()
+                   .solverControl_.expertParameters_.viscousWorkType_ ==
+               viscousWorkType::elementCentre;
+    }
+
+    // Laplacian stress in tau.U instead of the full stress
+    bool usesLaplacianViscousWork_() const
+    {
+        return model_->controlsRef()
+                   .solverRef()
+                   .solverControl_.expertParameters_.viscousWorkStressType_ ==
+               viscousWorkStressType::laplacian;
+    }
+
+    // Viscous work carried by a no-slip wall
+    viscousWorkWallModel wallViscousWorkModel_() const
+    {
+        return model_->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.viscousWorkWallModel_;
+    }
+
     void assembleNodeTermsFusedSteady_(const domain* domain,
                                        Context* ctx) override;
 

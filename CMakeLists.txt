@@ -263,6 +263,8 @@ endif()
 
 add_executable(${exec} main.cpp)
 target_link_libraries(${exec} PRIVATE main_obj)
+# main.cpp prints the git hash and version for --build-info.
+target_link_libraries(${exec} PRIVATE git_version)
 
 # debugging utilities
 if(WITH_DEBUG_LIB)

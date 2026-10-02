@@ -261,12 +261,15 @@ struct solverDictionary
             bool nso_ = false;
             scalar nsoFourthOrderFac_ = 1.0;
             bool highSpeedBlendDamping_ = false;
+            // pre-solve mass-flux refresh (compressible);
+            bool massFluxRefresh_ = true;
             // Cap on the high-resolution blend beta in
             // phi_ip = phi_upwind + beta * (grad phi . dx): 0 upwind, 1 linear
             scalar blendFactorMax_ = 1.0;
             nonconformalMethod nonconformalMethod_ =
                 nonconformalMethod::discontinuousGalerkin;
             gradientAveragingType cvpgType_ = gradientAveragingType::arithAver;
+
             // mesh deformation backend: displacement diffusion or lithe (IDW)
             meshDeformationBackend meshDeformationBackend_ =
                 meshDeformationBackend::displacementDiffusion;
@@ -291,6 +294,15 @@ struct solverDictionary
             };
 
             litheDictionary lithe_;
+
+            // Discretisation of the total-enthalpy viscous work flux tau.U
+            viscousWorkType viscousWorkType_ = viscousWorkType::elementCentre;
+            // Stress carried by the total-enthalpy viscous work flux
+            viscousWorkStressType viscousWorkStressType_ =
+                viscousWorkStressType::fullStress;
+            // Viscous work carried by a no-slip wall
+            viscousWorkWallModel viscousWorkWallModel_ =
+                viscousWorkWallModel::faceVelocity;
         };
 
         basicSettingsDictionary basicSettings_;

@@ -22,6 +22,7 @@
 // code libraries
 #include "macros.h"
 #include "simulation.h"
+#include "version.h"
 
 volatile sig_atomic_t g_signalSent = 0;
 volatile sig_atomic_t g_signalID = 0;
@@ -33,10 +34,61 @@ extern "C" void handleSignal(int signal)
     std::signal(signal, SIG_DFL); // next one kills immediately (no cleanup)
 }
 
+// One JSON line describing this build; answers before MPI/Kokkos start so a GUI can
+// inspect a binary cheaply (dimension, execution space, compiled-in features).
+static int printBuildInfo()
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    const char* space = "cuda";
+#elif defined(KOKKOS_ENABLE_HIP)
+    const char* space = "hip";
+#elif defined(KOKKOS_ENABLE_OPENMP)
+    const char* space = "openmp";
+#else
+    const char* space = "serial";
+#endif
+    auto flag = [](bool on) { return on ? "true" : "false"; };
+    bool cpld = false, overset = false, ggi = false, trilinos = false, petsc = false,
+         hypre = false, fsi = false;
+#ifdef HAS_TRILINOS
+    trilinos = true;
+#endif
+#ifdef HAS_PETSC
+    petsc = true;
+#endif
+#ifdef HAS_HYPRE
+    hypre = true;
+#endif
+#ifdef HAS_FSI
+    fsi = true;
+#endif
+    std::cout << "{\"solver\": \"accel-stk\", \"name\": \"" << accel::PROJECT_NAME
+              << "\", \"version\": \"" << accel::PROJECT_VERSION
+              << "\", \"git\": \"" << accel::GIT_HASH
+              << "\", \"spatial_dim\": " << SPATIAL_DIM
+              << ", \"execution_space\": \"" << space
+              << "\", \"gpu\": " << flag(std::strcmp(space, "cuda") == 0 ||
+                                              std::strcmp(space, "hip") == 0)
+              << ", \"mpi\": true, \"features\": {\"coupled\": " << flag(cpld)
+              << ", \"overset\": " << flag(overset) << ", \"ggi\": " << flag(ggi)
+              << ", \"trilinos\": " << flag(trilinos) << ", \"petsc\": " << flag(petsc)
+              << ", \"hypre\": " << flag(hypre) << ", \"fsi\": " << flag(fsi) << "}}"
+              << std::endl;
+    return 0;
+}
+
 int main(int argc, char* argv[])
 {
     // The package tackles real world physics in 2D or 3D
     assert(SPATIAL_DIM >= 2);
+
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--build-info") == 0)
+        {
+            return printBuildInfo();
+        }
+    }
 
     using Sim = ::accel::simulation;
 
