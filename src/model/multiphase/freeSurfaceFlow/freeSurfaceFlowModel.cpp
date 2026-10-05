@@ -222,6 +222,9 @@ freeSurfaceFlowModel::freeSurfaceFlowModel(realm* realm)
             }
         }
     }
+
+    // setup interphase mass transfer (e.g. cavitation)
+    setupMassTransfer_(realm);
 }
 
 void freeSurfaceFlowModel::computeCurvature_(

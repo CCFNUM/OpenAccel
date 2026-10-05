@@ -23,7 +23,11 @@ target_sources(main_obj PRIVATE
     ${DIR}/solidMechanics/solidMechanicsModel.cpp
     ############################################################################
     ${DIR}/multiphase/freeSurfaceFlow/freeSurfaceFlowModel.cpp
+    ${DIR}/multiphase/freeSurfaceFlow/freeSurfaceFlowModelMassTransfer.cpp
     ${DIR}/multiphase/multiphaseModel.cpp
+    ${DIR}/multiphase/massTransfer/massTransferModel.cpp
+    ${DIR}/multiphase/massTransfer/cavitation/cavitationModel.cpp
+    ${DIR}/multiphase/massTransfer/cavitation/rayleighPlessetCavitation/rayleighPlessetCavitationMassTransfer.cpp
     ############################################################################
     ${DIR}/turbulence/RANS/RANSModel.cpp
     ${DIR}/turbulence/RANS/kEpsilon/kEpsilonModel.cpp
@@ -52,6 +56,9 @@ target_include_directories(main_obj PUBLIC
     ############################################################################
     ${DIR}/multiphase
     ${DIR}/multiphase/freeSurfaceFlow
+    ${DIR}/multiphase/massTransfer
+    ${DIR}/multiphase/massTransfer/cavitation
+    ${DIR}/multiphase/massTransfer/cavitation/rayleighPlessetCavitation
     ############################################################################
     ${DIR}/turbulence
     ${DIR}/turbulence/RANS

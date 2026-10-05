@@ -318,6 +318,23 @@ enum class surfaceTensionModelOption
 surfaceTensionModelOption
 convertSurfaceTensionModelOptionFromString(std::string s);
 
+// Mass transfer model option (interphase mass transfer of a fluid pair)
+enum class massTransferModelOption
+{
+    none,
+    cavitation
+};
+
+massTransferModelOption convertMassTransferModelOptionFromString(std::string s);
+
+// Cavitation model option
+enum class cavitationModelOption
+{
+    rayleighPlesset
+};
+
+cavitationModelOption convertCavitationModelOptionFromString(std::string s);
+
 // Source option
 enum class sourceOption
 {

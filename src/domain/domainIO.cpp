@@ -5,6 +5,7 @@
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
+#include "cavitationModel.h"
 #include "domain.h"
 #include "macros.h"
 #include "realm.h"
@@ -829,18 +830,33 @@ void domain::read_()
             const auto& fluidPairModelsBlock =
                 domain_conf_["fluid_pair_models"];
 
+            label pairCount = 0;
             for (const auto& pairBlock : fluidPairModelsBlock)
             {
                 fluidPairModel fpm;
+                const std::string pairPath =
+                    "fluid_pair_models[" + std::to_string(pairCount++) + "]";
 
-                // read pair: [materialA, materialB]
-                if (!pairBlock["pair"])
+                // read pair: [materialA, materialB]; `fluid_a`/`fluid_b` is
+                // accepted as an alternative spelling
+                std::vector<std::string> pairList;
+                if (pairBlock["pair"])
                 {
-                    errorMsg("fluid_pair_models: `pair` key is required");
+                    pairList = pairBlock["pair"]
+                                   .template as<std::vector<std::string>>();
+                }
+                else if (pairBlock["fluid_a"] && pairBlock["fluid_b"])
+                {
+                    pairList = {
+                        pairBlock["fluid_a"].template as<std::string>(),
+                        pairBlock["fluid_b"].template as<std::string>()};
+                }
+                else
+                {
+                    errorMsg(pairPath + ": `pair` (or `fluid_a` and "
+                                        "`fluid_b`) is required");
                 }
 
-                auto pairList =
-                    pairBlock["pair"].template as<std::vector<std::string>>();
                 if (pairList.size() != 2)
                 {
                     errorMsg("fluid_pair_models: `pair` must contain exactly "
@@ -895,12 +911,204 @@ void domain::read_()
                             convertSurfaceTensionModelOptionFromString(
                                 stBlock["option"].template as<std::string>());
                     }
+                    else if (stBlock["model"])
+                    {
+                        // CFX-like spelling: `model: constant` selects a
+                        // constant coefficient (continuum surface force)
+                        std::string model =
+                            stBlock["model"].template as<std::string>();
+                        ::accel::tolower(model);
+                        fpm.surfaceTension_.option_ =
+                            model == "constant"
+                                ? surfaceTensionModelOption::
+                                      continuumSurfaceForce
+                                : convertSurfaceTensionModelOptionFromString(
+                                      model);
+                    }
 
                     if (stBlock["surface_tension_coefficient"])
                     {
                         fpm.surfaceTension_.coefficient_ =
                             stBlock["surface_tension_coefficient"]
                                 .template as<scalar>();
+                    }
+                    else if (stBlock["coefficient"])
+                    {
+                        fpm.surfaceTension_.coefficient_ =
+                            stBlock["coefficient"].template as<scalar>();
+                    }
+                }
+
+                // read interphase mass transfer model (e.g. cavitation)
+                if (pairBlock["mass_transfer"])
+                {
+                    const auto& mtBlock = pairBlock["mass_transfer"];
+                    const std::string mtPath = pairPath + ".mass_transfer";
+                    auto& mt = fpm.massTransfer_;
+
+                    // numeric/boolean/string entries with the YAML path in the
+                    // error message
+                    auto readScalar = [&](const std::string& key) {
+                        try
+                        {
+                            return mtBlock[key].template as<scalar>();
+                        }
+                        catch (const YAML::Exception&)
+                        {
+                            errorMsg(mtPath + "." + key +
+                                     ": expected a number");
+                        }
+                        return scalar(0);
+                    };
+                    auto readBool = [&](const std::string& key) {
+                        try
+                        {
+                            return mtBlock[key].template as<bool>();
+                        }
+                        catch (const YAML::Exception&)
+                        {
+                            errorMsg(mtPath + "." + key +
+                                     ": expected a boolean (true/false)");
+                        }
+                        return false;
+                    };
+                    auto readString = [&](const std::string& key) {
+                        std::string value =
+                            mtBlock[key].template as<std::string>();
+                        ::accel::tolower(value);
+                        return value;
+                    };
+
+                    // model selection: `model`, `option` or `type`
+                    std::string modelKey;
+                    for (const char* key : {"model", "option", "type"})
+                    {
+                        if (!mtBlock[key])
+                            continue;
+                        if (!modelKey.empty() &&
+                            readString(key) != readString(modelKey))
+                        {
+                            errorMsg(mtPath +
+                                     ": conflicting model selectors `" +
+                                     modelKey + "` and `" + key + "`");
+                        }
+                        if (modelKey.empty())
+                            modelKey = key;
+                    }
+                    if (modelKey.empty())
+                    {
+                        errorMsg(mtPath + ".model: required (none | "
+                                          "cavitation)");
+                    }
+                    const std::string modelName = readString(modelKey);
+                    mt.option_ =
+                        convertMassTransferModelOptionFromString(modelName);
+
+                    if (mt.option_ == massTransferModelOption::cavitation)
+                    {
+                        if (modelName == "rayleigh_plesset_cavitation")
+                        {
+                            mt.cavitationModel_ =
+                                cavitationModelOption::rayleighPlesset;
+                        }
+                        if (mtBlock["cavitation_model"])
+                        {
+                            mt.cavitationModel_ =
+                                convertCavitationModelOptionFromString(
+                                    readString("cavitation_model"));
+                        }
+
+                        // phase roles: each given name must belong to the
+                        // pair; a missing role is the other pair member
+                        if (!mtBlock["liquid_phase"] &&
+                            !mtBlock["vapor_phase"])
+                        {
+                            errorMsg(mtPath +
+                                     ": cannot infer phase roles for pair [" +
+                                     fpm.materialA_ + ", " + fpm.materialB_ +
+                                     "]; specify `liquid_phase` and/or "
+                                     "`vapor_phase`");
+                        }
+                        auto inPair = [&](const std::string& name) {
+                            return name == fpm.materialA_ ||
+                                   name == fpm.materialB_;
+                        };
+                        auto otherOf = [&](const std::string& name) {
+                            return name == fpm.materialA_ ? fpm.materialB_
+                                                          : fpm.materialA_;
+                        };
+                        for (const char* role : {"liquid_phase", "vapor_phase"})
+                        {
+                            if (mtBlock[role] && !inPair(readString(role)))
+                            {
+                                errorMsg(mtPath + "." + role + ": `" +
+                                         readString(role) +
+                                         "` is not part of pair [" +
+                                         fpm.materialA_ + ", " +
+                                         fpm.materialB_ + "]");
+                            }
+                        }
+                        if (mtBlock["liquid_phase"])
+                            mt.liquidPhase_ = readString("liquid_phase");
+                        if (mtBlock["vapor_phase"])
+                            mt.vaporPhase_ = readString("vapor_phase");
+                        if (mt.liquidPhase_.empty())
+                            mt.liquidPhase_ = otherOf(mt.vaporPhase_);
+                        if (mt.vaporPhase_.empty())
+                            mt.vaporPhase_ = otherOf(mt.liquidPhase_);
+
+                        // parameters
+                        if (!mtBlock["saturation_pressure"])
+                        {
+                            errorMsg(mtPath +
+                                     ".saturation_pressure: required for "
+                                     "cavitation (absolute pressure in Pa)");
+                        }
+                        mt.saturationPressure_ =
+                            readScalar("saturation_pressure");
+                        if (mtBlock["nucleation_site_volume_fraction"])
+                            mt.nucleationSiteVolumeFraction_ =
+                                readScalar("nucleation_site_volume_fraction");
+                        if (mtBlock["nucleation_site_radius"])
+                            mt.nucleationSiteRadius_ =
+                                readScalar("nucleation_site_radius");
+                        if (mtBlock["vaporization_coefficient"])
+                            mt.vaporizationCoefficient_ =
+                                readScalar("vaporization_coefficient");
+                        if (mtBlock["condensation_coefficient"])
+                            mt.condensationCoefficient_ =
+                                readScalar("condensation_coefficient");
+                        if (mtBlock["under_relaxation"])
+                            mt.underRelaxation_ =
+                                readScalar("under_relaxation");
+                        if (mtBlock["pressure_clipping_for_rate"])
+                            mt.pressureClippingForRate_ =
+                                readBool("pressure_clipping_for_rate");
+                        if (mtBlock["include_continuity_source"])
+                            mt.includeContinuitySource_ =
+                                readBool("include_continuity_source");
+
+                        try
+                        {
+                            cavitationModel::validate(mt, mtPath);
+                        }
+                        catch (const std::runtime_error& e)
+                        {
+                            errorMsg(e.what());
+                        }
+
+                        mt.liquidIndex_ =
+                            simulationRef().materialIndex(mt.liquidPhase_);
+                        mt.vaporIndex_ =
+                            simulationRef().materialIndex(mt.vaporPhase_);
+
+                        if (multiphase_.freeSurfaceModel_.option_ !=
+                            freeSurfaceModelOption::standard)
+                        {
+                            errorMsg(mtPath +
+                                     ": requires a free_surface_model in "
+                                     "fluid_models.multiphase");
+                        }
                     }
                 }
 

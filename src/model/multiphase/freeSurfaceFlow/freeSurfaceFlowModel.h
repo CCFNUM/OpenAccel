@@ -8,6 +8,7 @@
 #define FREESURFACEFLOWMODEL_H
 
 // code
+#include "massTransferModel.h"
 #include "multiphaseModel.h"
 
 namespace accel
@@ -68,6 +69,36 @@ public:
     // Enable public use
 
     using fieldBroker::nHatRef;
+
+    // Interphase mass transfer (fluid_pair_models[].mass_transfer). One entry
+    // per (domain, fluid pair) with an active model. mdot is stored as a nodal
+    // field and holds the under-relaxed rate of the previous iteration, which
+    // makes the field itself the persistent state of the relaxation.
+    struct massTransferPair
+    {
+        label domainIndex_ = -1;
+        std::string name_; // "<materialA>_<materialB>"
+        std::unique_ptr<massTransferModel> model_;
+        label liquidIndex_ = -1; // global material indices
+        label vaporIndex_ = -1;
+        STKScalarField* mdotSTKFieldPtr_ = nullptr; // [kg/(m^3 s)], l -> v > 0
+    };
+
+    // active mass transfer pairs of a domain (empty if none)
+    std::vector<const massTransferPair*>
+    massTransferPairs(const domain* domain) const;
+
+    bool hasMassTransfer() const
+    {
+        return !massTransferPairs_.empty();
+    }
+
+    // zero the persistent mass transfer rate (not on restart)
+    void initializeMassTransferRate(const std::shared_ptr<domain> domain);
+
+    // compute the raw rate from the current p, alpha, rho; under-relax it
+    // against the stored previous value and store the result
+    void updateMassTransferRate(const std::shared_ptr<domain> domain);
 
     // Body forces override (adds CSF surface tension after base class forces)
     void computeBodyForces(const std::shared_ptr<domain> domain) override;
@@ -176,6 +207,11 @@ public:
     }
 
 protected:
+    std::vector<massTransferPair> massTransferPairs_;
+    std::map<std::string, STKScalarField*> mdotMassTransferSTKFieldPtrs_;
+
+    void setupMassTransfer_(realm* realm);
+
     // Surface tension: per-pair curvature fields
     void computeCurvature_(const std::shared_ptr<domain> domain,
                            label iPhase,
