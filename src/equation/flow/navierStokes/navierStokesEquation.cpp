@@ -5,10 +5,10 @@
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "navierStokesEquation.h"
-#include "interface.h"
-#include "ipInfo.h"
 #include "realm.h"
 #include "scaling.h"
+#include "interface.h"
+#include "ipInfo.h"
 
 namespace accel
 {
@@ -179,6 +179,7 @@ void navierStokesEquation::solve()
              .solverRef()
              .solverControl_.expertParameters_.disableMomentumPredictor_)
     {
+
         // solve linear system
         if (ctx->getGraph()->isGraphMember())
         {

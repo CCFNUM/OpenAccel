@@ -43,6 +43,12 @@ bool controls::isRenumbered() const
     return solver_.solverControl_.expertParameters_.nodeReordering_;
 }
 
+bool controls::isCvfemSolidMechanics() const
+{
+    return solver_.solverControl_.expertParameters_.solidAssemblerType_ ==
+           solidAssemblerType::cvfem;
+}
+
 bool controls::isTransient() const
 {
     return analysisType_.transient_;
@@ -63,6 +69,12 @@ bool controls::isHighResolutionTurbulenceNumerics() const
 bool controls::isNSO() const
 {
     return solver_.solverControl_.expertParameters_.nso_;
+}
+
+bool controls::bypassVolumeFractionConvergence() const
+{
+    return solver_.solverControl_.expertParameters_
+        .bypassVolumeFractionConvergence_;
 }
 
 bool controls::useAutomaticDomainDecomposition() const

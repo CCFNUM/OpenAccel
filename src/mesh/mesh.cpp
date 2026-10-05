@@ -30,9 +30,17 @@ void ElementValidatorDeleter::operator()(elementValidator* ptr)
 
 mesh::mesh(controls* controlsPtr) : controlsPtr_(controlsPtr)
 {
-    stencil_ = controlsPtr->isReducedStencil()
-                   ? ::linearSolver::GraphLayout::Stencil__Reduced
-                   : ::linearSolver::GraphLayout::Stencil__Full;
+    if (controlsPtr->isCvfemSolidMechanics())
+    {
+        stencil_ = controlsPtr->isReducedStencil()
+                       ? ::linearSolver::GraphLayout::Stencil__Reduced
+                       : ::linearSolver::GraphLayout::Stencil__Full;
+    }
+    else
+    {
+        // FEM couples all element nodes: use the full stencil
+        stencil_ = ::linearSolver::GraphLayout::Stencil__Full;
+    }
 }
 
 mesh::~mesh()

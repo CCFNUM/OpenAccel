@@ -131,8 +131,6 @@ void turbulentKineticEnergySSTAssembler::
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
-
     // space for LHS/RHS
     const label lhsSize = 1;
     const label rhsSize = 1;
@@ -159,9 +157,6 @@ void turbulentKineticEnergySSTAssembler::
     const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -234,13 +229,6 @@ void turbulentKineticEnergySSTAssembler::
             rhs[0] += (Pk - Dk) * vol;
             lhs[0] += betaStar * rho * omega * vol;
 
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * k * divUm * vol;
-            }
-
             // global matrix
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
@@ -260,8 +248,6 @@ void turbulentKineticEnergySSTAssembler::
 
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
 
     // space for LHS/RHS
     const label lhsSize = 1;
@@ -293,9 +279,6 @@ void turbulentKineticEnergySSTAssembler::
     const STKScalarField* PkSTKFieldPtr = model_->PkRef().stkFieldPtr();
 
     scalar betaStar = model_->betaStar();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -371,13 +354,6 @@ void turbulentKineticEnergySSTAssembler::
 
             rhs[0] += (Pk - Dk) * vol;
             lhs[0] += betaStar * rho * omega * vol;
-
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * k * divUm * vol;
-            }
 
             // global matrix
             Base::applyCoeff_(

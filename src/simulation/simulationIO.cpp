@@ -469,6 +469,7 @@ void simulation::collectEquations_()
 
     for (const auto& domain : domainVector_)
     {
+
         // segregated NS-pcorr equations
         if (domain->hasEquation(equationID::segregatedFlow))
         {

@@ -179,8 +179,6 @@ void turbulentKineticEnergyCorrelationTransitionSSTAssembler::
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
-
     // space for LHS/RHS
     const label lhsSize = 1;
     const label rhsSize = 1;
@@ -215,9 +213,6 @@ void turbulentKineticEnergyCorrelationTransitionSSTAssembler::
     const scalar Ck_BLT = model_->Ck_BLT();
     const scalar CSEP = model_->CSEP();
     const scalar Retclim = model_->Retclim();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -330,13 +325,6 @@ void turbulentKineticEnergyCorrelationTransitionSSTAssembler::
             lhs[0] +=
                 betaStar * rho * omega * std::max(gamma, scalar(0.1)) * vol;
 
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * k * divUm * vol;
-            }
-
             // global matrix
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
@@ -356,8 +344,6 @@ void turbulentKineticEnergyCorrelationTransitionSSTAssembler::
 
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
 
     // space for LHS/RHS
     const label lhsSize = 1;
@@ -397,9 +383,6 @@ void turbulentKineticEnergyCorrelationTransitionSSTAssembler::
     const scalar Ck_BLT = model_->Ck_BLT();
     const scalar CSEP = model_->CSEP();
     const scalar Retclim = model_->Retclim();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -515,13 +498,6 @@ void turbulentKineticEnergyCorrelationTransitionSSTAssembler::
             rhs[0] += (Pk + Pklim - Dk) * vol;
             lhs[0] +=
                 betaStar * rho * omega * std::max(gamma, scalar(0.1)) * vol;
-
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * k * divUm * vol;
-            }
 
             // global matrix
             Base::applyCoeff_(

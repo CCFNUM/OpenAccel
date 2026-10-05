@@ -49,7 +49,6 @@ public:
     {
         return ID;
     }
-
 protected:
     void setResidualScales_() override;
 

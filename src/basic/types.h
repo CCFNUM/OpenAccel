@@ -233,7 +233,7 @@ public:
 // equations
 enum class equationID
 {
-    // fluid equations
+// fluid equations
     coupledNavierStokes,
     pressureCorrection,
     segregatedCorrelationTransitionShearStressTransport,
@@ -283,7 +283,8 @@ enum class solidMechanicsOption
 {
     none,
     linearElastic,
-    simplifiedNeoHookean
+    neoHookean,
+    modifiedMooneyRivlin
 };
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s);
@@ -796,6 +797,15 @@ enum class kinematicFormulationType
 
 kinematicFormulationType
 convertKinematicFormulationTypeFromString(std::string s);
+
+// Solid mechanics assembler technology
+enum class solidAssemblerType
+{
+    sfem,
+    cvfem
+};
+
+solidAssemblerType convertSolidAssemblerTypeFromString(std::string s);
 
 // Post process type
 enum class postProcessType

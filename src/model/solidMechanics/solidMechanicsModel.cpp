@@ -280,6 +280,26 @@ void solidMechanicsModel::setupDisplacement(
                                     boundaryConditionType::specifiedFlux);
                                 bc.query<1>(node, "pressure", "pressure");
                                 bc.query<SPATIAL_DIM>(node, "shear", "shear");
+
+                                // pressure_type: dead (default) or follower
+                                bool followerPressure = false;
+                                if (node["pressure_type"])
+                                {
+                                    std::string pt =
+                                        node["pressure_type"]
+                                            .template as<std::string>();
+                                    if (pt == "follower")
+                                        followerPressure = true;
+                                    else if (pt == "dead")
+                                        followerPressure = false;
+                                    else
+                                        errorMsg("pressure_type must be "
+                                                 "'follower' or 'dead'");
+                                }
+                                bc.setConstantValue<1>(
+                                    "follower_pressure",
+                                    {followerPressure ? 1.0 : 0.0});
+
                                 DRef().registerSideFluxField(domain->index(),
                                                              iBoundary);
                             }
@@ -1054,6 +1074,12 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
     auto& pressureData = bc.template data<1>("pressure");
     auto& shearData = bc.template data<SPATIAL_DIM>("shear");
 
+    // guard: callers without follower_pressure get dead load
+    auto& followerPressureData = bc.template data<1>("follower_pressure");
+    const bool followerPressure =
+        (followerPressureData.type() == inputDataType::constant) &&
+        (*followerPressureData.value() > 0.5);
+
     // Determine which contributions are active
     const bool hasPressure = (pressureData.type() == inputDataType::constant ||
                               pressureData.type() == inputDataType::timeTable);
@@ -1132,6 +1158,15 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                       : mesh::original_exposed_area_vector_ID))
             : exposedAreaVecSTKFieldPtr;
 
+    // follower pressure: area vectors on the current configuration
+    std::vector<scalar> deformedAreaVec;
+    if (followerPressure && hasPressure)
+    {
+        this->meshRef().computeDeformedExposedAreaVector(
+            boundary->parts(), *this->DRef().stkFieldPtr(), deformedAreaVec);
+    }
+    label ipOffset = 0;
+
     for (const stk::mesh::Bucket* bucket : sideBuckets)
     {
         const MasterElement* meFC =
@@ -1149,12 +1184,14 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 stk::mesh::field_data(*exposedAreaVecSTKFieldPtr, side);
             const scalar* orgAreaVec =
                 stk::mesh::field_data(*originalExposedAreaVecSTKFieldPtr, side);
+            const scalar* deformedAreaVecForSide =
+                (followerPressure && hasPressure) ? &deformedAreaVec[ipOffset]
+                                                  : nullptr;
 
             // Loop over integration points
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                // Apply pressure contribution (normal traction)
-                // Traction = -p * n, where n is the unit normal vector
+                // reference area magnitude dA0
                 scalar aMag0 = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -1165,12 +1202,26 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 // Inverse of area magnitude for normalization
                 const scalar invAMag0 = 1.0 / std::sqrt(aMag0);
 
-                // Set traction as pressure * unit normal
-                for (label j = 0; j < SPATIAL_DIM; ++j)
+                if (followerPressure)
                 {
-                    tractionValues[SPATIAL_DIM * ip + j] =
-                        -pressureValue * areaVec[SPATIAL_DIM * ip + j] *
-                        invAMag0;
+                    // follower: Nanson pullback t0 = -p * a_current / dA0
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        tractionValues[SPATIAL_DIM * ip + j] =
+                            -pressureValue *
+                            deformedAreaVecForSide[SPATIAL_DIM * ip + j] *
+                            invAMag0;
+                    }
+                }
+                else
+                {
+                    // dead load: traction = -p * n_0
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        tractionValues[SPATIAL_DIM * ip + j] =
+                            -pressureValue * areaVec[SPATIAL_DIM * ip + j] *
+                            invAMag0;
+                    }
                 }
 
                 // Accumulate shear contribution (tangential traction)
@@ -1180,6 +1231,8 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                     tractionValues[SPATIAL_DIM * ip + j] += shearValue[j];
                 }
             }
+
+            ipOffset += numScsBip * SPATIAL_DIM;
         }
     }
 }
@@ -1204,6 +1257,33 @@ void solidMechanicsModel::updateStressAndStrain_(
 
     // Check if plane stress or plane strain
     const bool planeStress = domain->solidMechanics_.planeStress_;
+
+    // FEM: post-processed stress/strain must match the solve's model
+    bool useNeoHookeanStress = false;
+    bool useMooneyRivlinStress = false;
+
+    // c1/c2/kappa are per-domain constants, fetched once
+    scalar mooneyC1 = 0.0;
+    scalar mooneyC2 = 0.0;
+    scalar mooneyKappa = 0.0;
+
+    if (!this->controlsRef().isCvfemSolidMechanics())
+    {
+        useNeoHookeanStress = (domain->solidMechanics_.option_ ==
+                               solidMechanicsOption::neoHookean);
+
+        // same for the Flory-split Mooney-Rivlin model
+        useMooneyRivlinStress = (domain->solidMechanics_.option_ ==
+                                 solidMechanicsOption::modifiedMooneyRivlin);
+
+        if (useMooneyRivlinStress)
+        {
+            const auto& mechProps = domain->materialRef().mechanicalProperties_;
+            mooneyC1 = mechProps.c1_;
+            mooneyC2 = mechProps.c2_;
+            mooneyKappa = mechProps.kappa_;
+        }
+    }
 
     // Get interior parts
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -1315,11 +1395,11 @@ void solidMechanicsModel::updateStressAndStrain_(
                     lambda = nu * E / ((1.0 + nu) * (1.0 - 2.0 * nu));
                 }
 
-                // Compute strain at this node (average over integration points)
-                // Zero strain
+                // strain (and stress), averaged over integration points
                 for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; ++i)
                 {
                     p_strain[i] = 0.0;
+                    p_stress[i] = 0.0;
                 }
 
                 for (label ip = 0; ip < numScvIp; ++ip)
@@ -1348,41 +1428,196 @@ void solidMechanicsModel::updateStressAndStrain_(
                         }
                     }
 
-                    // Compute strain: ε_ij = 0.5 * (∂u_i/∂x_j + ∂u_j/∂x_i)
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    if (useNeoHookeanStress)
                     {
-                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        // Deformation gradient: F = I + grad_X(u)
+                        scalar F[SPATIAL_DIM * SPATIAL_DIM];
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
-                            p_strain[i * SPATIAL_DIM + j] +=
-                                0.5 *
-                                (p_grad_u[i * SPATIAL_DIM + j] +
-                                 p_grad_u[j * SPATIAL_DIM + i]) /
-                                numScvIp;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                                F[i * SPATIAL_DIM + j] =
+                                    delta_ij + p_grad_u[i * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // J = det(F)
+#if SPATIAL_DIM == 2
+                        const scalar J = F[0] * F[3] - F[1] * F[2];
+#elif SPATIAL_DIM == 3
+                        const scalar J = F[0] * (F[4] * F[8] - F[5] * F[7]) -
+                                         F[1] * (F[3] * F[8] - F[5] * F[6]) +
+                                         F[2] * (F[3] * F[7] - F[4] * F[6]);
+#endif
+                        const scalar lnJ = std::log(J);
+
+                        // Cauchy (mu/J)(b-I)+(lambda/J)ln(J)I; E=0.5(F^T F-I)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+
+                                scalar b_ij = 0.0;
+                                scalar c_ij = 0.0; // (F^T * F)_ij
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    b_ij += F[i * SPATIAL_DIM + kk] *
+                                            F[j * SPATIAL_DIM + kk];
+                                    c_ij += F[kk * SPATIAL_DIM + i] *
+                                            F[kk * SPATIAL_DIM + j];
+                                }
+
+                                p_stress[i * SPATIAL_DIM + j] +=
+                                    ((mu / J) * (b_ij - delta_ij) +
+                                     (lambda / J) * lnJ * delta_ij) /
+                                    numScvIp;
+
+                                p_strain[i * SPATIAL_DIM + j] +=
+                                    0.5 * (c_ij - delta_ij) / numScvIp;
+                            }
+                        }
+                    }
+                    else if (useMooneyRivlinStress)
+                    {
+                        // Deformation gradient: F = I + grad_X(u)
+                        scalar F[SPATIAL_DIM * SPATIAL_DIM];
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                                F[i * SPATIAL_DIM + j] =
+                                    delta_ij + p_grad_u[i * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // J = det(F)
+#if SPATIAL_DIM == 2
+                        const scalar J = F[0] * F[3] - F[1] * F[2];
+#elif SPATIAL_DIM == 3
+                        const scalar J = F[0] * (F[4] * F[8] - F[5] * F[7]) -
+                                         F[1] * (F[3] * F[8] - F[5] * F[6]) +
+                                         F[2] * (F[3] * F[7] - F[4] * F[6]);
+#endif
+                        const scalar lnJ = std::log(J);
+                        const scalar Jm23 = std::pow(J, -2.0 / 3.0);
+                        const scalar Jm43 = std::pow(J, -4.0 / 3.0);
+
+                        // Left Cauchy-Green tensor b = F * F^T; I1 = trace(b).
+                        scalar b[SPATIAL_DIM * SPATIAL_DIM];
+                        scalar I1 = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                scalar b_ij = 0.0;
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    b_ij += F[i * SPATIAL_DIM + kk] *
+                                            F[j * SPATIAL_DIM + kk];
+                                }
+                                b[i * SPATIAL_DIM + j] = b_ij;
+                            }
+                            I1 += b[i * SPATIAL_DIM + i];
+                        }
+                        // plane strain: add b_zz = 1 to I1
+#if SPATIAL_DIM == 2
+                        I1 += 1.0;
+#endif
+                        // I2 is folded into dev(I1*b - b^2) below
+
+                        // tr(b^2); plane strain adds b_zz^2 = 1
+                        scalar b2[SPATIAL_DIM * SPATIAL_DIM];
+                        scalar trb2 = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                scalar b2_ij = 0.0;
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    b2_ij += b[i * SPATIAL_DIM + kk] *
+                                             b[kk * SPATIAL_DIM + j];
+                                }
+                                b2[i * SPATIAL_DIM + j] = b2_ij;
+                            }
+                            trb2 += b2[i * SPATIAL_DIM + i];
+                        }
+#if SPATIAL_DIM == 2
+                        trb2 += 1.0;
+#endif
+
+                        // Flory-split Cauchy stress (physical d = 3)
+                        const scalar trX = I1 * I1 - trb2;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+
+                                const scalar devB_ij = b[i * SPATIAL_DIM + j] -
+                                                       (I1 / 3.0) * delta_ij;
+
+                                const scalar X_ij =
+                                    I1 * b[i * SPATIAL_DIM + j] -
+                                    b2[i * SPATIAL_DIM + j];
+                                const scalar devX_ij =
+                                    X_ij - (trX / 3.0) * delta_ij;
+
+                                p_stress[i * SPATIAL_DIM + j] +=
+                                    ((2.0 / J) * (mooneyC1 * Jm23 * devB_ij +
+                                                  mooneyC2 * Jm43 * devX_ij) +
+                                     (mooneyKappa / J) * lnJ * delta_ij) /
+                                    numScvIp;
+
+                                scalar c_ij = 0.0; // (F^T * F)_ij
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    c_ij += F[kk * SPATIAL_DIM + i] *
+                                            F[kk * SPATIAL_DIM + j];
+                                }
+                                p_strain[i * SPATIAL_DIM + j] +=
+                                    0.5 * (c_ij - delta_ij) / numScvIp;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // infinitesimal strain: eps = 0.5*(grad u + grad u^T)
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_strain[i * SPATIAL_DIM + j] +=
+                                    0.5 *
+                                    (p_grad_u[i * SPATIAL_DIM + j] +
+                                     p_grad_u[j * SPATIAL_DIM + i]) /
+                                    numScvIp;
+                            }
                         }
                     }
                 }
 
-                // Compute stress: σ_ij = λ * ε_kk * δ_ij + 2μ * ε_ij
-                // Zero stress
-                for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; ++i)
+                if (!useNeoHookeanStress && !useMooneyRivlinStress)
                 {
-                    p_stress[i] = 0.0;
-                }
-
-                scalar trace_strain = 0.0;
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    trace_strain += p_strain[i * SPATIAL_DIM + i];
-                }
-
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    // linear elastic: sigma = lambda*tr(eps)*I + 2*mu*eps
+                    scalar trace_strain = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
-                        scalar delta_ij = (i == j) ? 1.0 : 0.0;
-                        p_stress[i * SPATIAL_DIM + j] =
-                            lambda * trace_strain * delta_ij +
-                            2.0 * mu * p_strain[i * SPATIAL_DIM + j];
+                        trace_strain += p_strain[i * SPATIAL_DIM + i];
+                    }
+
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                            p_stress[i * SPATIAL_DIM + j] =
+                                lambda * trace_strain * delta_ij +
+                                2.0 * mu * p_strain[i * SPATIAL_DIM + j];
+                        }
                     }
                 }
 

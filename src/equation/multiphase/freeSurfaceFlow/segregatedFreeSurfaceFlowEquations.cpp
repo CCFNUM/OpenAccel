@@ -60,12 +60,17 @@ void segregatedFreeSurfaceFlowEquations::addDomain(
 bool segregatedFreeSurfaceFlowEquations::isConverged() const
 {
     bool converged = U_eq_->isConverged() && pCorr_eq_->isConverged();
-    for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+
+    // alpha residual (normalized by max-min = 1) may never reach the target
+    if (!this->controlsRef().bypassVolumeFractionConvergence())
     {
-        if (!this->phaseRef(iPhase).primaryPhase_)
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
         {
-            assert(alpha_eq_[iPhase]);
-            converged = converged && alpha_eq_[iPhase]->isConverged();
+            if (!this->phaseRef(iPhase).primaryPhase_)
+            {
+                assert(alpha_eq_[iPhase]);
+                converged = converged && alpha_eq_[iPhase]->isConverged();
+            }
         }
     }
 

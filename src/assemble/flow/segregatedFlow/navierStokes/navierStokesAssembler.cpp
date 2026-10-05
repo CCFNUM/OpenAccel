@@ -235,6 +235,7 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
 
     // conformal interface: give master and slave the effective (vol1+vol2)
     // volume in their D coefficients, mirroring the coupled assembler
+    bool conformalDuModified = false;
     for (const interface* interf : domain->interfacesRef())
     {
         if (!interf->isConformalTreatment() ||
@@ -256,6 +257,18 @@ void navierStokesAssembler::computeDUCoefficients(const domain* domain,
         transfer.setup();
         transfer.initialize();
         transfer.update();
+        conformalDuModified = true;
+    }
+
+    // Refresh aura/shared D coefficients after conformal interface transfer.
+    if (messager::parallel() && conformalDuModified)
+    {
+        stk::mesh::communicate_field_data(bulkData, {duSTKFieldPtr});
+
+        if (consistent)
+        {
+            stk::mesh::communicate_field_data(bulkData, {duTildeSTKFieldPtr});
+        }
     }
 }
 
@@ -263,8 +276,9 @@ void navierStokesAssembler::postAssemble(const domain* domain, Context* ctx)
 {
     phiAssembler::postAssemble(domain, ctx);
     computeDUCoefficients(domain, ctx);
-    assembleBoundaryRelaxation_(domain, ctx, 0.75);
     applySymmetryConditions_(domain, ctx);
+    assembleBoundaryRelaxation_(domain, ctx, 0.75);
+    assembleNormalRelaxation_(domain, ctx, 0.75);
 }
 
 void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
@@ -411,6 +425,220 @@ void navierStokesAssembler::assembleBoundaryRelaxation_(const domain* domain,
                 for (int k = 0; k < BLOCKSIZE; k++)
                 {
                     rhs_val[k] *= urf;
+                }
+            }
+        }
+    }
+}
+
+void navierStokesAssembler::assembleNormalRelaxation_(const domain* domain,
+                                                      Context* ctx,
+                                                      const scalar urf)
+{
+    using Bucket = stk::mesh::Bucket;
+    using BucketVec = stk::mesh::BucketVector;
+
+    const auto& mesh = field_broker_->meshRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+
+    const zone* zonePtr = domain->zonePtr();
+
+    // no-slip walls and specified-velocity inlets
+    stk::mesh::PartVector partVec;
+
+    for (label iBoundary = 0; iBoundary < zonePtr->nBoundaries(); iBoundary++)
+    {
+        const auto& boundaryRef = zonePtr->boundaryRef(iBoundary);
+        const stk::mesh::PartVector& parts = boundaryRef.parts();
+
+        boundaryConditionType UBCType =
+            field_broker_->URef()
+                .boundaryConditionRef(domain->index(), iBoundary)
+                .type();
+
+        boundaryPhysicalType type = boundaryRef.type();
+        switch (type)
+        {
+            case boundaryPhysicalType::inlet:
+                {
+                    switch (UBCType)
+                    {
+                        case boundaryConditionType::specifiedValue:
+                        case boundaryConditionType::normalSpeed:
+                        case boundaryConditionType::massFlowRate:
+                            {
+                                for (auto part : parts)
+                                {
+                                    partVec.push_back(part);
+                                }
+                            }
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+                break;
+
+            case boundaryPhysicalType::wall:
+                {
+                    switch (UBCType)
+                    {
+                        case boundaryConditionType::noSlip:
+                            {
+                                for (auto part : parts)
+                                {
+                                    partVec.push_back(part);
+                                }
+                            }
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    // add interface parts for relaxation if fluid-solid interface
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isFluidSolidType())
+        {
+            for (auto part :
+                 interf->interfaceSideInfoPtr(domain->index())->currentPartVec_)
+            {
+                partVec.push_back(part);
+            }
+        }
+    }
+
+    if (partVec.empty())
+        return;
+
+    Matrix& A = ctx->getAMatrix();
+    const auto* graph = A.getGraph();
+
+    // nodal boundary area (no continuity row here); aura makes the sum complete
+    std::unordered_map<label, std::array<scalar, SPATIAL_DIM>> asumMap;
+    {
+        const STKScalarField& exposedAreaVecSTKFieldRef =
+            *metaData.get_field<scalar>(metaData.side_rank(),
+                                        this->getExposedAreaVectorID_(domain));
+
+        stk::mesh::Selector selAllSides =
+            metaData.universal_part() & stk::mesh::selectUnion(partVec);
+        const BucketVec& sideBuckets =
+            bulkData.get_buckets(metaData.side_rank(), selAllSides);
+
+        for (const Bucket* sideBucket : sideBuckets)
+        {
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket->topology());
+            const label* faceIpNodeMap = meFC->ipNodeMap();
+            const label numScsBip = meFC->numIntPoints_;
+
+            for (const stk::mesh::Entity side : *sideBucket)
+            {
+                const stk::mesh::Entity* sideNodeRels =
+                    bulkData.begin_nodes(side);
+                const scalar* areaVec =
+                    stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+
+                for (label ip = 0; ip < numScsBip; ++ip)
+                {
+                    stk::mesh::Entity node = sideNodeRels[faceIpNodeMap[ip]];
+                    if (!bulkData.bucket(node).owned())
+                        continue;
+
+                    const label lid =
+                        graph->localToRow(bulkData.local_id(node));
+                    if (lid < 0) // node not in this (subset) graph
+                        continue;
+
+                    auto it = asumMap.try_emplace(lid).first;
+                    for (label i = 0; i < SPATIAL_DIM; i++)
+                    {
+                        it->second[i] += areaVec[ip * SPATIAL_DIM + i];
+                    }
+                }
+            }
+        }
+    }
+
+    // workspace: allocated once, pointers reused in the node loop
+    std::vector<scalar> ws_tran(SPATIAL_DIM * SPATIAL_DIM, 0.0);
+    std::vector<scalar> ws_modf(SPATIAL_DIM * SPATIAL_DIM, 0.0);
+    scalar* tran = ws_tran.data();
+    scalar* modf = ws_modf.data();
+
+    for (const auto& [lid, asum] : asumMap)
+    {
+        // zero-out quantities
+        for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; i++)
+        {
+            tran[i] = 0.0;
+            modf[i] = 0.0;
+        }
+
+        assert(lid < static_cast<label>(A.nRows()));
+        scalar* diag = A.diag(lid);
+
+        // find degree to which mass is specified
+        scalar alpha = 0;
+        for (label i = 0; i < SPATIAL_DIM; i++)
+        {
+            alpha = std::max(alpha,
+                             std::abs(asum[i] / (std::abs(asum[i]) + SMALL)));
+        }
+
+        // coefficient of transformation matrix: skip if too small
+        scalar beta = alpha * (1.0 - urf);
+        if (beta > 0.001)
+        {
+            scalar amag = 0.0;
+            for (label i = 0; i < SPATIAL_DIM; i++)
+            {
+                amag += asum[i] * asum[i];
+            }
+            amag = std::sqrt(amag);
+
+            // create transformation matrix
+            for (label i = 0; i < SPATIAL_DIM; i++)
+            {
+                scalar ni = asum[i] / amag;
+                for (label j = 0; j < SPATIAL_DIM; j++)
+                {
+                    scalar nj = asum[j] / amag;
+                    tran[SPATIAL_DIM * i + j] = ni * nj;
+                }
+            }
+
+            // multiply matrices
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                    {
+                        modf[SPATIAL_DIM * i + j] += diag[SPATIAL_DIM * i + k] *
+                                                     tran[SPATIAL_DIM * k + j];
+                    }
+                }
+            }
+
+            // modify diagonal coefficient
+            for (label i = 0; i < SPATIAL_DIM; i++)
+            {
+                for (label j = 0; j < SPATIAL_DIM; j++)
+                {
+                    diag[SPATIAL_DIM * i + j] +=
+                        beta * modf[SPATIAL_DIM * i + j];
                 }
             }
         }

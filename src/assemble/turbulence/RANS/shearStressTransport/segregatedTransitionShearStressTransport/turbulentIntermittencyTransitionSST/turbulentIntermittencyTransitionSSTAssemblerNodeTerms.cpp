@@ -235,8 +235,6 @@ void turbulentIntermittencyTransitionSSTAssembler::
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
-
     // space for LHS/RHS
     const label lhsSize = 1;
     const label rhsSize = 1;
@@ -271,9 +269,6 @@ void turbulentIntermittencyTransitionSSTAssembler::
     scalar ca2 = model_->ca2();
     scalar ce1 = model_->ce1();
     scalar ce2 = model_->ce2();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -441,13 +436,6 @@ void turbulentIntermittencyTransitionSSTAssembler::
             lhs[0] += std::max(0.0, linearizedProductionFlux * vol) +
                       std::max(0.0, linearizedDissipationFlux * vol);
 
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * gamma * divUm * vol;
-            }
-
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
@@ -466,8 +454,6 @@ void turbulentIntermittencyTransitionSSTAssembler::
 
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
 
     // space for LHS/RHS
     const label lhsSize = 1;
@@ -503,9 +489,6 @@ void turbulentIntermittencyTransitionSSTAssembler::
     const STKScalarField* gradUSTKFieldPtr =
         model_->URef().gradRef().stkFieldPtr();
     const STKScalarField* yMinSTKFieldPtr = model_->yMinRef().stkFieldPtr();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     scalar ce1 = model_->ce1();
     scalar ce2 = model_->ce2();
@@ -686,13 +669,6 @@ void turbulentIntermittencyTransitionSSTAssembler::
             rhs[0] += (Pgamma - Egamma) * vol;
             lhs[0] += std::max(0.0, linearizedProductionFlux * vol) +
                       std::max(0.0, linearizedDissipationFlux * vol);
-
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * gamma * divUm * vol;
-            }
 
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);

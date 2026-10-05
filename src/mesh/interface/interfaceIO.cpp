@@ -4,8 +4,8 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#include "controls.h"
 #include "dgInterfaceSideInfo.h"
+#include "controls.h"
 #include "interface.h"
 #include "messager.h"
 #include "zone.h"
@@ -205,6 +205,12 @@ void interface::read(const YAML::Node& inputNode)
                 {
                     searchMethodName =
                         inputNode["search_method"].template as<std::string>();
+                    if (searchMethodName != "stk_kdtree")
+                    {
+                        errorMsg("invalid search_method '" + searchMethodName +
+                                 "' provided for interface; only stk_kdtree "
+                                 "is supported");
+                    }
                 }
 
                 if (inputNode["search_tolerance"])

@@ -20,7 +20,8 @@ void displacementDiffusionAssembler::applySymmetryConditions_(
     const domain* domain,
     Context* ctx)
 {
-    // get rhs vector
+    // get system matrix and rhs vector
+    Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
 
     // select all locally owned nodes for this domain
@@ -55,10 +56,19 @@ void displacementDiffusionAssembler::applySymmetryConditions_(
         }
     }
 
+    if (partVec.empty())
+        return;
+
     // remove symmetry normal component from residual vector
     // select all locally owned nodes for this domain
     const auto& assembledSymmSTKFieldRef = *metaData.template get_field<scalar>(
         stk::topology::NODE_RANK, mesh::assembled_symm_area_ID);
+
+    // fixed-size containers
+    scalar n[SPATIAL_DIM];
+
+    // we require diagonal offsets
+    const auto& diagOffsets = A.diagOffsetRef();
 
     stk::mesh::Selector selOwnedNodes =
         metaData.locally_owned_part() & stk::mesh::selectUnion(partVec);
@@ -79,29 +89,62 @@ void displacementDiffusionAssembler::applySymmetryConditions_(
             if (row < 0) // node not part of this (subset) system
                 continue;
 
-            scalar* rhs_val = &b[BLOCKSIZE * row];
-
+            // unit symmetry normal
             const scalar* aarea =
                 stk::mesh::field_data(assembledSymmSTKFieldRef, node);
-
             scalar asq = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
+            for (label i = 0; i < SPATIAL_DIM; ++i)
             {
-                const scalar axj = aarea[j];
-                asq += axj * axj;
+                n[i] = aarea[i];
+                asq += n[i] * n[i];
             }
+            if (asq < SMALL)
+                continue;
             const scalar amag = std::sqrt(asq);
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                n[i] /= amag;
 
-            scalar dot = 0.0;
-            for (label j = 0; j < SPATIAL_DIM; ++j)
+            auto vals = A.rowVals(row);
+            const label nBlocks =
+                static_cast<label>(vals.size()) / (SPATIAL_DIM * SPATIAL_DIM);
+            const label diagBk = diagOffsets[row];
+
+            // normal stiffness scale = n^T D n (keeps du physical after decoup)
+            scalar* Dblk = &vals[SPATIAL_DIM * SPATIAL_DIM * diagBk];
+            scalar scale = 0.0;
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                    scale += n[i] * Dblk[i * SPATIAL_DIM + j] * n[j];
+            if (std::abs(scale) < SMALL)
+                scale = amag;
+
+            for (label bk = 0; bk < nBlocks; ++bk)
             {
-                dot += rhs_val[j] * aarea[j] / amag;
+                scalar* B = &vals[SPATIAL_DIM * SPATIAL_DIM * bk];
+                scalar colProj[SPATIAL_DIM];
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    scalar s = 0.0;
+                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                        s += n[k] * B[k * SPATIAL_DIM + j];
+                    colProj[j] = s;
+                }
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        B[i * SPATIAL_DIM + j] -= n[i] * colProj[j];
+                if (bk == diagBk)
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                            B[i * SPATIAL_DIM + j] += scale * n[i] * n[j];
             }
 
-            for (int j = 0; j < SPATIAL_DIM; j++)
-            {
-                rhs_val[j] -= dot * aarea[j] / amag;
-            }
+            // RHS: remove the normal component (normal equation rhs = 0)
+            scalar* rhs = &b[BLOCKSIZE * row];
+            scalar bproj = 0.0;
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                bproj += n[i] * rhs[i];
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                rhs[i] -= n[i] * bproj;
         }
     }
 }

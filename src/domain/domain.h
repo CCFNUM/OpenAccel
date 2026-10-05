@@ -175,6 +175,11 @@ struct material
 
         youngModulus youngModulus_;
         poissonRatio poissonRatio_;
+
+        // Mooney-Rivlin (Flory split); derived from E/nu when unset
+        scalar c1_ = 0.0;    // C10
+        scalar c2_ = 0.0;    // C01
+        scalar kappa_ = 0.0; // bulk modulus
     };
 
     struct buoyancyProperties

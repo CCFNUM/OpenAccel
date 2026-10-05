@@ -14,3 +14,7 @@
 [submodule "external/gplotpp"]
 	path = external/gplotpp
 	url = https://github.com/ziotom78/gplotpp
+[submodule "external/sfem"]
+	path = external/sfem
+	url = https://github.com/zulianp/sfem.git
+	branch = smesh

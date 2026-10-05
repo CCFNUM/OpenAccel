@@ -441,7 +441,7 @@ void controls::read(YAML::Node inputNode)
             }
             else
             {
-                errorMsg("convergence_controls block is not provided in the "
+                errorMsg("convergence_criteria block is not provided in the "
                          "yaml input file");
             }
 
@@ -767,6 +767,18 @@ void controls::read(YAML::Node inputNode)
                         .conservativeFluxTransfer_ =
                         interfaceTransfer["conservative_flux_transfer"]
                             .template as<bool>();
+                }
+            }
+
+            if (advancedOptions["solid_mechanics"])
+            {
+                const auto& solidMechanics = advancedOptions["solid_mechanics"];
+
+                if (solidMechanics["verbose"])
+                {
+                    solver_.solverControl_.advancedOptions_.solidMechanics_
+                        .verbose_ =
+                        solidMechanics["verbose"].template as<label>();
                 }
             }
 
@@ -1152,6 +1164,14 @@ void controls::read(YAML::Node inputNode)
                             .template as<std::string>());
             }
 
+            if (expertParameters["solid_assembler_type"])
+            {
+                solver_.solverControl_.expertParameters_.solidAssemblerType_ =
+                    convertSolidAssemblerTypeFromString(
+                        expertParameters["solid_assembler_type"]
+                            .template as<std::string>());
+            }
+
             if (expertParameters["strong_dirichlet_wall_scale"])
             {
                 solver_.solverControl_.expertParameters_
@@ -1192,6 +1212,14 @@ void controls::read(YAML::Node inputNode)
             {
                 solver_.solverControl_.expertParameters_.disablePhysics_ =
                     expertParameters["disable_physics"].template as<bool>();
+            }
+
+            if (expertParameters["bypass_volume_fraction_convergence"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .bypassVolumeFractionConvergence_ =
+                    expertParameters["bypass_volume_fraction_convergence"]
+                        .template as<bool>();
             }
 
             if (expertParameters["freeze_flow"])

@@ -311,6 +311,12 @@ public:
         return coordinates_ID;
     }
 
+    // exposed area vectors on the deformed configuration (follower loads)
+    void
+    computeDeformedExposedAreaVector(const stk::mesh::PartVector& parts,
+                                     const STKScalarField& displacementField,
+                                     std::vector<scalar>& deformedAreaVec);
+
     controls& controlsRef();
 
     const controls& controlsRef() const;

@@ -183,8 +183,6 @@ void turbulentEddyFrequencySSTAssembler::
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
-
     scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
     // space for LHS/RHS
@@ -234,9 +232,6 @@ void turbulentEddyFrequencySSTAssembler::
     scalar betaTwo = model_->betaTwo();
     scalar gammaOne = model_->gammaOne();
     scalar gammaTwo = model_->gammaTwo();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -334,13 +329,6 @@ void turbulentEddyFrequencySSTAssembler::
                        std::max(Sw / (omega + SMALL), 0.0)) *
                       vol;
 
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * omega * divUm * vol;
-            }
-
             // global matrix
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
@@ -360,8 +348,6 @@ void turbulentEddyFrequencySSTAssembler::
 
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
 
     scalar comp = domain->isMaterialCompressible() ? 1.0 : 0.0;
 
@@ -416,9 +402,6 @@ void turbulentEddyFrequencySSTAssembler::
     scalar betaTwo = model_->betaTwo();
     scalar gammaOne = model_->gammaOne();
     scalar gammaTwo = model_->gammaTwo();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -519,13 +502,6 @@ void turbulentEddyFrequencySSTAssembler::
             lhs[0] += (2.0 * beta * rho * omega +
                        std::max(Sw / (omega + SMALL), 0.0)) *
                       vol;
-
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * omega * divUm * vol;
-            }
 
             // global matrix
             Base::applyCoeff_(

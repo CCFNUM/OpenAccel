@@ -340,15 +340,40 @@ void domain::read_()
                     materialBlockVector_[localMaterialIndex]
                                         ["mechanical_properties"];
 
-                mat.mechanicalProperties_.youngModulus_.option_ =
-                    convertYoungModulusOptionFromString(
-                        mechanicalPropertiesBlock["young_modulus"]["option"]
-                            .template as<std::string>());
+                // optional: mooney_rivlin may give c1/c2/kappa instead
+                if (mechanicalPropertiesBlock["young_modulus"])
+                {
+                    mat.mechanicalProperties_.youngModulus_.option_ =
+                        convertYoungModulusOptionFromString(
+                            mechanicalPropertiesBlock["young_modulus"]["option"]
+                                .template as<std::string>());
+                }
 
-                mat.mechanicalProperties_.poissonRatio_.option_ =
-                    convertPoissonRatioOptionFromString(
-                        mechanicalPropertiesBlock["poisson_ratio"]["option"]
-                            .template as<std::string>());
+                if (mechanicalPropertiesBlock["poisson_ratio"])
+                {
+                    mat.mechanicalProperties_.poissonRatio_.option_ =
+                        convertPoissonRatioOptionFromString(
+                            mechanicalPropertiesBlock["poisson_ratio"]["option"]
+                                .template as<std::string>());
+                }
+
+                // Mooney-Rivlin parameters (optional; else derived from E/nu)
+                if (mechanicalPropertiesBlock["c1"])
+                {
+                    mat.mechanicalProperties_.c1_ =
+                        mechanicalPropertiesBlock["c1"].template as<scalar>();
+                }
+                if (mechanicalPropertiesBlock["c2"])
+                {
+                    mat.mechanicalProperties_.c2_ =
+                        mechanicalPropertiesBlock["c2"].template as<scalar>();
+                }
+                if (mechanicalPropertiesBlock["kappa"])
+                {
+                    mat.mechanicalProperties_.kappa_ =
+                        mechanicalPropertiesBlock["kappa"]
+                            .template as<scalar>();
+                }
             }
 
             // move ownership to material vector
@@ -962,6 +987,9 @@ void domain::read_()
                 {
                     case kinematicFormulationType::totalLagrangian:
                         {
+                            equations_[static_cast<int>(
+                                equationID::solidDisplacement)] = true;
+
                             if (this->zonePtr()
                                     ->meshPtr()
                                     ->controlsRef()
@@ -985,9 +1013,6 @@ void domain::read_()
                                 deformation
                                     .setDisplacementRelativeToPreviousMesh(
                                         false);
-
-                                equations_[static_cast<int>(
-                                    equationID::solidDisplacement)] = true;
                             }
                         }
                         break;
@@ -1057,6 +1082,93 @@ void domain::read_()
                 if (solidMechanics_.dampingCoeff_ < 0.0)
                 {
                     errorMsg("damping_coeff must be non-negative");
+                }
+            }
+
+            // Mooney-Rivlin: derive c1/c2/kappa from E/nu if not given
+            if (solidMechanics_.option_ ==
+                solidMechanicsOption::modifiedMooneyRivlin)
+            {
+                for (label iMat = 0;
+                     iMat < static_cast<label>(materialVector_.size());
+                     ++iMat)
+                {
+                    const auto& materialBlock = materialBlockVector_[iMat];
+                    if (!materialBlock["mechanical_properties"])
+                        continue;
+
+                    const auto& mechanicalPropertiesBlock =
+                        materialBlock["mechanical_properties"];
+
+                    const bool hasC1C2Kappa =
+                        mechanicalPropertiesBlock["c1"] ||
+                        mechanicalPropertiesBlock["c2"] ||
+                        mechanicalPropertiesBlock["kappa"];
+
+                    if (hasC1C2Kappa)
+                        continue;
+
+                    const bool hasYoungPoisson =
+                        mechanicalPropertiesBlock["young_modulus"] &&
+                        mechanicalPropertiesBlock["young_modulus"]
+                                                 ["young_modulus"] &&
+                        mechanicalPropertiesBlock["poisson_ratio"] &&
+                        mechanicalPropertiesBlock["poisson_ratio"]
+                                                 ["poisson_ratio"];
+
+                    auto& mechProps =
+                        materialVector_[iMat].mechanicalProperties_;
+
+                    if (hasYoungPoisson)
+                    {
+                        const scalar E =
+                            mechanicalPropertiesBlock["young_modulus"]
+                                                     ["young_modulus"]
+                                                         .template as<scalar>();
+                        const scalar nu =
+                            mechanicalPropertiesBlock["poisson_ratio"]
+                                                     ["poisson_ratio"]
+                                                         .template as<scalar>();
+
+                        // (E, nu) -> (c1, c2, kappa) with C01 = 0
+                        const scalar muEff = E / (2.0 * (1.0 + nu));
+                        mechProps.c1_ = muEff / 2.0;
+                        mechProps.c2_ = 0.0;
+                        mechProps.kappa_ = E / (3.0 * (1.0 - 2.0 * nu));
+                    }
+
+                    // mooney_rivlin needs c1/c2/kappa or E/nu
+                    if (mechProps.c1_ == 0.0 && !hasYoungPoisson)
+                    {
+                        errorMsg("mooney_rivlin requires either c1/c2/kappa or "
+                                 "young_modulus/poisson_ratio");
+                    }
+                }
+            }
+
+            // linear_elastic and neo_hookean need E and nu
+            if (solidMechanics_.option_ ==
+                    solidMechanicsOption::linearElastic ||
+                solidMechanics_.option_ == solidMechanicsOption::neoHookean)
+            {
+                for (label iMat = 0;
+                     iMat < static_cast<label>(materialVector_.size());
+                     ++iMat)
+                {
+                    const auto& materialBlock = materialBlockVector_[iMat];
+                    const bool hasE =
+                        materialBlock["mechanical_properties"] &&
+                        materialBlock["mechanical_properties"]["young_modulus"];
+                    const bool hasNu =
+                        materialBlock["mechanical_properties"] &&
+                        materialBlock["mechanical_properties"]["poisson_ratio"];
+
+                    if (!hasE || !hasNu)
+                    {
+                        errorMsg("linear_elastic/neo_hookean requires "
+                                 "young_modulus and poisson_ratio in "
+                                 "mechanical_properties");
+                    }
                 }
             }
         }

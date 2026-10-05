@@ -243,8 +243,8 @@ void zone::read(const YAML::Node& domain)
     {
         errorMsg("zone: `boundaries` block is missing for domain `" +
                  domain["name"].template as<std::string>() +
-                 "`.\nboundary_conditions:\n -name: <boundary name>\n type: "
-                 "<boundary type>\n location: <location list>");
+                 "`.\nboundaries:\n- name: <boundary name>\n  type: "
+                 "<boundary type>\n  location: <location list>");
     }
 }
 

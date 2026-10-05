@@ -92,6 +92,10 @@ private:
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx) override;
+
+    void assembleElemTermsBoundaryWallSpecifiedFlux_(const domain* domain,
+                                                     const boundary* boundary,
+                                                     Context* ctx) override;
 };
 
 } /* namespace accel */

@@ -187,6 +187,11 @@ struct solverDictionary
                 label verbose_ = 0;
             };
 
+            struct solidMechanicsDictionary
+            {
+                label verbose_ = 0;
+            };
+
             struct equationControlsDictionary
             {
                 struct subIterationsDictionary
@@ -228,6 +233,7 @@ struct solverDictionary
 
             pressureLevelInformationDictionary pressureLevelInformation_;
             interfaceTransferDictionary interfaceTransfer_;
+            solidMechanicsDictionary solidMechanics_;
             equationControlsDictionary equationControls_;
             domainDecompositionDictionary domainDecomposition_;
         };
@@ -253,6 +259,8 @@ struct solverDictionary
             bool nodeReordering_ = false;
             bool forceWallDistanceCalculation_ = false;
             bool disablePhysics_ = false;
+            // exclude alpha residual from free-surface convergence checks
+            bool bypassVolumeFractionConvergence_ = false;
             bool freezeFlow_ = false;
             bool freezePressure_ = false;
             bool freezeEnergy_ = false;
@@ -303,6 +311,8 @@ struct solverDictionary
             // Viscous work carried by a no-slip wall
             viscousWorkWallModel viscousWorkWallModel_ =
                 viscousWorkWallModel::faceVelocity;
+
+            solidAssemblerType solidAssemblerType_ = solidAssemblerType::cvfem;
         };
 
         basicSettingsDictionary basicSettings_;
@@ -396,6 +406,8 @@ public:
 
     bool isRenumbered() const;
 
+    bool isCvfemSolidMechanics() const;
+
     bool isTransient() const;
 
     bool isHighResolution() const;
@@ -403,6 +415,8 @@ public:
     bool isHighResolutionTurbulenceNumerics() const;
 
     bool isNSO() const;
+
+    bool bypassVolumeFractionConvergence() const;
 
     bool useAutomaticDomainDecomposition() const;
 
