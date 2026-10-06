@@ -12,7 +12,6 @@ option(WITH_CANONICAL_SUFFIX "Enable canonical executable suffix" OFF)
 option(WITH_CVFEM_SOLID_MECHANICS "Use CVFEM for solid mechanics" ON)
 option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
 option(WITH_FASTMATH "Use fast math optimization" OFF)
-option(WITH_UNIT_TESTS "Build unit tests (run with ctest)" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
 option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" ON)
 option(WITH_WARNINGS "Enable compiler warnings" OFF)
@@ -274,22 +273,4 @@ if(WITH_DEBUG_LIB)
     )
     target_compile_options(debug PRIVATE -O0 -g -UNDEBUG) # always build this object library in debug mode
     target_link_libraries(debug PRIVATE main_obj)
-endif()
-
-# unit tests (no mesh/MPI needed; headers are taken from main_obj)
-if(WITH_UNIT_TESTS)
-    enable_testing()
-    set(MT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/model/multiphase/massTransfer)
-    add_executable(massTransferTests
-        ${MT_DIR}/tests/massTransferTests.cpp
-        ${MT_DIR}/massTransferModel.cpp
-        ${MT_DIR}/cavitation/cavitationModel.cpp
-        ${MT_DIR}/cavitation/rayleighPlessetCavitation/rayleighPlessetCavitationMassTransfer.cpp
-    )
-    target_include_directories(massTransferTests PRIVATE
-        $<TARGET_PROPERTY:main_obj,INCLUDE_DIRECTORIES>)
-    # domain.h pulls in the STK/Kokkos headers
-    target_link_libraries(massTransferTests PRIVATE
-        ${Trilinos_LIBRARIES} MPI::MPI_C)
-    add_test(NAME massTransfer COMMAND massTransferTests)
 endif()

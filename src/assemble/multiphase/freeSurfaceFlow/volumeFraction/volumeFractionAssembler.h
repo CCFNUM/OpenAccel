@@ -29,15 +29,7 @@ public:
 protected:
     // Assembly
 
-    // Node terms: same as the base class (divergence correction and the
-    // transient/false transient terms) plus the interphase mass transfer
-    // (phase change) source, assembled in the same node loop. The source of
-    // this phase is, in the advective form rho_k (d alpha_k/dt + u.grad
-    // alpha_k) used by the equation,
-    //   S_k = s_k mdot_lv - alpha_k rho_k D,  D = mdot_lv (1/rho_v - 1/rho_l)
-    // with s_v = +1, s_l = -1 (D is dropped if the continuity source is off).
-    // The -alpha rho D part is implicit when D > 0.
-    void assembleNodeTermsFused_(const domain* domain, Context* ctx) override;
+    // base node terms plus the phase change source s_k mdot - alpha_k rho_k D
     void assembleNodeTermsFusedSteady_(const domain* domain,
                                        Context* ctx) override;
     void assembleNodeTermsFusedFirstOrderUnsteady_(const domain* domain,

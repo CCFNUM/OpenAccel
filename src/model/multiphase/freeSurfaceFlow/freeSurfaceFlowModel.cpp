@@ -7,6 +7,7 @@
 #include "freeSurfaceFlowModel.h"
 #include "idealGasModel.h"
 #include "ipInfo.h"
+#include "realm.h"
 #include "simulation.h"
 #include "sutherlandsFormulaModel.h"
 
@@ -8836,6 +8837,289 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
 
                 // store with relaxation
                 mDot[ip] = mDotURF * tmDot + (1.0 - mDotURF) * mDot[ip];
+            }
+        }
+    }
+}
+
+// Interphase mass transfer (cavitation)
+
+void freeSurfaceFlowModel::setupMassTransfer_(realm* realm)
+{
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+
+    auto isPhase = [&](label index)
+    {
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+        {
+            if (phaseRef(iPhase).index_ == index)
+                return true;
+        }
+        return false;
+    };
+
+    // nodal field of a pair: declared once, shared across domains
+    auto declareField =
+        [&](const std::string& fieldName, const stk::mesh::PartVector& partVec)
+    {
+        auto* fieldPtr = &metaData.declare_field<scalar>(
+            stk::topology::NODE_RANK, fieldName);
+        const scalar initialValue = 0.0;
+        for (const stk::mesh::Part* part : partVec)
+        {
+            if (!fieldPtr->defined_on(*part))
+            {
+                stk::mesh::put_field_on_mesh(
+                    *fieldPtr, *part, 1, &initialValue);
+            }
+        }
+        return fieldPtr;
+    };
+
+    for (const auto& domain : realm->simulationRef().domainVector())
+    {
+        for (const auto& fpm : domain->fluidPairModels_)
+        {
+            const auto& mt = fpm.massTransfer_;
+            if (mt.option_ == massTransferModelOption::none)
+                continue;
+
+            const std::string pairName = fpm.materialA_ + "_" + fpm.materialB_;
+
+            if (!isPhase(mt.liquidIndex_) || !isPhase(mt.vaporIndex_))
+            {
+                errorMsg("mass_transfer of pair " + pairName +
+                         ": liquid and vapor phases must be phases of the "
+                         "free surface flow model");
+            }
+
+            // continuity source assumes constant phase densities
+            if (domain->isMaterialCompressible(
+                    domain->globalToLocalMaterialIndex(mt.liquidIndex_)) ||
+                domain->isMaterialCompressible(
+                    domain->globalToLocalMaterialIndex(mt.vaporIndex_)))
+            {
+                errorMsg("mass_transfer of pair " + pairName +
+                         ": compressible phases are not supported");
+            }
+
+            if (domain->multiphase_.freeSurfaceModel_.fluxCorrectedTransport_)
+            {
+                warningMsg("mass_transfer of pair " + pairName +
+                           ": flux corrected transport sharpens the "
+                           "volume fraction of the dispersed vapor");
+            }
+
+            massTransferPair pair;
+            pair.domainIndex_ = domain->index();
+            pair.name_ = pairName;
+            pair.cfg_ = mt;
+
+            const stk::mesh::PartVector& partVec =
+                domain->zonePtr()->interiorParts();
+
+            pair.mdotSTKFieldPtr_ =
+                declareField("mass_transfer_rate." + pairName, partVec);
+            pair.dmdotdalphaSTKFieldPtr_ = declareField(
+                "mass_transfer_rate_alpha_coeff." + pairName, partVec);
+            pair.dmdotdpSTKFieldPtr_ = declareField(
+                "mass_transfer_rate_pressure_coeff." + pairName, partVec);
+
+            // the rate is the state of the relaxation
+            stk::io::set_field_output_type(*pair.mdotSTKFieldPtr_,
+                                           fieldType[1]);
+            realm->registerRestartField(pair.mdotSTKFieldPtr_->name());
+
+            massTransferPairs_.push_back(std::move(pair));
+        }
+    }
+}
+
+void freeSurfaceFlowModel::initializeMassTransferRate(
+    const std::shared_ptr<domain> domain)
+{
+    // fields are zero by default: restore on restart only
+    const auto& restart_ctrl = controlsRef().solverRef().restartControl_;
+    if (!restart_ctrl.isRestart_)
+        return;
+
+    for (const auto& pair : massTransferPairs_)
+    {
+        if (pair.domainIndex_ != domain->index())
+            continue;
+
+        stk::io::MeshField mf(pair.mdotSTKFieldPtr_,
+                              std::to_string(std::hash<std::string>{}(
+                                  pair.mdotSTKFieldPtr_->name())),
+                              restart_ctrl.timeMatchOption_);
+
+        scalar restart_time = restart_ctrl.restartTime_;
+        if (restart_time == 0.0)
+        {
+            restart_time = this->meshRef().ioBrokerRef().get_max_time();
+        }
+        mf.set_read_time(restart_time);
+        mf.set_single_state(false);
+
+        for (const stk::mesh::Part* part : domain->zonePtr()->interiorParts())
+        {
+            mf.add_subset(*part);
+        }
+
+        this->meshRef().ioBrokerRef().read_input_field(mf);
+
+        if (mf.field_restored())
+        {
+            stk::mesh::communicate_field_data(this->meshRef().bulkDataRef(),
+                                              {pair.mdotSTKFieldPtr_});
+        }
+        else
+        {
+            warningMsg("Field " + pair.mdotSTKFieldPtr_->name() +
+                       " not found in the restart file: starting from zero");
+        }
+    }
+}
+
+void freeSurfaceFlowModel::updateMassTransferRate(
+    const std::shared_ptr<domain> domain)
+{
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+    stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+
+    // phase change depends on the absolute pressure
+    const scalar pLevel = domain->referencePressure();
+    const STKScalarField* pSTKFieldPtr = pRef().stkFieldPtr();
+
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+    stk::mesh::Selector selUniversalNodes =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selUniversalNodes);
+
+    for (const auto& pair : massTransferPairs_)
+    {
+        if (pair.domainIndex_ != domain->index())
+            continue;
+
+        const auto& cfg = pair.cfg_;
+
+        // Rayleigh-Plesset: mdot = C (1-a_v) rho_v sqrt(2/3 (p_v-p)/rho_l)
+        const scalar pv = cfg.saturationPressure_;
+        const scalar pMin = cfg.pressureClippingForRate_ ? 0.0 : -BIG;
+        const scalar Cvap = cfg.vaporizationCoefficient_ * 3.0 *
+                            cfg.nucleationSiteVolumeFraction_ /
+                            cfg.nucleationSiteRadius_;
+        const scalar Ccond =
+            cfg.condensationCoefficient_ * 3.0 / cfg.nucleationSiteRadius_;
+        const scalar omega = cfg.underRelaxation_;
+
+        // sqrt(|dp|) has an unbounded slope at p_v: linear in dp below dpMin
+        const scalar dpMin = 1.0e-3 * pv;
+
+        const STKScalarField* alphaVSTKFieldPtr =
+            this->alphaRef(cfg.vaporIndex_).stkFieldPtr();
+        const STKScalarField* rhoLSTKFieldPtr =
+            this->rhoRef(cfg.liquidIndex_).stkFieldPtr();
+        const STKScalarField* rhoVSTKFieldPtr =
+            this->rhoRef(cfg.vaporIndex_).stkFieldPtr();
+
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
+
+            // field chunks in bucket
+            const scalar* pb = stk::mesh::field_data(*pSTKFieldPtr, nodeBucket);
+            const scalar* alphaVb =
+                stk::mesh::field_data(*alphaVSTKFieldPtr, nodeBucket);
+            const scalar* rhoLb =
+                stk::mesh::field_data(*rhoLSTKFieldPtr, nodeBucket);
+            const scalar* rhoVb =
+                stk::mesh::field_data(*rhoVSTKFieldPtr, nodeBucket);
+            scalar* mdotb =
+                stk::mesh::field_data(*pair.mdotSTKFieldPtr_, nodeBucket);
+            scalar* dmdotdalphab = stk::mesh::field_data(
+                *pair.dmdotdalphaSTKFieldPtr_, nodeBucket);
+            scalar* dmdotdpb =
+                stk::mesh::field_data(*pair.dmdotdpSTKFieldPtr_, nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
+            {
+                const scalar dp = pv - std::max(pb[iNode] + pLevel, pMin);
+                const scalar alphaV =
+                    std::min(std::max(alphaVb[iNode], 0.0), 1.0);
+
+                // growth/collapse mass flux per unit pressure difference
+                const scalar w =
+                    rhoVb[iNode] * std::sqrt(2.0 / 3.0 / rhoLb[iNode] /
+                                             std::max(std::abs(dp), dpMin));
+
+                const bool vaporization = dp > 0.0;
+                const scalar K =
+                    (vaporization ? Cvap : Ccond) * w * std::abs(dp);
+                const scalar mdot =
+                    vaporization ? K * (1.0 - alphaV) : -K * alphaV;
+
+                // under-relaxed rate and its (secant in p) sensitivities
+                mdotb[iNode] = omega * mdot + (1.0 - omega) * mdotb[iNode];
+                dmdotdalphab[iNode] = -omega * K;
+                dmdotdpb[iNode] =
+                    -omega *
+                    (vaporization ? Cvap * (1.0 - alphaV) : Ccond * alphaV) * w;
+            }
+        }
+    }
+}
+
+void freeSurfaceFlowModel::correctMassTransferRate(
+    const std::shared_ptr<domain> domain)
+{
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+    stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+
+    const STKScalarField* pSTKFieldPtr = pRef().stkFieldPtr();
+    const STKScalarField* pSTKFieldPtrPrevIter =
+        pRef().prevIterRef().stkFieldPtr();
+
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+    stk::mesh::Selector selUniversalNodes =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selUniversalNodes);
+
+    for (const auto& pair : massTransferPairs_)
+    {
+        if (pair.domainIndex_ != domain->index())
+            continue;
+
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+
+            const label nNodesPerBucket = nodeBucket.size();
+
+            // field chunks in bucket
+            const scalar* pb = stk::mesh::field_data(*pSTKFieldPtr, nodeBucket);
+            const scalar* pbPrevIter =
+                stk::mesh::field_data(*pSTKFieldPtrPrevIter, nodeBucket);
+            const scalar* dmdotdpb =
+                stk::mesh::field_data(*pair.dmdotdpSTKFieldPtr_, nodeBucket);
+            scalar* mdotb =
+                stk::mesh::field_data(*pair.mdotSTKFieldPtr_, nodeBucket);
+
+            for (label iNode = 0; iNode < nNodesPerBucket; ++iNode)
+            {
+                mdotb[iNode] +=
+                    dmdotdpb[iNode] * (pb[iNode] - pbPrevIter[iNode]);
             }
         }
     }

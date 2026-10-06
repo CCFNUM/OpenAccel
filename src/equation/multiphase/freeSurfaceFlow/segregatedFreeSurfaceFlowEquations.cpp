@@ -111,7 +111,7 @@ void segregatedFreeSurfaceFlowEquations::initialize()
     U_eq_->initialize();     // 1. must be first
     pCorr_eq_->initialize(); // 2.
 
-    // initialize interphase mass transfer rate (zero)
+    // mass transfer rate (restored on restart)
     FOREACH_DOMAIN(initializeMassTransferRate);
 
     // initialize volume fractions
@@ -161,14 +161,6 @@ void segregatedFreeSurfaceFlowEquations::postInitialize()
 
 void segregatedFreeSurfaceFlowEquations::solve()
 {
-    // interphase mass transfer (cavitation): update the under-relaxed rate
-    // from the current pressure, volume fractions and densities. It acts as
-    // source in the volume fraction and pressure correction equations below
-    if (this->hasMassTransfer())
-    {
-        FOREACH_DOMAIN(updateMassTransferRate);
-    }
-
     // solve volume fraction
     {
         for (label iPhase = 0; iPhase < nPhases(); iPhase++)
@@ -262,9 +254,20 @@ void segregatedFreeSurfaceFlowEquations::solve()
                 std::cout << std::endl << " sub-iter: " << subIter << "\n";
             }
 
+            // cavitation rate: implicit in p here, alpha source next iteration
+            if (this->hasMassTransfer())
+            {
+                FOREACH_DOMAIN(updateMassTransferRate);
+            }
+
             pCorr_eq_->preSolve();
             pCorr_eq_->solve();
             pCorr_eq_->postSolve();
+
+            if (this->hasMassTransfer())
+            {
+                FOREACH_DOMAIN(correctMassTransferRate);
+            }
 
             // correct phase density (only if compressible)
             for (label iPhase = 0; iPhase < nPhases(); iPhase++)

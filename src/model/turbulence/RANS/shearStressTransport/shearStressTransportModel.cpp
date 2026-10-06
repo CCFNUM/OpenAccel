@@ -661,6 +661,23 @@ void shearStressTransportModel::updateTurbulentDynamicViscosity(
     scalar a1 = this->aOne();
     scalar betaStar = this->betaStar();
 
+    // Reboud correction: rho in mu_t -> rho_v + (rho_l - rho_v) f^n
+    scalar reboudExponent = 0.0;
+    const STKScalarField* rhoLSTKFieldPtr = nullptr;
+    const STKScalarField* rhoVSTKFieldPtr = nullptr;
+    for (const auto& fpm : domain->fluidPairModels_)
+    {
+        const auto& mt = fpm.massTransfer_;
+        if (mt.option_ != massTransferModelOption::none &&
+            mt.reboudCorrectionExponent_ > 0.0)
+        {
+            reboudExponent = mt.reboudCorrectionExponent_;
+            rhoLSTKFieldPtr = this->rhoRef(mt.liquidIndex_).stkFieldPtr();
+            rhoVSTKFieldPtr = this->rhoRef(mt.vaporIndex_).stkFieldPtr();
+        }
+    }
+    const bool reboud = reboudExponent > 0.0;
+
     // define some common selectors
     stk::mesh::Selector selAllNodes =
         metaData.universal_part() &
@@ -682,6 +699,10 @@ void shearStressTransportModel::updateTurbulentDynamicViscosity(
         const scalar* minDb =
             stk::mesh::field_data(*minDistanceToWallSTKFieldPtr, b);
         scalar* mutb = stk::mesh::field_data(*mutSTKFieldPtr, b);
+        const scalar* rhoLb =
+            reboud ? stk::mesh::field_data(*rhoLSTKFieldPtr, b) : nullptr;
+        const scalar* rhoVb =
+            reboud ? stk::mesh::field_data(*rhoVSTKFieldPtr, b) : nullptr;
 
         for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
         {
@@ -710,7 +731,16 @@ void shearStressTransportModel::updateTurbulentDynamicViscosity(
             const scalar fArgTwo = std::max(2.0 * trbDiss, lamDiss);
             const scalar fTwo = std::tanh(fArgTwo * fArgTwo);
 
-            scalar mut_val = a1 * rhob[k] * tkeb[k] /
+            scalar rhoMut = rhob[k];
+            if (reboud)
+            {
+                const scalar dRho = rhoLb[k] - rhoVb[k];
+                const scalar f = std::min(
+                    std::max((rhob[k] - rhoVb[k]) / (dRho + SMALL), 0.0), 1.0);
+                rhoMut = rhoVb[k] + dRho * std::pow(f, reboudExponent);
+            }
+
+            scalar mut_val = a1 * rhoMut * tkeb[k] /
                              (std::max(a1 * tefb[k], sijMag * fTwo) + SMALL);
 
             mutb[k] = urf * mut_val + (1.0 - urf) * mutb[k];

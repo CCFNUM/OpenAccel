@@ -1,9 +1,7 @@
 // File       : volumeFractionAssemblerNodeTerms.cpp
 // Created    : Thu Oct 01 2026
 // Author     : OpenAccel
-// Description: Node based terms of the volume fraction equation: divergence
-//              correction, (false) transient and the interphase mass transfer
-//              (phase change) source, assembled in one node loop
+// Description: Node terms of the volume fraction equation incl. phase change
 // Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "volumeFractionAssembler.h"
@@ -11,34 +9,25 @@
 namespace accel
 {
 
-void volumeFractionAssembler::assembleNodeTermsFused_(const domain* domain,
-                                                      Context* ctx)
+namespace
 {
-    auto& mesh = field_broker_->meshRef();
-    if (mesh.controlsRef().isTransient())
-    {
-        auto scheme = mesh.controlsRef()
-                          .solverRef()
-                          .solverControl_.basicSettings_.transientScheme_;
-        switch (scheme)
-        {
-            case transientSchemeType::firstOrderBackwardEuler:
-                assembleNodeTermsFusedFirstOrderUnsteady_(domain, ctx);
-                break;
 
-            case transientSchemeType::secondOrderBackwardEuler:
-                assembleNodeTermsFusedSecondOrderUnsteady_(domain, ctx);
-                break;
+// phase change pair data gathered per bucket
+struct massTransferTerm
+{
+    scalar sign;       // +1 vapor, -1 liquid, 0 other phases
+    scalar continuity; // 1 if the expansion enters the equations
+    const STKScalarField* mdot;
+    const STKScalarField* dmdotdalpha;
+    const STKScalarField* rhoL;
+    const STKScalarField* rhoV;
+    const scalar* mdotb;
+    const scalar* dmdotdalphab;
+    const scalar* rhoLb;
+    const scalar* rhoVb;
+};
 
-            default:
-                break;
-        }
-    }
-    else
-    {
-        assembleNodeTermsFusedSteady_(domain, ctx);
-    }
-}
+} // namespace
 
 void volumeFractionAssembler::assembleNodeTermsFusedSteady_(
     const domain* domain,
@@ -72,8 +61,22 @@ void volumeFractionAssembler::assembleNodeTermsFusedSteady_(
     // other
     scalar dt = field_broker_->controlsRef().getPhysicalTimescale();
 
-    // mass transfer pairs of this domain (phase change source)
-    const auto mtPairs = model_->massTransferPairs(domain);
+    // phase change pairs of this domain
+    std::vector<massTransferTerm> mtPairs;
+    for (const auto& pair : model_->massTransferPairs())
+    {
+        if (pair.domainIndex_ != domain->index())
+            continue;
+        const auto& cfg = pair.cfg_;
+        mtPairs.push_back({cfg.vaporIndex_ == phaseIndex_
+                               ? 1.0
+                               : (cfg.liquidIndex_ == phaseIndex_ ? -1.0 : 0.0),
+                           cfg.includeContinuitySource_ ? 1.0 : 0.0,
+                           pair.mdotSTKFieldPtr_,
+                           pair.dmdotdalphaSTKFieldPtr_,
+                           model_->rhoRef(cfg.liquidIndex_).stkFieldPtr(),
+                           model_->rhoRef(cfg.vaporIndex_).stkFieldPtr()});
+    }
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -96,6 +99,14 @@ void volumeFractionAssembler::assembleNodeTermsFusedSteady_(
         scalar* rhob = stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
         scalar* volb = stk::mesh::field_data(*volSTKFieldPtr, nodeBucket);
         scalar* phib = stk::mesh::field_data(*phiSTKFieldPtr, nodeBucket);
+        for (auto& mt : mtPairs)
+        {
+            mt.mdotb = stk::mesh::field_data(*mt.mdot, nodeBucket);
+            mt.dmdotdalphab =
+                stk::mesh::field_data(*mt.dmdotdalpha, nodeBucket);
+            mt.rhoLb = stk::mesh::field_data(*mt.rhoL, nodeBucket);
+            mt.rhoVb = stk::mesh::field_data(*mt.rhoV, nodeBucket);
+        }
 
         for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
              ++iNode)
@@ -131,38 +142,22 @@ void volumeFractionAssembler::assembleNodeTermsFusedSteady_(
             // false transient
             lhs[0] += lhsfac;
 
-            // interphase mass transfer (phase change) source: residual
-            // vol (s mdot - alpha rho D) with s = +1 for the vapor, -1 for the
-            // liquid and 0 for any other phase, D = mdot (1/rho_v - 1/rho_l);
-            // the -alpha rho D part (mixture expansion) acts on every phase
-            // and is implicit (positive diagonal) when D > 0
-            for (const auto* pair : mtPairs)
+            // phase change s mdot - alpha rho D, D = mdot (1/rho_v - 1/rho_l)
+            for (const auto& mt : mtPairs)
             {
-                scalar sign = 0.0;
-                if (pair->vaporIndex_ == phaseIndex_)
-                    sign = 1.0;
-                else if (pair->liquidIndex_ == phaseIndex_)
-                    sign = -1.0;
-                const scalar mdot =
-                    *stk::mesh::field_data(*pair->mdotSTKFieldPtr_, node);
+                const scalar mdot = mt.mdotb[iNode];
+                const scalar rhoDfac =
+                    mt.continuity * rho *
+                    (1.0 / mt.rhoVb[iNode] - 1.0 / mt.rhoLb[iNode]);
+                const scalar expansion = phii * rhoDfac;
 
-                scalar D = 0.0;
-                if (pair->model_->includeContinuitySource())
-                {
-                    const scalar rhoL = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->liquidIndex_).stkFieldPtr(),
-                        node);
-                    const scalar rhoV = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->vaporIndex_).stkFieldPtr(),
-                        node);
-                    D = massTransferModel::volumeSource(mdot, rhoL, rhoV);
-                }
+                rhs[0] += vol * mdot * (mt.sign - expansion);
 
-                rhs[0] += vol * (sign * mdot - phii * rho * D);
-                if (D > 0.0)
-                {
-                    lhs[0] += vol * rho * D;
-                }
+                // -dS/dalpha where positive (d mdot/d alpha = s d mdot/d a_v)
+                lhs[0] += vol * (std::max(mdot * rhoDfac, 0.0) +
+                                 std::max(-mt.sign * mt.dmdotdalphab[iNode] *
+                                              (mt.sign - expansion),
+                                          0.0));
             }
 
             Base::applyCoeff_(
@@ -208,8 +203,22 @@ void volumeFractionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
     const scalar dt = mesh.controlsRef().getTimestep();
     const auto c = BDF1::coeff();
 
-    // mass transfer pairs of this domain (phase change source)
-    const auto mtPairs = model_->massTransferPairs(domain);
+    // phase change pairs of this domain
+    std::vector<massTransferTerm> mtPairs;
+    for (const auto& pair : model_->massTransferPairs())
+    {
+        if (pair.domainIndex_ != domain->index())
+            continue;
+        const auto& cfg = pair.cfg_;
+        mtPairs.push_back({cfg.vaporIndex_ == phaseIndex_
+                               ? 1.0
+                               : (cfg.liquidIndex_ == phaseIndex_ ? -1.0 : 0.0),
+                           cfg.includeContinuitySource_ ? 1.0 : 0.0,
+                           pair.mdotSTKFieldPtr_,
+                           pair.dmdotdalphaSTKFieldPtr_,
+                           model_->rhoRef(cfg.liquidIndex_).stkFieldPtr(),
+                           model_->rhoRef(cfg.vaporIndex_).stkFieldPtr()});
+    }
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -233,6 +242,14 @@ void volumeFractionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
         scalar* rhobOld = stk::mesh::field_data(*rhoSTKFieldPtrOld, nodeBucket);
         scalar* volb = stk::mesh::field_data(*volSTKFieldPtr, nodeBucket);
         scalar* phib = stk::mesh::field_data(*phiSTKFieldPtr, nodeBucket);
+        for (auto& mt : mtPairs)
+        {
+            mt.mdotb = stk::mesh::field_data(*mt.mdot, nodeBucket);
+            mt.dmdotdalphab =
+                stk::mesh::field_data(*mt.dmdotdalpha, nodeBucket);
+            mt.rhoLb = stk::mesh::field_data(*mt.rhoL, nodeBucket);
+            mt.rhoVb = stk::mesh::field_data(*mt.rhoV, nodeBucket);
+        }
         scalar* phibOld = stk::mesh::field_data(*phiSTKFieldPtrOld, nodeBucket);
 
         for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
@@ -274,38 +291,22 @@ void volumeFractionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
             lhs[0] += lhsfac;
             rhs[0] -= (lhsfac * phii + lhsfacOld * phiOldi);
 
-            // interphase mass transfer (phase change) source: residual
-            // vol (s mdot - alpha rho D) with s = +1 for the vapor, -1 for the
-            // liquid and 0 for any other phase, D = mdot (1/rho_v - 1/rho_l);
-            // the -alpha rho D part (mixture expansion) acts on every phase
-            // and is implicit (positive diagonal) when D > 0
-            for (const auto* pair : mtPairs)
+            // phase change s mdot - alpha rho D, D = mdot (1/rho_v - 1/rho_l)
+            for (const auto& mt : mtPairs)
             {
-                scalar sign = 0.0;
-                if (pair->vaporIndex_ == phaseIndex_)
-                    sign = 1.0;
-                else if (pair->liquidIndex_ == phaseIndex_)
-                    sign = -1.0;
-                const scalar mdot =
-                    *stk::mesh::field_data(*pair->mdotSTKFieldPtr_, node);
+                const scalar mdot = mt.mdotb[iNode];
+                const scalar rhoDfac =
+                    mt.continuity * rho *
+                    (1.0 / mt.rhoVb[iNode] - 1.0 / mt.rhoLb[iNode]);
+                const scalar expansion = phii * rhoDfac;
 
-                scalar D = 0.0;
-                if (pair->model_->includeContinuitySource())
-                {
-                    const scalar rhoL = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->liquidIndex_).stkFieldPtr(),
-                        node);
-                    const scalar rhoV = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->vaporIndex_).stkFieldPtr(),
-                        node);
-                    D = massTransferModel::volumeSource(mdot, rhoL, rhoV);
-                }
+                rhs[0] += vol * mdot * (mt.sign - expansion);
 
-                rhs[0] += vol * (sign * mdot - phii * rho * D);
-                if (D > 0.0)
-                {
-                    lhs[0] += vol * rho * D;
-                }
+                // -dS/dalpha where positive (d mdot/d alpha = s d mdot/d a_v)
+                lhs[0] += vol * (std::max(mdot * rhoDfac, 0.0) +
+                                 std::max(-mt.sign * mt.dmdotdalphab[iNode] *
+                                              (mt.sign - expansion),
+                                          0.0));
             }
 
             Base::applyCoeff_(
@@ -355,8 +356,22 @@ void volumeFractionAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
     const scalar dt = mesh.controlsRef().getTimestep();
     const auto c = BDF2::coeff(dt, mesh.controlsRef().getTimestep(-1));
 
-    // mass transfer pairs of this domain (phase change source)
-    const auto mtPairs = model_->massTransferPairs(domain);
+    // phase change pairs of this domain
+    std::vector<massTransferTerm> mtPairs;
+    for (const auto& pair : model_->massTransferPairs())
+    {
+        if (pair.domainIndex_ != domain->index())
+            continue;
+        const auto& cfg = pair.cfg_;
+        mtPairs.push_back({cfg.vaporIndex_ == phaseIndex_
+                               ? 1.0
+                               : (cfg.liquidIndex_ == phaseIndex_ ? -1.0 : 0.0),
+                           cfg.includeContinuitySource_ ? 1.0 : 0.0,
+                           pair.mdotSTKFieldPtr_,
+                           pair.dmdotdalphaSTKFieldPtr_,
+                           model_->rhoRef(cfg.liquidIndex_).stkFieldPtr(),
+                           model_->rhoRef(cfg.vaporIndex_).stkFieldPtr()});
+    }
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -382,6 +397,14 @@ void volumeFractionAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
             stk::mesh::field_data(*rhoSTKFieldPtrOldOld, nodeBucket);
         scalar* volb = stk::mesh::field_data(*volSTKFieldPtr, nodeBucket);
         scalar* phib = stk::mesh::field_data(*phiSTKFieldPtr, nodeBucket);
+        for (auto& mt : mtPairs)
+        {
+            mt.mdotb = stk::mesh::field_data(*mt.mdot, nodeBucket);
+            mt.dmdotdalphab =
+                stk::mesh::field_data(*mt.dmdotdalpha, nodeBucket);
+            mt.rhoLb = stk::mesh::field_data(*mt.rhoL, nodeBucket);
+            mt.rhoVb = stk::mesh::field_data(*mt.rhoV, nodeBucket);
+        }
         scalar* phibOld = stk::mesh::field_data(*phiSTKFieldPtrOld, nodeBucket);
         scalar* phibOldOld =
             stk::mesh::field_data(*phiSTKFieldPtrOldOld, nodeBucket);
@@ -429,38 +452,22 @@ void volumeFractionAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
             rhs[0] -= (lhsfac * phii + lhsfacOld * phiOldi +
                        lhsfacOldOld * phiOldOldi);
 
-            // interphase mass transfer (phase change) source: residual
-            // vol (s mdot - alpha rho D) with s = +1 for the vapor, -1 for the
-            // liquid and 0 for any other phase, D = mdot (1/rho_v - 1/rho_l);
-            // the -alpha rho D part (mixture expansion) acts on every phase
-            // and is implicit (positive diagonal) when D > 0
-            for (const auto* pair : mtPairs)
+            // phase change s mdot - alpha rho D, D = mdot (1/rho_v - 1/rho_l)
+            for (const auto& mt : mtPairs)
             {
-                scalar sign = 0.0;
-                if (pair->vaporIndex_ == phaseIndex_)
-                    sign = 1.0;
-                else if (pair->liquidIndex_ == phaseIndex_)
-                    sign = -1.0;
-                const scalar mdot =
-                    *stk::mesh::field_data(*pair->mdotSTKFieldPtr_, node);
+                const scalar mdot = mt.mdotb[iNode];
+                const scalar rhoDfac =
+                    mt.continuity * rho *
+                    (1.0 / mt.rhoVb[iNode] - 1.0 / mt.rhoLb[iNode]);
+                const scalar expansion = phii * rhoDfac;
 
-                scalar D = 0.0;
-                if (pair->model_->includeContinuitySource())
-                {
-                    const scalar rhoL = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->liquidIndex_).stkFieldPtr(),
-                        node);
-                    const scalar rhoV = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->vaporIndex_).stkFieldPtr(),
-                        node);
-                    D = massTransferModel::volumeSource(mdot, rhoL, rhoV);
-                }
+                rhs[0] += vol * mdot * (mt.sign - expansion);
 
-                rhs[0] += vol * (sign * mdot - phii * rho * D);
-                if (D > 0.0)
-                {
-                    lhs[0] += vol * rho * D;
-                }
+                // -dS/dalpha where positive (d mdot/d alpha = s d mdot/d a_v)
+                lhs[0] += vol * (std::max(mdot * rhoDfac, 0.0) +
+                                 std::max(-mt.sign * mt.dmdotdalphab[iNode] *
+                                              (mt.sign - expansion),
+                                          0.0));
             }
 
             Base::applyCoeff_(

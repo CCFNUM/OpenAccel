@@ -65,6 +65,7 @@ private:
                                                    Context* ctx) override;
     void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
                                                     Context* ctx) override;
+
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
 

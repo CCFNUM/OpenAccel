@@ -196,18 +196,15 @@ convertSurfaceTensionModelOptionFromString(std::string s)
     return surfaceTensionModelOptionMap[s];
 }
 
-// Mass transfer model option; `rayleigh_plesset_cavitation` is an alias that
-// also selects the Rayleigh-Plesset cavitation model
+// Mass transfer model option
 std::unordered_map<std::string, massTransferModelOption>
     massTransferModelOptionMap{
         {"none", massTransferModelOption::none},
-        {"cavitation", massTransferModelOption::cavitation},
-        {"rayleigh_plesset_cavitation", massTransferModelOption::cavitation}};
+        {"cavitation", massTransferModelOption::cavitation}};
 
 massTransferModelOption convertMassTransferModelOptionFromString(std::string s)
 {
     ::accel::tolower(s);
-    std::replace(s.begin(), s.end(), '-', '_');
     const auto it = massTransferModelOptionMap.find(s);
     if (it == massTransferModelOptionMap.end())
     {
@@ -219,19 +216,16 @@ massTransferModelOption convertMassTransferModelOptionFromString(std::string s)
 
 // Cavitation model option
 std::unordered_map<std::string, cavitationModelOption> cavitationModelOptionMap{
-    {"rayleigh_plesset", cavitationModelOption::rayleighPlesset},
-    {"cfx_rayleigh_plesset", cavitationModelOption::rayleighPlesset},
-    {"rayleigh_plesset_cavitation", cavitationModelOption::rayleighPlesset}};
+    {"rayleigh_plesset", cavitationModelOption::rayleighPlesset}};
 
 cavitationModelOption convertCavitationModelOptionFromString(std::string s)
 {
     ::accel::tolower(s);
-    std::replace(s.begin(), s.end(), '-', '_');
     const auto it = cavitationModelOptionMap.find(s);
     if (it == cavitationModelOptionMap.end())
     {
         errorMsg("No cavitation model option found for `" + s +
-                 "` (valid: rayleigh_plesset, cfx_rayleigh_plesset)");
+                 "` (valid: rayleigh_plesset)");
     }
     return it->second;
 }

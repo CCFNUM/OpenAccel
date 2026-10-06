@@ -8,7 +8,6 @@
 #define FREESURFACEFLOWMODEL_H
 
 // code
-#include "massTransferModel.h"
 #include "multiphaseModel.h"
 
 namespace accel
@@ -70,35 +69,35 @@ public:
 
     using fieldBroker::nHatRef;
 
-    // Interphase mass transfer (fluid_pair_models[].mass_transfer). One entry
-    // per (domain, fluid pair) with an active model. mdot is stored as a nodal
-    // field and holds the under-relaxed rate of the previous iteration, which
-    // makes the field itself the persistent state of the relaxation.
+    // phase change of a fluid pair; mdot [kg/(m^3 s)], liquid -> vapor > 0
     struct massTransferPair
     {
         label domainIndex_ = -1;
         std::string name_; // "<materialA>_<materialB>"
-        std::unique_ptr<massTransferModel> model_;
-        label liquidIndex_ = -1; // global material indices
-        label vaporIndex_ = -1;
-        STKScalarField* mdotSTKFieldPtr_ = nullptr; // [kg/(m^3 s)], l -> v > 0
+        fluidPairModel::massTransfer cfg_;
+        STKScalarField* mdotSTKFieldPtr_ = nullptr;
+        STKScalarField* dmdotdalphaSTKFieldPtr_ = nullptr; // d mdot/d alpha_v
+        STKScalarField* dmdotdpSTKFieldPtr_ = nullptr;     // d mdot/d p
     };
 
-    // active mass transfer pairs of a domain (empty if none)
-    std::vector<const massTransferPair*>
-    massTransferPairs(const domain* domain) const;
+    const std::vector<massTransferPair>& massTransferPairs() const
+    {
+        return massTransferPairs_;
+    }
 
     bool hasMassTransfer() const
     {
         return !massTransferPairs_.empty();
     }
 
-    // zero the persistent mass transfer rate (not on restart)
+    // restore the rate on restart (zero otherwise)
     void initializeMassTransferRate(const std::shared_ptr<domain> domain);
 
-    // compute the raw rate from the current p, alpha, rho; under-relax it
-    // against the stored previous value and store the result
+    // raw rate from p, alpha, rho, under-relaxed against the stored one
     void updateMassTransferRate(const std::shared_ptr<domain> domain);
+
+    // follow the last pressure change with the linearized rate
+    void correctMassTransferRate(const std::shared_ptr<domain> domain);
 
     // Body forces override (adds CSF surface tension after base class forces)
     void computeBodyForces(const std::shared_ptr<domain> domain) override;
@@ -208,7 +207,6 @@ public:
 
 protected:
     std::vector<massTransferPair> massTransferPairs_;
-    std::map<std::string, STKScalarField*> mdotMassTransferSTKFieldPtrs_;
 
     void setupMassTransfer_(realm* realm);
 

@@ -126,6 +126,9 @@ struct fluidPairModel
         scalar underRelaxation_ = 0.25; // (0, 1]
         bool pressureClippingForRate_ = false;
         bool includeContinuitySource_ = true;
+
+        // Reboud (1998) eddy viscosity density correction exponent; 0 = off
+        scalar reboudCorrectionExponent_ = 0.0;
     };
 
     massTransfer massTransfer_;

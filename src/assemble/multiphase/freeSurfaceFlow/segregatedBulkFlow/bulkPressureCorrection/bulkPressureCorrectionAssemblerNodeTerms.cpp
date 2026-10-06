@@ -12,6 +12,24 @@
 namespace accel
 {
 
+namespace
+{
+
+// phase change pair data gathered per bucket (expansion of this phase)
+struct massTransferTerm
+{
+    const STKScalarField* mdot;
+    const STKScalarField* dmdotdp;
+    const STKScalarField* rhoL;
+    const STKScalarField* rhoV;
+    const scalar* mdotb;
+    const scalar* dmdotdpb;
+    const scalar* rhoLb;
+    const scalar* rhoVb;
+};
+
+} // namespace
+
 void bulkPressureCorrectionAssembler::assembleNodeTermsFused_(
     const domain* domain,
     Context* ctx)
@@ -53,8 +71,19 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedSteady_(
             .solverRef()
             .solverControl_.expertParameters_.falseMassAccumulation_;
 
-    // mass transfer pairs of this domain (phase change expansion)
-    const auto mtPairs = model_->massTransferPairs(domain);
+    // phase change pairs of this domain with continuity source
+    std::vector<massTransferTerm> mtPairs;
+    for (const auto& pair : model_->massTransferPairs())
+    {
+        if (pair.domainIndex_ != domain->index() ||
+            !pair.cfg_.includeContinuitySource_)
+            continue;
+        mtPairs.push_back(
+            {pair.mdotSTKFieldPtr_,
+             pair.dmdotdpSTKFieldPtr_,
+             model_->rhoRef(pair.cfg_.liquidIndex_).stkFieldPtr(),
+             model_->rhoRef(pair.cfg_.vaporIndex_).stkFieldPtr()});
+    }
 
     const bool falseTransient = compressible && falseMassAccumulation;
 
@@ -116,6 +145,14 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedSteady_(
 
         const stk::mesh::Bucket::size_type nNodesPerBucket = nodeBucket.size();
 
+        for (auto& mt : mtPairs)
+        {
+            mt.mdotb = stk::mesh::field_data(*mt.mdot, nodeBucket);
+            mt.dmdotdpb = stk::mesh::field_data(*mt.dmdotdp, nodeBucket);
+            mt.rhoLb = stk::mesh::field_data(*mt.rhoL, nodeBucket);
+            mt.rhoVb = stk::mesh::field_data(*mt.rhoV, nodeBucket);
+        }
+
         for (stk::mesh::Bucket::size_type iNode = 0; iNode < nNodesPerBucket;
              ++iNode)
         {
@@ -144,25 +181,15 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedSteady_(
                 lhs[0] += lhsfac * alpha / densityScale;
             }
 
-            // interphase mass transfer (phase change): volumetric expansion
-            // D = mdot (1/rho_v - 1/rho_l) of the mixture. Without a true
-            // accumulation term the phasic equation reads alpha rho div(u),
-            // so this phase contributes alpha rho D (same scaling as above)
-            for (const auto* pair : mtPairs)
+            // phase change alpha rho mdot (1/rho_v - 1/rho_l), implicit in p
+            for (const auto& mt : mtPairs)
             {
-                if (!pair->model_->includeContinuitySource())
-                    continue;
-
-                const scalar mdot =
-                    *stk::mesh::field_data(*pair->mdotSTKFieldPtr_, node);
-                const scalar rhoL = *stk::mesh::field_data(
-                    *model_->rhoRef(pair->liquidIndex_).stkFieldPtr(), node);
-                const scalar rhoV = *stk::mesh::field_data(
-                    *model_->rhoRef(pair->vaporIndex_).stkFieldPtr(), node);
-
-                rhs[0] += alpha * rho *
-                          massTransferModel::volumeSource(mdot, rhoL, rhoV) *
-                          vol / densityScale;
+                const scalar fac =
+                    alpha * rho *
+                    (1.0 / mt.rhoVb[iNode] - 1.0 / mt.rhoLb[iNode]) * vol /
+                    densityScale;
+                rhs[0] += mt.mdotb[iNode] * fac;
+                lhs[0] += std::max(-mt.dmdotdpb[iNode] * fac, 0.0);
             }
 
             // global matrix
@@ -180,8 +207,19 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
 
     const bool compressible = domain->isMaterialCompressible(phaseIndex_);
 
-    // mass transfer pairs of this domain (phase change expansion)
-    const auto mtPairs = model_->massTransferPairs(domain);
+    // phase change pairs of this domain with continuity source
+    std::vector<massTransferTerm> mtPairs;
+    for (const auto& pair : model_->massTransferPairs())
+    {
+        if (pair.domainIndex_ != domain->index() ||
+            !pair.cfg_.includeContinuitySource_)
+            continue;
+        mtPairs.push_back(
+            {pair.mdotSTKFieldPtr_,
+             pair.dmdotdpSTKFieldPtr_,
+             model_->rhoRef(pair.cfg_.liquidIndex_).stkFieldPtr(),
+             model_->rhoRef(pair.cfg_.vaporIndex_).stkFieldPtr()});
+    }
 
     if (!meshDeforming && !compressible && mtPairs.empty())
         return;
@@ -258,6 +296,14 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
 
         const stk::mesh::Bucket::size_type nNodesPerBucket = nodeBucket.size();
 
+        for (auto& mt : mtPairs)
+        {
+            mt.mdotb = stk::mesh::field_data(*mt.mdot, nodeBucket);
+            mt.dmdotdpb = stk::mesh::field_data(*mt.dmdotdp, nodeBucket);
+            mt.rhoLb = stk::mesh::field_data(*mt.rhoL, nodeBucket);
+            mt.rhoVb = stk::mesh::field_data(*mt.rhoV, nodeBucket);
+        }
+
         // field chunks in bucket
         scalar* rhob = stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
         scalar* alphab = stk::mesh::field_data(*alphaSTKFieldPtr, nodeBucket);
@@ -321,41 +367,15 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
 #endif /* NDEBUG */
             }
 
-            // interphase mass transfer (phase change): a compressible phase
-            // has its accumulation d(rho alpha)/dt (with the solved, phase
-            // change driven alpha) in the equation, so it only needs its
-            // phasic mass source s mdot (s = +1 vapor, -1 liquid). An
-            // incompressible phase has no accumulation, so it contributes
-            // alpha rho D with D = mdot (1/rho_v - 1/rho_l) (same scaling)
-            for (const auto* pair : mtPairs)
+            // phase change alpha rho mdot (1/rho_v - 1/rho_l), implicit in p
+            for (const auto& mt : mtPairs)
             {
-                if (!pair->model_->includeContinuitySource())
-                    continue;
-
-                const scalar mdot =
-                    *stk::mesh::field_data(*pair->mdotSTKFieldPtr_, node);
-
-                if (compressible)
-                {
-                    if (phaseIndex_ == pair->vaporIndex_)
-                        rhs[0] += mdot * vol / densityScale;
-                    else if (phaseIndex_ == pair->liquidIndex_)
-                        rhs[0] -= mdot * vol / densityScale;
-                }
-                else
-                {
-                    const scalar rhoL = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->liquidIndex_).stkFieldPtr(),
-                        node);
-                    const scalar rhoV = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->vaporIndex_).stkFieldPtr(),
-                        node);
-
-                    rhs[0] += alpha * rho *
-                              massTransferModel::volumeSource(
-                                  mdot, rhoL, rhoV) *
-                              vol / densityScale;
-                }
+                const scalar fac =
+                    alpha * rho *
+                    (1.0 / mt.rhoVb[iNode] - 1.0 / mt.rhoLb[iNode]) * vol /
+                    densityScale;
+                rhs[0] += mt.mdotb[iNode] * fac;
+                lhs[0] += std::max(-mt.dmdotdpb[iNode] * fac, 0.0);
             }
 
             this->applyCoeff_(
@@ -372,8 +392,19 @@ void bulkPressureCorrectionAssembler::
 
     const bool compressible = domain->isMaterialCompressible(phaseIndex_);
 
-    // mass transfer pairs of this domain (phase change expansion)
-    const auto mtPairs = model_->massTransferPairs(domain);
+    // phase change pairs of this domain with continuity source
+    std::vector<massTransferTerm> mtPairs;
+    for (const auto& pair : model_->massTransferPairs())
+    {
+        if (pair.domainIndex_ != domain->index() ||
+            !pair.cfg_.includeContinuitySource_)
+            continue;
+        mtPairs.push_back(
+            {pair.mdotSTKFieldPtr_,
+             pair.dmdotdpSTKFieldPtr_,
+             model_->rhoRef(pair.cfg_.liquidIndex_).stkFieldPtr(),
+             model_->rhoRef(pair.cfg_.vaporIndex_).stkFieldPtr()});
+    }
 
     if (!meshDeforming && !compressible && mtPairs.empty())
         return;
@@ -458,6 +489,14 @@ void bulkPressureCorrectionAssembler::
 
         const stk::mesh::Bucket::size_type nNodesPerBucket = nodeBucket.size();
 
+        for (auto& mt : mtPairs)
+        {
+            mt.mdotb = stk::mesh::field_data(*mt.mdot, nodeBucket);
+            mt.dmdotdpb = stk::mesh::field_data(*mt.dmdotdp, nodeBucket);
+            mt.rhoLb = stk::mesh::field_data(*mt.rhoL, nodeBucket);
+            mt.rhoVb = stk::mesh::field_data(*mt.rhoV, nodeBucket);
+        }
+
         // field chunks in bucket
         scalar* rhob = stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
         scalar* alphab = stk::mesh::field_data(*alphaSTKFieldPtr, nodeBucket);
@@ -527,41 +566,15 @@ void bulkPressureCorrectionAssembler::
 #endif /* NDEBUG */
             }
 
-            // interphase mass transfer (phase change): a compressible phase
-            // has its accumulation d(rho alpha)/dt (with the solved, phase
-            // change driven alpha) in the equation, so it only needs its
-            // phasic mass source s mdot (s = +1 vapor, -1 liquid). An
-            // incompressible phase has no accumulation, so it contributes
-            // alpha rho D with D = mdot (1/rho_v - 1/rho_l) (same scaling)
-            for (const auto* pair : mtPairs)
+            // phase change alpha rho mdot (1/rho_v - 1/rho_l), implicit in p
+            for (const auto& mt : mtPairs)
             {
-                if (!pair->model_->includeContinuitySource())
-                    continue;
-
-                const scalar mdot =
-                    *stk::mesh::field_data(*pair->mdotSTKFieldPtr_, node);
-
-                if (compressible)
-                {
-                    if (phaseIndex_ == pair->vaporIndex_)
-                        rhs[0] += mdot * vol / densityScale;
-                    else if (phaseIndex_ == pair->liquidIndex_)
-                        rhs[0] -= mdot * vol / densityScale;
-                }
-                else
-                {
-                    const scalar rhoL = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->liquidIndex_).stkFieldPtr(),
-                        node);
-                    const scalar rhoV = *stk::mesh::field_data(
-                        *model_->rhoRef(pair->vaporIndex_).stkFieldPtr(),
-                        node);
-
-                    rhs[0] += alpha * rho *
-                              massTransferModel::volumeSource(
-                                  mdot, rhoL, rhoV) *
-                              vol / densityScale;
-                }
+                const scalar fac =
+                    alpha * rho *
+                    (1.0 / mt.rhoVb[iNode] - 1.0 / mt.rhoLb[iNode]) * vol /
+                    densityScale;
+                rhs[0] += mt.mdotb[iNode] * fac;
+                lhs[0] += std::max(-mt.dmdotdpb[iNode] * fac, 0.0);
             }
 
             this->applyCoeff_(

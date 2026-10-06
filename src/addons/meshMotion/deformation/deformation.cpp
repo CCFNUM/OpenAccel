@@ -30,7 +30,6 @@ deformation::deformation(meshMotion* meshMotionPtr)
 
         switch (backend)
         {
-
             default:
                 if (displacementDiffusionEquation_ == nullptr)
                 {

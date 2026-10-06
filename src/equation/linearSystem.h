@@ -528,7 +528,6 @@ void linearSystem<N>::setEquationName(const std::vector<std::string>& name)
 template <size_t N>
 void linearSystem<N>::condense()
 {
-
     // schur complement condensation
     auto& coeffs = lsolver_->getContext()->getCoefficients();
     if (coeffs.numConstraints() > 0)
