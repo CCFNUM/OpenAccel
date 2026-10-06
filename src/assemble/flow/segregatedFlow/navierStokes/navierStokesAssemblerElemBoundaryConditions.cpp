@@ -539,7 +539,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
             const label offSetDnDx =                                           \
                 SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;         \
                                                                                \
-            /* Compute trace-like term: Σⱼ Aⱼ ∂N/∂xⱼ */                        \
+            /* Compute trace-like term: Σⱼ Aⱼ ∂N/∂xⱼ */             \
             scalar trace_term = 0.0;                                           \
             for (label k = 0; k < SPATIAL_DIM; ++k)                            \
             {                                                                  \
@@ -548,7 +548,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
                 trace_term += axk * dndxk;                                     \
             }                                                                  \
                                                                                \
-            /* Compute area-direction dot product: Σₖ Aₖ dₖ */                 \
+            /* Compute area-direction dot product: Σₖ Aₖ dₖ */          \
             scalar area_dot_dir = 0.0;                                         \
             for (label k = 0; k < SPATIAL_DIM; ++k)                            \
             {                                                                  \
@@ -577,7 +577,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
                     const scalar nxj = p_nx[j];                                \
                     const scalar uxj = p_U[ic * SPATIAL_DIM + j];              \
                                                                                \
-                    /* Transformed coefficient: only n·u contributes */        \
+                    /* Transformed coefficient: only n·u contributes */       \
                     const scalar lhsfac =                                      \
                         stress_proj_dir * nxj * inv_dir_dot_n;                 \
                                                                                \
@@ -2363,7 +2363,7 @@ void navierStokesAssembler::assembleElemTermsBoundarySymmetry_(
                 // Note: The normal component of the momentum residual will be
                 // zeroed later in applySymmetryConditions_() to enforce the
                 // symmetry constraint (U·n = 0)
-                IP_FULL_STRESS__();
+                IP_ZERO_TANGENTIAL_STRESS__();
             }
 
             this->applyCoeff_(
@@ -4839,6 +4839,7 @@ void navierStokesAssembler::
 #undef IP_FULL_STRESS_FIXED_VEL__
 #undef IP_ZERO_NORMAL_STRESS__
 #undef IP_ZERO_NORMAL_STRESS_NO_GRADU_TRANSPOSE__
+#undef IP_ZERO_TANGENTIAL_STRESS__
 #undef IP_ZERO_TANGENTIAL_STRESS_CLIPPED_GRADU_TRANSPOSE__
 #undef IP_ZERO_NORMAL_STRESS_FIXED_VEL__
 #undef IP_DIRECTIONAL_STRESS__
