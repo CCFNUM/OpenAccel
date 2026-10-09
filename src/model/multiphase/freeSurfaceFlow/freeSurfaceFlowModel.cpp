@@ -1969,6 +1969,16 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
                         }
                         break;
 
+                    case boundaryConditionType::zeroGradient:
+                        {
+                            flowModel::updateMassFlowRateBoundaryFieldOutletOutflow_(
+                                domain,
+                                boundary,
+                                this->mDotRef(iPhase).sideFieldRef(),
+                                this->rhoRef(iPhase));
+                        }
+                        break;
+
                     default:
                         errorMsg("boundary condition invalid");
                 }
