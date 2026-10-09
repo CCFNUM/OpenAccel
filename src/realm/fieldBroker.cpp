@@ -1504,9 +1504,36 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
                                     }
                                     else if (regime == "subcritical")
                                     {
-                                        errorMsg("open_channel_outlet: "
-                                                 "`regime: subcritical` is not "
-                                                 "implemented yet");
+                                        if (!massAndMomentumNode
+                                                ["free_surface_level"])
+                                        {
+                                            errorMsg("open_channel_outlet with "
+                                                     "`regime: subcritical` "
+                                                     "requires "
+                                                     "`free_surface_level`");
+                                        }
+
+                                        if (domain->buoyancy_.option_ !=
+                                            buoyancyOption::buoyant)
+                                        {
+                                            errorMsg("open_channel_outlet "
+                                                     "requires a buoyant domain "
+                                                     "(gravity)");
+                                        }
+
+                                        bc.setType(boundaryConditionType::
+                                                       staticPressure);
+                                        pRef().registerSideFields(
+                                            domain->index(), iBoundary);
+
+                                        bc.addRawData("open_channel_outlet",
+                                                      true);
+                                        bc.addRawData(
+                                            "open_channel_free_surface_level",
+                                            massAndMomentumNode
+                                                ["free_surface_level"]
+                                                    .template as<scalar>());
+                                        bc.addRawData("value", scalar(0.0));
                                     }
                                     else
                                     {

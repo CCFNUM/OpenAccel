@@ -106,6 +106,8 @@ public:
 
     void updateOpenChannelInletPressure(const std::shared_ptr<domain> domain);
 
+    void updateOpenChannelOutletPressure(const std::shared_ptr<domain> domain);
+
     // Flux Corrected Transport FCT
 
     void setupFCTFields(const std::shared_ptr<domain> domain, label iPhase);
