@@ -215,6 +215,8 @@ void segregatedFreeSurfaceFlowEquations::solve()
         FOREACH_DOMAIN(updateDensity);
         FOREACH_DOMAIN(updateDynamicViscosity);
 
+        FOREACH_DOMAIN(updateOpenChannelInletPressure);
+
         // update bulk mass flux: flow reversal field is updated above and in
         // case of any zero mass flux at outlet this will be implicitly be
         // calculated upon the following update

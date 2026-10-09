@@ -65,6 +65,55 @@ void fieldBroker::setupVolumeFraction(const std::shared_ptr<domain> domain,
             {
                 case boundaryPhysicalType::inlet:
                     {
+                        const auto& pbc = pRef().boundaryConditionRef(
+                            domain->index(), iBoundary);
+                        if (pbc.isInputDataAdded("open_channel_inlet"))
+                        {
+                            if (!pbc.rawBoolValue("open_channel_supercritical"))
+                            {
+                                bc.setType(boundaryConditionType::zeroGradient);
+                                break;
+                            }
+
+                            const bool isLiquid =
+                                realmPtr_->simulationRef().materialName(
+                                    iPhase) ==
+                                pbc.rawStringValue("open_channel_liquid_phase");
+
+                            const auto& g = domain->buoyancy_.gravity_;
+                            scalar gMag = 0.0;
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                gMag += g[j] * g[j];
+                            }
+                            gMag = std::sqrt(gMag);
+                            const char* coord[3] = {"x", "y", "z"};
+                            std::string elevation = "(0";
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                elevation += " + (" +
+                                             std::to_string(-g[j] / gMag) +
+                                             ")*" + coord[j];
+                            }
+                            elevation += ")";
+
+                            const std::string level = std::to_string(
+                                pbc.rawScalarValue(
+                                    "open_channel_free_surface_level"));
+                            const std::string below = isLiquid ? "1" : "0";
+                            const std::string above = isLiquid ? "0" : "1";
+                            bc.setType(boundaryConditionType::specifiedValue);
+                            bc.addExpression<1>(
+                                "value",
+                                {"if (" + elevation + " < " + level +
+                                 " - 1e-6, " + below + ", if (" + elevation +
+                                 " > " + level + " + 1e-6, " + above +
+                                 ", 0.5))"});
+                            alphaRef(iPhase).registerSideFields(domain->index(),
+                                                                iBoundary);
+                            break;
+                        }
+
                         const auto& fluidValuesForMaterialNode =
                             fluidValues[realmPtr_->simulationRef().materialName(
                                 iPhase)];

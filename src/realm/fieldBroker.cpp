@@ -290,7 +290,8 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
                                     URef().registerSideFields(domain->index(),
                                                               iBoundary);
                                 }
-                                else if (option == "total_pressure")
+                                else if (option == "total_pressure" ||
+                                         option == "open_channel_inlet")
                                 {
                                     bc.setType(boundaryConditionType::
                                                    specifiedDirection);
@@ -1260,6 +1261,111 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
                                                 "relative_pressure");
                                     pRef().registerSideFields(domain->index(),
                                                               iBoundary);
+                                }
+                                else if (option == "open_channel_inlet")
+                                {
+                                    bc.setType(
+                                        boundaryConditionType::totalPressure);
+                                    pRef().registerSideFields(domain->index(),
+                                                              iBoundary);
+
+                                    for (const char* key :
+                                         {"free_surface_level",
+                                          "bottom_level",
+                                          "velocity_magnitude"})
+                                    {
+                                        if (!massAndMomentumNode[key])
+                                        {
+                                            errorMsg(std::string(
+                                                         "open_channel_inlet "
+                                                         "requires `") +
+                                                     key + "`");
+                                        }
+                                    }
+
+                                    const scalar freeSurfaceLevel =
+                                        massAndMomentumNode
+                                            ["free_surface_level"]
+                                                .template as<scalar>();
+                                    const scalar bottomLevel =
+                                        massAndMomentumNode["bottom_level"]
+                                            .template as<scalar>();
+                                    const scalar velocityMagnitude =
+                                        massAndMomentumNode
+                                            ["velocity_magnitude"]
+                                                .template as<scalar>();
+
+                                    if (freeSurfaceLevel <= bottomLevel)
+                                    {
+                                        errorMsg("open_channel_inlet: "
+                                                 "`free_surface_level` must be "
+                                                 "above `bottom_level`");
+                                    }
+
+                                    if (domain->buoyancy_.option_ !=
+                                        buoyancyOption::buoyant)
+                                    {
+                                        errorMsg("open_channel_inlet requires "
+                                                 "a buoyant domain (gravity)");
+                                    }
+
+                                    scalar gMag = 0.0;
+                                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                                    {
+                                        gMag += domain->buoyancy_.gravity_[j] *
+                                                domain->buoyancy_.gravity_[j];
+                                    }
+                                    gMag = std::sqrt(gMag);
+                                    const scalar froude =
+                                        velocityMagnitude /
+                                        std::sqrt(gMag * (freeSurfaceLevel -
+                                                          bottomLevel));
+                                    const bool supercritical = froude > 1.0;
+
+                                    bc.addRawData("open_channel_inlet", true);
+                                    bc.addRawData(
+                                        "open_channel_free_surface_level",
+                                        freeSurfaceLevel);
+                                    bc.addRawData("open_channel_velocity",
+                                                  velocityMagnitude);
+                                    bc.addRawData("open_channel_supercritical",
+                                                  supercritical);
+
+                                    if (massAndMomentumNode["liquid_phase"])
+                                    {
+                                        bc.addRawData(
+                                            "open_channel_liquid_phase",
+                                            massAndMomentumNode["liquid_phase"]
+                                                .template as<std::string>());
+                                    }
+                                    else if (supercritical)
+                                    {
+                                        errorMsg("open_channel_inlet: a "
+                                                 "supercritical inlet (Fr > 1) "
+                                                 "fixes the volume fraction "
+                                                 "from the free-surface level "
+                                                 "and needs `liquid_phase`");
+                                    }
+
+                                    bc.addRawData("value", scalar(0.0));
+
+                                    if (messager::master())
+                                    {
+                                        std::cout
+                                            << "open_channel_inlet ["
+                                            << domain->zonePtr()
+                                                   ->boundaryPtr(iBoundary)
+                                                   ->name()
+                                            << "]: Fr = " << froude << " -> "
+                                            << (supercritical
+                                                    ? "supercritical: volume "
+                                                      "fraction fixed by the "
+                                                      "free-surface level"
+                                                    : "subcritical: volume "
+                                                      "fraction from the "
+                                                      "interior")
+                                            << std::endl;
+                                    }
                                 }
                                 else
                                 {

@@ -102,6 +102,10 @@ public:
 
     void applyVolumeConservation(const std::shared_ptr<domain> domain);
 
+    void updatePressure(const std::shared_ptr<domain> domain) override;
+
+    void updateOpenChannelInletPressure(const std::shared_ptr<domain> domain);
+
     // Flux Corrected Transport FCT
 
     void setupFCTFields(const std::shared_ptr<domain> domain, label iPhase);

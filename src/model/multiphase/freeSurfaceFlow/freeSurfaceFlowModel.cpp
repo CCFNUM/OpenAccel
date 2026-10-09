@@ -2040,6 +2040,225 @@ void freeSurfaceFlowModel::applyVolumeConservation(
     }
 }
 
+void freeSurfaceFlowModel::updatePressure(const std::shared_ptr<domain> domain)
+{
+    flowModel::updatePressure(domain);
+
+    updateOpenChannelInletPressure(domain);
+}
+
+void freeSurfaceFlowModel::updateOpenChannelInletPressure(
+    const std::shared_ptr<domain> domain)
+{
+    if (domain->buoyancy_.option_ != buoyancyOption::buoyant)
+    {
+        return;
+    }
+
+    const auto& mesh = this->meshRef();
+    const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    const stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    const auto& gravity = domain->buoyancy_.gravity_;
+    const scalar rhoRefValue = domain->buoyancy_.referenceDensity_;
+    const auto& referenceLocation = domain->buoyancy_.referenceLocation_;
+
+    scalar gMag = 0.0;
+    for (label j = 0; j < SPATIAL_DIM; ++j)
+    {
+        gMag += gravity[j] * gravity[j];
+    }
+    gMag = std::sqrt(gMag);
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         iBoundary++)
+    {
+        const auto* boundary = domain->zonePtr()->boundaryPtr(iBoundary);
+
+        if (boundary->type() != boundaryPhysicalType::inlet)
+        {
+            continue;
+        }
+
+        const auto& bc =
+            pRef().boundaryConditionRef(domain->index(), boundary->index());
+
+        if (!bc.isInputDataAdded("open_channel_inlet"))
+        {
+            continue;
+        }
+
+        const scalar freeSurfaceLevel =
+            bc.rawScalarValue("open_channel_free_surface_level");
+        const scalar velocityMagnitude =
+            bc.rawScalarValue("open_channel_velocity");
+
+        std::vector<scalar> uBip(SPATIAL_DIM);
+        std::vector<scalar> coordBip(SPATIAL_DIM);
+
+        std::vector<scalar> ws_U;
+        std::vector<scalar> ws_rho;
+        std::vector<scalar> ws_coordinates;
+
+        std::vector<scalar> ws_face_shape_function;
+        std::vector<scalar> ws_coordinate_face_shape_function;
+
+        const auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
+        const auto& USTKFieldRef = URef().stkFieldRef();
+        const auto& sideFlowDirectionSTKFieldRef =
+            URef().sideFlowDirectionFieldRef().stkFieldRef();
+        auto& sidePSTKFieldRef = pRef().sideFieldRef().stkFieldRef();
+        const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+        const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+            metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+        stk::mesh::Selector selAllSides =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(boundary->parts());
+
+        const bool isUShifted = this->URef().isShifted();
+
+        stk::mesh::BucketVector const& sideBuckets =
+            bulkData.get_buckets(metaData.side_rank(), selAllSides);
+
+        for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+             ib != sideBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& sideBucket = **ib;
+
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
+            const label nodesPerSide = meFC->nodesPerElement_;
+            const label numScsBip = meFC->numIntPoints_;
+
+            ws_U.resize(nodesPerSide * SPATIAL_DIM);
+            ws_rho.resize(nodesPerSide);
+            ws_coordinates.resize(nodesPerSide * SPATIAL_DIM);
+            ws_face_shape_function.resize(numScsBip * nodesPerSide);
+            ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
+
+            if (isUShifted)
+            {
+                meFC->shifted_shape_fcn(&ws_face_shape_function[0]);
+            }
+            else
+            {
+                meFC->shape_fcn(&ws_face_shape_function[0]);
+            }
+
+            meFC->shape_fcn(&ws_coordinate_face_shape_function[0]);
+
+            const stk::mesh::Bucket::size_type nSidesPerBucket =
+                sideBucket.size();
+
+            for (stk::mesh::Bucket::size_type iSide = 0;
+                 iSide < nSidesPerBucket;
+                 ++iSide)
+            {
+                stk::mesh::Entity side = sideBucket[iSide];
+
+                const scalar* areaVec =
+                    stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+                const scalar* dir =
+                    stk::mesh::field_data(sideFlowDirectionSTKFieldRef, side);
+                scalar* pbc = stk::mesh::field_data(sidePSTKFieldRef, side);
+
+                stk::mesh::Entity const* sideNodeRels =
+                    bulkData.begin_nodes(side);
+                const label numSideNodes = bulkData.num_nodes(side);
+                STK_ThrowAssert(numSideNodes == nodesPerSide);
+
+                for (label ni = 0; ni < numSideNodes; ++ni)
+                {
+                    stk::mesh::Entity node = sideNodeRels[ni];
+
+                    ws_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+
+                    const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                    const scalar* coords =
+                        stk::mesh::field_data(coordsSTKFieldRef, node);
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        ws_U[ni * SPATIAL_DIM + j] = U[j];
+                        ws_coordinates[ni * SPATIAL_DIM + j] = coords[j];
+                    }
+                }
+
+                for (label ip = 0; ip < numScsBip; ++ip)
+                {
+                    const label offSetSF = ip * nodesPerSide;
+
+                    scalar rhoBip = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        uBip[j] = 0.0;
+                        coordBip[j] = 0.0;
+                    }
+
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        const scalar r = ws_face_shape_function[offSetSF + ic];
+                        const scalar rc =
+                            ws_coordinate_face_shape_function[offSetSF + ic];
+                        rhoBip += r * ws_rho[ic];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            uBip[j] += r * ws_U[ic * SPATIAL_DIM + j];
+                            coordBip[j] +=
+                                rc * ws_coordinates[ic * SPATIAL_DIM + j];
+                        }
+                    }
+
+                    scalar asq = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+                        asq += axj * axj;
+                    }
+                    const scalar amag = std::sqrt(asq);
+
+                    scalar elevation = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        elevation -= gravity[j] / gMag * coordBip[j];
+                    }
+                    const scalar p0 =
+                        0.5 * rhoBip * velocityMagnitude * velocityMagnitude +
+                        rhoBip * gMag * (freeSurfaceLevel - elevation);
+
+                    scalar num = 0.0;
+                    scalar den = 0.0;
+                    scalar d2 = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar d = dir[ip * SPATIAL_DIM + j];
+                        const scalar nj = areaVec[ip * SPATIAL_DIM + j] / amag;
+                        num += uBip[j] * nj;
+                        den += d * nj;
+                        d2 += d * d;
+                    }
+                    const scalar Iu = num / (den + SMALL);
+                    scalar ps =
+                        std::min(p0 - 0.5 * rhoBip * Iu * Iu * d2, p0);
+
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        ps -= rhoRefValue * gravity[j] *
+                              (coordBip[j] - referenceLocation[j]);
+                    }
+
+                    pbc[ip] = ps;
+                }
+            }
+        }
+
+        pRef().nodeSideFieldRef().interpolate(
+            pRef().sideFieldRef(), domain->index(), boundary->index());
+    }
+}
+
 void freeSurfaceFlowModel::updateInterfaceNormal(
     const std::shared_ptr<domain> domain,
     label iPhase)
