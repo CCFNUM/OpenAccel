@@ -631,6 +631,11 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
                                     bc.setType(
                                         boundaryConditionType::zeroGradient);
                                 }
+                                else if (option == "open_channel_outlet")
+                                {
+                                    bc.setType(
+                                        boundaryConditionType::zeroGradient);
+                                }
                                 else if (option == "mass_flow_rate")
                                 {
                                     bc.setType(
@@ -1478,6 +1483,39 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
                                 {
                                     bc.setType(
                                         boundaryConditionType::massFlowRate);
+                                }
+                                else if (option == "open_channel_outlet")
+                                {
+                                    if (!massAndMomentumNode["regime"])
+                                    {
+                                        errorMsg("open_channel_outlet requires "
+                                                 "`regime`: supercritical or "
+                                                 "subcritical");
+                                    }
+
+                                    std::string regime =
+                                        massAndMomentumNode["regime"]
+                                            .template as<std::string>();
+
+                                    if (regime == "supercritical")
+                                    {
+                                        bc.setType(boundaryConditionType::
+                                                       zeroGradient);
+                                    }
+                                    else if (regime == "subcritical")
+                                    {
+                                        errorMsg("open_channel_outlet: "
+                                                 "`regime: subcritical` is not "
+                                                 "implemented yet");
+                                    }
+                                    else
+                                    {
+                                        errorMsg("open_channel_outlet: unknown "
+                                                 "regime `" +
+                                                 regime +
+                                                 "`; expected supercritical or "
+                                                 "subcritical");
+                                    }
                                 }
                                 else
                                 {
