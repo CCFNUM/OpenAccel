@@ -2055,6 +2055,106 @@ void freeSurfaceFlowModel::updatePressure(const std::shared_ptr<domain> domain)
     flowModel::updatePressure(domain);
 
     updateOpenChannelInletPressure(domain);
+
+    updateOpenChannelOutletPressure(domain);
+}
+
+void freeSurfaceFlowModel::updateOpenChannelOutletPressure(
+    const std::shared_ptr<domain> domain)
+{
+    if (domain->buoyancy_.option_ != buoyancyOption::buoyant)
+    {
+        return;
+    }
+
+    auto& mesh = this->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    const auto& gravity = domain->buoyancy_.gravity_;
+    const scalar rhoRefValue = domain->buoyancy_.referenceDensity_;
+    const auto& referenceLocation = domain->buoyancy_.referenceLocation_;
+
+    scalar gMag = 0.0;
+    for (label j = 0; j < SPATIAL_DIM; ++j)
+    {
+        gMag += gravity[j] * gravity[j];
+    }
+    gMag = std::sqrt(gMag);
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         iBoundary++)
+    {
+        const auto* boundary = domain->zonePtr()->boundaryPtr(iBoundary);
+
+        if (boundary->type() != boundaryPhysicalType::outlet)
+        {
+            continue;
+        }
+
+        const auto& bc =
+            pRef().boundaryConditionRef(domain->index(), boundary->index());
+
+        if (!bc.isInputDataAdded("open_channel_outlet"))
+        {
+            continue;
+        }
+
+        const scalar freeSurfaceLevel =
+            bc.rawScalarValue("open_channel_free_surface_level");
+
+        const auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
+        auto& nodeSidePSTKFieldRef = pRef().nodeSideFieldRef().stkFieldRef();
+        const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+
+        stk::mesh::Selector selAllNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(boundary->parts());
+
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+
+            scalar* pb = stk::mesh::field_data(nodeSidePSTKFieldRef, nodeBucket);
+            const scalar* rhob =
+                stk::mesh::field_data(rhoSTKFieldRef, nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nodeBucket.size();
+                 ++iNode)
+            {
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, nodeBucket, iNode);
+
+                scalar elevation = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    elevation -= gravity[j] / gMag * coords[j];
+                }
+
+                scalar p = rhob[iNode] * gMag * (freeSurfaceLevel - elevation);
+
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p -= rhoRefValue * gravity[j] *
+                         (coords[j] - referenceLocation[j]);
+                }
+
+                pb[iNode] = p;
+            }
+        }
+
+        pRef().sideFieldRef().interpolate(pRef().nodeSideFieldRef(),
+                                          domain->index(),
+                                          boundary->index(),
+                                          pRef().isShifted());
+    }
 }
 
 void freeSurfaceFlowModel::updateOpenChannelInletPressure(
