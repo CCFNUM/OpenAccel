@@ -222,6 +222,9 @@ freeSurfaceFlowModel::freeSurfaceFlowModel(realm* realm)
             }
         }
     }
+
+    // setup interphase mass transfer (e.g. cavitation)
+    setupMassTransfer_(realm);
 }
 
 void freeSurfaceFlowModel::computeCurvature_(
@@ -8423,6 +8426,8 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     const auto& pSTKFieldRef = this->pRef().stkFieldRef();
     const auto& USTKFieldRef = this->URef().stkFieldRef();
     const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
+    const auto& nodalSidePSTKFieldRef =
+        this->pRef().nodeSideFieldRef().stkFieldRef();
 
     const auto& mDotSideSTKFieldRef = mDotSideField.stkFieldRef();
     const scalar mDotURF = mDotSideField.urf();
@@ -8686,10 +8691,13 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
             STK_ThrowAssert(numSideNodes == nodesPerSide);
             for (label ni = 0; ni < numSideNodes; ++ni)
             {
+                const label ic = faceNodeOrdinals[ni];
+
                 stk::mesh::Entity node = sideNodeRels[ni];
 
-                // gather scalars
+                // gather scalars; boundary pressure from the BC side field
                 p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_p[ic] = *stk::mesh::field_data(nodalSidePSTKFieldRef, node);
 
                 // gather vectors
                 scalar* U = stk::mesh::field_data(USTKFieldRef, node);
@@ -8713,10 +8721,6 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                     p_F[offSet + j] = F[j];
                     p_FOrig[offSet + j] = FOrig[j];
                 }
-
-                // NOTE: Correction uses
-                // computed pressure values for side nodes, not actual boundary
-                // condition values (after discussion with Mahdi).
             }
 
             // compute dndx

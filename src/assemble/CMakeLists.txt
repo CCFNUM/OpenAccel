@@ -39,6 +39,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssembler.cpp
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssemblerElemInterfaceConditions.cpp
     ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssemblerElemTerms.cpp
+    ${DIR}/multiphase/freeSurfaceFlow/volumeFraction/volumeFractionAssemblerNodeTerms.cpp
     ############################################################################
     ${DIR}/turbulence/RANS/kEpsilon/segregatedKEpsilon/turbulentDissipationRate/turbulentDissipationRateAssemblerElemBoundaryConditions.cpp
     ${DIR}/turbulence/RANS/kEpsilon/segregatedKEpsilon/turbulentDissipationRate/turbulentDissipationRateAssemblerNodeTerms.cpp

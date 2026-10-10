@@ -1170,6 +1170,14 @@ void controls::read(YAML::Node inputNode)
                     convertSolidAssemblerTypeFromString(
                         expertParameters["solid_assembler_type"]
                             .template as<std::string>());
+#ifndef HAS_SFEM
+                if (solver_.solverControl_.expertParameters_
+                        .solidAssemblerType_ == solidAssemblerType::sfem)
+                {
+                    errorMsg("solid_assembler_type sfem is not supported in "
+                             "this release: rebuild with WITH_SFEM=ON");
+                }
+#endif /* HAS_SFEM */
             }
 
             if (expertParameters["strong_dirichlet_wall_scale"])

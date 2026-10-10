@@ -9,9 +9,9 @@ set(CMAKE_CXX_STANDARD 20)
 # options
 option(WITH_AMGSOLVER "Build with AMG solver" OFF)
 option(WITH_CANONICAL_SUFFIX "Enable canonical executable suffix" OFF)
-option(WITH_CVFEM_SOLID_MECHANICS "Use CVFEM for solid mechanics" ON)
 option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
 option(WITH_FASTMATH "Use fast math optimization" OFF)
+option(WITH_SFEM "Build with the SFEM solid mechanics backend" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
 option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" ON)
 option(WITH_WARNINGS "Enable compiler warnings" OFF)
@@ -155,12 +155,12 @@ else()
     message("-- HYPRE functionalities are DISABLED")
 endif()
 
-# Solid mechanics assembler
-if(WITH_CVFEM_SOLID_MECHANICS)
-    add_compile_definitions(USE_CVFEM_SOLID_MECHANICS)
-    message("-- Solid mechanics assembler: CVFEM")
+# SFEM: FEM solid mechanics backend (solid_assembler_type: sfem)
+if(WITH_SFEM)
+    add_compile_definitions(HAS_SFEM)
+    message("-- SFEM solid mechanics backend: ENABLED")
 else()
-    message("-- Solid mechanics assembler: FEM")
+    message("-- SFEM solid mechanics backend: DISABLED")
 endif()
 
 # Which thermal energy equation to use?

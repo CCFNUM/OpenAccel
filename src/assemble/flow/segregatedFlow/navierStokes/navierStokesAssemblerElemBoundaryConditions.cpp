@@ -255,6 +255,24 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
         }                                                                      \
     } while (0)
 
+// Replace the nodal Green-Gauss boundary pressure force, -p_ip*A, by the
+// prescribed one, -p_static*A, as the coupled assembler applies it.
+#define IP_FIXED_VALUE_PRESSURE_FORCE__(p_static)                              \
+    do                                                                         \
+    {                                                                          \
+        scalar pIp = 0.0;                                                      \
+        for (label ic = 0; ic < nodesPerSide; ++ic)                            \
+        {                                                                      \
+            pIp += p_pressure_face_shape_function[offSetSF + ic] *             \
+                   p_p[faceNodeOrdinals[ic]];                                  \
+        }                                                                      \
+        for (label i = 0; i < SPATIAL_DIM; ++i)                                \
+        {                                                                      \
+            const label indexR = nearestNode * SPATIAL_DIM + i;                \
+            p_rhs[indexR] -= ((p_static) - pIp) * areaVec[faceOffSet + i];     \
+        }                                                                      \
+    } while (0)
+
 #define IP_IMPLICIT_UPWIND_ADVECTIVE_FLUX__(flux)                              \
     do                                                                         \
     {                                                                          \
@@ -539,7 +557,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
             const label offSetDnDx =                                           \
                 SPATIAL_DIM * nodesPerElement * ip + ic * SPATIAL_DIM;         \
                                                                                \
-            /* Compute trace-like term: Σⱼ Aⱼ ∂N/∂xⱼ */             \
+            /* Compute trace-like term: Σⱼ Aⱼ ∂N/∂xⱼ */                        \
             scalar trace_term = 0.0;                                           \
             for (label k = 0; k < SPATIAL_DIM; ++k)                            \
             {                                                                  \
@@ -548,7 +566,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
                 trace_term += axk * dndxk;                                     \
             }                                                                  \
                                                                                \
-            /* Compute area-direction dot product: Σₖ Aₖ dₖ */          \
+            /* Compute area-direction dot product: Σₖ Aₖ dₖ */                 \
             scalar area_dot_dir = 0.0;                                         \
             for (label k = 0; k < SPATIAL_DIM; ++k)                            \
             {                                                                  \
@@ -577,7 +595,7 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
                     const scalar nxj = p_nx[j];                                \
                     const scalar uxj = p_U[ic * SPATIAL_DIM + j];              \
                                                                                \
-                    /* Transformed coefficient: only n·u contributes */       \
+                    /* Transformed coefficient: only n·u contributes */        \
                     const scalar lhsfac =                                      \
                         stress_proj_dir * nxj * inv_dir_dot_n;                 \
                                                                                \
@@ -1153,6 +1171,7 @@ void navierStokesAssembler::
 
     // nodal fields to gather
     std::vector<scalar> ws_U;
+    std::vector<scalar> ws_p;
     std::vector<scalar> ws_coords;
     std::vector<scalar> ws_muEff;
     std::vector<scalar> ws_bcMultiplier;
@@ -1168,6 +1187,7 @@ void navierStokesAssembler::
         model_->URef().nodeSideFieldRef().stkFieldRef();
     const auto& sideUSTKFieldRef = model_->URef().sideFieldRef().stkFieldRef();
     const auto& sidePSTKFieldRef = model_->pRef().sideFieldRef().stkFieldRef();
+    const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
     const auto& muEffSTKFieldRef = model_->muEffRef().stkFieldRef();
     const auto& mDotSideSTKFieldRef =
@@ -1231,6 +1251,7 @@ void navierStokesAssembler::
 
         // algorithm related; element/face
         ws_U.resize(nodesPerElement * SPATIAL_DIM);
+        ws_p.resize(nodesPerElement);
         ws_coords.resize(nodesPerElement * SPATIAL_DIM);
         ws_muEff.resize(nodesPerSide);
         ws_bcMultiplier.resize(nodesPerElement);
@@ -1243,6 +1264,7 @@ void navierStokesAssembler::
         scalar* p_lhs = &lhs[0];
         scalar* p_rhs = &rhs[0];
         scalar* p_U = &ws_U[0];
+        scalar* p_p = &ws_p[0];
         scalar* p_bcMultiplier = &ws_bcMultiplier[0];
         scalar* p_coords = &ws_coords[0];
         scalar* p_muEff = &ws_muEff[0];
@@ -1298,6 +1320,7 @@ void navierStokesAssembler::
             // pointer to face data
             const scalar* areaVec =
                 stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            const scalar* pbc = stk::mesh::field_data(sidePSTKFieldRef, side);
             const scalar* UbcVec =
                 stk::mesh::field_data(sideUSTKFieldRef, side);
 
@@ -1335,6 +1358,9 @@ void navierStokesAssembler::
 
                 // set connected nodes
                 connectedNodes[ni] = node;
+
+                // gather scalars
+                p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
 
                 // set 1 on all nodes initially
                 p_bcMultiplier[ni] = 1.0;
@@ -1455,6 +1481,7 @@ void navierStokesAssembler::
                     // stress: full stress
                     //================================
                     IP_FULL_STRESS_FIXED_VEL__();
+                    IP_FIXED_VALUE_PRESSURE_FORCE__(pbc[ip]);
                 }
             }
 
@@ -1634,6 +1661,7 @@ void navierStokesAssembler::assembleElemTermsBoundaryOutletSpecifiedPressure_(
                 stk::mesh::field_data(mDotSideSTKFieldRef, side);
             const scalar* areaVec =
                 stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            const scalar* pbc = stk::mesh::field_data(sidePSTKFieldRef, side);
             const label* rfflag =
                 stk::mesh::field_data(reversalFlowFlagSTKFieldRef, side);
 
@@ -1651,6 +1679,10 @@ void navierStokesAssembler::assembleElemTermsBoundaryOutletSpecifiedPressure_(
             // mapping from ip to nodes for this ordinal;
             const label* ipNodeMap =
                 meSCS->ipNodeMap(faceOrdinal); // use with elem_node_rels
+
+            // populate faceNodeOrdinals
+            const label* faceNodeOrdinals =
+                meSCS->side_node_ordinals(faceOrdinal);
 
             //==========================================
             // gather nodal data off of element
@@ -1763,6 +1795,7 @@ void navierStokesAssembler::assembleElemTermsBoundaryOutletSpecifiedPressure_(
                     IP_IMPLICIT_UPWIND_ADVECTIVE_FLUX__(
                         tmDot * p_U[SPATIAL_DIM * nearestNode + i]);
                     IP_ZERO_NORMAL_STRESS__();
+                    IP_FIXED_VALUE_PRESSURE_FORCE__(pbc[ip]);
                 }
             }
 
@@ -2945,17 +2978,20 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
 
     // nodal fields to gather
     std::vector<scalar> ws_U;
+    std::vector<scalar> ws_p;
     std::vector<scalar> ws_coords;
     std::vector<scalar> ws_muEff;
 
     // master element
     std::vector<scalar> ws_velocity_face_shape_function;
+    std::vector<scalar> ws_pressure_face_shape_function;
     std::vector<scalar> ws_dndx;
     std::vector<scalar> ws_det_j;
 
     // Get fields
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
     const auto& sidePSTKFieldRef = model_->pRef().sideFieldRef().stkFieldRef();
+    const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
     const auto& muEffSTKFieldRef = model_->muEffRef().stkFieldRef();
     const auto& mDotSideSTKFieldRef =
         model_->mDotRef().sideFieldRef().stkFieldRef();
@@ -2977,6 +3013,7 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
 
     // shifted ip's for fields?
     const bool isUShifted = model_->URef().isShifted();
+    const bool isPShifted = model_->pRef().isShifted();
 
     // shifted ip's for gradients?
     const bool isUGradientShifted = model_->URef().isGradientShifted();
@@ -3017,9 +3054,11 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
 
         // algorithm related; element/face
         ws_U.resize(nodesPerElement * SPATIAL_DIM);
+        ws_p.resize(nodesPerElement);
         ws_coords.resize(nodesPerElement * SPATIAL_DIM);
         ws_muEff.resize(nodesPerSide);
         ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_pressure_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
         ws_det_j.resize(numScsBip);
 
@@ -3027,10 +3066,13 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
         scalar* p_lhs = &lhs[0];
         scalar* p_rhs = &rhs[0];
         scalar* p_U = &ws_U[0];
+        scalar* p_p = &ws_p[0];
         scalar* p_coords = &ws_coords[0];
         scalar* p_muEff = &ws_muEff[0];
         scalar* p_velocity_face_shape_function =
             &ws_velocity_face_shape_function[0];
+        scalar* p_pressure_face_shape_function =
+            &ws_pressure_face_shape_function[0];
         scalar* p_dndx = &ws_dndx[0];
 
         // shape functions
@@ -3041,6 +3083,15 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
         else
         {
             meFC->shape_fcn(&p_velocity_face_shape_function[0]);
+        }
+
+        if (isPShifted)
+        {
+            meFC->shifted_shape_fcn(&p_pressure_face_shape_function[0]);
+        }
+        else
+        {
+            meFC->shape_fcn(&p_pressure_face_shape_function[0]);
         }
 
         const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
@@ -3068,6 +3119,7 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
                 stk::mesh::field_data(sideFlowDirectionSTKFieldRef, side);
             const scalar* areaVec =
                 stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            const scalar* pbc = stk::mesh::field_data(sidePSTKFieldRef, side);
 
             // extract the connected element to this exposed face; should be
             // single in size!
@@ -3103,6 +3155,9 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
 
                 // set connected nodes
                 connectedNodes[ni] = node;
+
+                // gather scalars
+                p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
 
                 // gather vectors
                 scalar* U = stk::mesh::field_data(USTKFieldRef, node);
@@ -3222,6 +3277,8 @@ void navierStokesAssembler::assembleElemTermsBoundaryOpening_(
                                                  dir[SPATIAL_DIM * ip + i]);
                     IP_ZERO_NORMAL_STRESS_NO_GRADU_TRANSPOSE__();
                 }
+
+                IP_FIXED_VALUE_PRESSURE_FORCE__(pbc[ip]);
             }
 
             this->applyCoeff_(
@@ -3407,6 +3464,7 @@ void navierStokesAssembler::assembleElemTermsBoundaryInletSpecifiedPressure_(
                 stk::mesh::field_data(sideFlowDirectionSTKFieldRef, side);
             const scalar* areaVec =
                 stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            const scalar* pbc = stk::mesh::field_data(sidePSTKFieldRef, side);
             const label* rfflag =
                 stk::mesh::field_data(reversalFlowFlagSTKFieldRef, side);
 
@@ -3599,6 +3657,7 @@ void navierStokesAssembler::assembleElemTermsBoundaryInletSpecifiedPressure_(
                     IP_EXPLICIT_ADVECTIVE_FLUX__(tmDot * Iu_ipI *
                                                  dir[SPATIAL_DIM * ip + i]);
                     IP_ZERO_NORMAL_STRESS_NO_GRADU_TRANSPOSE__();
+                    IP_FIXED_VALUE_PRESSURE_FORCE__(pbc[ip]);
                 }
             }
 
@@ -3796,6 +3855,8 @@ void navierStokesAssembler::
                     stk::mesh::field_data(sideFlowDirectionSTKFieldRef, side);
                 const scalar* areaVec =
                     stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+                const scalar* pbc =
+                    stk::mesh::field_data(sidePSTKFieldRef, side);
                 const label* rfflag =
                     stk::mesh::field_data(reversalFlowFlagSTKFieldRef, side);
 
@@ -3995,6 +4056,7 @@ void navierStokesAssembler::
                         IP_EXPLICIT_ADVECTIVE_FLUX__(tmDot * Iu_ipI *
                                                      dir[SPATIAL_DIM * ip + i]);
                         IP_DIRECTIONAL_STRESS__();
+                        IP_FIXED_VALUE_PRESSURE_FORCE__(pbc[ip]);
 
                         //==========================================
                         // Total Pressure Linearization
@@ -4443,6 +4505,7 @@ void navierStokesAssembler::
                         IP_EXPLICIT_ADVECTIVE_FLUX__(tmDot * Iu_ipI *
                                                      dir[SPATIAL_DIM * ip + i]);
                         IP_DIRECTIONAL_STRESS__();
+                        IP_FIXED_VALUE_PRESSURE_FORCE__(pbc[ip]);
 
                         //==========================================
                         // Total Pressure Linearization

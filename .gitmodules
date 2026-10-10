@@ -2,19 +2,19 @@
 	path = src/solver
 	url = https://github.com/CCFNUM/LibLinSolve.git
 	branch = main
-[submodule "external/eigen"]
-	path = external/eigen
+[submodule "external/core/eigen"]
+	path = external/core/eigen
 	url = https://gitlab.com/libeigen/eigen.git
-[submodule "external/exprtk"]
-	path = external/exprtk
+[submodule "external/core/exprtk"]
+	path = external/core/exprtk
 	url = https://github.com/ArashPartow/exprtk.git
-[submodule "external/nanoflann"]
-	path = external/nanoflann
+[submodule "external/core/nanoflann"]
+	path = external/core/nanoflann
 	url = https://github.com/jlblancoc/nanoflann.git
-[submodule "external/gplotpp"]
-	path = external/gplotpp
+[submodule "external/core/gplotpp"]
+	path = external/core/gplotpp
 	url = https://github.com/ziotom78/gplotpp
-[submodule "external/sfem"]
-	path = external/sfem
+[submodule "external/core/sfem"]
+	path = external/core/sfem
 	url = https://github.com/zulianp/sfem.git
-	branch = smesh
+	branch = main

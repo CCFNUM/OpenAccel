@@ -196,6 +196,40 @@ convertSurfaceTensionModelOptionFromString(std::string s)
     return surfaceTensionModelOptionMap[s];
 }
 
+// Mass transfer model option
+std::unordered_map<std::string, massTransferModelOption>
+    massTransferModelOptionMap{
+        {"none", massTransferModelOption::none},
+        {"cavitation", massTransferModelOption::cavitation}};
+
+massTransferModelOption convertMassTransferModelOptionFromString(std::string s)
+{
+    ::accel::tolower(s);
+    const auto it = massTransferModelOptionMap.find(s);
+    if (it == massTransferModelOptionMap.end())
+    {
+        errorMsg("No mass transfer model option found for `" + s +
+                 "` (valid: none, cavitation)");
+    }
+    return it->second;
+}
+
+// Cavitation model option
+std::unordered_map<std::string, cavitationModelOption> cavitationModelOptionMap{
+    {"rayleigh_plesset", cavitationModelOption::rayleighPlesset}};
+
+cavitationModelOption convertCavitationModelOptionFromString(std::string s)
+{
+    ::accel::tolower(s);
+    const auto it = cavitationModelOptionMap.find(s);
+    if (it == cavitationModelOptionMap.end())
+    {
+        errorMsg("No cavitation model option found for `" + s +
+                 "` (valid: rayleigh_plesset)");
+    }
+    return it->second;
+}
+
 // Source option
 std::unordered_map<std::string, sourceOption> sourceOptionMap{
     {"source", sourceOption::source},

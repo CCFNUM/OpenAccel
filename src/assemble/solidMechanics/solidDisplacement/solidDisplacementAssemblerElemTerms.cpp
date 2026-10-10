@@ -6,13 +6,16 @@
 
 #include "solidDisplacementAssembler.h"
 
+#ifdef HAS_SFEM
 #include "linear_elasticity.hpp"
 #include "sfem_GeneratedModifiedMooneyRivlin_c_abi.hpp"
 #include "sfem_GeneratedNeoHookeanOgden_element_api.hpp"
+#endif /* HAS_SFEM */
 
 namespace accel
 {
 
+#ifdef HAS_SFEM
 #if SPATIAL_DIM == 2
 namespace
 {
@@ -157,7 +160,7 @@ void assembleSfemNeoHookeanElement(
 
 #if SPATIAL_DIM == 2
     const int gradientStatus =
-        sfem::codegen::neohookean_ogden_gradient_2d_element_soa<scalar, 1>(
+        sfem::codegen::neohookean_ogden_gradient_2d_esoa<scalar, 1>(
             sfemElementType,
             1,
             coordinateStreams.data(),
@@ -166,7 +169,7 @@ void assembleSfemNeoHookeanElement(
             displacementStreams.data(),
             gradientStreams.data());
     const int hessianStatus =
-        sfem::codegen::neohookean_ogden_hessian_2d_element_soa<scalar, 1>(
+        sfem::codegen::neohookean_ogden_hessian_2d_ecoords_soa<scalar, 1>(
             sfemElementType,
             1,
             coordinateStreams.data(),
@@ -176,7 +179,7 @@ void assembleSfemNeoHookeanElement(
             hessianStreams.data());
 #else
     const int gradientStatus =
-        sfem::codegen::neohookean_ogden_gradient_3d_element_soa<scalar, 1>(
+        sfem::codegen::neohookean_ogden_gradient_3d_esoa<scalar, 1>(
             sfemElementType,
             1,
             coordinateStreams.data(),
@@ -185,7 +188,7 @@ void assembleSfemNeoHookeanElement(
             displacementStreams.data(),
             gradientStreams.data());
     const int hessianStatus =
-        sfem::codegen::neohookean_ogden_hessian_3d_element_soa<scalar, 1>(
+        sfem::codegen::neohookean_ogden_hessian_3d_ecoords_soa<scalar, 1>(
             sfemElementType,
             1,
             coordinateStreams.data(),
@@ -231,22 +234,22 @@ void assembleSfemModifiedMooneyRivlinElement(
     for (label dim = 0; dim < SPATIAL_DIM; ++dim)
         pointStreams[dim] = coordinates[dim].data();
 
-    const int gradientStatus =
-        modified_mooney_rivlin_gradient_2d_isoparametric_mesh_soa(
-            sfemElementType,
-            1,
-            nodesPerElement,
-            elementConnectivity.data(),
-            pointStreams.data(),
-            c1,
-            c2,
-            kappa,
-            SPATIAL_DIM,
-            ux,
-            uy,
-            SPATIAL_DIM,
-            outx,
-            outy);
+    const int gradientStatus = modified_mooney_rivlin_gradient_2d_i_msoa(
+        sfemElementType,
+        smesh::TypeToEnum<scalar>::value(),
+        1,
+        nodesPerElement,
+        elementConnectivity.data(),
+        pointStreams.data(),
+        c1,
+        c2,
+        kappa,
+        SPATIAL_DIM,
+        ux,
+        uy,
+        SPATIAL_DIM,
+        outx,
+        outy);
 
     // Dense CSR: every local node coupled to every other.
     std::vector<count_t> rowptr(nodesPerElement + 1);
@@ -262,22 +265,22 @@ void assembleSfemModifiedMooneyRivlinElement(
     std::vector<scalar> values(
         nodesPerElement * nodesPerElement * SPATIAL_DIM * SPATIAL_DIM, 0.0);
 
-    const int hessianStatus =
-        modified_mooney_rivlin_hessian_bsr_2d_isoparametric_mesh_soa(
-            sfemElementType,
-            1,
-            nodesPerElement,
-            elementConnectivity.data(),
-            pointStreams.data(),
-            c1,
-            c2,
-            kappa,
-            SPATIAL_DIM,
-            ux,
-            uy,
-            rowptr.data(),
-            colidx.data(),
-            values.data());
+    const int hessianStatus = modified_mooney_rivlin_hessian_bsr_2d_i_msoa(
+        sfemElementType,
+        smesh::TypeToEnum<scalar>::value(),
+        1,
+        nodesPerElement,
+        elementConnectivity.data(),
+        pointStreams.data(),
+        c1,
+        c2,
+        kappa,
+        SPATIAL_DIM,
+        ux,
+        uy,
+        rowptr.data(),
+        colidx.data(),
+        values.data());
 
     STK_ThrowRequireMsg(gradientStatus == SFEM_SUCCESS &&
                             hessianStatus == SFEM_SUCCESS,
@@ -310,6 +313,7 @@ void assembleSfemModifiedMooneyRivlinElement(
 #endif // SPATIAL_DIM == 2
 
 } // namespace
+#endif /* HAS_SFEM */
 
 void solidDisplacementAssembler::assembleElemTermsInterior_(
     const domain* domain,
@@ -804,6 +808,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
     }
     else
     {
+#ifdef HAS_SFEM
         const auto& mesh = field_broker_->meshRef();
         Matrix& A = ctx->getAMatrix();
         Vector& b = ctx->getBVector();
@@ -1097,6 +1102,10 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                     A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
             }
         }
+#else
+        errorMsg("solid_assembler_type sfem requires a build with "
+                 "WITH_SFEM=ON");
+#endif /* HAS_SFEM */
     }
 }
 

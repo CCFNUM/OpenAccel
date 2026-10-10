@@ -28,6 +28,13 @@ public:
 
 protected:
     // Assembly
+    void assembleNodeTermsFusedSteady_(const domain* domain,
+                                       Context* ctx) override;
+    void assembleNodeTermsFusedFirstOrderUnsteady_(const domain* domain,
+                                                   Context* ctx) override;
+    void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
+                                                    Context* ctx) override;
+
     void assembleElemTermsInterior_(const domain* domain,
                                     Context* ctx) override;
 

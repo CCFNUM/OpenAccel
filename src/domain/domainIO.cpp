@@ -904,6 +904,154 @@ void domain::read_()
                     }
                 }
 
+                // read interphase mass transfer model (e.g. cavitation)
+                if (pairBlock["mass_transfer"])
+                {
+                    const auto& mtBlock = pairBlock["mass_transfer"];
+                    auto& mt = fpm.massTransfer_;
+                    const std::string path = "fluid_pair_models: mass_transfer";
+
+                    if (!mtBlock["option"])
+                    {
+                        errorMsg(path + " `option` key is required");
+                    }
+                    mt.option_ = convertMassTransferModelOptionFromString(
+                        mtBlock["option"].template as<std::string>());
+
+                    if (mt.option_ == massTransferModelOption::cavitation)
+                    {
+                        if (mtBlock["cavitation_model"])
+                        {
+                            mt.cavitationModel_ =
+                                convertCavitationModelOptionFromString(
+                                    mtBlock["cavitation_model"]
+                                        .template as<std::string>());
+                        }
+
+                        if (fpm.globalIndexA_ == fpm.globalIndexB_)
+                        {
+                            errorMsg(path + ": the pair members must differ");
+                        }
+
+                        // phase roles from the domain material order (as in
+                        // CFX): the one listed first is the liquid
+                        if (globalToLocalMaterialIndex(fpm.globalIndexA_) <
+                            globalToLocalMaterialIndex(fpm.globalIndexB_))
+                        {
+                            mt.liquidPhase_ = fpm.materialA_;
+                            mt.vaporPhase_ = fpm.materialB_;
+                            mt.liquidIndex_ = fpm.globalIndexA_;
+                            mt.vaporIndex_ = fpm.globalIndexB_;
+                        }
+                        else
+                        {
+                            mt.liquidPhase_ = fpm.materialB_;
+                            mt.vaporPhase_ = fpm.materialA_;
+                            mt.liquidIndex_ = fpm.globalIndexB_;
+                            mt.vaporIndex_ = fpm.globalIndexA_;
+                        }
+
+                        // parameters
+                        if (!mtBlock["saturation_pressure"])
+                        {
+                            errorMsg(path + " `saturation_pressure` key is "
+                                            "required (absolute pressure)");
+                        }
+                        mt.saturationPressure_ = mtBlock["saturation_pressure"]
+                                                     .template as<scalar>();
+                        if (!(mt.saturationPressure_ > 0.0) ||
+                            !std::isfinite(mt.saturationPressure_))
+                        {
+                            errorMsg(path + ".saturation_pressure: must be a "
+                                            "positive absolute pressure [Pa]");
+                        }
+
+                        if (mtBlock["nucleation_site_volume_fraction"])
+                        {
+                            mt.nucleationSiteVolumeFraction_ =
+                                mtBlock["nucleation_site_volume_fraction"]
+                                    .template as<scalar>();
+                        }
+                        if (!(mt.nucleationSiteVolumeFraction_ >= 0.0 &&
+                              mt.nucleationSiteVolumeFraction_ <= 1.0))
+                        {
+                            errorMsg(path + ".nucleation_site_volume_fraction:"
+                                            " must be in [0, 1]");
+                        }
+
+                        if (mtBlock["nucleation_site_radius"])
+                        {
+                            mt.nucleationSiteRadius_ =
+                                mtBlock["nucleation_site_radius"]
+                                    .template as<scalar>();
+                        }
+                        if (!(mt.nucleationSiteRadius_ > 0.0) ||
+                            !std::isfinite(mt.nucleationSiteRadius_))
+                        {
+                            errorMsg(path + ".nucleation_site_radius: must be "
+                                            "positive [m]");
+                        }
+
+                        if (mtBlock["vaporization_coefficient"])
+                        {
+                            mt.vaporizationCoefficient_ =
+                                mtBlock["vaporization_coefficient"]
+                                    .template as<scalar>();
+                        }
+                        if (!(mt.vaporizationCoefficient_ >= 0.0) ||
+                            !std::isfinite(mt.vaporizationCoefficient_))
+                        {
+                            errorMsg(path + ".vaporization_coefficient: must "
+                                            "be non-negative");
+                        }
+
+                        if (mtBlock["condensation_coefficient"])
+                        {
+                            mt.condensationCoefficient_ =
+                                mtBlock["condensation_coefficient"]
+                                    .template as<scalar>();
+                        }
+                        if (!(mt.condensationCoefficient_ >= 0.0) ||
+                            !std::isfinite(mt.condensationCoefficient_))
+                        {
+                            errorMsg(path + ".condensation_coefficient: must "
+                                            "be non-negative");
+                        }
+
+                        if (mtBlock["under_relaxation"])
+                        {
+                            mt.underRelaxation_ = mtBlock["under_relaxation"]
+                                                      .template as<scalar>();
+                        }
+                        if (!(mt.underRelaxation_ > 0.0 &&
+                              mt.underRelaxation_ <= 1.0))
+                        {
+                            errorMsg(path +
+                                     ".under_relaxation: must be in (0, 1]");
+                        }
+
+                        if (mtBlock["pressure_clipping_for_rate"])
+                        {
+                            mt.pressureClippingForRate_ =
+                                mtBlock["pressure_clipping_for_rate"]
+                                    .template as<bool>();
+                        }
+                        if (mtBlock["include_continuity_source"])
+                        {
+                            mt.includeContinuitySource_ =
+                                mtBlock["include_continuity_source"]
+                                    .template as<bool>();
+                        }
+
+                        if (multiphase_.freeSurfaceModel_.option_ !=
+                            freeSurfaceModelOption::standard)
+                        {
+                            errorMsg(path + " requires a free_surface_model in "
+                                            "fluid_models.multiphase");
+                        }
+                    }
+                }
+
                 fluidPairModels_.push_back(std::move(fpm));
             }
         }

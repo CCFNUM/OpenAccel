@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <unordered_map>
+#include <utility>
 
 using namespace linearSolver;
 
@@ -379,49 +380,63 @@ void nodeGraph::buildGraph_()
                 }
             }
 
-        // closure: pair rows holding a slave column also get its master; keep
-        // pair sets equal
-        for (label iI = 0; iI < meshPtr_->nInterfaces(); ++iI)
+        // closure: make every owned row set closed under periodic
+        // partnership. The conformal row merge (pass 1 above) unions each
+        // pair's stencil into both pair rows, which inserts
+        // partner-neighbour columns (a -> c for every c in row(b)) whose
+        // transposes (c -> a) are missing from the neighbour rows. The
+        // owned sub-graph would be structurally asymmetric, which breaks
+        // smoothers that require the transpose of every owned column
+        // (e.g. the DILU factorization). Close therefore EVERY owned row
+        // under the partner map, in both directions (rows holding either
+        // the master or the slave of a pair receive the partner). The
+        // map spans all conformal interfaces at once, so corner nodes
+        // paired in more than one interface close transitively; the loop
+        // runs to a fixpoint (row sets only grow, so it terminates).
         {
-            const interface& interf = meshPtr_->interfaceRef(iI);
-            if (!interf.isConformalTreatment())
-                continue;
-
-            std::unordered_map<size_t, stk::mesh::Entity> slaveToMaster;
-            for (const auto& nodePair : interf.matchingNodePairVector())
+            std::unordered_map<size_t, std::vector<stk::mesh::Entity>>
+                nodeToPartners;
+            for (label iI = 0; iI < meshPtr_->nInterfaces(); ++iI)
             {
-                slaveToMaster.emplace(nodePair.second.local_offset(),
-                                      nodePair.first);
+                const interface& interf = meshPtr_->interfaceRef(iI);
+                if (!interf.isConformalTreatment())
+                    continue;
+                for (const auto& nodePair : interf.matchingNodePairVector())
+                {
+                    nodeToPartners[nodePair.first.local_offset()].push_back(
+                        nodePair.second);
+                    nodeToPartners[nodePair.second.local_offset()].push_back(
+                        nodePair.first);
+                }
             }
 
-            const ulabel nOwned = static_cast<ulabel>(n_owned_nodes_);
-            const auto closeRow = [&](stk::mesh::Entity n)
+            if (!nodeToPartners.empty())
             {
-                const ulabel lid = bulkData.local_id(n);
-                if (lid >= nOwned)
-                    return;
-                const std::vector<stk::mesh::Entity> cols(
-                    crsRowStencil[lid].begin(), crsRowStencil[lid].end());
-                for (const stk::mesh::Entity c : cols)
+                const ulabel nOwned = static_cast<ulabel>(n_owned_nodes_);
+                bool changed = true;
+                while (changed)
                 {
-                    const auto it = slaveToMaster.find(c.local_offset());
-                    if (it != slaveToMaster.end())
-                        crsRowStencil[lid].insert(it->second);
-                }
-            };
-            for (const auto& nodePair : interf.matchingNodePairVector())
-            {
-                closeRow(nodePair.first);
-                closeRow(nodePair.second);
-                // re-equalize the pair sets after closure insertions
-                const ulabel lid1 = bulkData.local_id(nodePair.first);
-                const ulabel lid2 = bulkData.local_id(nodePair.second);
-                if (lid1 < nOwned && lid2 < nOwned)
-                {
-                    for (const auto& c : crsRowStencil[lid2])
-                        crsRowStencil[lid1].insert(c);
-                    for (const auto& c : crsRowStencil[lid1])
-                        crsRowStencil[lid2].insert(c);
+                    changed = false;
+                    for (ulabel lid = 0; lid < nOwned; ++lid)
+                    {
+                        // snapshot: the inserts below must not invalidate
+                        // the iteration
+                        const std::vector<stk::mesh::Entity> cols(
+                            crsRowStencil[lid].begin(),
+                            crsRowStencil[lid].end());
+                        for (const stk::mesh::Entity c : cols)
+                        {
+                            const auto it =
+                                nodeToPartners.find(c.local_offset());
+                            if (it == nodeToPartners.end())
+                                continue;
+                            for (const stk::mesh::Entity partner : it->second)
+                            {
+                                if (crsRowStencil[lid].insert(partner).second)
+                                    changed = true;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -599,6 +614,59 @@ void nodeGraph::buildGraph_()
         for (const label col_idx : this->localIndices())
         {
             assert(col_idx < __n_active_nodes);
+        }
+
+        // c.) structural symmetry of the owned sub-graph: every edge
+        // (i -> j) whose column j is owned must have its transpose
+        // (j -> i) in row j. Symmetric smoothers such as the DILU
+        // factorization require this and assert deep inside the linear
+        // solver setup otherwise. Transposes of ghost columns live in
+        // the owning rank's rows and are verified there.
+        {
+            std::vector<std::pair<Index, Index>> ownedEdges;
+            for (Index i = 0; i < n_owned_nodes_; ++i)
+            {
+                for (Index k = static_cast<Index>(row_ptr_[i]);
+                     k < static_cast<Index>(row_ptr_[i + 1]);
+                     ++k)
+                {
+                    const Index j = static_cast<Index>(this->localIndices()[k]);
+                    if (j < n_owned_nodes_)
+                        ownedEdges.emplace_back(i, j);
+                }
+            }
+            std::sort(ownedEdges.begin(), ownedEdges.end());
+            std::vector<std::pair<Index, Index>> missingTranspose;
+            for (const auto& edge : ownedEdges)
+            {
+                if (!std::binary_search(
+                        ownedEdges.begin(),
+                        ownedEdges.end(),
+                        std::make_pair(edge.second, edge.first)))
+                    missingTranspose.push_back(edge);
+            }
+            for (int rank = 0; rank < messager::nProcs(); rank++)
+            {
+                if (rank == messager::myProcNo())
+                {
+                    if (!missingTranspose.empty())
+                    {
+                        std::cout
+                            << "ERROR (rank=" << rank
+                            << "): node graph is structurally asymmetric: "
+                            << missingTranspose.size()
+                            << " owned edges without transpose (row -> col:";
+                        const size_t nPrint =
+                            std::min<size_t>(missingTranspose.size(), 10);
+                        for (size_t m = 0; m < nPrint; ++m)
+                            std::cout << " " << missingTranspose[m].first
+                                      << " -> " << missingTranspose[m].second;
+                        std::cout << ")" << std::endl;
+                    }
+                }
+                MPI_Barrier(messager::comm());
+            }
+            assert(missingTranspose.empty());
         }
     }
 #endif /* NDEBUG */
@@ -877,50 +945,64 @@ void nodeGraph::buildSubsetGraph_()
                 addSide(interf.slaveInfoRef());
             }
 
-        // closure: pair rows holding a slave column also get its master; keep
-        // pair sets equal
-        for (label iI = 0; iI < meshPtr_->nInterfaces(); ++iI)
+        // closure: make every owned row set closed under periodic
+        // partnership (mirrors buildGraph_). The row merge above inserts
+        // partner-neighbour columns whose transposes are missing from the
+        // neighbour rows; close EVERY owned row under the partner map, in
+        // both directions, so the owned sub-graph stays structurally
+        // symmetric. The map spans all conformal interfaces at once
+        // (corner nodes can be paired in more than one interface) and
+        // the loop runs to a fixpoint (rows only grow, so it terminates).
         {
-            const interface& interf = meshPtr_->interfaceRef(iI);
-            if (!interf.isConformalTreatment())
-                continue;
-
-            std::unordered_map<Index, Index> slaveToMasterRow;
-            for (const auto& nodePair : interf.matchingNodePairVector())
+            std::unordered_map<Index, std::vector<Index>> rowToPartners;
+            for (label iI = 0; iI < meshPtr_->nInterfaces(); ++iI)
             {
-                const int64_t r1 = rowOf(nodePair.first);
-                const int64_t r2 = rowOf(nodePair.second);
-                if (r1 >= 0 && r2 >= 0)
-                    slaveToMasterRow.emplace(static_cast<Index>(r2),
-                                             static_cast<Index>(r1));
+                const interface& interf = meshPtr_->interfaceRef(iI);
+                if (!interf.isConformalTreatment())
+                    continue;
+                for (const auto& nodePair : interf.matchingNodePairVector())
+                {
+                    const int64_t r1 = rowOf(nodePair.first);
+                    const int64_t r2 = rowOf(nodePair.second);
+                    if (r1 >= 0 && r2 >= 0)
+                    {
+                        rowToPartners[static_cast<Index>(r1)].push_back(
+                            static_cast<Index>(r2));
+                        rowToPartners[static_cast<Index>(r2)].push_back(
+                            static_cast<Index>(r1));
+                    }
+                }
             }
 
-            const int64_t nOwned = static_cast<int64_t>(n_owned_nodes_);
-            const auto closeRow = [&](const int64_t r)
+            if (!rowToPartners.empty())
             {
-                if (r < 0 || r >= nOwned)
-                    return;
-                const std::vector<Index> cols = crsRowStencil[r]; // copy
-                for (const Index c : cols)
+                bool changed = true;
+                while (changed)
                 {
-                    const auto it = slaveToMasterRow.find(c);
-                    if (it != slaveToMasterRow.end())
-                        insertSorted(crsRowStencil[r], it->second);
-                }
-            };
-            for (const auto& nodePair : interf.matchingNodePairVector())
-            {
-                const int64_t r1 = rowOf(nodePair.first);
-                const int64_t r2 = rowOf(nodePair.second);
-                closeRow(r1);
-                closeRow(r2);
-                // re-equalize the pair sets after closure insertions
-                if (r1 >= 0 && r1 < nOwned && r2 >= 0 && r2 < nOwned)
-                {
-                    for (const Index c : crsRowStencil[r2])
-                        insertSorted(crsRowStencil[r1], c);
-                    for (const Index c : crsRowStencil[r1])
-                        insertSorted(crsRowStencil[r2], c);
+                    changed = false;
+                    for (Index r = 0; r < n_owned_nodes_; ++r)
+                    {
+                        // snapshot: the inserts below must not invalidate
+                        // the iteration
+                        const std::vector<Index> cols = crsRowStencil[r];
+                        for (const Index c : cols)
+                        {
+                            const auto it = rowToPartners.find(c);
+                            if (it == rowToPartners.end())
+                                continue;
+                            for (const Index partner : it->second)
+                            {
+                                if (!std::binary_search(
+                                        crsRowStencil[r].begin(),
+                                        crsRowStencil[r].end(),
+                                        partner))
+                                {
+                                    insertSorted(crsRowStencil[r], partner);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

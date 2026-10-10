@@ -53,7 +53,11 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedSteady_(
             .solverRef()
             .solverControl_.expertParameters_.falseMassAccumulation_;
 
-    if (!compressible || !falseMassAccumulation)
+    const bool falseTransient = compressible && falseMassAccumulation;
+
+    const bool massTransfer = model_->hasMassTransfer(domain);
+
+    if (!falseTransient && !massTransfer)
         return;
 
     const auto& mesh = model_->meshRef();
@@ -79,9 +83,11 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedSteady_(
 
     // Get fields
     const STKScalarField* psiSTKFieldPtr =
-        model_->psiRef(phaseIndex_).stkFieldPtr();
+        falseTransient ? model_->psiRef(phaseIndex_).stkFieldPtr() : nullptr;
     const STKScalarField* alphaSTKFieldPtr =
         model_->alphaRef(phaseIndex_).stkFieldPtr();
+    const STKScalarField* rhoSTKFieldPtr =
+        model_->rhoRef(phaseIndex_).stkFieldPtr();
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -125,13 +131,42 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedSteady_(
                 p_rhs[i] = 0.0;
             }
 
-            // false transient (compressible only)
-            scalar psi = *stk::mesh::field_data(*psiSTKFieldPtr, node);
             scalar alpha = *stk::mesh::field_data(*alphaSTKFieldPtr, node);
+            scalar rho = *stk::mesh::field_data(*rhoSTKFieldPtr, node);
             scalar vol = *stk::mesh::field_data(*volSTKFieldPtr, node);
 
-            scalar lhsfac = vol / dt * psi;
-            lhs[0] += lhsfac * alpha / densityScale;
+            // false transient (compressible only)
+            if (falseTransient)
+            {
+                scalar psi = *stk::mesh::field_data(*psiSTKFieldPtr, node);
+                scalar lhsfac = vol / dt * psi;
+                lhs[0] += lhsfac * alpha / densityScale;
+            }
+
+            // interphase mass transfer: alpha rho mdot (1/rho_v - 1/rho_l),
+            // implicit in p
+            for (const auto& fpm : domain->fluidPairModels())
+            {
+                const auto& mt = fpm.massTransfer_;
+                if (mt.option_ != massTransferModelOption::none &&
+                    mt.includeContinuitySource_)
+                {
+                    scalar rhoL = *stk::mesh::field_data(
+                        *model_->rhoRef(mt.liquidIndex_).stkFieldPtr(), node);
+                    scalar rhoV = *stk::mesh::field_data(
+                        *model_->rhoRef(mt.vaporIndex_).stkFieldPtr(), node);
+                    scalar mdot = *stk::mesh::field_data(
+                        *model_->massTransferRateSTKFieldPtr(fpm), node);
+                    scalar dmdotdp = *stk::mesh::field_data(
+                        *model_->massTransferRatePressureCoeffSTKFieldPtr(fpm),
+                        node);
+
+                    scalar fac = alpha * rho * (1.0 / rhoV - 1.0 / rhoL) * vol /
+                                 densityScale;
+                    rhs[0] += mdot * fac;
+                    lhs[0] += std::max(-dmdotdp * fac, 0.0);
+                }
+            }
 
             // global matrix
             Base::applyCoeff_(
@@ -148,7 +183,9 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
 
     const bool compressible = domain->isMaterialCompressible(phaseIndex_);
 
-    if (!meshDeforming && !compressible)
+    const bool massTransfer = model_->hasMassTransfer(domain);
+
+    if (!meshDeforming && !compressible && !massTransfer)
         return;
 
     const auto& mesh = field_broker_->meshRef();
@@ -286,6 +323,31 @@ void bulkPressureCorrectionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
 #endif /* NDEBUG */
             }
 
+            // interphase mass transfer: alpha rho mdot (1/rho_v - 1/rho_l),
+            // implicit in p
+            for (const auto& fpm : domain->fluidPairModels())
+            {
+                const auto& mt = fpm.massTransfer_;
+                if (mt.option_ != massTransferModelOption::none &&
+                    mt.includeContinuitySource_)
+                {
+                    scalar rhoL = *stk::mesh::field_data(
+                        *model_->rhoRef(mt.liquidIndex_).stkFieldPtr(), node);
+                    scalar rhoV = *stk::mesh::field_data(
+                        *model_->rhoRef(mt.vaporIndex_).stkFieldPtr(), node);
+                    scalar mdot = *stk::mesh::field_data(
+                        *model_->massTransferRateSTKFieldPtr(fpm), node);
+                    scalar dmdotdp = *stk::mesh::field_data(
+                        *model_->massTransferRatePressureCoeffSTKFieldPtr(fpm),
+                        node);
+
+                    scalar fac = alpha * rho * (1.0 / rhoV - 1.0 / rhoL) * vol /
+                                 densityScale;
+                    rhs[0] += mdot * fac;
+                    lhs[0] += std::max(-dmdotdp * fac, 0.0);
+                }
+            }
+
             this->applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
@@ -300,7 +362,9 @@ void bulkPressureCorrectionAssembler::
 
     const bool compressible = domain->isMaterialCompressible(phaseIndex_);
 
-    if (!meshDeforming && !compressible)
+    const bool massTransfer = model_->hasMassTransfer(domain);
+
+    if (!meshDeforming && !compressible && !massTransfer)
         return;
 
     const auto& mesh = field_broker_->meshRef();
@@ -450,6 +514,31 @@ void bulkPressureCorrectionAssembler::
                     *scl += rho * alpha * divUm * vol / densityScale;
                 }
 #endif /* NDEBUG */
+            }
+
+            // interphase mass transfer: alpha rho mdot (1/rho_v - 1/rho_l),
+            // implicit in p
+            for (const auto& fpm : domain->fluidPairModels())
+            {
+                const auto& mt = fpm.massTransfer_;
+                if (mt.option_ != massTransferModelOption::none &&
+                    mt.includeContinuitySource_)
+                {
+                    scalar rhoL = *stk::mesh::field_data(
+                        *model_->rhoRef(mt.liquidIndex_).stkFieldPtr(), node);
+                    scalar rhoV = *stk::mesh::field_data(
+                        *model_->rhoRef(mt.vaporIndex_).stkFieldPtr(), node);
+                    scalar mdot = *stk::mesh::field_data(
+                        *model_->massTransferRateSTKFieldPtr(fpm), node);
+                    scalar dmdotdp = *stk::mesh::field_data(
+                        *model_->massTransferRatePressureCoeffSTKFieldPtr(fpm),
+                        node);
+
+                    scalar fac = alpha * rho * (1.0 / rhoV - 1.0 / rhoL) * vol /
+                                 densityScale;
+                    rhs[0] += mdot * fac;
+                    lhs[0] += std::max(-dmdotdp * fac, 0.0);
+                }
             }
 
             this->applyCoeff_(

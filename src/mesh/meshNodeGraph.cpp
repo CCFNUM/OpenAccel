@@ -1003,6 +1003,52 @@ void mesh::initializeLocalNodeIDs_()
                         }
                     }
                 }
+
+                // Nodes of elements referenced by interface integration
+                // points must be active on this rank: the interface
+                // stencils (nodeGraph::buildGraph_) insert them as graph
+                // columns. Aura elements can be selected as current faces
+                // by the non-conformal side infos; they are skipped by
+                // the aura loop above (their owner rank is below mine)
+                // and are not part of the interface ghosting receive
+                // lists, so activate their nodes explicitly here.
+                for (label iInterface = 0; iInterface < nInterfaces();
+                     iInterface++)
+                {
+                    const interface& interf = interfaceRef(iInterface);
+                    const auto activateIpElementNodes =
+                        [&](const interfaceSideInfo& sideInfo)
+                    {
+                        for (const auto& faceIpInfoVec : sideInfo.ipInfoVec())
+                        {
+                            for (const ipInfo* ip : faceIpInfoVec)
+                            {
+                                // exposed ips have no opposing element
+                                // and contribute no stencil columns
+                                if (ip->isExposed_)
+                                    continue;
+                                for (const stk::mesh::Entity elem :
+                                     {ip->currentElement_,
+                                      ip->opposingElement_})
+                                {
+                                    if (!bulkData.is_valid(elem))
+                                        continue;
+                                    stk::mesh::Entity const* nodeRels =
+                                        bulkData.begin_nodes(elem);
+                                    const label numNodes =
+                                        bulkData.num_nodes(elem);
+                                    for (label ni = 0; ni < numNodes; ++ni)
+                                    {
+                                        activeNodeFlag[bulkData.local_id(
+                                            nodeRels[ni])] = 1;
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    activateIpElementNodes(interf.masterInfoRef());
+                    activateIpElementNodes(interf.slaveInfoRef());
+                }
             }
 
             // Set some sizes
@@ -1298,6 +1344,47 @@ void mesh::updateLocalNodeIDs_()
                     }
                 }
             }
+        }
+
+        // Nodes of elements referenced by interface integration points
+        // must be active on this rank: the interface stencils insert
+        // them as graph columns, and aura current elements are skipped
+        // by the aura loop above (owner rank below mine) and are not in
+        // the interface ghosting receive lists. See
+        // initializeLocalNodeIDs_ for the full rationale.
+        for (label iInterface = 0; iInterface < nInterfaces(); iInterface++)
+        {
+            const interface& interf = interfaceRef(iInterface);
+            const auto activateIpElementNodes =
+                [&](const interfaceSideInfo& sideInfo)
+            {
+                for (const auto& faceIpInfoVec : sideInfo.ipInfoVec())
+                {
+                    for (const ipInfo* ip : faceIpInfoVec)
+                    {
+                        // exposed ips have no opposing element and
+                        // contribute no stencil columns
+                        if (ip->isExposed_)
+                            continue;
+                        for (const stk::mesh::Entity elem :
+                             {ip->currentElement_, ip->opposingElement_})
+                        {
+                            if (!bulkData.is_valid(elem))
+                                continue;
+                            stk::mesh::Entity const* nodeRels =
+                                bulkData.begin_nodes(elem);
+                            const label numNodes = bulkData.num_nodes(elem);
+                            for (label ni = 0; ni < numNodes; ++ni)
+                            {
+                                activeNodeFlag[bulkData.local_id(
+                                    nodeRels[ni])] = 1;
+                            }
+                        }
+                    }
+                }
+            };
+            activateIpElementNodes(interf.masterInfoRef());
+            activateIpElementNodes(interf.slaveInfoRef());
         }
     }
 

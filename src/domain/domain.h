@@ -102,6 +102,33 @@ struct fluidPairModel
     };
 
     surfaceTension surfaceTension_;
+
+    // Interphase mass transfer (e.g. cavitation). Sign convention: mdot_lv > 0
+    // is liquid -> vapor [kg/(m^3 s)]
+    struct massTransfer
+    {
+        massTransferModelOption option_ = massTransferModelOption::none;
+        cavitationModelOption cavitationModel_ =
+            cavitationModelOption::rayleighPlesset;
+
+        // roles of the pair members: names and global material indices
+        std::string liquidPhase_;
+        std::string vaporPhase_;
+        label liquidIndex_ = -1;
+        label vaporIndex_ = -1;
+
+        // cavitation parameters (CFX defaults)
+        scalar saturationPressure_ = -1.0; // [Pa] absolute, required
+        scalar nucleationSiteVolumeFraction_ = 5.0e-4;
+        scalar nucleationSiteRadius_ = 1.0e-6; // [m]
+        scalar vaporizationCoefficient_ = 50.0;
+        scalar condensationCoefficient_ = 0.01;
+        scalar underRelaxation_ = 0.25; // (0, 1]
+        bool pressureClippingForRate_ = false;
+        bool includeContinuitySource_ = true;
+    };
+
+    massTransfer massTransfer_;
 };
 
 struct material

@@ -8902,6 +8902,8 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     const auto& pSTKFieldRef = this->pRef().stkFieldRef();
     const auto& USTKFieldRef = this->URef().stkFieldRef();
     const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
+    const auto& nodalSidePSTKFieldRef =
+        this->pRef().nodeSideFieldRef().stkFieldRef();
 
     const auto& mDotSideSTKFieldRef = mDotSideField.stkFieldRef();
     const scalar mDotURF = mDotSideField.urf();
@@ -9125,10 +9127,13 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
             STK_ThrowAssert(numSideNodes == nodesPerSide);
             for (label ni = 0; ni < numSideNodes; ++ni)
             {
+                const label ic = faceNodeOrdinals[ni];
+
                 stk::mesh::Entity node = sideNodeRels[ni];
 
-                // gather scalars
+                // gather scalars; boundary pressure from the BC side field
                 p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_p[ic] = *stk::mesh::field_data(nodalSidePSTKFieldRef, node);
 
                 // gather vectors
                 scalar* U = stk::mesh::field_data(USTKFieldRef, node);
@@ -9152,10 +9157,6 @@ void flowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                     p_F[offSet + j] = F[j];
                     p_FOrig[offSet + j] = FOrig[j];
                 }
-
-                // NOTE: Correction uses
-                // computed pressure values for side nodes, not actual boundary
-                // condition values (after discussion with Mahdi).
             }
 
             // compute dndx
@@ -15687,6 +15688,12 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                     this->URef()
                                         .reversalFlagRef()
                                         .stkFieldRef();
+                                const auto& USTKFieldRef =
+                                    this->URef().stkFieldRef();
+                                const auto& exposedAreaVecSTKFieldRef =
+                                    *metaData.get_field<scalar>(
+                                        metaData.side_rank(),
+                                        this->getExposedAreaVectorID_(domain));
 
                                 // define some common selectors
                                 stk::mesh::Selector selAllSides =
@@ -15712,6 +15719,8 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                         get_surface_master_element(
                                             sideBucket.topology());
                                     const label numScsBip = meFC->numIntPoints_;
+                                    const label nodesPerSide =
+                                        meFC->nodesPerElement_;
 
                                     const stk::mesh::Bucket::size_type
                                         nSidesPerBucket = sideBucket.size();
@@ -15729,6 +15738,10 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                             mDotSideSTKFieldRef, side);
                                         label* revf_val = stk::mesh::field_data(
                                             reversalFlowFlagSTKFieldRef, side);
+                                        const scalar* areaVec =
+                                            stk::mesh::field_data(
+                                                exposedAreaVecSTKFieldRef,
+                                                side);
 
                                         // calculate net mass flow for the side
                                         scalar mDotSide = 0.0;
@@ -15739,27 +15752,86 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                                         }
 
                                         // loop over boundary ips and set flag
-                                        if (mDotSide > 0)
+                                        if (revf_val[0] == 0)
                                         {
-                                            for (label ip = 0; ip < numScsBip;
-                                                 ++ip)
+                                            if (mDotSide < -SMALL)
                                             {
-                                                if (!ignoreFlagUpdate)
+                                                for (label ip = 0;
+                                                     ip < numScsBip;
+                                                     ++ip)
                                                 {
-                                                    revf_val[ip] = 0;
+                                                    if (!ignoreFlagUpdate)
+                                                    {
+                                                        revf_val[ip] = 1;
+                                                    }
+                                                    mDot[ip] = 0.0;
                                                 }
                                             }
                                         }
                                         else
                                         {
-                                            for (label ip = 0; ip < numScsBip;
-                                                 ++ip)
+                                            scalar asq = 0.0;
+                                            scalar faceAreaVec[SPATIAL_DIM];
+                                            for (label j = 0; j < SPATIAL_DIM;
+                                                 ++j)
+                                            {
+                                                faceAreaVec[j] = 0.0;
+                                                for (label ip = 0;
+                                                     ip < numScsBip;
+                                                     ++ip)
+                                                {
+                                                    faceAreaVec[j] += areaVec
+                                                        [ip * SPATIAL_DIM + j];
+                                                }
+                                                asq += faceAreaVec[j] *
+                                                       faceAreaVec[j];
+                                            }
+                                            const scalar amag = std::sqrt(asq);
+
+                                            stk::mesh::Entity const*
+                                                sideNodeRels =
+                                                    bulkData.begin_nodes(side);
+                                            scalar vnorm = 0.0;
+                                            for (label ni = 0;
+                                                 ni < nodesPerSide;
+                                                 ++ni)
+                                            {
+                                                const scalar* U =
+                                                    stk::mesh::field_data(
+                                                        USTKFieldRef,
+                                                        sideNodeRels[ni]);
+                                                for (label j = 0;
+                                                     j < SPATIAL_DIM;
+                                                     ++j)
+                                                {
+                                                    vnorm += U[j] *
+                                                             faceAreaVec[j] /
+                                                             amag;
+                                                }
+                                            }
+                                            vnorm /= static_cast<scalar>(
+                                                nodesPerSide);
+
+                                            if (vnorm >= 0.0)
                                             {
                                                 if (!ignoreFlagUpdate)
                                                 {
-                                                    revf_val[ip] = 1;
+                                                    for (label ip = 0;
+                                                         ip < numScsBip;
+                                                         ++ip)
+                                                    {
+                                                        revf_val[ip] = 0;
+                                                    }
                                                 }
-                                                mDot[ip] = 0.0;
+                                            }
+                                            else
+                                            {
+                                                for (label ip = 0;
+                                                     ip < numScsBip;
+                                                     ++ip)
+                                                {
+                                                    mDot[ip] = 0.0;
+                                                }
                                             }
                                         }
                                     }
