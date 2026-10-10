@@ -40,6 +40,10 @@ void segregatedShearStressTransportEquations::setup()
     tke_eq_->setup();
     tef_eq_->setup();
 
+    // curvature-correction fields must exist before output is set up
+    FOREACH_DOMAIN_IF(setupCurvatureCorrection,
+                      domain->turbulence_.curvatureCorrection_);
+
     equation::isCreated_ = tke_eq_->isCreated() && tef_eq_->isCreated();
 }
 
@@ -100,6 +104,8 @@ void segregatedShearStressTransportEquations::solve()
 {
     // compute blending for SST model
     FOREACH_DOMAIN(updateFOneBlending);
+    FOREACH_DOMAIN_IF(updateCurvatureCorrection,
+                      domain->turbulence_.curvatureCorrection_);
     FOREACH_DOMAIN(updateTurbulentProduction);
 
     tke_eq_->solve();

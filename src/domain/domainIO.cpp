@@ -760,6 +760,52 @@ void domain::read_()
                             turbulence_.wallFunctionType_ =
                                 wallFunctionType::automatic;
                         }
+
+                        // curvature correction (Smirnov-Menter 2009)
+                        if (turbulenceBlock["curvature_correction"])
+                        {
+                            turbulence_.curvatureCorrection_ =
+                                turbulenceBlock["curvature_correction"]
+                                    .template as<bool>();
+                        }
+
+                        if (turbulenceBlock["curvature_correction_coefficient"])
+                        {
+                            turbulence_.curvatureCorrectionCoeff_ =
+                                turbulenceBlock
+                                    ["curvature_correction_coefficient"]
+                                        .template as<scalar>();
+
+                            // 0 is allowed: f_r = 1 everywhere, plain SST
+                            if (turbulence_.curvatureCorrectionCoeff_ < 0.0)
+                            {
+                                errorMsg("curvature_correction_coefficient "
+                                         "must be >= 0");
+                            }
+                        }
+
+                        if (turbulence_.curvatureCorrection_)
+                        {
+                            if (turbulence_.transitional_)
+                            {
+                                errorMsg("curvature_correction is not "
+                                         "implemented for transitional SST");
+                            }
+
+#if SPATIAL_DIM != 3
+                            errorMsg("curvature_correction requires a 3D "
+                                     "build (SPATIAL_DIM == 3)");
+#endif
+
+                            // DS_ij/Dt keeps only the convective part
+                            if (simulationRef().controlsRef().isTransient())
+                            {
+                                errorMsg(
+                                    "curvature_correction is implemented "
+                                    "for steady_state only (DS_ij/Dt omits "
+                                    "the temporal term)");
+                            }
+                        }
                     }
                     break;
             }

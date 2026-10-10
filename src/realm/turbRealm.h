@@ -55,6 +55,9 @@ private:
 
     std::unique_ptr<simpleScalarField> tkeProduction_;
 
+    // curvature correction factor f_r (Smirnov-Menter 2009)
+    std::unique_ptr<simpleScalarField> curvatureCorrectionFactor_;
+
     // Wall-function related
 
     std::unique_ptr<simpleScalarField> uTau_;
@@ -101,6 +104,8 @@ public:
     static constexpr char F1_ID[] = "f_one_blending";
 
     static constexpr char Pk_ID[] = "tke_production";
+
+    static constexpr char fr_ID[] = "curvature_correction_factor";
 
     static constexpr char yPlus_ID[] = "y_plus";
 
