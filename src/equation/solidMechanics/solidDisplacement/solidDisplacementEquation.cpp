@@ -79,6 +79,26 @@ void solidDisplacementEquation::setup()
                               this->domainZones_(),
                               this->fallbackName());
 
+    // the un-relaxed FSI residual uses the raw correction X^k of the last
+    // solid solve only: with sub-iterations it is the last Newton increment
+    const auto& fsiConv =
+        controlsRef()
+            .solverRef()
+            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
+    const bool usesInterfaceResidual =
+        fsiConv.enabled_ &&
+        std::find(fsiConv.criteria_.begin(),
+                  fsiConv.criteria_.end(),
+                  fsiConvergenceType::fsiInterfaceResidual) !=
+            fsiConv.criteria_.end();
+    if (subIters_ > 1 && usesInterfaceResidual && messager::master())
+    {
+        warningMsg("solid_displacement sub_iterations > 1 with "
+                   "fsi_interface_residual: X^k is the last Newton increment "
+                   "only, not the full FSI correction of the outer "
+                   "iteration; FSI convergence may be declared prematurely");
+    }
+
     equation::isCreated_ = true;
 }
 
@@ -194,6 +214,43 @@ void solidDisplacementEquation::solve()
         linearSystem::solve();
     }
     messager::barrier();
+
+    // raw correction X^k before relaxation (last Newton increment with
+    // sub-iterations)
+    {
+        const Vector& correction = ctx->coeffs()->getXVector();
+        auto& xSTKFieldRef = this->solidCorrectionRef().stkFieldRef();
+        const stk::mesh::BulkData& bulkData =
+            fieldBroker::meshRef().bulkDataRef();
+        const stk::mesh::MetaData& metaData =
+            fieldBroker::meshRef().metaDataRef();
+        for (const auto& domain : domainVector_)
+        {
+            const stk::mesh::Selector sel =
+                metaData.locally_owned_part() &
+                stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+            for (const stk::mesh::Bucket* b :
+                 bulkData.get_buckets(stk::topology::NODE_RANK, sel))
+            {
+                for (stk::mesh::Bucket::size_type i = 0; i < b->size(); ++i)
+                {
+                    const stk::mesh::Entity entity = (*b)[i];
+                    const int64_t row = ctx->coeffs()->getGraph()->localToRow(
+                        bulkData.local_id(entity));
+                    if (row < 0)
+                        continue;
+                    scalar* xk = stk::mesh::field_data(xSTKFieldRef, entity);
+                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                    {
+                        xk[k] = correction[row * linearSystem::BLOCKSIZE + k];
+                    }
+                }
+            }
+            this->solidCorrectionRef().synchronizeGhostedEntities(
+                domain->index());
+        }
+    }
+
     // Compute relaxation factor (acceleration handled in base equation)
     scalar relaxationFactor = DRef().urf();
 
@@ -231,6 +288,23 @@ void solidDisplacementEquation::postSolve()
 {
     // calculate post-processed quantities
     FOREACH_DOMAIN(updateStressAndStrain_);
+
+    // once per outer iteration: D (mesh motion BC) and X^k (FSI residual) to
+    // the fluid side
+    for (const auto& domain : domainVector_)
+    {
+        for (const interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType())
+            {
+                const bool reverse = !interf->isMasterZone(domain->index());
+                DRef().transfer(
+                    interf->index(), dataTransferType::copy, reverse);
+                this->solidCorrectionRef().transfer(
+                    interf->index(), dataTransferType::copy, reverse);
+            }
+        }
+    }
 }
 
 stk::mesh::PartVector
@@ -277,29 +351,6 @@ void solidDisplacementEquation::setResidualScales_()
     for (int i = 0; i < SPATIAL_DIM; i++)
     {
         residual_scales[i] = disp_scale_inv;
-    }
-}
-
-void solidDisplacementEquation::applyDependencyUpdates_(
-    const domain* domain,
-    const stk::mesh::EntityRank entityRank,
-    STKScalarField& /*stk_dst*/)
-{
-    assert(entityRank == stk::mesh::EntityRank::NODE_RANK);
-
-    // if the zone deforms, and a fluid-solid interface exists, transfer
-    // displacement from solid side to fluid side
-    if (domain->zonePtr()->meshDeforming())
-    {
-        for (const interface* interf : domain->interfacesRef())
-        {
-            if (interf->isFluidSolidType())
-            {
-                DRef().transfer(interf->index(),
-                                dataTransferType::copy,
-                                !interf->isMasterZone(domain->index()));
-            }
-        }
     }
 }
 

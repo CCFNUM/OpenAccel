@@ -9,6 +9,7 @@
 
 // code
 #include "phiAssembler.h"
+#include "robinNeumannState.h"
 
 namespace accel
 {
@@ -21,7 +22,8 @@ class domain;
 // in some degree of code duplication in this class. If possible, phiAssembler
 // should be generic enough to handle momentum assembly without the need for
 // implementing a new class.
-class bulkPressureCorrectionAssembler : public phiAssembler<1>
+class bulkPressureCorrectionAssembler : public phiAssembler<1>,
+                                        public robinNeumannState
 {
 public:
     using Base = phiAssembler<1>;
@@ -48,6 +50,9 @@ public:
     }
 
     void adjustMatrixForPressureReference(const domain* domain, Context* ctx);
+
+    // Tukovic Eq. 30: accumulate Q_vol after every corrector (postSolve)
+    void accumulateRnWallFlux(const domain* domain);
 
     void setPhaseIndex(label phaseIndex)
     {
@@ -78,6 +83,13 @@ private:
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
         Context* ctx);
+    void assembleElemTermsInterfaceSideRobinNeumann_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr,
+        Context* ctx);
+    void accumulateRnWallFluxInterfaceSide_(
+        const domain* domain,
+        const interfaceSideInfo* interfaceSideInfoPtr);
 
     void assembleElemTermsBoundary_(const domain* domain,
                                     Context* ctx) override;

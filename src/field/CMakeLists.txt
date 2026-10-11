@@ -10,6 +10,7 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(main_obj PRIVATE
     ${DIR}/elementField/scalar/elementScalarField.cpp
     ${DIR}/elementField/scalar/heatFlowRate/heatFlowRate.cpp
+    ${DIR}/elementField/scalar/interfaceScalarField/interfaceScalarField.cpp
     ${DIR}/elementField/scalar/massFlowRate/massFlowRate.cpp
     ${DIR}/elementField/vector/momentumFlowRate/momentumFlowRate.cpp
     ############################################################################
@@ -53,6 +54,7 @@ target_include_directories(main_obj PUBLIC
     ${DIR}/elementField
     ${DIR}/elementField/scalar
     ${DIR}/elementField/scalar/heatFlowRate
+    ${DIR}/elementField/scalar/interfaceScalarField
     ${DIR}/elementField/scalar/massFlowRate
     ${DIR}/elementField/vector/momentumFlowRate
     ############################################################################

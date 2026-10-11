@@ -89,6 +89,7 @@ public:
     using fieldBroker::muRef;
     using fieldBroker::mutRef;
     using fieldBroker::omegaRef;
+    using fieldBroker::frRef;
     using fieldBroker::PkRef;
     using fieldBroker::ReThetaRef;
     using fieldBroker::TPlusRef;

@@ -79,6 +79,37 @@ protected:
 
     scalar penaltyFactor_ = 1.0;
 
+    // FSI traction on the deformed area (follower load, default) or reference
+    // area
+    bool useDeformedArea_ = true;
+
+    // DN (zero-gradient pressure) or RN (mixed BC with solid inertia)
+    fsiCouplingMethod couplingMethod_ = fsiCouplingMethod::dirichletNeumann;
+
+    // rho_f in c1: local BIP density unless reference_fluid_density is set
+    scalar robinReferenceFluidDensity_ = 1000.0;
+    bool useReferenceFluidDensity_ = false;
+
+    // Write c1 = rho_s*h_s/rho_f to postProcessing/robin_alpha.out per
+    // timestep.
+    bool writeRobinAlpha_ = false;
+
+    // a_n under-relaxation beta in (0, 1] (rn_accel_relaxation)
+    scalar rnAccelRelaxation_ = 1.0;
+
+    // Write per-outer-iteration fluid/solid interface force balance to
+    // postProcessing/fsi_force_balance.out.
+    bool writeForceBalance_ = false;
+
+    // Physical solid thickness for thin-shell Robin BC (Tukovic Sec. 2.4).
+    // If usePhysicalSolidThickness_ = true, h_s = solidThickness_ (m).
+    // Default false: h_s = a_p*dt (virtual thickness, Tukovic Eq. 21).
+    bool usePhysicalSolidThickness_ = false;
+    scalar solidThickness_ = 0.0;
+
+    // coupling activation time; coupling starts when all interfaces reached it
+    scalar couplingStartTime_ = 0.0;
+
     // Geometric transformations measured from salve to master
 
     utils::vector axisLocation_;
@@ -200,6 +231,56 @@ public:
     {
         return type_ == interfaceType::fluid_solid;
     };
+
+    bool useDeformedArea() const
+    {
+        return useDeformedArea_;
+    };
+
+    bool isRobinNeumann() const
+    {
+        return couplingMethod_ == fsiCouplingMethod::robinNeumann;
+    };
+
+    scalar robinReferenceFluidDensity() const
+    {
+        return robinReferenceFluidDensity_;
+    };
+
+    bool useReferenceFluidDensity() const
+    {
+        return useReferenceFluidDensity_;
+    }
+
+    bool writeRobinAlpha() const
+    {
+        return writeRobinAlpha_;
+    };
+
+    scalar rnAccelRelaxation() const
+    {
+        return rnAccelRelaxation_;
+    };
+
+    bool writeForceBalance() const
+    {
+        return writeForceBalance_;
+    };
+
+    bool usePhysicalSolidThickness() const
+    {
+        return usePhysicalSolidThickness_;
+    }
+
+    scalar solidThickness() const
+    {
+        return solidThickness_;
+    }
+
+    scalar couplingStartTime() const
+    {
+        return couplingStartTime_;
+    }
 
     bool isSlipNonOverlap() const
     {

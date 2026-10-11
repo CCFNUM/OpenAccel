@@ -16,8 +16,8 @@ std::unordered_map<size_t, stk::io::FieldOutputType> fieldType{
     {1, stk::io::FieldOutputType::SCALAR},
     {2, stk::io::FieldOutputType::VECTOR_2D},
     {3, stk::io::FieldOutputType::VECTOR_3D},
-    {4, stk::io::FieldOutputType::FULL_TENSOR_22},
-    {9, stk::io::FieldOutputType::FULL_TENSOR_36}};
+    {4, stk::io::FieldOutputType::MATRIX_22},
+    {9, stk::io::FieldOutputType::MATRIX_33}};
 
 // Specialisations for pTraits
 
@@ -123,6 +123,8 @@ std::unordered_map<std::string, solidMechanicsOption> solidMechanicsOptionMap{
     {"none", solidMechanicsOption::none},
     {"linear_elastic", solidMechanicsOption::linearElastic},
     {"neo_hookean", solidMechanicsOption::neoHookean},
+    // deprecated alias (warned in domain::read_())
+    {"simplified_new_hookean", solidMechanicsOption::neoHookean},
     {"mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin},
     {"modified_mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin}};
 
@@ -466,6 +468,27 @@ transientSchemeType convertTransientSchemeTypeFromString(std::string s)
     return transientSchemeType::firstOrderBackwardEuler; // useless
 }
 
+std::unordered_map<std::string, solidTransientSchemeType>
+    solidTransientSchemeTypeMap{
+        {"euler", solidTransientSchemeType::eulerD2dt2},
+        {"backward", solidTransientSchemeType::backwardD2dt2}};
+
+solidTransientSchemeType
+convertSolidTransientSchemeTypeFromString(std::string s)
+{
+    auto it = solidTransientSchemeTypeMap.find(s);
+    if (it != solidTransientSchemeTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid solid transient scheme type: " + s);
+    }
+
+    return solidTransientSchemeType::eulerD2dt2; // useless
+}
+
 std::array<scalar, 2> BDF1::coeff()
 {
     // interpolation coefficients for BDF1
@@ -566,6 +589,62 @@ advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s)
     }
 
     return advectionSchemeType::upwind; // useless
+}
+
+// Volume fraction advection scheme
+
+std::unordered_map<std::string, vofAdvectionSchemeType>
+    vofAdvectionSchemeTypeMap{
+        {"BarthJespersen", vofAdvectionSchemeType::barthJespersen},
+        {"VanLeer", vofAdvectionSchemeType::vanLeer},
+        {"MSTOIC", vofAdvectionSchemeType::mstoic},
+        {"MSUPERBEE", vofAdvectionSchemeType::msuperbee},
+        {"HYPERC", vofAdvectionSchemeType::hyperC},
+        {"STACS", vofAdvectionSchemeType::stacs},
+        {"CICSAM", vofAdvectionSchemeType::cicsam}};
+
+vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s)
+{
+    auto it = vofAdvectionSchemeTypeMap.find(s);
+    if (it != vofAdvectionSchemeTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        std::string valid;
+        for (const auto& pair : vofAdvectionSchemeTypeMap)
+        {
+            valid += (valid.empty() ? "" : ", ") + pair.first;
+        }
+        errorMsg("Invalid volume fraction advection scheme type: " + s +
+                 ". Valid options: " + valid);
+    }
+
+    return vofAdvectionSchemeType::barthJespersen; // useless
+}
+
+std::string toString(vofAdvectionSchemeType type)
+{
+    switch (type)
+    {
+        case vofAdvectionSchemeType::barthJespersen:
+            return "BarthJespersen";
+        case vofAdvectionSchemeType::vanLeer:
+            return "VanLeer";
+        case vofAdvectionSchemeType::mstoic:
+            return "MSTOIC";
+        case vofAdvectionSchemeType::msuperbee:
+            return "MSUPERBEE";
+        case vofAdvectionSchemeType::hyperC:
+            return "HYPERC";
+        case vofAdvectionSchemeType::stacs:
+            return "STACS";
+        case vofAdvectionSchemeType::cicsam:
+            return "CICSAM";
+    }
+
+    return ""; // useless
 }
 
 // Physical boundary type
@@ -1014,27 +1093,25 @@ accelerationType convertAccelerationTypeFromString(std::string s)
     return accelerationType::none; // useless
 }
 
-// Physics convergence type
+// FSI convergence type
 
-std::unordered_map<std::string, physicsConvergenceType>
-    physicsConvergenceTypeMap{
-        {"fsi_interface_residual",
-         physicsConvergenceType::fsiInterfaceResidual},
-        {"fsi_force_residual", physicsConvergenceType::fsiForceResidual}};
+std::unordered_map<std::string, fsiConvergenceType> fsiConvergenceTypeMap{
+    {"fsi_interface_residual", fsiConvergenceType::fsiInterfaceResidual},
+    {"fsi_force_residual", fsiConvergenceType::fsiForceResidual}};
 
-physicsConvergenceType convertPhysicsConvergenceTypeFromString(std::string s)
+fsiConvergenceType convertFsiConvergenceTypeFromString(std::string s)
 {
-    auto it = physicsConvergenceTypeMap.find(s);
-    if (it != physicsConvergenceTypeMap.end())
+    auto it = fsiConvergenceTypeMap.find(s);
+    if (it != fsiConvergenceTypeMap.end())
     {
         return it->second;
     }
     else
     {
-        errorMsg("Invalid physics convergence type: " + s);
+        errorMsg("Invalid FSI convergence type: " + s);
     }
 
-    return physicsConvergenceType::fsiInterfaceResidual; // useless
+    return fsiConvergenceType::fsiInterfaceResidual; // useless
 }
 
 // Pressure level information specification
@@ -1219,6 +1296,25 @@ convertMeshStiffnessSpecificationTypeFromString(std::string s)
     }
 
     return meshStiffnessSpecificationType::value; // useless
+}
+
+std::unordered_map<std::string, fsiCouplingMethod> fsiCouplingMethodMap{
+    {"dirichlet_neumann", fsiCouplingMethod::dirichletNeumann},
+    {"robin_neumann", fsiCouplingMethod::robinNeumann}};
+
+fsiCouplingMethod convertFsiCouplingMethodFromString(std::string s)
+{
+    auto it = fsiCouplingMethodMap.find(s);
+    if (it != fsiCouplingMethodMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid FSI coupling method: " + s);
+    }
+
+    return fsiCouplingMethod::dirichletNeumann; // useless
 }
 
 // Frame type

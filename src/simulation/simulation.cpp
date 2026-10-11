@@ -8,8 +8,9 @@
 #include "simulation.h"
 #include "domain.h"
 #include "elementField.h"
+#include "fsiConvergence.h"
+#include "interface.h"
 #include "mesh.h"
-#include "physicsConvergence.h"
 #include "realm.h"
 #include "version.h"
 
@@ -99,6 +100,30 @@ void simulation::initialize_()
                              "` on realm `" + realmPtr_->name() + "`\n";
         }
         equation->setup();
+    }
+
+    // FSI outputs are written by fsiConvergence, which only runs with
+    // fsi_convergence enabled: tell the user if they were requested without
+    {
+        const auto& fsiConvCfg = controlsRef()
+                                     .solverRef()
+                                     .solverControl_.basicSettings_
+                                     .convergenceCriteria_.fsiConvergence_;
+        bool forceBalanceRequested = false;
+        for (const interface* interf : meshRef().interfaceVector())
+        {
+            if (interf->isFluidSolidType() && interf->writeForceBalance())
+            {
+                forceBalanceRequested = true;
+            }
+        }
+        if (!fsiConvCfg.enabled_ &&
+            (forceBalanceRequested || fsiConvCfg.diagnosticsEnabled_) &&
+            messager::master())
+        {
+            warningMsg("write_force_balance / fsi_convergence diagnostics "
+                       "have no effect: fsi_convergence is not enabled");
+        }
     }
 
     // setup dynamic mesh components in case of deforming/moving mesh
@@ -273,6 +298,19 @@ void simulation::runTransient()
                                        .solverControl_.basicSettings_
                                        .convergenceControl_.maxIterations_;
 
+        // optional outer-iteration cap until all interfaces are coupled
+        {
+            const label maxUncoupled =
+                controlsRef()
+                    .solverRef()
+                    .solverControl_.basicSettings_.convergenceControl_
+                    .maxIterationsUncoupled_;
+            if (maxUncoupled > 0 && hasFsiInterface() && !allFsiCoupled())
+            {
+                maxCoeffIterations = maxUncoupled;
+            }
+        }
+
         if (messager::master())
             std::cout << std::endl
                       << "Time = " << std::scientific << std::setprecision(2)
@@ -297,17 +335,22 @@ void simulation::runTransient()
                           << std::endl;
             }
 
-            // update mesh in case of deforming/moving mesh
-            if (this->meshRef().anyZoneMeshDeforming() ||
-                this->meshRef().anyZoneMeshTransforming())
+            // per-iteration mesh motion (not frozen per timestep)
+            const bool updateMeshPerIteration =
+                (this->meshRef().anyZoneMeshDeforming() ||
+                 this->meshRef().anyZoneMeshTransforming()) &&
+                !controlsRef()
+                     .solverRef()
+                     .solverControl_.advancedOptions_.equationControls_
+                     .meshMotion_.freezePerTimestep_;
+
+            const bool isFsiRun = hasFsiInterface();
+
+            // non-FSI run: update mesh in case of deforming/moving mesh,
+            // before assembling the systems
+            if (updateMeshPerIteration && !isFsiRun)
             {
-                if (!controlsRef()
-                         .solverRef()
-                         .solverControl_.advancedOptions_.equationControls_
-                         .meshMotion_.freezePerTimestep_)
-                {
-                    meshMotionPtr_->update();
-                }
+                meshMotionPtr_->update();
             }
 
             controlsRef().globalIter++;
@@ -317,6 +360,13 @@ void simulation::runTransient()
 
             // assemble and solve systems now
             assembleAndSolveSystems();
+
+            // FSI: mesh motion after the solid solve (Tukovic Alg. 1 step 7),
+            // once coupled
+            if (updateMeshPerIteration && isFsiRun && allFsiCoupled())
+            {
+                meshMotionPtr_->update();
+            }
 
             auto elapsedIterTimeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::duration<scalar> elapsedSeconds =
@@ -379,6 +429,22 @@ void simulation::assembleAndSolveSystems()
 
     for (auto& equation : equationVector_)
     {
+        // freeze the solid until all interfaces are coupled (s4f coupled_)
+        if (equation->getID() == equationID::solidDisplacement)
+        {
+            if (!allFsiCoupled())
+            {
+                // once per uncoupled step (first outer iteration)
+                if (messager::master() && controlsRef().iter == 1)
+                {
+                    std::cout << "\n[FSI] t = " << controlsRef().time
+                              << " < coupling_start_time: solid frozen, "
+                              << "skipping " << equation->name() << "\n";
+                }
+                continue;
+            }
+        }
+
         if (messager::master() && equation->subIters() > 1)
         {
             std::cout << std::endl
@@ -436,9 +502,9 @@ void simulation::preWork()
 {
     if (controlsRef().isTransient())
     {
-        if (physicsConvergence* physConv = getPhysicsConvergence_())
+        if (fsiConvergence* fsiConv = getFsiConvergence_())
         {
-            physConv->resetForTimeStep();
+            fsiConv->resetForTimeStep();
         }
 
         // equation dependent pre-timestep tasks for transient simulations
@@ -517,15 +583,42 @@ void simulation::postWork()
     }
 }
 
+bool simulation::hasFsiInterface() const
+{
+    for (const interface* interf : meshRef().interfaceVector())
+    {
+        if (interf->isFluidSolidType())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool simulation::allFsiCoupled() const
+{
+    const scalar tNow = controlsRef().time;
+    for (const interface* interf : meshRef().interfaceVector())
+    {
+        if (interf->isFluidSolidType() &&
+            tNow < (interf->couplingStartTime() - ::accel::SMALL))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool simulation::checkConvergence()
 {
-    physicsConvergence* physConv = getPhysicsConvergence_();
-    if (physConv)
+    fsiConvergence* fsiConv = getFsiConvergence_();
+    // FSI criterion only once all interfaces are coupled
+    if (fsiConv && allFsiCoupled())
     {
-        physConv->update();
-        if (physConv->enabled())
+        fsiConv->update();
+        if (fsiConv->enabled() && fsiConv->hasCriteria())
         {
-            return physConv->isConverged();
+            return fsiConv->isConverged();
         }
     }
 
@@ -538,23 +631,24 @@ bool simulation::checkConvergence()
     return convergence;
 }
 
-physicsConvergence* simulation::getPhysicsConvergence_()
+fsiConvergence* simulation::getFsiConvergence_()
 {
-    const auto& physConv = controlsRef()
-                               .solverRef()
-                               .solverControl_.basicSettings_
-                               .convergenceCriteria_.physicsConvergence_;
+    const auto& fsiConv =
+        controlsRef()
+            .solverRef()
+            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
 
-    if (!physConv.enabled_ || physConv.criteria_.empty())
+    // created when fsi_convergence is enabled, also without criteria
+    if (!fsiConv.enabled_)
     {
         return nullptr;
     }
 
-    if (!physicsConvergencePtr_)
+    if (!fsiConvergencePtr_)
     {
-        physicsConvergencePtr_ = std::make_unique<physicsConvergence>(*this);
+        fsiConvergencePtr_ = std::make_unique<fsiConvergence>(*this);
     }
-    return physicsConvergencePtr_.get();
+    return fsiConvergencePtr_.get();
 }
 
 // Access
@@ -562,6 +656,18 @@ physicsConvergence* simulation::getPhysicsConvergence_()
 label simulation::nDomains() const
 {
     return domainVector_.size();
+}
+
+equation* simulation::equationPtr(equationID id)
+{
+    for (const auto& eq : equationVector_)
+    {
+        if (eq->getID() == id)
+        {
+            return eq.get();
+        }
+    }
+    return nullptr;
 }
 
 domain& simulation::domainRef(label iDomain)

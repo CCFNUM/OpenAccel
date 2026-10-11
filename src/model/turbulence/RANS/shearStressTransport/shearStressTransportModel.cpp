@@ -592,6 +592,41 @@ void shearStressTransportModel::updateTurbulentProduction(
         }
     }
 
+    // Curvature correction: scale the production at all nodes (interior and
+    // wall-function values) before the limiter caps it. P_omega is built from
+    // P_k in the omega assembler, so it is scaled as well.
+    if (domain->turbulence_.curvatureCorrection_)
+    {
+        const STKScalarField* frSTKFieldPtr = frRef().stkFieldPtr();
+        STKScalarField* PkCorrSTKFieldPtr = PkRef().stkFieldPtr();
+
+        stk::mesh::Selector selAllNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
+
+            const scalar* frb =
+                stk::mesh::field_data(*frSTKFieldPtr, nodeBucket);
+            scalar* Pkb = stk::mesh::field_data(*PkCorrSTKFieldPtr, nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
+            {
+                Pkb[iNode] *= frb[iNode];
+            }
+        }
+    }
+
     // Apply production limiter
     {
         const STKScalarField* kSTKFieldPtr = kRef().stkFieldPtr();
@@ -633,6 +668,298 @@ void shearStressTransportModel::updateTurbulentProduction(
                              tkeProdLimitRatio * betaStar * rhob[iNode] *
                                  omegab[iNode] * kb[iNode]);
             }
+        }
+    }
+}
+
+// Levi-Civita symbol for indices 0..2
+static inline scalar leviCivita_(label i, label j, label k)
+{
+    return 0.5 * static_cast<scalar>((i - j) * (j - k) * (k - i));
+}
+
+void shearStressTransportModel::setupCurvatureCorrection(
+    const std::shared_ptr<domain> domain)
+{
+    // f_r is a plain node field: allocate it now so that it exists when the
+    // output file is set up (fields are matched by name in output_fields)
+    frRef();
+
+    if (!SijPtr_)
+    {
+        SijPtr_ = std::make_unique<nodeTensorField>(
+            &this->realmRef(), "strain_rate_tensor", 1, false);
+        SijPtr_->setupGradientField();
+
+        const auto& basic =
+            controlsRef()
+                .solverRef()
+                .solverControl_.basicSettings_.interpolationSchemeType_;
+        SijPtr_->setInterpolationScheme(basic.pressureInterpolationType_);
+        SijPtr_->setGradientInterpolationScheme(
+            basic.pressureGradientInterpolationType_);
+
+        // S_ij is rebuilt every iteration: full gradient, no relaxation lag
+        SijPtr_->setGradURF(1.0);
+    }
+
+    SijPtr_->setZone(domain->index());
+}
+
+void shearStressTransportModel::updateCurvatureCorrection(
+    const std::shared_ptr<domain> domain)
+{
+    // Smirnov & Menter (2009), J. Turbomach. 131(4) 041010, SST form:
+    //
+    //   f_r = max(0, 1 + C_scale (f~_r - 1)),  f~_r = max(min(f_rot, 1.25), 0)
+    //   f_rot = (1 + c_r1) 2r*/(1 + r*) [1 - c_r3 atan(c_r2 r~)] - c_r1
+    //   r* = S/W
+    //   r~ = 2 W_ik S_jk [DS_ij/Dt + (e_imn S_jn + e_jmn S_in) Om_m]
+    //        / (W D^3),  D^2 = max(S^2, 0.09 omega^2)
+    //   W_ij = 1/2 (du_i/dx_j - du_j/dx_i) + e_mji Om_m   (u: relative
+    //   velocity)
+    //
+    // The solved velocity is the ABSOLUTE velocity (rotating frames use the
+    // absolute-velocity formulation), whose gradient already contains the frame
+    // term: grad(Om x r) has antisymmetric part e_mji Om_m and no strain. So
+    // W_ij comes directly from grad(u_abs), S_ij is frame independent, and the
+    // strain is convected with the relative velocity u_abs - Om x (r - r0).
+    //
+    // Steady state only: DS_ij/Dt = u_rel,k dS_ij/dx_k (the parser rejects
+    // transient runs).
+
+    stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+
+    const label iZone = domain->index();
+    const scalar Cscale = domain->turbulence_.curvatureCorrectionCoeff_;
+    const scalar betaStar = this->betaStar();
+
+    // frame rotation vector Om_m = omega * axis (axis is normalized on read)
+    // and rotation origin r0
+    std::vector<scalar> OmRot(SPATIAL_DIM, 0.0);
+    std::vector<scalar> origin(SPATIAL_DIM, 0.0);
+    const bool frameRotating = domain->zonePtr()->frameRotating();
+    if (frameRotating)
+    {
+        const auto& rot = domain->zonePtr()->transformationRef().rotation();
+        for (label m = 0; m < SPATIAL_DIM; ++m)
+        {
+            OmRot[m] = rot.omega_ * rot.axis_[m];
+            origin[m] = rot.origin_[m];
+        }
+    }
+
+    const STKScalarField* coordsSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+
+    stk::mesh::Selector selAllNodes =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+
+    const STKScalarField* gradUSTKFieldPtr = URef().gradRef().stkFieldPtr();
+
+    // 1) S_ij from the velocity gradient, then its gradient dS_ij/dx_k
+    {
+        STKScalarField* SijSTKFieldPtr = SijPtr_->stkFieldPtr();
+
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
+
+            const scalar* gradUb =
+                stk::mesh::field_data(*gradUSTKFieldPtr, nodeBucket);
+            scalar* Sijb = stk::mesh::field_data(*SijSTKFieldPtr, nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
+            {
+                // gU[SPATIAL_DIM * i + j] = du_i/dx_j
+                const scalar* gU = gradUb + SPATIAL_DIM * SPATIAL_DIM * iNode;
+                scalar* S = Sijb + SPATIAL_DIM * SPATIAL_DIM * iNode;
+
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        S[SPATIAL_DIM * i + j] =
+                            0.5 *
+                            (gU[SPATIAL_DIM * i + j] + gU[SPATIAL_DIM * j + i]);
+                    }
+                }
+            }
+        }
+
+        // gradient assembly needs consistent ghost values
+        SijPtr_->synchronizeGhostedEntities(iZone);
+        SijPtr_->updateGradientField(iZone);
+    }
+
+    // 2) f_r at every node
+    {
+        const STKScalarField* USTKFieldPtr = URef().stkFieldPtr();
+        const STKScalarField* omegaSTKFieldPtr = omegaRef().stkFieldPtr();
+        const STKScalarField* SijSTKFieldPtr = SijPtr_->stkFieldPtr();
+        const STKScalarField* gradSijSTKFieldPtr =
+            SijPtr_->gradRef().stkFieldPtr();
+        STKScalarField* frSTKFieldPtr = frRef().stkFieldPtr();
+
+        for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+             ib != nodeBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+            const stk::mesh::Bucket::size_type nNodesPerBucket =
+                nodeBucket.size();
+
+            const scalar* Ub = stk::mesh::field_data(*USTKFieldPtr, nodeBucket);
+            const scalar* coordsb =
+                stk::mesh::field_data(*coordsSTKFieldPtr, nodeBucket);
+            const scalar* omegab =
+                stk::mesh::field_data(*omegaSTKFieldPtr, nodeBucket);
+            const scalar* gradUb =
+                stk::mesh::field_data(*gradUSTKFieldPtr, nodeBucket);
+            const scalar* Sijb =
+                stk::mesh::field_data(*SijSTKFieldPtr, nodeBucket);
+            const scalar* gradSijb =
+                stk::mesh::field_data(*gradSijSTKFieldPtr, nodeBucket);
+            scalar* frb = stk::mesh::field_data(*frSTKFieldPtr, nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nNodesPerBucket;
+                 ++iNode)
+            {
+                const scalar* gU = gradUb + SPATIAL_DIM * SPATIAL_DIM * iNode;
+
+                // relative (convecting) velocity u_abs - Om x (r - r0)
+                scalar u[SPATIAL_DIM];
+                for (label k = 0; k < SPATIAL_DIM; ++k)
+                {
+                    u[k] = Ub[SPATIAL_DIM * iNode + k];
+                }
+                if (frameRotating)
+                {
+                    const scalar* x = coordsb + SPATIAL_DIM * iNode;
+                    for (label k = 0; k < SPATIAL_DIM; ++k)
+                    {
+                        for (label l = 0; l < SPATIAL_DIM; ++l)
+                        {
+                            for (label m = 0; m < SPATIAL_DIM; ++m)
+                            {
+                                u[k] -= leviCivita_(k, l, m) * OmRot[l] *
+                                        (x[m] - origin[m]);
+                            }
+                        }
+                    }
+                }
+                const scalar* S = Sijb + SPATIAL_DIM * SPATIAL_DIM * iNode;
+
+                // gradient storage is component-major:
+                // gS[SPATIAL_DIM * (SPATIAL_DIM * i + j) + k] = dS_ij/dx_k
+                const scalar* gS =
+                    gradSijb + SPATIAL_DIM * SPATIAL_DIM * SPATIAL_DIM * iNode;
+
+                // W_ij: grad(u_abs) already includes the frame term e_mji Om_m
+                scalar W[SPATIAL_DIM * SPATIAL_DIM];
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        W[SPATIAL_DIM * i + j] =
+                            0.5 *
+                            (gU[SPATIAL_DIM * i + j] - gU[SPATIAL_DIM * j + i]);
+                    }
+                }
+
+                // S^2 = 2 S_ij S_ij, W^2 = 2 W_ij W_ij
+                scalar S2 = 0.0;
+                scalar W2 = 0.0;
+                for (label c = 0; c < SPATIAL_DIM * SPATIAL_DIM; ++c)
+                {
+                    S2 += S[c] * S[c];
+                    W2 += W[c] * W[c];
+                }
+                S2 *= 2.0;
+                W2 *= 2.0;
+                const scalar Smag = std::sqrt(S2);
+                const scalar Wmag = std::sqrt(W2);
+
+                const scalar rStar = Smag / (Wmag + SMALL);
+
+                // bracket: DS_ij/Dt + (e_imn S_jn + e_jmn S_in) Om_m
+                scalar DS[SPATIAL_DIM * SPATIAL_DIM];
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        scalar val = 0.0;
+                        for (label k = 0; k < SPATIAL_DIM; ++k)
+                        {
+                            val += u[k] *
+                                   gS[SPATIAL_DIM * (SPATIAL_DIM * i + j) + k];
+                        }
+                        if (frameRotating)
+                        {
+                            for (label m = 0; m < SPATIAL_DIM; ++m)
+                            {
+                                for (label n = 0; n < SPATIAL_DIM; ++n)
+                                {
+                                    val +=
+                                        OmRot[m] * (leviCivita_(i, m, n) *
+                                                        S[SPATIAL_DIM * j + n] +
+                                                    leviCivita_(j, m, n) *
+                                                        S[SPATIAL_DIM * i + n]);
+                                }
+                            }
+                        }
+                        DS[SPATIAL_DIM * i + j] = val;
+                    }
+                }
+
+                // numerator 2 W_ik S_jk [ ... ]_ij
+                scalar num = 0.0;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        scalar WS = 0.0;
+                        for (label k = 0; k < SPATIAL_DIM; ++k)
+                        {
+                            WS +=
+                                W[SPATIAL_DIM * i + k] * S[SPATIAL_DIM * j + k];
+                        }
+                        num += WS * DS[SPATIAL_DIM * i + j];
+                    }
+                }
+                num *= 2.0;
+
+                // D^2 = max(S^2, 0.09 omega^2); SST form W D^3 (not D^4)
+                const scalar D2 =
+                    std::max(S2, betaStar * omegab[iNode] * omegab[iNode]);
+                const scalar D = std::sqrt(D2);
+                const scalar rTilde = num / (Wmag * D2 * D + SMALL);
+
+                const scalar fRot =
+                    (1.0 + cR1_) * 2.0 * rStar / (1.0 + rStar) *
+                        (1.0 - cR3_ * std::atan(cR2_ * rTilde)) -
+                    cR1_;
+
+                const scalar frTilde = std::max(std::min(fRot, 1.25), 0.0);
+                frb[iNode] = std::max(0.0, 1.0 + Cscale * (frTilde - 1.0));
+            }
+        }
+
+        // ghosted nodes consistent for the k/omega assemblers
+        if (messager::parallel())
+        {
+            stk::mesh::communicate_field_data(bulkData, {frSTKFieldPtr});
         }
     }
 }
