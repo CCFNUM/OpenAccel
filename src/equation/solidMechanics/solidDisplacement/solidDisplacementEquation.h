@@ -59,10 +59,6 @@ public:
 protected:
     void setResidualScales_() override;
 
-    void applyDependencyUpdates_(const domain* domain,
-                                 const stk::mesh::EntityRank entityRank,
-                                 STKScalarField& stk_dst) override;
-
     stk::mesh::PartVector collectDirichletBoundaryParts_();
 
 private:

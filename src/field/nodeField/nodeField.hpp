@@ -6103,12 +6103,13 @@ void nodeField<N, M>::transfer(label iInterface,
         // update
         dataTransferVector_[iInterface]->update();
 
-        // sync in case of parallel over the interface
-        if (messager::parallel())
+        // sync over the interface ghosting (none if the search ghosted nothing)
+        const auto* interfaceGhosting =
+            this->meshRef().interfaceRef(iInterface).interfaceGhosting_;
+        if (messager::parallel() && interfaceGhosting)
         {
-            stk::mesh::communicate_field_data(
-                *(this->meshRef().interfaceRef(iInterface).interfaceGhosting_),
-                {this->stkFieldPtr()});
+            stk::mesh::communicate_field_data(*interfaceGhosting,
+                                              {this->stkFieldPtr()});
         }
     }
 }

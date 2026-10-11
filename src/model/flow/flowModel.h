@@ -25,6 +25,7 @@ public:
     flowModel(realm* realm);
     ~flowModel();
 
+    using fieldBroker::aWallBcRef;
     using fieldBroker::betaRef;
     using fieldBroker::CoRef;
     using fieldBroker::cpRef;
@@ -35,6 +36,8 @@ public:
     using fieldBroker::pDotRef;
     using fieldBroker::pRef;
     using fieldBroker::psiRef;
+    using fieldBroker::rnWallFluxERef;
+    using fieldBroker::rnWallFluxRef;
     using fieldBroker::TRef;
     using fieldBroker::uWallCoeffsRef;
     using fieldBroker::wallShearStressRef;

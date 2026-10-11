@@ -37,6 +37,17 @@ void solidMechanicsModel::setupDisplacement(
         initialCondition::setupFieldInitializationOverDomainFromInput(
             DRef(), realm::D_ID, domain);
 
+        // raw solid correction X^k (un-relaxed FSI residual), written in
+        // solve()
+        if (solidCorrectionRef().isZoneUnset(domain->index()))
+        {
+            solidCorrectionRef().setZone(domain->index());
+            initialCondition::setupFieldInitializationOverDomainFromValues(
+                solidCorrectionRef(),
+                domain->index(),
+                std::vector<scalar>(SPATIAL_DIM, 0.0));
+        }
+
         // In the case of fluid-structure interaction, that is, the presence of
         // fluid domains adjacent to the current solid domain (provided that
         // this solid domain is naturally deforming), therefore, the fluid-solid
@@ -710,22 +721,39 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
         this->wallShearStressRef().stkFieldRef();
     auto& sideFluxSTKFieldRef = this->DRef().sideFluxFieldRef().stkFieldRef();
 
-    // Area vector field needed only for pressure (normal traction). We always
-    // use current area for fluid side assuming it is deforming
+    // current (exposed_area_vector) and reference (original_...) area vectors
     const STKScalarField* exposedAreaVecSTKFieldPtr =
         metaData.get_field<scalar>(metaData.side_rank(),
                                    mesh::exposed_area_vector_ID);
+    const STKScalarField* origExposedAreaVecSTKFieldPtr =
+        metaData.get_field<scalar>(metaData.side_rank(),
+                                   mesh::original_exposed_area_vector_ID);
 
     // update traction on fluid side: need to negate the fluxes
-    stk::mesh::Selector selOwnedSides =
-        metaData.locally_owned_part() &
+    stk::mesh::Selector selSides =
+        metaData.universal_part() &
         stk::mesh::selectUnion(interfaceSideInfoPtr->opposingPartVec_);
+
+    // use_deformed_area: follower load p*a/|a0| (default) or dead load
+    // p*a0/|a0| (s4f useUndeformedArea)
+    const bool useDeformedArea =
+        interfaceSideInfoPtr->interfPtr()->useDeformedArea();
+
+    std::vector<scalar> deformedAreaVec;
+    if (useDeformedArea)
+    {
+        this->meshRef().computeDeformedExposedAreaVector(
+            interfaceSideInfoPtr->opposingPartVec_,
+            *this->DRef().stkFieldPtr(),
+            deformedAreaVec);
+    }
+    label ipOffset = 0;
 
     // shifted ip's for field?
     const bool isPShifted = this->pRef().isShifted();
 
     stk::mesh::BucketVector const& sideBuckets =
-        bulkData.get_buckets(metaData.side_rank(), selOwnedSides);
+        bulkData.get_buckets(metaData.side_rank(), selSides);
 
     for (const stk::mesh::Bucket* bucket : sideBuckets)
     {
@@ -757,6 +785,10 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
             // face node relations
             stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
 
+            // this side's entries of deformedAreaVec
+            const scalar* deformedAreaVecForSide =
+                useDeformedArea ? &deformedAreaVec[ipOffset] : nullptr;
+
             //======================================
             // gather nodal data off of side
             //======================================
@@ -772,9 +804,21 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
             scalar* tractionValues =
                 stk::mesh::field_data(sideFluxSTKFieldRef, side);
 
-            // Get area vector if needed for pressure
+            // current area vector (see above)
             const scalar* areaVec =
                 stk::mesh::field_data(*exposedAreaVecSTKFieldPtr, side);
+
+            // reference area vector; a fluid zone without mesh motion does
+            // not carry the original field, and there current == reference
+            const scalar* origAreaVec =
+                origExposedAreaVecSTKFieldPtr
+                    ? stk::mesh::field_data(*origExposedAreaVecSTKFieldPtr,
+                                            side)
+                    : nullptr;
+            if (!origAreaVec)
+            {
+                origAreaVec = areaVec;
+            }
 
             const scalar* wallShearStressBip =
                 stk::mesh::field_data(wallShearStressSTKFieldRef, side);
@@ -789,18 +833,28 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
                 // Force on solid = +p * n, where n is the fluid's outward
                 // normal (pointing into solid). Positive pressure causes
                 // compression.
-                // Compute magnitude of area vector to normalize
-                scalar aMag = 0.0;
+                // reference area dA0: the solid assembler integrates the
+                // traction over dA0
+                scalar aMag0 = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    const scalar axj = areaVec[SPATIAL_DIM * ip + j];
-                    aMag += axj * axj;
+                    const scalar axj = origAreaVec[SPATIAL_DIM * ip + j];
+                    aMag0 += axj * axj;
                 }
 
-                // Inverse of area magnitude for normalization
-                const scalar invAMag = 1.0 / std::sqrt(aMag);
+                // degenerate (zero-area) ip: carries no force
+                if (aMag0 < SMALL)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        tractionValues[SPATIAL_DIM * ip + j] = 0.0;
+                    }
+                    continue;
+                }
 
-                // interpolate to bip
+                const scalar invAMag0 = 1.0 / std::sqrt(aMag0);
+
+                // interpolate pressure to bip
                 scalar pBip = 0.0;
                 for (label ic = 0; ic < nodesPerSide; ++ic)
                 {
@@ -808,22 +862,52 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
                     pBip += r * p_p[ic];
                 }
 
-                // Set traction as pressure * unit normal
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    tractionValues[SPATIAL_DIM * ip + j] =
-                        pBip * areaVec[SPATIAL_DIM * ip + j] * invAMag;
+                    if (useDeformedArea)
+                    {
+                        // follower load, Nanson pullback: p * a_current / dA0
+                        tractionValues[SPATIAL_DIM * ip + j] =
+                            pBip *
+                            deformedAreaVecForSide[SPATIAL_DIM * ip + j] *
+                            invAMag0;
+                    }
+                    else
+                    {
+                        // dead load: p * a_0 / dA0 = p * n_0
+                        tractionValues[SPATIAL_DIM * ip + j] =
+                            pBip * origAreaVec[SPATIAL_DIM * ip + j] * invAMag0;
+                    }
                 }
 
-                // Accumulate shear contribution (tangential traction)
-                // Note: If only shear is present, this adds to existing
-                // values
+                scalar aMag_current = 0.0;
+                if (useDeformedArea)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj =
+                            deformedAreaVecForSide[SPATIAL_DIM * ip + j];
+                        aMag_current += axj * axj;
+                    }
+                    aMag_current = std::sqrt(aMag_current);
+                }
+                else
+                {
+                    aMag_current = 1.0 / invAMag0; // dA0: dead load
+                }
+
+                // shear stored as tau*|a|/dA0 (same convention as the pressure
+                // term)
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     tractionValues[SPATIAL_DIM * ip + j] +=
-                        wallShearStressBip[SPATIAL_DIM * ip + j];
+                        wallShearStressBip[SPATIAL_DIM * ip + j] *
+                        aMag_current * invAMag0;
                 }
             }
+
+            // Advance offset to next side's deformed area entries
+            ipOffset += numScsBip * SPATIAL_DIM;
         }
     }
 
@@ -858,20 +942,31 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
             const scalar* areaVec =
                 stk::mesh::field_data(*exposedAreaVecSTKFieldPtr, side);
 
+            // traction stored per reference area: force = traction * |a0|
+            const scalar* origAreaVec =
+                origExposedAreaVecSTKFieldPtr
+                    ? stk::mesh::field_data(*origExposedAreaVecSTKFieldPtr,
+                                            side)
+                    : nullptr;
+            if (!origAreaVec)
+            {
+                origAreaVec = areaVec;
+            }
+
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                // Compute area magnitude for this ip
+                // Reference area magnitude for this ip
                 scalar aMag = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    const scalar axj = areaVec[SPATIAL_DIM * ip + j];
+                    const scalar axj = origAreaVec[SPATIAL_DIM * ip + j];
                     aMag += axj * axj;
                 }
                 aMag = std::sqrt(aMag);
 
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    // Force = traction * area
+                    // Force = traction * reference area
                     const scalar force =
                         tractionValues[SPATIAL_DIM * ip + j] * aMag;
                     fluidForceMin[j] = std::min(fluidForceMin[j], force);
@@ -940,20 +1035,31 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
             const scalar* areaVec =
                 stk::mesh::field_data(*solidExposedAreaVecPtr, side);
 
+            // traction stored per reference area: force = traction * |a0|
+            const scalar* origAreaVec =
+                origExposedAreaVecSTKFieldPtr
+                    ? stk::mesh::field_data(*origExposedAreaVecSTKFieldPtr,
+                                            side)
+                    : nullptr;
+            if (!origAreaVec)
+            {
+                origAreaVec = areaVec;
+            }
+
             for (label ip = 0; ip < numScsBip; ++ip)
             {
-                // Compute area magnitude for this ip
+                // Reference area magnitude for this ip
                 scalar aMag = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    const scalar axj = areaVec[SPATIAL_DIM * ip + j];
+                    const scalar axj = origAreaVec[SPATIAL_DIM * ip + j];
                     aMag += axj * axj;
                 }
                 aMag = std::sqrt(aMag);
 
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    // Force = traction * area
+                    // Force = traction * reference area
                     const scalar force =
                         tractionValues[SPATIAL_DIM * ip + j] * aMag;
                     solidForceMin[j] = std::min(solidForceMin[j], force);
@@ -1180,8 +1286,6 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 stk::mesh::field_data(sideFluxSTKFieldRef, side);
 
             // Get area vector if needed for pressure
-            const scalar* areaVec =
-                stk::mesh::field_data(*exposedAreaVecSTKFieldPtr, side);
             const scalar* orgAreaVec =
                 stk::mesh::field_data(*originalExposedAreaVecSTKFieldPtr, side);
             const scalar* deformedAreaVecForSide =
@@ -1215,11 +1319,12 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 }
                 else
                 {
-                    // dead load: traction = -p * n_0
+                    // Dead load (default): traction = -p * n0 (reference unit
+                    // normal)
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         tractionValues[SPATIAL_DIM * ip + j] =
-                            -pressureValue * areaVec[SPATIAL_DIM * ip + j] *
+                            -pressureValue * orgAreaVec[SPATIAL_DIM * ip + j] *
                             invAMag0;
                     }
                 }

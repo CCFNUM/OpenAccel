@@ -9,8 +9,10 @@
 #include "interface.h"
 #include "ipInfo.h"
 #include "mesh.h"
+#include "messager.h"
 #include "navierStokesAssembler.h"
 #include "pressureCorrectionAssembler.h"
+#include "simulation.h"
 #include "zoneTransformation.h"
 
 namespace accel
@@ -40,10 +42,46 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaces_(
 
             if (interf->isFluidSolidType())
             {
-                // If this is a fluid/solid interface, deal with as a no-slip
-                // wall
-                assembleElemTermsInterfaceSideNoSlipWall_(
-                    domain, interfaceSideInfoPtr, ctx);
+                // no-slip wall until all fluid-solid interfaces are coupled
+                // (simulation::allFsiCoupled())
+                const bool fsiActive =
+                    model_->realmRef().simulationRef().allFsiCoupled();
+
+                if (interf->isRobinNeumann() && fsiActive)
+                {
+                    if (robinParamsValid())
+                    {
+                        // Robin-Neumann pressure BC (Badia et al. 2008; Tukovic
+                        // et al. 2014)
+                        assembleElemTermsInterfaceSideRobinNeumann_(
+                            domain, interfaceSideInfoPtr, ctx);
+                    }
+                    else
+                    {
+                        // invalid RN parameters (c1 = 0): no-slip fallback on
+                        // all ranks; warned once per step
+                        if (messager::master() && shouldWarnRn(interf->index()))
+                        {
+                            warningMsg("Robin-Neumann coupling requested on "
+                                       "interface " +
+                                       interf->name() +
+                                       " but its parameters are invalid "
+                                       "(solid E or rho not positive): this "
+                                       "run uses the Dirichlet-Neumann "
+                                       "(no-slip wall) pressure treatment on "
+                                       "all ranks, NOT Robin-Neumann");
+                        }
+                        assembleElemTermsInterfaceSideNoSlipWall_(
+                            domain, interfaceSideInfoPtr, ctx);
+                    }
+                }
+                else
+                {
+                    // DN, or RN before coupling: no-slip wall (zero-gradient
+                    // pressure)
+                    assembleElemTermsInterfaceSideNoSlipWall_(
+                        domain, interfaceSideInfoPtr, ctx);
+                }
             }
             else
             {
@@ -1250,6 +1288,779 @@ void pressureCorrectionAssembler::assembleElemTermsInterfaceSideNoSlipWall_(
 
             this->applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+        }
+    }
+}
+
+void pressureCorrectionAssembler::assembleElemTermsInterfaceSideRobinNeumann_(
+    const domain* domain,
+    const interfaceSideInfo* interfaceSideInfoPtr,
+    Context* ctx)
+{
+    // part A: no-slip mass flux (as the no-slip kernel); part B: Robin row
+    // (Tukovic Eqs. 20-26)
+    auto& mesh = model_->meshRef();
+
+    Matrix& A = ctx->getAMatrix();
+    Vector& b = ctx->getBVector();
+
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    // required for frame motion (MFR)
+    const auto coriolisMatrix =
+        domain->zonePtr()->frameRotating()
+            ? domain->zonePtr()->transformationRef().rotation().coriolisMatrix_
+            : utils::matrix::Zero();
+    const scalar* p_mat = coriolisMatrix.data();
+
+    const auto origin =
+        domain->zonePtr()->frameRotating()
+            ? domain->zonePtr()->transformationRef().rotation().origin_
+            : utils::vector::Zero();
+    const scalar* p_ori = origin.data();
+
+    // mesh motion
+    const bool meshMoving = domain->zonePtr()->meshMoving();
+
+    // space for LHS/RHS; nodesPerElem*nodesPerElem and nodesPerElem
+    std::vector<scalar> lhs;
+    std::vector<scalar> rhs;
+    std::vector<label> scratchIds;
+    std::vector<scalar> scratchVals;
+    std::vector<stk::mesh::Entity> connectedNodes;
+
+    // ip values; both boundary and opposing surface
+    std::vector<scalar> umBip(SPATIAL_DIM);
+    std::vector<scalar> coordBip(SPATIAL_DIM);
+
+    // pointers to fixed values
+    scalar* p_umBip = &umBip[0];
+    scalar* p_coordBip = &coordBip[0];
+
+    // nodal fields to gather
+    std::vector<scalar> ws_Um;
+    std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_du;     // pressure diffusivity (per component)
+    std::vector<scalar> ws_FOrig;  // original body force (SPATIAL_DIM per node)
+    std::vector<scalar> ws_elem_p; // element nodal p^{k-1} for BIP gradient
+    std::vector<scalar> ws_dndx;   // shape-function derivatives at BIP
+    std::vector<scalar> ws_det_j;  // Jacobian (general_face_grad_op)
+
+    // master element
+    std::vector<scalar> ws_velocity_face_shape_function;
+    std::vector<scalar> ws_coordinate_face_shape_function;
+
+    // Get fields
+    const auto& rhoSTKFieldRef = model_->rhoRef().stkFieldRef();
+    const auto& sideUSTKFieldRef = model_->URef().sideFieldRef().stkFieldRef();
+
+    // wall normal acceleration a_n (meshMotion, solid d2dt2 scheme)
+    const auto& aWallBcSideSTKFieldRef =
+        model_->aWallBcRef().sideFieldRef().stkFieldRef();
+
+    // Tukovic Eq. 30 Robin flux memory Q_vol: reset per corrector loop,
+    // accumulated per corrector
+    const auto& rnWallFluxSideSTKFieldRef =
+        model_->rnWallFluxRef().sideFieldRef().stkFieldRef();
+
+    // frozen explicit Robin term E: stored at the first corrector, reused by
+    // 2..N
+    auto& rnWallFluxESideSTKFieldRef =
+        model_->rnWallFluxERef().sideFieldRef().stkFieldRef();
+
+    const auto* UmSTKFieldPtr =
+        meshMoving ? model_->UmRef().stkFieldPtr() : nullptr;
+
+    // pressure diffusivity: same SIMPLEC choice (duLhs) as the interior
+    const bool consistent = model_->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& duLhsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK,
+        consistent ? flowModel::duTilde_ID : flowModel::du_ID);
+    const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
+
+    // Original (non-stabilized) body force: the interior Rhie-Chow balances
+    // grad(p) against it, so the Robin gradient term uses n.(grad(p) - F_orig)
+    const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+#ifndef NDEBUG
+    // SCL check field for debug: accumulates mesh flux to verify SCL
+    auto* sclCheckSTKFieldPtr =
+        meshMoving ? metaData.get_field<scalar>(stk::topology::NODE_RANK,
+                                                mesh::scl_check_ID)
+                   : nullptr;
+#endif /* NDEBUG */
+
+    // Get geometric fields
+    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    // define vector of parent topos; should always be UNITY in size
+    std::vector<stk::topology> parentTopo;
+
+    // define some common selectors
+    stk::mesh::Selector selAllSides =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(interfaceSideInfoPtr->currentPartVec_);
+
+    // shifted ip's for fields?
+    const bool isUShifted = model_->URef().isShifted();
+
+    // h_s and rho_s: set once per timestep in preTimeStep()
+    const scalar robinHs = this->robinHs();
+    const scalar robinRhoSolid = this->robinRhoSolid();
+    // compute and store E in this pass (first corrector) or reuse it
+    const bool computeE = this->freezeE();
+
+    stk::mesh::BucketVector const& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selAllSides);
+    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& sideBucket = **ib;
+
+        // extract connected element topology
+        sideBucket.parent_topology(stk::topology::ELEMENT_RANK, parentTopo);
+        STK_ThrowAssert(parentTopo.size() == 1);
+        stk::topology theElemTopo = parentTopo[0];
+
+        // volume master element
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(theElemTopo);
+        const label nodesPerElement = meSCS->nodesPerElement_;
+
+        // face master element
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
+        const label nodesPerSide = sideBucket.topology().num_nodes();
+        const label numScsBip = meFC->numIntPoints_;
+
+        // resize some things; matrix related
+        const label lhsSize = nodesPerElement * nodesPerElement;
+        const label rhsSize = nodesPerElement;
+        lhs.resize(lhsSize);
+        rhs.resize(rhsSize);
+        scratchIds.resize(rhsSize);
+        scratchVals.resize(rhsSize);
+        connectedNodes.resize(nodesPerElement);
+
+        // algorithm related; element
+        ws_Um.resize(nodesPerSide * SPATIAL_DIM);
+        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rho.resize(nodesPerSide);
+        ws_du.resize(nodesPerSide * SPATIAL_DIM);
+        ws_FOrig.assign(nodesPerSide * SPATIAL_DIM, 0.0);
+        ws_elem_p.resize(nodesPerElement);
+        ws_dndx.resize(SPATIAL_DIM * nodesPerElement);
+        ws_det_j.resize(1);
+        ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
+
+        // pointers
+        scalar* p_lhs = &lhs[0];
+        scalar* p_rhs = &rhs[0];
+        scalar* p_Um = &ws_Um[0];
+        scalar* p_coordinates = &ws_coordinates[0];
+        scalar* p_rho = &ws_rho[0];
+        scalar* p_du = &ws_du[0];
+        scalar* p_velocity_face_shape_function =
+            &ws_velocity_face_shape_function[0];
+        scalar* p_coordinate_face_shape_function =
+            &ws_coordinate_face_shape_function[0];
+
+        // shape functions; boundary
+        if (isUShifted)
+        {
+            meFC->shifted_shape_fcn(&p_velocity_face_shape_function[0]);
+        }
+        else
+        {
+            meFC->shape_fcn(&p_velocity_face_shape_function[0]);
+        }
+
+        // Always use trilinear (standard) shape functions for coordinates
+        meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
+
+        const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
+        for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSidesPerBucket;
+             ++iSide)
+        {
+            // zero lhs/rhs
+            for (label p = 0; p < lhsSize; ++p)
+            {
+                p_lhs[p] = 0.0;
+            }
+            for (label p = 0; p < rhsSize; ++p)
+            {
+                p_rhs[p] = 0.0;
+            }
+
+            // get face
+            stk::mesh::Entity side = sideBucket[iSide];
+
+            //======================================
+            // gather nodal data off of face
+            //======================================
+            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
+            label numSideNodes = bulkData.num_nodes(side);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numSideNodes == nodesPerSide);
+            for (label ni = 0; ni < numSideNodes; ++ni)
+            {
+                stk::mesh::Entity node = sideNodeRels[ni];
+
+                // gather scalars
+                p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+
+                // du is a vector (one diagonal momentum coefficient per
+                // component): gather all components for the normal projection
+                const scalar* duNode =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_du[ni * SPATIAL_DIM + j] = duNode[j];
+                }
+
+                const scalar* FOrigNode =
+                    FOrigSTKFieldPtr
+                        ? stk::mesh::field_data(*FOrigSTKFieldPtr, node)
+                        : nullptr;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    ws_FOrig[ni * SPATIAL_DIM + j] =
+                        FOrigNode ? FOrigNode[j] : 0.0;
+                }
+
+                if (meshMoving)
+                {
+                    const scalar* Um =
+                        stk::mesh::field_data(*UmSTKFieldPtr, node);
+                    const label offSet = ni * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_Um[offSet + j] = Um[j];
+                    }
+                }
+                else
+                {
+                    const label offSet = ni * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        p_Um[offSet + j] = 0.0;
+                    }
+                }
+            }
+
+            // pointer to face data
+            const scalar* areaVec =
+                stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            const scalar* UbcVec =
+                stk::mesh::field_data(sideUSTKFieldRef, side);
+            const scalar* aWallBcVals =
+                stk::mesh::field_data(aWallBcSideSTKFieldRef, side);
+            const scalar* rnWallFluxVals =
+                stk::mesh::field_data(rnWallFluxSideSTKFieldRef, side);
+            scalar* rnWallFluxEVals =
+                stk::mesh::field_data(rnWallFluxESideSTKFieldRef, side);
+
+            // extract the connected element to this exposed face; should be
+            // single in size!
+            const stk::mesh::Entity* faceElemRels =
+                bulkData.begin_elements(side);
+            STK_ThrowAssert(bulkData.num_elements(side) == 1);
+
+            // get element; its face ordinal number and populate
+            // face_node_ordinals
+            stk::mesh::Entity element = faceElemRels[0];
+            const stk::mesh::ConnectivityOrdinal* face_elem_ords =
+                bulkData.begin_element_ordinals(side);
+            const label faceOrdinal = face_elem_ords[0];
+
+            // mapping from ip to nodes for this ordinal
+            const label* ipNodeMap = meSCS->ipNodeMap(faceOrdinal);
+
+            // populate faceNodeOrdinals
+            const label* faceNodeOrdinals =
+                meSCS->side_node_ordinals(faceOrdinal);
+
+            //======================================
+            // gather nodal data off of element
+            //======================================
+            stk::mesh::Entity const* elemNodeRels =
+                bulkData.begin_nodes(element);
+            label numNodes = bulkData.num_nodes(element);
+
+            // sanity check on num nodes
+            STK_ThrowAssert(numNodes == nodesPerElement);
+            for (label ni = 0; ni < numNodes; ++ni)
+            {
+                stk::mesh::Entity node = elemNodeRels[ni];
+
+                // set connected nodes
+                connectedNodes[ni] = node;
+
+                // gather vectors
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, node);
+                const label offSet = ni * SPATIAL_DIM;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_coordinates[offSet + j] = coords[j];
+                }
+                // gather p^{k-1} at element nodes for BIP normal gradient
+                ws_elem_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+            }
+
+            std::vector<scalar> faceIsoParCoords(SPATIAL_DIM - 1);
+            std::vector<scalar> elemIsoParCoords(SPATIAL_DIM);
+            std::vector<scalar> pGradBip(SPATIAL_DIM);
+
+            // loop over boundary ips
+            for (label ip = 0; ip < numScsBip; ++ip)
+            {
+                const label offSetSF_face = ip * nodesPerSide;
+
+                const label nearestNode = ipNodeMap[ip];
+
+                // zero out vector quantities; form aMag
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    p_umBip[j] = 0.0;
+                    p_coordBip[j] = 0.0;
+                    pGradBip[j] = 0.0;
+                }
+
+                // n.grad(p^{k-1}) at the BIP from the element shape-function
+                // derivatives
+                {
+                    const label faceDim = SPATIAL_DIM - 1;
+                    for (label j = 0; j < faceDim; ++j)
+                        faceIsoParCoords[j] = static_cast<scalar>(
+                            meFC->intgLoc_[ip * faceDim + j]);
+                    meSCS->sidePcoords_to_elemPcoords(faceOrdinal,
+                                                      1,
+                                                      &faceIsoParCoords[0],
+                                                      &elemIsoParCoords[0]);
+                    scalar scs_error = 0.0;
+                    meSCS->general_face_grad_op(faceOrdinal,
+                                                &elemIsoParCoords[0],
+                                                &p_coordinates[0],
+                                                &ws_dndx[0],
+                                                &ws_det_j[0],
+                                                &scs_error);
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const label offSetDnDx = ic * SPATIAL_DIM;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                            pGradBip[j] +=
+                                ws_dndx[offSetDnDx + j] * ws_elem_p[ic];
+                    }
+                }
+
+                // interpolate to bip
+                scalar rhoBip = 0;
+                scalar duBipVec[SPATIAL_DIM] = {};
+                scalar FOrigBip[SPATIAL_DIM] = {};
+                for (label ic = 0; ic < nodesPerSide; ++ic)
+                {
+                    const label inn = faceNodeOrdinals[ic];
+
+                    const scalar r_vel =
+                        p_velocity_face_shape_function[offSetSF_face + ic];
+                    const scalar r_coord =
+                        p_coordinate_face_shape_function[offSetSF_face + ic];
+
+                    // use velocity shape functions
+                    rhoBip += r_vel * p_rho[ic];
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        duBipVec[j] += r_vel * p_du[ic * SPATIAL_DIM + j];
+                        FOrigBip[j] += r_vel * ws_FOrig[ic * SPATIAL_DIM + j];
+                    }
+
+                    const label icNdim = ic * SPATIAL_DIM;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        // use coordinates shape functions
+                        p_coordBip[j] +=
+                            r_coord * p_coordinates[inn * SPATIAL_DIM + j];
+
+                        // use velocity shape functions
+                        p_umBip[j] += r_vel * p_Um[icNdim + j];
+                    }
+                }
+
+                // Tukovic Eq. 29 boundary mass flux: rho * v^{m-1}_bi . n * S
+                // (the Eq. 30 inter-corrector Robin flux is added below)
+                scalar mDot = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+                    mDot += (rhoBip * UbcVec[ip * SPATIAL_DIM + j]) * axj;
+                }
+
+                // transform mDot to relative frame
+
+                // 1.) frame motion
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        mDot -= rhoBip * p_mat[i * SPATIAL_DIM + j] *
+                                (p_coordBip[j] - p_ori[j]) *
+                                areaVec[ip * SPATIAL_DIM + i];
+                    }
+                }
+
+                // 2.) mesh motion
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    mDot -= rhoBip * p_umBip[i] * areaVec[ip * SPATIAL_DIM + i];
+                }
+
+#ifndef NDEBUG
+                // SCL check: accumulate grid flux to nearest node
+                if (sclCheckSTKFieldPtr)
+                {
+                    scalar gridFlux = 0.0;
+                    for (label i = 0; i < SPATIAL_DIM; i++)
+                    {
+                        gridFlux +=
+                            rhoBip * p_umBip[i] * areaVec[ip * SPATIAL_DIM + i];
+                    }
+                    stk::mesh::Entity node = elemNodeRels[nearestNode];
+                    scalar* scl =
+                        stk::mesh::field_data(*sclCheckSTKFieldPtr, node);
+                    *scl -= gridFlux;
+                }
+#endif /* NDEBUG */
+
+                // residual (part A)
+                p_rhs[nearestNode] -= mDot;
+
+                // Eq. 30: Robin wall flux already carried by the previous
+                // correctors of this loop (mass flux = rho * Q_vol)
+                p_rhs[nearestNode] -= rhoBip * rnWallFluxVals[ip];
+
+                // part B: Robin row p' + c1*dp'/dn = -rho_s*h_s*a_n (Tukovic
+                // Eqs. 20, 28)
+
+                // rho_f: local density unless reference_fluid_density is set
+                const scalar rhoFluid =
+                    robinFluidDensity(interfaceSideInfoPtr->interfPtr()
+                                          ->useReferenceFluidDensity(),
+                                      interfaceSideInfoPtr->interfPtr()
+                                          ->robinReferenceFluidDensity(),
+                                      rhoBip);
+
+                // BIP coefficients, shared with accumulateRnWallFlux()
+                const robinBipCoefficients rc = computeRobinBipCoefficients(
+                    &areaVec[ip * SPATIAL_DIM],
+                    duBipVec,
+                    p_coordBip,
+                    &p_coordinates[nearestNode * SPATIAL_DIM],
+                    rhoFluid,
+                    robinRhoSolid,
+                    robinHs);
+                const scalar aMag = rc.aMag;
+                const scalar invAMag = rc.invAMag;
+                const scalar du_n = rc.du_n;
+                const scalar c1 = rc.c1;
+
+                // deltaBn: normal node-to-BIP distance (Tukovic Fig. 2), ~0 on
+                // planar faces
+                const scalar deltaBn = rc.deltaBn;
+
+                const uint64_t vnKey =
+                    (static_cast<uint64_t>(bulkData.identifier(side)) << 8) |
+                    static_cast<uint64_t>(ip);
+
+                const scalar asSolid = aWallBcVals[ip];
+
+                // G = rho*du_n*S/(deltaBn + c1); du_n (not Tukovic's dt) as in
+                // the interior Rhie-Chow
+                const scalar gradCoeff = rhoBip * du_n * aMag / (deltaBn + c1);
+
+                // accelTerm = rho_s*h_s*a_n  (Tukovic Eq. 20)
+                const scalar accelTerm = robinRhoSolid * robinHs * asSolid;
+
+                // persist per-BIP Robin state for fsiConvergence diagnostics
+                robinAccelTerm_[vnKey] = accelTerm;
+                recordC1(c1, aMag);
+
+                const label rowR = nearestNode * nodesPerElement;
+                // LHS: p'_BIP = sum N_ic p'_ic (Tukovic Eq. 26)
+                for (label ic = 0; ic < nodesPerSide; ++ic)
+                {
+                    const label inn = faceNodeOrdinals[ic];
+                    const scalar r_p =
+                        p_velocity_face_shape_function[offSetSF_face + ic];
+                    p_lhs[rowR + inn] += gradCoeff * r_p;
+                }
+                // RHS: frozen E = rho_s*h_s*a_n + c1*n.(grad p - F_orig)
+                // (Tukovic Eq. 20); converged dp/dn = -rho_f*a_n + f_n
+                if (computeE)
+                {
+                    scalar nDotGradPOld = 0.0;
+                    scalar nDotFOrig = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        nDotGradPOld += pGradBip[j] *
+                                        areaVec[ip * SPATIAL_DIM + j] * invAMag;
+                        nDotFOrig += FOrigBip[j] *
+                                     areaVec[ip * SPATIAL_DIM + j] * invAMag;
+                    }
+                    const scalar gpnOld = nDotGradPOld - nDotFOrig;
+                    rnWallFluxEVals[ip] = accelTerm + c1 * gpnOld;
+                }
+                const scalar frozenE = rnWallFluxEVals[ip];
+                p_rhs[nearestNode] -= gradCoeff * frozenE;
+            }
+
+            this->applyCoeff_(
+                A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
+        }
+    }
+}
+
+void pressureCorrectionAssembler::accumulateRnWallFlux(const domain* domain)
+{
+    // Tukovic Eq. 30: Q_vol += G/rho * p'_bip after each corrector, on the RN
+    // BIPs
+    if (!robinParamsValid())
+    {
+        return;
+    }
+
+    // RN kernel only dispatched once all fluid-solid interfaces are coupled
+    if (!model_->realmRef().simulationRef().allFsiCoupled())
+    {
+        return;
+    }
+
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (interf->isConformalTreatment() || interf->isInternal())
+            continue;
+
+        if (!interf->isFluidSolidType() || !interf->isRobinNeumann())
+            continue;
+
+        accumulateRnWallFluxInterfaceSide_(
+            domain, interf->interfaceSideInfoPtr(domain->index()));
+    }
+}
+
+void pressureCorrectionAssembler::accumulateRnWallFluxInterfaceSide_(
+    const domain* domain,
+    const interfaceSideInfo* interfaceSideInfoPtr)
+{
+    auto& mesh = model_->meshRef();
+
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    // same fields as the RN kernel
+    const auto& rhoSTKFieldRef = model_->rhoRef().stkFieldRef();
+    const bool consistent = model_->controlsRef()
+                                .solverRef()
+                                .solverControl_.expertParameters_.consistent_;
+    const auto& duLhsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK,
+        consistent ? flowModel::duTilde_ID : flowModel::du_ID);
+    // full (un-relaxed) p' of the corrector just solved (correctField_)
+    const auto& pCorrSTKFieldRef = model_->pCorrRef().stkFieldRef();
+    auto& rnWallFluxSideSTKFieldRef =
+        model_->rnWallFluxRef().sideFieldRef().stkFieldRef();
+
+    // geometric fields
+    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+    const scalar robinHs = this->robinHs();
+    const scalar robinRhoSolid = this->robinRhoSolid();
+    const bool useReferenceFluidDensity =
+        interfaceSideInfoPtr->interfPtr()->useReferenceFluidDensity();
+    const scalar referenceFluidDensity =
+        interfaceSideInfoPtr->interfPtr()->robinReferenceFluidDensity();
+
+    // shifted ip's for fields?
+    const bool isUShifted = model_->URef().isShifted();
+
+    // workspace
+    std::vector<stk::topology> parentTopo;
+    std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_du;
+    std::vector<scalar> ws_pCorr;
+    std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_velocity_face_shape_function;
+    std::vector<scalar> ws_coordinate_face_shape_function;
+    std::vector<scalar> coordBip(SPATIAL_DIM);
+
+    stk::mesh::Selector selAllSides =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(interfaceSideInfoPtr->currentPartVec_);
+
+    stk::mesh::BucketVector const& sideBuckets =
+        bulkData.get_buckets(metaData.side_rank(), selAllSides);
+    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+         ib != sideBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& sideBucket = **ib;
+
+        // extract connected element topology
+        sideBucket.parent_topology(stk::topology::ELEMENT_RANK, parentTopo);
+        STK_ThrowAssert(parentTopo.size() == 1);
+        stk::topology theElemTopo = parentTopo[0];
+
+        // volume master element
+        MasterElement* meSCS =
+            MasterElementRepo::get_surface_master_element(theElemTopo);
+        const label nodesPerElement = meSCS->nodesPerElement_;
+
+        // face master element
+        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+            sideBucket.topology());
+        const label nodesPerSide = sideBucket.topology().num_nodes();
+        const label numScsBip = meFC->numIntPoints_;
+
+        ws_rho.resize(nodesPerSide);
+        ws_du.resize(nodesPerSide * SPATIAL_DIM);
+        ws_pCorr.resize(nodesPerSide);
+        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
+        ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
+        ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
+
+        // shape functions; boundary (same as the RN kernel)
+        if (isUShifted)
+        {
+            meFC->shifted_shape_fcn(&ws_velocity_face_shape_function[0]);
+        }
+        else
+        {
+            meFC->shape_fcn(&ws_velocity_face_shape_function[0]);
+        }
+
+        // Always use trilinear (standard) shape functions for coordinates
+        meFC->shape_fcn(&ws_coordinate_face_shape_function[0]);
+
+        const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
+        for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSidesPerBucket;
+             ++iSide)
+        {
+            stk::mesh::Entity side = sideBucket[iSide];
+
+            // gather nodal data off of face (same node order as the kernel)
+            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
+            STK_ThrowAssert(bulkData.num_nodes(side) == nodesPerSide);
+            for (label ni = 0; ni < nodesPerSide; ++ni)
+            {
+                stk::mesh::Entity node = sideNodeRels[ni];
+                ws_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                const scalar* duNode =
+                    stk::mesh::field_data(duLhsSTKFieldRef, node);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    ws_du[ni * SPATIAL_DIM + j] = duNode[j];
+                }
+            }
+
+            // connected element, face ordinal and node maps
+            const stk::mesh::Entity* faceElemRels =
+                bulkData.begin_elements(side);
+            STK_ThrowAssert(bulkData.num_elements(side) == 1);
+            stk::mesh::Entity element = faceElemRels[0];
+            const stk::mesh::ConnectivityOrdinal* face_elem_ords =
+                bulkData.begin_element_ordinals(side);
+            const label faceOrdinal = face_elem_ords[0];
+            const label* ipNodeMap = meSCS->ipNodeMap(faceOrdinal);
+            const label* faceNodeOrdinals =
+                meSCS->side_node_ordinals(faceOrdinal);
+
+            stk::mesh::Entity const* elemNodeRels =
+                bulkData.begin_nodes(element);
+            STK_ThrowAssert(bulkData.num_nodes(element) == nodesPerElement);
+            for (label ni = 0; ni < nodesPerElement; ++ni)
+            {
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, elemNodeRels[ni]);
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    ws_coordinates[ni * SPATIAL_DIM + j] = coords[j];
+                }
+            }
+
+            // p' at the element nodes of the Robin row's LHS columns
+            for (label ic = 0; ic < nodesPerSide; ++ic)
+            {
+                ws_pCorr[ic] = *stk::mesh::field_data(
+                    pCorrSTKFieldRef, elemNodeRels[faceNodeOrdinals[ic]]);
+            }
+
+            const scalar* areaVec =
+                stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+            scalar* rnWallFluxVals =
+                stk::mesh::field_data(rnWallFluxSideSTKFieldRef, side);
+
+            for (label ip = 0; ip < numScsBip; ++ip)
+            {
+                const label offSetSF_face = ip * nodesPerSide;
+                const label nearestNode = ipNodeMap[ip];
+
+                scalar rhoBip = 0.0;
+                scalar pCorrBip = 0.0;
+                scalar duBipVec[SPATIAL_DIM] = {};
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    coordBip[j] = 0.0;
+                }
+
+                for (label ic = 0; ic < nodesPerSide; ++ic)
+                {
+                    const label inn = faceNodeOrdinals[ic];
+                    const scalar r_vel =
+                        ws_velocity_face_shape_function[offSetSF_face + ic];
+                    const scalar r_coord =
+                        ws_coordinate_face_shape_function[offSetSF_face + ic];
+
+                    rhoBip += r_vel * ws_rho[ic];
+                    pCorrBip += r_vel * ws_pCorr[ic];
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        duBipVec[j] += r_vel * ws_du[ic * SPATIAL_DIM + j];
+                        coordBip[j] +=
+                            r_coord * ws_coordinates[inn * SPATIAL_DIM + j];
+                    }
+                }
+
+                const scalar rhoFluid = robinFluidDensity(
+                    useReferenceFluidDensity, referenceFluidDensity, rhoBip);
+
+                const robinBipCoefficients rc = computeRobinBipCoefficients(
+                    &areaVec[ip * SPATIAL_DIM],
+                    duBipVec,
+                    &coordBip[0],
+                    &ws_coordinates[nearestNode * SPATIAL_DIM],
+                    rhoFluid,
+                    robinRhoSolid,
+                    robinHs);
+
+                // G/rho = du_n*|A|/(deltaBn + c1); Q_vol is weighted by rho in
+                // the kernels
+                rnWallFluxVals[ip] +=
+                    rc.du_n * rc.aMag / (rc.deltaBn + rc.c1) * pCorrBip;
+            }
         }
     }
 }

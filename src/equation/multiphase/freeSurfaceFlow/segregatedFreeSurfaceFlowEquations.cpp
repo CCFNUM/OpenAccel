@@ -246,6 +246,10 @@ void segregatedFreeSurfaceFlowEquations::solve()
                       << "Sub-iterating " + pCorr_eq_->name() << ":\n";
         }
 
+        // RN FSI: reset the inter-corrector wall flux memory and request the
+        // frozen explicit Robin term for this corrector loop
+        pCorr_eq_->startOfOuterIteration();
+
         for (label subIter = 1; subIter <= pCorr_eq_->subIters(); subIter++)
         {
             // only print sub-iter if it is active (> 1)
@@ -432,6 +436,12 @@ void segregatedFreeSurfaceFlowEquations::preTimeStep()
                            phaseIndex(iPhase));
         }
     }
+}
+
+void segregatedFreeSurfaceFlowEquations::postTimeStep()
+{
+    // only the pressure correction has post-timestep work (RN diagnostics)
+    pCorr_eq_->postTimeStep();
 }
 
 void segregatedFreeSurfaceFlowEquations::printScales()

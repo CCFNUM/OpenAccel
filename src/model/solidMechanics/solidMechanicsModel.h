@@ -36,6 +36,7 @@ public:
     using fieldBroker::ERef;
     using fieldBroker::nuRef;
     using fieldBroker::pRef;
+    using fieldBroker::solidCorrectionRef;
     using fieldBroker::strainRef;
     using fieldBroker::stressRef;
     using fieldBroker::wallShearStressRef;

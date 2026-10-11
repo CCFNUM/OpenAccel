@@ -161,6 +161,19 @@ public:
 
     virtual void setupHeatFlowRate(const std::shared_ptr<domain> domain);
 
+    virtual void setupRnWallAcceleration(const std::shared_ptr<domain> domain);
+
+    virtual void setupRnWallFlux(const std::shared_ptr<domain> domain);
+
+    // zero the RN stored wall flux on this domain's RN interface sides
+    void zeroRnWallFlux(const std::shared_ptr<domain> domain);
+
+    virtual void setupRnWallFluxE(const std::shared_ptr<domain> domain);
+
+    // zero the RN frozen explicit Robin term on this domain's RN interface
+    // sides
+    void zeroRnWallFluxE(const std::shared_ptr<domain> domain);
+
     virtual void setupMomentumFlowRate(const std::shared_ptr<domain> domain);
 
     virtual void setupYoungModulus(const std::shared_ptr<domain> domain);
@@ -942,6 +955,18 @@ protected:
 
     const heatFlowRate& qDotRef() const;
 
+    interfaceScalarField& aWallBcRef();
+
+    const interfaceScalarField& aWallBcRef() const;
+
+    interfaceScalarField& rnWallFluxRef();
+
+    const interfaceScalarField& rnWallFluxRef() const;
+
+    interfaceScalarField& rnWallFluxERef();
+
+    const interfaceScalarField& rnWallFluxERef() const;
+
     momentumFlowRate& pDotRef();
 
     const momentumFlowRate& pDotRef() const;
@@ -1053,6 +1078,10 @@ protected:
     displacement& DRef();
 
     const displacement& DRef() const;
+
+    nodeVectorField& solidCorrectionRef();
+
+    const nodeVectorField& solidCorrectionRef() const;
 
     simpleTensorField& stressRef();
 
@@ -1408,9 +1437,10 @@ protected:
         if ((EField).isZoneUnset((domain)->index()))                           \
         {                                                                      \
             (EField).setZone((domain)->index());                               \
-            if (domain->materialRef(__VA_ARGS__)                               \
-                    .mechanicalProperties_.youngModulus_.option_ ==            \
-                youngModulusOption::value)                                     \
+            if ((materialBlock)["mechanical_properties"]["young_modulus"] &&   \
+                domain->materialRef(__VA_ARGS__)                               \
+                        .mechanicalProperties_.youngModulus_.option_ ==        \
+                    youngModulusOption::value)                                 \
             {                                                                  \
                 initialCondition::                                             \
                     setupFieldInitializationOverDomainFromConfig(              \
@@ -1428,9 +1458,10 @@ protected:
         if ((nuField).isZoneUnset((domain)->index()))                          \
         {                                                                      \
             (nuField).setZone((domain)->index());                              \
-            if (domain->materialRef(__VA_ARGS__)                               \
-                    .mechanicalProperties_.poissonRatio_.option_ ==            \
-                poissonRatioOption::value)                                     \
+            if ((materialBlock)["mechanical_properties"]["poisson_ratio"] &&   \
+                domain->materialRef(__VA_ARGS__)                               \
+                        .mechanicalProperties_.poissonRatio_.option_ ==        \
+                    poissonRatioOption::value)                                 \
             {                                                                  \
                 initialCondition::                                             \
                     setupFieldInitializationOverDomainFromConfig(              \

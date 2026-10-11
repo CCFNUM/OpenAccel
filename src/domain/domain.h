@@ -65,6 +65,8 @@ struct multiphase
         label interfaceCompressionLevel_ = 0;
         bool fluxCorrectedTransport_ = false;
         label nAlphaCorrections_ = 1; // FCT outer corrections
+        vofAdvectionSchemeType advectionScheme_ =
+            vofAdvectionSchemeType::barthJespersen;
     };
 
     bool homogeneous_ = true;

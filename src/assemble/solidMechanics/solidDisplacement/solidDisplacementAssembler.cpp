@@ -12,15 +12,9 @@ namespace accel
 void solidDisplacementAssembler::postAssemble(const domain* domain,
                                               Context* ctx)
 {
-    if (field_broker_->controlsRef().isCvfemSolidMechanics())
-    {
-        phiAssembler<SPATIAL_DIM>::postAssemble(domain, ctx);
-    }
-    else
-    {
-        // SFEM tangent is consistent; diagonal relaxation would break it
-        this->applyConstraints(domain, ctx);
-    }
+    // no diagonal relaxation (CVFEM and SFEM): the URF is applied once in
+    // correctField_
+    this->applyConstraints(domain, ctx);
     applySymmetryConditions_(domain, ctx);
 }
 
