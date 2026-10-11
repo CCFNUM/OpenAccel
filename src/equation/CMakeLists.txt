@@ -10,6 +10,7 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(main_obj PRIVATE
     ${DIR}/equation.cpp
     ${DIR}/auxiliary/convergenceAcceleration.cpp
+    ${DIR}/auxiliary/robinNeumannParams.cpp
     ############################################################################
     ${DIR}/flow/navierStokes/navierStokesEquation.cpp
     ${DIR}/flow/pressureCorrection/pressureCorrectionEquation.cpp

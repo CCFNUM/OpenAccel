@@ -7,11 +7,31 @@
 // code
 #include "domain.h"
 #include "macros.h"
+#include "messager.h"
 #include "realm.h"
 #include "simulation.h"
 
 namespace accel
 {
+
+namespace
+{
+
+// (E, nu) -> Mooney-Rivlin (c1, c2 = 0, kappa) for a modified_mooney_rivlin
+// material
+void convertYoungPoissonToMooneyRivlin(scalar E,
+                                       scalar nu,
+                                       scalar& c1,
+                                       scalar& c2,
+                                       scalar& kappa)
+{
+    const scalar muEff = E / (2.0 * (1.0 + nu));
+    c1 = muEff / 2.0; // C10
+    c2 = 0.0;         // C01 (pure neo-Hookean split if not specified)
+    kappa = E / (3.0 * (1.0 - 2.0 * nu));
+}
+
+} // namespace
 
 // IO
 
@@ -529,6 +549,18 @@ void domain::read_()
                                 freeSurfaceModelBlock["n_alpha_corrections"]
                                     .template as<label>();
                         }
+
+                        if (freeSurfaceModelBlock["advection_scheme"])
+                        {
+                            multiphase_.freeSurfaceModel_.advectionScheme_ =
+                                convertVofAdvectionSchemeTypeFromString(
+                                    freeSurfaceModelBlock["advection_scheme"]
+                                        .template as<std::string>());
+                        }
+
+                        infoMsg("Volume fraction advection scheme: " +
+                                toString(multiphase_.freeSurfaceModel_
+                                             .advectionScheme_));
                     }
                 }
                 else
@@ -759,6 +791,52 @@ void domain::read_()
                             // default to automatic wall function
                             turbulence_.wallFunctionType_ =
                                 wallFunctionType::automatic;
+                        }
+
+                        // curvature correction (Smirnov-Menter 2009)
+                        if (turbulenceBlock["curvature_correction"])
+                        {
+                            turbulence_.curvatureCorrection_ =
+                                turbulenceBlock["curvature_correction"]
+                                    .template as<bool>();
+                        }
+
+                        if (turbulenceBlock["curvature_correction_coefficient"])
+                        {
+                            turbulence_.curvatureCorrectionCoeff_ =
+                                turbulenceBlock
+                                    ["curvature_correction_coefficient"]
+                                        .template as<scalar>();
+
+                            // 0 is allowed: f_r = 1 everywhere, plain SST
+                            if (turbulence_.curvatureCorrectionCoeff_ < 0.0)
+                            {
+                                errorMsg("curvature_correction_coefficient "
+                                         "must be >= 0");
+                            }
+                        }
+
+                        if (turbulence_.curvatureCorrection_)
+                        {
+                            if (turbulence_.transitional_)
+                            {
+                                errorMsg("curvature_correction is not "
+                                         "implemented for transitional SST");
+                            }
+
+#if SPATIAL_DIM != 3
+                            errorMsg("curvature_correction requires a 3D "
+                                     "build (SPATIAL_DIM == 3)");
+#endif
+
+                            // DS_ij/Dt keeps only the convective part
+                            if (simulationRef().controlsRef().isTransient())
+                            {
+                                errorMsg(
+                                    "curvature_correction is implemented "
+                                    "for steady_state only (DS_ij/Dt omits "
+                                    "the temporal term)");
+                            }
                         }
                     }
                     break;
@@ -1120,87 +1198,103 @@ void domain::read_()
 
             if (solidMechanicsBlock["option"])
             {
-                solidMechanics_.option_ = convertSolidMechanicsOptionFromString(
-                    solidMechanicsBlock["option"].template as<std::string>());
+                const std::string optionName =
+                    solidMechanicsBlock["option"].template as<std::string>();
+
+                // deprecated alias of neo_hookean (kept for old input files);
+                // same normalisation as the converter
+                std::string normalisedName = optionName;
+                ::accel::tolower(normalisedName);
+                std::replace(
+                    normalisedName.begin(), normalisedName.end(), '-', '_');
+                if (normalisedName == "simplified_new_hookean" &&
+                    messager::master())
+                {
+                    warningMsg("solid_mechanics option "
+                               "simplified_new_hookean is deprecated: use "
+                               "neo_hookean");
+                }
+
+                solidMechanics_.option_ =
+                    convertSolidMechanicsOptionFromString(optionName);
             }
 
+            // missing key: default total_lagrangian (domain.h)
             if (solidMechanicsBlock["formulation"])
             {
                 solidMechanics_.formulation_ =
                     convertKinematicFormulationTypeFromString(
                         solidMechanicsBlock["formulation"]
                             .template as<std::string>());
-
-                switch (solidMechanics_.formulation_)
-                {
-                    case kinematicFormulationType::totalLagrangian:
-                        {
-                            equations_[static_cast<int>(
-                                equationID::solidDisplacement)] = true;
-
-                            if (this->zonePtr()
-                                    ->meshPtr()
-                                    ->controlsRef()
-                                    .isTransient())
-                            {
-                                // set deforming zone
-                                this->zonePtr()->setMeshDeforming(true);
-                                this->zonePtr()
-                                    ->meshPtr()
-                                    ->setAnyZoneMeshDeforming(true);
-
-                                // call deformation
-                                auto& deformation =
-                                    this->zonePtr()->deformationRef();
-
-                                // force inherent mesh deformation
-                                deformation.setSpecification(
-                                    meshDeformationSpecificationType::inherent);
-
-                                // force total displacement
-                                deformation
-                                    .setDisplacementRelativeToPreviousMesh(
-                                        false);
-                            }
-                        }
-                        break;
-
-                    case kinematicFormulationType::updatedLagrangian:
-                        {
-                            errorMsg("updated_lagrangian not implemented yet");
-
-                            if (this->zonePtr()
-                                    ->meshPtr()
-                                    ->controlsRef()
-                                    .isTransient())
-                            {
-                                // set deforming zone
-                                this->zonePtr()->setMeshDeforming(true);
-                                this->zonePtr()
-                                    ->meshPtr()
-                                    ->setAnyZoneMeshDeforming(true);
-
-                                // call deformation
-                                auto& deformation =
-                                    this->zonePtr()->deformationRef();
-
-                                // force inherent mesh deformation
-                                deformation.setSpecification(
-                                    meshDeformationSpecificationType::inherent);
-
-                                // force relative displacement
-                                deformation
-                                    .setDisplacementRelativeToPreviousMesh(
-                                        true);
-                            }
-                        }
-                        break;
-                }
             }
-            else
+
+            switch (solidMechanics_.formulation_)
             {
-                equations_[static_cast<int>(equationID::solidDisplacement)] =
-                    true;
+                case kinematicFormulationType::totalLagrangian:
+                    {
+                        equations_[static_cast<int>(
+                            equationID::solidDisplacement)] = true;
+
+                        // the solid transient scheme sets the number of
+                        // field states
+                        this->zonePtr()
+                            ->meshPtr()
+                            ->controlsRef()
+                            .setAnySolidMechanics(true);
+
+                        if (this->zonePtr()
+                                ->meshPtr()
+                                ->controlsRef()
+                                .isTransient())
+                        {
+                            // set deforming zone
+                            this->zonePtr()->setMeshDeforming(true);
+                            this->zonePtr()->meshPtr()->setAnyZoneMeshDeforming(
+                                true);
+
+                            // call deformation
+                            auto& deformation =
+                                this->zonePtr()->deformationRef();
+
+                            // force inherent mesh deformation
+                            deformation.setSpecification(
+                                meshDeformationSpecificationType::inherent);
+
+                            // force total displacement
+                            deformation.setDisplacementRelativeToPreviousMesh(
+                                false);
+                        }
+                    }
+                    break;
+
+                case kinematicFormulationType::updatedLagrangian:
+                    {
+                        errorMsg("updated_lagrangian not implemented yet");
+
+                        if (this->zonePtr()
+                                ->meshPtr()
+                                ->controlsRef()
+                                .isTransient())
+                        {
+                            // set deforming zone
+                            this->zonePtr()->setMeshDeforming(true);
+                            this->zonePtr()->meshPtr()->setAnyZoneMeshDeforming(
+                                true);
+
+                            // call deformation
+                            auto& deformation =
+                                this->zonePtr()->deformationRef();
+
+                            // force inherent mesh deformation
+                            deformation.setSpecification(
+                                meshDeformationSpecificationType::inherent);
+
+                            // force relative displacement
+                            deformation.setDisplacementRelativeToPreviousMesh(
+                                true);
+                        }
+                    }
+                    break;
             }
 
             if (solidMechanicsBlock["plane_stress"])
@@ -1248,13 +1342,23 @@ void domain::read_()
                     const auto& mechanicalPropertiesBlock =
                         materialBlock["mechanical_properties"];
 
-                    const bool hasC1C2Kappa =
-                        mechanicalPropertiesBlock["c1"] ||
-                        mechanicalPropertiesBlock["c2"] ||
-                        mechanicalPropertiesBlock["kappa"];
+                    // c1/c2/kappa are all-or-nothing: a partial set would
+                    // leave the missing ones at 0 (e.g. zero bulk modulus)
+                    const bool hasC1 =
+                        static_cast<bool>(mechanicalPropertiesBlock["c1"]);
+                    const bool hasC2 =
+                        static_cast<bool>(mechanicalPropertiesBlock["c2"]);
+                    const bool hasKappa =
+                        static_cast<bool>(mechanicalPropertiesBlock["kappa"]);
 
-                    if (hasC1C2Kappa)
+                    if (hasC1 && hasC2 && hasKappa)
                         continue;
+
+                    if (hasC1 || hasC2 || hasKappa)
+                    {
+                        errorMsg("mooney_rivlin requires all of c1, c2 and "
+                                 "kappa when any of them is given");
+                    }
 
                     const bool hasYoungPoisson =
                         mechanicalPropertiesBlock["young_modulus"] &&
@@ -1278,11 +1382,11 @@ void domain::read_()
                                                      ["poisson_ratio"]
                                                          .template as<scalar>();
 
-                        // (E, nu) -> (c1, c2, kappa) with C01 = 0
-                        const scalar muEff = E / (2.0 * (1.0 + nu));
-                        mechProps.c1_ = muEff / 2.0;
-                        mechProps.c2_ = 0.0;
-                        mechProps.kappa_ = E / (3.0 * (1.0 - 2.0 * nu));
+                        convertYoungPoissonToMooneyRivlin(E,
+                                                          nu,
+                                                          mechProps.c1_,
+                                                          mechProps.c2_,
+                                                          mechProps.kappa_);
                     }
 
                     // mooney_rivlin needs c1/c2/kappa or E/nu

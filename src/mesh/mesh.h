@@ -64,8 +64,6 @@ private:
 
     stk::mesh::ConstPartVector symmetryBoundaryActiveParts_;
 
-    ::linearSolver::GraphLayout stencil_;
-
     std::unique_ptr<nodeGraph> globalOrderGraphPtr_ = nullptr;
 
     std::unique_ptr<nodeGraph> localOrderGraphPtr_ = nullptr;

@@ -6,6 +6,7 @@
 
 #include "bulkPressureCorrectionEquation.h"
 #include "realm.h"
+#include "robinNeumannParams.h"
 #include "scaling.h"
 
 namespace accel
@@ -44,6 +45,11 @@ bool bulkPressureCorrectionEquation::isConverged() const
     return linearSystem::isConverged();
 }
 
+bool bulkPressureCorrectionEquation::anyDomainHasRobinNeumannFsi_() const
+{
+    return anyRobinNeumannFsi(domainVector_);
+}
+
 void bulkPressureCorrectionEquation::setup()
 {
     // setup of fields (initial values and boundary conditions)
@@ -51,6 +57,18 @@ void bulkPressureCorrectionEquation::setup()
 
     // setup the dedicated pressure correction field
     FOREACH_DOMAIN(model_->setupPressureCorrection);
+
+    // Robin-Neumann wall-acceleration side field (RN FSI only)
+    if (anyDomainHasRobinNeumannFsi_())
+    {
+        FOREACH_DOMAIN(model_->setupRnWallAcceleration);
+
+        // Robin-Neumann stored wall flux side field (Tukovic Eq. 30)
+        FOREACH_DOMAIN(model_->setupRnWallFlux);
+
+        // Robin-Neumann frozen explicit Robin term side field
+        FOREACH_DOMAIN(model_->setupRnWallFluxE);
+    }
 
     // setup assembler
     assembler_->setup(&model_->pRef(), null, domainVector_, nullptr);
@@ -169,17 +187,73 @@ void bulkPressureCorrectionEquation::solve()
     p.updateScale();
 }
 
+void bulkPressureCorrectionEquation::startOfOuterIteration()
+{
+    if (!anyRobinNeumannFsi(domainVector_))
+    {
+        return;
+    }
+
+    // reset Q_vol; E is recomputed and frozen at the first corrector
+    FOREACH_DOMAIN(model_->zeroRnWallFlux);
+    FOREACH_DOMAIN(model_->zeroRnWallFluxE);
+    assembler_->requestFreezeE();
+}
+
 void bulkPressureCorrectionEquation::postSolve()
 {
 #ifndef NDEBUG
     // Sync SCL check field after assembly
     FOREACH_DOMAIN(model_->syncSCLCheckField);
 #endif /* NDEBUG */
+
+    // Tukovic Eq. 30: accumulate Q_vol from the p' just solved
+    if (anyRobinNeumannFsi(domainVector_))
+    {
+        for (const auto& domain : domainVector_)
+        {
+            assembler_->accumulateRnWallFlux(domain.get());
+        }
+    }
+
+    // E stored by the first corrector; correctors 2..N reuse it
+    assembler_->clearFreezeE();
 }
 
 void bulkPressureCorrectionEquation::preTimeStep()
 {
     FOREACH_DOMAIN(model_->updatePressurePrevTimeField);
+
+    // RN parameters (h_s, rho_s) once per timestep; no-slip fallback if invalid
+    if (!domainVector_.empty())
+    {
+        const scalar dt = model_->controlsRef().getTimestep();
+        const auto rnp = computeRobinNeumannParams(
+            domainVector_[0]->simulationRef(), domainVector_, dt);
+        assembler_->resetC1Stats();
+        assembler_->invalidateRobinParams();
+
+        // reset the RN stored wall flux (Tukovic Eq. 30) at step start
+        if (anyRobinNeumannFsi(domainVector_))
+        {
+            FOREACH_DOMAIN(model_->zeroRnWallFlux);
+        }
+
+        if (rnp.valid)
+        {
+            assembler_->setRobinParams(rnp.hs, rnp.rhoSolid);
+        }
+    }
+}
+
+void bulkPressureCorrectionEquation::postTimeStep()
+{
+    // robin_alpha.out: one row per physical timestep (after all outer FSI
+    // iterations and pressure sub-iterations)
+    writeRobinC1Diagnostics(*assembler_,
+                            domainVector_,
+                            robinAlphaStream_,
+                            model_->controlsRef().time);
 }
 
 void bulkPressureCorrectionEquation::setResidualScales_()

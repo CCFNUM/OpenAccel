@@ -22,6 +22,10 @@ private:
 
     std::unique_ptr<transformation> transformationPtr_ = nullptr;
 
+    // aWallBc holds a previous value for rn_accel_relaxation (kept across
+    // steps)
+    bool hasAWallBc_ = false;
+
 public:
     // Constructors
     meshMotion(realm* realm);
@@ -50,6 +54,14 @@ protected:
     void updateRigidRotationMeshVelocity_(label iZone);
 
     void updateMeshVelocityDivergenceField_();
+
+    // Write the wall velocity from the Dt history at fluid-solid interface
+    // BIPs into URef().sideFieldRef() (no-slip wall velocity, DN and RN).
+    void updateFsiWallVelocity_();
+
+    // write the RN wall normal acceleration (solid d2dt2 operator on Dt) at the
+    // BIPs
+    void updateFsiWallAcceleration_();
 };
 
 } // namespace accel

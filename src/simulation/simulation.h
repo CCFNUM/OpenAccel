@@ -24,7 +24,10 @@
 namespace accel
 {
 
-class physicsConvergence;
+class domain;
+class fsiConvergence;
+class simulation;
+struct robinNeumannParams;
 
 class simulation
 {
@@ -39,7 +42,7 @@ public:
 
 private:
     friend class domain;
-    friend class physicsConvergence;
+    friend class fsiConvergence;
 
     using complementFunc =
         std::function<void(const label /* step */, const scalar /* time */)>;
@@ -69,6 +72,11 @@ private:
     // domain: contains region specific properties. Each domain has a unique
     // mesh zone. The mesh zone is owned by the mesh.
     std::vector<std::shared_ptr<domain>> domainVector_;
+
+    friend robinNeumannParams computeRobinNeumannParams(
+        simulation& sim,
+        const std::vector<std::shared_ptr<domain>>& domainVector,
+        scalar dt);
 
     // equations that are solved on the realm
     std::vector<std::unique_ptr<equation>> equationVector_;
@@ -110,8 +118,8 @@ private:
 
     std::unordered_map<std::string, scalar> scalarResiduals_;
 
-    // Physics-based convergence (FSI)
-    std::unique_ptr<physicsConvergence> physicsConvergencePtr_;
+    // FSI convergence checks
+    std::unique_ptr<fsiConvergence> fsiConvergencePtr_;
 
     // Private methods
 
@@ -161,7 +169,7 @@ private:
     // Initialize output structure and detect output fields to be written
     void initializeOutput_();
 
-    physicsConvergence* getPhysicsConvergence_();
+    fsiConvergence* getFsiConvergence_();
 
 public:
     // Constructors
@@ -213,6 +221,12 @@ public:
     void printSolverFooter();
 
     bool checkConvergence();
+
+    // True if the simulation has at least one fluid-solid interface.
+    bool hasFsiInterface() const;
+
+    // all fluid-solid interfaces reached coupling_start_time (true without FSI)
+    bool allFsiCoupled() const;
 
     fs::path getSimulationDirectory() const;
 
@@ -327,6 +341,9 @@ public:
     // Access
 
     label nDomains() const;
+
+    // equation with the given id, nullptr if not solved
+    equation* equationPtr(equationID id);
 
     domain& domainRef(label iZone);
 

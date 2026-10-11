@@ -46,6 +46,8 @@ public:
 
     void preTimeStep() override;
 
+    void postTimeStep() override;
+
     void printScales() override;
 
     equationID getID() override
@@ -56,6 +58,12 @@ public:
     // update overrides which involve direct dependency over linear system
 
     void updateMassFlowRate(const std::shared_ptr<domain> domain) override;
+
+    // pressure equation access for fsiConvergence (not in equationVector_)
+    pressureCorrectionEquation* pCorrEqPtr() const
+    {
+        return pCorr_eq_.get();
+    }
 
 private:
     // instances for segregated equations

@@ -34,7 +34,8 @@ void solidDisplacementAssembler::assembleElemTermsBoundaryWallSpecifiedFlux_(
     const auto& exposedAreaVectorField = *metaData.get_field<scalar>(
         metaData.side_rank(), this->getExposedAreaVectorID_(domain));
 
-    // follower-pressure load-stiffness tangent (Bonet & Wood 2008, §8.5)
+    // follower-pressure load stiffness not assembled (Picard convergence on
+    // this boundary)
     auto& bc =
         model_->DRef().boundaryConditionRef(domain->index(), boundary->index());
     auto& followerPressureData = bc.template data<1>("follower_pressure");

@@ -8,6 +8,7 @@
 #define SHEARSTRESSTRANSPORTMODEL_H
 
 #include "RANSModel.h"
+#include "nodeTensorField.h"
 
 namespace accel
 {
@@ -34,6 +35,17 @@ private:
     scalar gammaTwo_ = 0.4403;
 
     scalar aOne_ = 0.31;
+
+    // Curvature correction (Smirnov-Menter 2009) constants, SST values
+    scalar cR1_ = 1.0;
+
+    scalar cR2_ = 2.0;
+
+    scalar cR3_ = 1.0;
+
+    // strain-rate tensor S_ij with gradient dS_ij/dx_k, for DS_ij/Dt; only
+    // allocated when curvature correction is enabled
+    std::unique_ptr<nodeTensorField> SijPtr_ = nullptr;
 
 public:
     shearStressTransportModel(realm* realm);
@@ -97,6 +109,12 @@ protected:
 
     virtual void
     updateTurbulentProduction(const std::shared_ptr<domain> domain);
+
+    // Curvature correction (Smirnov-Menter 2009)
+
+    void setupCurvatureCorrection(const std::shared_ptr<domain> domain);
+
+    void updateCurvatureCorrection(const std::shared_ptr<domain> domain);
 
     // Other
 
