@@ -967,6 +967,14 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["relax_gradients"].template as<bool>();
             }
 
+            if (expertParameters["use_prescribed_value_for_grad"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .usePrescribedValueForGrad_ =
+                    expertParameters["use_prescribed_value_for_grad"]
+                        .template as<bool>();
+            }
+
             if (expertParameters["high_speed_blend_damping"])
             {
                 solver_.solverControl_.expertParameters_

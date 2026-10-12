@@ -247,6 +247,7 @@ struct solverDictionary
             bool correctGradients_ = false;
             bool incrementalGradientChange_ = true;
             bool relaxGradients_ = true;
+            bool usePrescribedValueForGrad_ = false;
             bool falseMassAccumulation_ = true;
             bool fractionalStepMethod_ = false;
             bool coriolisProductionTurbulence_ = false;

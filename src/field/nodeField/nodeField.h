@@ -165,6 +165,9 @@ protected:
     // the node: more accurate gradient
     bool incrementalGradientChange_ = false;
 
+    // flag to use the prescribed side field value at boundary ips in gradient
+    bool usePrescribedValueForGrad_ = false;
+
     // flag to mark initialzed field at a zone
     std::vector<bool> isInitialized_;
 

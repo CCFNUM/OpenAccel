@@ -90,6 +90,14 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
                 .solverRef()
                 .solverControl_.expertParameters_.incrementalGradientChange_;
 
+        // use the prescribed side field value at boundary ips? enable boolean
+        // if yes
+        usePrescribedValueForGrad_ =
+            this->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.usePrescribedValueForGrad_;
+
         // relax the gradient across outer iterations? if disabled, force the
         // gradient under-relaxation factor to 1 (full, un-relaxed gradient)
         const bool relaxGradients =
@@ -4732,6 +4740,18 @@ void nodeField<N, M>::updateGradientField(label iZone)
                             metaData.universal_part() &
                             stk::mesh::selectUnion(partVec);
 
+                        // prescribed side field values at the boundary ips,
+                        // if requested and available on this boundary
+                        const STKScalarField* sidePhiSTKFieldPtr = nullptr;
+                        if (usePrescribedValueForGrad_ &&
+                            sideFieldPtr_ != nullptr &&
+                            this->sideFieldRef().definedOnBoundary(iZone,
+                                                                   iBoundary))
+                        {
+                            sidePhiSTKFieldPtr =
+                                this->sideFieldRef().stkFieldPtr();
+                        }
+
                         stk::mesh::BucketVector const& sideBuckets =
                             bulkData.get_buckets(metaData.side_rank(),
                                                  selAllSides);
@@ -4782,6 +4802,13 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                     exposedAreaVecSTKFieldRef,
                                     sideBucket,
                                     iSide);
+                                const scalar* sidePhi =
+                                    sidePhiSTKFieldPtr
+                                        ? stk::mesh::field_data(
+                                              *sidePhiSTKFieldPtr,
+                                              sideBucket,
+                                              iSide)
+                                        : nullptr;
 
                                 //===============================================
                                 // gather nodal data; this is how we do it now..
@@ -4832,14 +4859,26 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                         p_phiIp[j] = 0.0;
                                     }
 
-                                    const label offset = ip * nodesPerSide;
-                                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                                    if (sidePhi)
                                     {
-                                        const scalar r =
-                                            p_shape_function[offset + ic];
                                         for (label j = 0; j < N; ++j)
                                         {
-                                            p_phiIp[j] += r * p_phi[ic * N + j];
+                                            p_phiIp[j] = sidePhi[ip * N + j];
+                                        }
+                                    }
+                                    else
+                                    {
+                                        const label offset = ip * nodesPerSide;
+                                        for (label ic = 0; ic < nodesPerSide;
+                                             ++ic)
+                                        {
+                                            const scalar r =
+                                                p_shape_function[offset + ic];
+                                            for (label j = 0; j < N; ++j)
+                                            {
+                                                p_phiIp[j] +=
+                                                    r * p_phi[ic * N + j];
+                                            }
                                         }
                                     }
 

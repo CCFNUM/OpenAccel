@@ -42,6 +42,11 @@ pressure::pressure(realm* realmPtr,
     // force correct gradient for pressure: remove symmetric contributions to
     // gradient
     correctGradient_ = true;
+
+    // segregated solver: use prescribed boundary pressure in the gradient
+    {
+        usePrescribedValueForGrad_ = true;
+    }
 }
 
 void pressure::updateBoundarySideField(label iZone, label iBoundary)
