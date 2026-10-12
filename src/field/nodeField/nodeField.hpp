@@ -3667,11 +3667,11 @@ void nodeField<N, M>::updateGradientField(label iZone)
                     {
                         for (label j = 0; j < SPATIAL_DIM; ++j)
                         {
-                            gradPhiL[i * N + j] +=
+                            gradPhiL[i * SPATIAL_DIM + j] +=
                                 gradientAssemblyFactor *
                                 (p_phiIp[i] - incMult * p_phi[il * N + i]) *
                                 p_scs_areav[ip * SPATIAL_DIM + j] * inv_volL;
-                            gradPhiR[i * N + j] -=
+                            gradPhiR[i * SPATIAL_DIM + j] -=
                                 gradientAssemblyFactor *
                                 (p_phiIp[i] - incMult * p_phi[ir * N + i]) *
                                 p_scs_areav[ip * SPATIAL_DIM + j] * inv_volR;
@@ -3831,7 +3831,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
+                                    gradPhi[i * SPATIAL_DIM + j] +=
                                         gradientAssemblyFactor * fac *
                                         inv_volNN;
                                 }
@@ -3964,7 +3964,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
+                                    gradPhi[i * SPATIAL_DIM + j] +=
                                         gradientAssemblyFactor * fac *
                                         inv_volNN;
                                 }
@@ -4082,7 +4082,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
+                                    gradPhi[i * SPATIAL_DIM + j] +=
                                         gradientAssemblyFactor * fac *
                                         inv_volNN;
                                 }
@@ -4215,7 +4215,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
+                                    gradPhi[i * SPATIAL_DIM + j] +=
                                         gradientAssemblyFactor * fac *
                                         inv_volNN;
                                 }
@@ -4370,7 +4370,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
+                                    gradPhi[i * SPATIAL_DIM + j] +=
                                         gradientAssemblyFactor * fac *
                                         inv_volNN;
                                 }
@@ -4505,7 +4505,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
+                                    gradPhi[i * SPATIAL_DIM + j] +=
                                         gradientAssemblyFactor * fac *
                                         inv_volNN;
                                 }
@@ -4671,7 +4671,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 {
                                     scalar fac = (phiip - incMult * phic) *
                                                  areaVec[ip * SPATIAL_DIM + j];
-                                    gradPhi[i * N + j] +=
+                                    gradPhi[i * SPATIAL_DIM + j] +=
                                         gradientAssemblyFactor * fac * inv_vol;
                                 }
                             }
@@ -4851,7 +4851,7 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                     {
                                         for (label j = 0; j < SPATIAL_DIM; ++j)
                                         {
-                                            gradPhi[i * N + j] +=
+                                            gradPhi[i * SPATIAL_DIM + j] +=
                                                 gradientAssemblyFactor *
                                                 (p_phiIp[i] -
                                                  incMult * p_phi[nn * N + i]) *
@@ -5919,7 +5919,7 @@ void nodeField<N, M>::limitGradientField_(label iZone)
             {
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    gradPhi[i * N + j] *= limiterb[N * iNode + i];
+                    gradPhi[i * SPATIAL_DIM + j] *= limiterb[N * iNode + i];
                 }
             }
         }

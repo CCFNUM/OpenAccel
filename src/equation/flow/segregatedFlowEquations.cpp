@@ -200,6 +200,7 @@ void segregatedFlowEquations::solve()
                          iNode < nNodesPerBucket;
                          ++iNode)
                     {
+
                         for (label i = 0; i < SPATIAL_DIM; i++)
                         {
                             Ub[SPATIAL_DIM * iNode + i] -=
