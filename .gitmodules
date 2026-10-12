@@ -14,7 +14,7 @@
 [submodule "external/core/gplotpp"]
 	path = external/core/gplotpp
 	url = https://github.com/ziotom78/gplotpp
-[submodule "external/core/sfem"]
-	path = external/core/sfem
+[submodule "external/opt/sfem"]
+	path = external/opt/sfem
 	url = https://github.com/zulianp/sfem.git
 	branch = main

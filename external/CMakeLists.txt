@@ -17,7 +17,7 @@ target_include_directories(main_obj SYSTEM PUBLIC
 
 # SFEM solid mechanics backend (solid_assembler_type: sfem), WITH_SFEM only.
 # Uses an installed SFEM when ACCEL_USE_SYSTEM_SFEM=ON (point SFEM_DIR or
-# CMAKE_PREFIX_PATH at it), otherwise builds the external/core/sfem submodule.
+# CMAKE_PREFIX_PATH at it), otherwise builds the external/opt/sfem submodule.
 # MatrixIO is provided by smesh (SFEM_ENABLE_MPI=ON).
 if(WITH_SFEM)
     option(ACCEL_USE_SYSTEM_SFEM "Use an installed SFEM instead of external/sfem" OFF)
@@ -34,7 +34,7 @@ if(WITH_SFEM)
         set(SFEM_LOG_LEVEL 0 CACHE STRING "Set the default log level for SFEM")
         # LibLinSolve turns BUILD_SHARED_LIBS on globally; SFEM is built static
         set(BUILD_SHARED_LIBS OFF)
-        add_subdirectory(core/sfem EXCLUDE_FROM_ALL)
+        add_subdirectory(opt/sfem EXCLUDE_FROM_ALL)
         add_library(SFEM::sfem ALIAS sfem)
     endif()
 
