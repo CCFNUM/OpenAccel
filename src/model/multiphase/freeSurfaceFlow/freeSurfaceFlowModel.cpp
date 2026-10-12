@@ -10,6 +10,9 @@
 #include "simulation.h"
 #include "sutherlandsFormulaModel.h"
 
+#include <iomanip>
+#include <sstream>
+
 namespace accel
 {
 
@@ -2098,7 +2101,8 @@ void freeSurfaceFlowModel::updateOpenChannelOutletPressure(
         const auto& bc =
             pRef().boundaryConditionRef(domain->index(), boundary->index());
 
-        if (!bc.isInputDataAdded("open_channel_outlet"))
+        if (!bc.isInputDataAdded("open_channel_outlet") ||
+            bc.type() != boundaryConditionType::staticPressure)
         {
             continue;
         }
@@ -2157,6 +2161,268 @@ void freeSurfaceFlowModel::updateOpenChannelOutletPressure(
                                           domain->index(),
                                           boundary->index(),
                                           pRef().isShifted());
+    }
+}
+
+void freeSurfaceFlowModel::updateOpenChannelOutletRegime(
+    const std::shared_ptr<domain> domain)
+{
+    if (domain->buoyancy_.option_ != buoyancyOption::buoyant)
+    {
+        return;
+    }
+
+    auto& mesh = this->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    const auto& gravity = domain->buoyancy_.gravity_;
+
+    scalar gMag = 0.0;
+    for (label j = 0; j < SPATIAL_DIM; ++j)
+    {
+        gMag += gravity[j] * gravity[j];
+    }
+    gMag = std::sqrt(gMag);
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         iBoundary++)
+    {
+        const auto* boundary = domain->zonePtr()->boundaryPtr(iBoundary);
+
+        if (boundary->type() != boundaryPhysicalType::outlet)
+        {
+            continue;
+        }
+
+        auto& bc =
+            pRef().boundaryConditionRef(domain->index(), boundary->index());
+
+        if (!bc.isInputDataAdded("open_channel_automatic"))
+        {
+            continue;
+        }
+
+        const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+
+        stk::mesh::Selector selAllNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(boundary->parts());
+        stk::mesh::BucketVector const& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+
+        label liquidPhase = -1;
+        if (bc.isInputDataAdded("open_channel_liquid_phase"))
+        {
+            const std::string liquidName =
+                bc.rawStringValue("open_channel_liquid_phase");
+            for (label i = 0; i < domain->nMaterials(); ++i)
+            {
+                if (domain->materialRef(i).name_ == liquidName)
+                {
+                    liquidPhase = domain->localToGlobalMaterialIndex(i);
+                }
+            }
+            if (liquidPhase < 0)
+            {
+                errorMsg("open_channel_outlet: `liquid_phase` " + liquidName +
+                         " is not a material of the domain");
+            }
+        }
+        else
+        {
+            scalar rhoMax = -BIG;
+            for (label i = 0; i < domain->nMaterials(); ++i)
+            {
+                const label iPhase = domain->localToGlobalMaterialIndex(i);
+                const auto& rhoPhaseSTKFieldRef = rhoRef(iPhase).stkFieldRef();
+                scalar l_rho = -BIG;
+                for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end();
+                     ++ib)
+                {
+                    stk::mesh::Bucket& nodeBucket = **ib;
+                    const scalar* rhob =
+                        stk::mesh::field_data(rhoPhaseSTKFieldRef, nodeBucket);
+                    for (stk::mesh::Bucket::size_type iNode = 0;
+                         iNode < nodeBucket.size();
+                         ++iNode)
+                    {
+                        l_rho = std::max(l_rho, rhob[iNode]);
+                    }
+                }
+                scalar g_rho = l_rho;
+                stk::all_reduce_max(bulkData.parallel(), &l_rho, &g_rho, 1);
+                if (g_rho > rhoMax)
+                {
+                    rhoMax = g_rho;
+                    liquidPhase = iPhase;
+                }
+            }
+        }
+
+        scalar l_elevation[2] = {BIG, BIG};
+        for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
+        {
+            stk::mesh::Bucket& nodeBucket = **ib;
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nodeBucket.size();
+                 ++iNode)
+            {
+                const scalar* coords =
+                    stk::mesh::field_data(coordsSTKFieldRef, nodeBucket, iNode);
+                scalar elevation = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    elevation -= gravity[j] / gMag * coords[j];
+                }
+                l_elevation[0] = std::min(l_elevation[0], elevation);
+                l_elevation[1] = std::min(l_elevation[1], -elevation);
+            }
+        }
+        scalar g_elevation[2] = {BIG, BIG};
+        stk::all_reduce_min(bulkData.parallel(), l_elevation, g_elevation, 2);
+        const scalar outletHeight = -g_elevation[1] - g_elevation[0];
+
+        const auto& alphaSTKFieldRef = alphaRef(liquidPhase).stkFieldRef();
+        const auto& USTKFieldRef = URef().stkFieldRef();
+        const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+            metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+        stk::mesh::Selector selOwnedSides =
+            metaData.locally_owned_part() &
+            stk::mesh::selectUnion(boundary->parts());
+        stk::mesh::BucketVector const& sideBuckets =
+            bulkData.get_buckets(metaData.side_rank(), selOwnedSides);
+
+        std::vector<scalar> ws_alpha;
+        std::vector<scalar> ws_U;
+        std::vector<scalar> ws_face_shape_function;
+
+        scalar l_sums[3] = {0.0, 0.0, 0.0};
+        for (auto ib = sideBuckets.begin(); ib != sideBuckets.end(); ++ib)
+        {
+            stk::mesh::Bucket& sideBucket = **ib;
+
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
+            const label nodesPerSide = meFC->nodesPerElement_;
+            const label numScsBip = meFC->numIntPoints_;
+
+            ws_alpha.resize(nodesPerSide);
+            ws_U.resize(nodesPerSide * SPATIAL_DIM);
+            ws_face_shape_function.resize(numScsBip * nodesPerSide);
+            meFC->shape_fcn(&ws_face_shape_function[0]);
+
+            for (stk::mesh::Bucket::size_type iSide = 0;
+                 iSide < sideBucket.size();
+                 ++iSide)
+            {
+                stk::mesh::Entity side = sideBucket[iSide];
+
+                const scalar* areaVec =
+                    stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+
+                stk::mesh::Entity const* sideNodeRels =
+                    bulkData.begin_nodes(side);
+                for (label ni = 0; ni < nodesPerSide; ++ni)
+                {
+                    stk::mesh::Entity node = sideNodeRels[ni];
+                    ws_alpha[ni] = *stk::mesh::field_data(alphaSTKFieldRef, node);
+                    const scalar* U = stk::mesh::field_data(USTKFieldRef, node);
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        ws_U[ni * SPATIAL_DIM + j] = U[j];
+                    }
+                }
+
+                for (label ip = 0; ip < numScsBip; ++ip)
+                {
+                    scalar alphaIp = 0.0;
+                    scalar uDotA = 0.0;
+                    scalar asq = 0.0;
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        const scalar r =
+                            ws_face_shape_function[ip * nodesPerSide + ic];
+                        alphaIp += r * ws_alpha[ic];
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            uDotA += r * ws_U[ic * SPATIAL_DIM + j] *
+                                     areaVec[ip * SPATIAL_DIM + j];
+                        }
+                    }
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        asq += areaVec[ip * SPATIAL_DIM + j] *
+                               areaVec[ip * SPATIAL_DIM + j];
+                    }
+                    alphaIp = std::min(std::max(alphaIp, 0.0), 1.0);
+                    l_sums[0] += alphaIp * std::sqrt(asq);
+                    l_sums[1] += alphaIp * uDotA;
+                    l_sums[2] += std::sqrt(asq);
+                }
+            }
+        }
+        scalar g_sums[3] = {0.0, 0.0, 0.0};
+        stk::all_reduce_sum(bulkData.parallel(), l_sums, g_sums, 3);
+
+        const scalar liquidArea = g_sums[0];
+        const scalar totalArea = g_sums[2];
+        const bool hasLiquid = liquidArea > 1.0e-6 * totalArea;
+
+        scalar depth = 0.0;
+        scalar velocity = 0.0;
+        scalar froude = 0.0;
+        if (hasLiquid)
+        {
+            depth = liquidArea * outletHeight / totalArea;
+            velocity = g_sums[1] / liquidArea;
+            froude = velocity / std::sqrt(gMag * depth);
+        }
+
+        auto& state =
+            openChannelRegimeStates_[{domain->index(), boundary->index()}];
+        const scalar hysteresis =
+            bc.rawScalarValue("open_channel_froude_hysteresis");
+        const label switchInterval =
+            bc.rawLabelValue("open_channel_switch_interval");
+
+        bool switched = false;
+        if (!state.initialized)
+        {
+            state.initialized = true;
+            state.supercritical = hasLiquid && froude > 1.0;
+            state.iterationsSinceSwitch = 0;
+            switched = true;
+        }
+        else
+        {
+            state.iterationsSinceSwitch++;
+            if (hasLiquid && state.iterationsSinceSwitch >= switchInterval &&
+                ((!state.supercritical && froude > 1.0 + hysteresis) ||
+                 (state.supercritical && froude < 1.0 - hysteresis)))
+            {
+                state.supercritical = !state.supercritical;
+                state.iterationsSinceSwitch = 0;
+                switched = true;
+            }
+        }
+
+        bc.setType(state.supercritical ? boundaryConditionType::zeroGradient
+                                       : boundaryConditionType::staticPressure);
+
+        if (switched && messager::master())
+        {
+            std::ostringstream message;
+            message << std::fixed << std::setprecision(3)
+                    << "open_channel_outlet [" << boundary->name()
+                    << "]: Fr = " << froude << " (depth " << depth
+                    << " m, velocity " << velocity << " m/s) -> "
+                    << (state.supercritical ? "supercritical: nothing imposed"
+                                            : "subcritical: hydrostatic profile");
+            std::cout << message.str() << std::endl;
+        }
     }
 }
 

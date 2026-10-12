@@ -10,6 +10,8 @@
 // code
 #include "multiphaseModel.h"
 
+#include <map>
+
 namespace accel
 {
 
@@ -28,6 +30,16 @@ private:
     scalar lambdaTolerance_ = 0.0;
 
     label maxLambdaIterations_ = 3;
+
+    struct openChannelRegimeState
+    {
+        bool initialized = false;
+        bool supercritical = false;
+        label iterationsSinceSwitch = 0;
+    };
+
+    std::map<std::pair<label, label>, openChannelRegimeState>
+        openChannelRegimeStates_;
 
     void computeFL_(const std::shared_ptr<domain> domain, label iPhase);
 
@@ -107,6 +119,8 @@ public:
     void updateOpenChannelInletPressure(const std::shared_ptr<domain> domain);
 
     void updateOpenChannelOutletPressure(const std::shared_ptr<domain> domain);
+
+    void updateOpenChannelOutletRegime(const std::shared_ptr<domain> domain);
 
     // Flux Corrected Transport FCT
 

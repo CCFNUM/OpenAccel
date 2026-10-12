@@ -1489,8 +1489,8 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
                                     if (!massAndMomentumNode["regime"])
                                     {
                                         errorMsg("open_channel_outlet requires "
-                                                 "`regime`: supercritical or "
-                                                 "subcritical");
+                                                 "`regime`: supercritical, "
+                                                 "subcritical or automatic");
                                     }
 
                                     std::string regime =
@@ -1535,13 +1535,85 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
                                                     .template as<scalar>());
                                         bc.addRawData("value", scalar(0.0));
                                     }
+                                    else if (regime == "automatic")
+                                    {
+                                        if (!massAndMomentumNode
+                                                ["free_surface_level"])
+                                        {
+                                            errorMsg("open_channel_outlet with "
+                                                     "`regime: automatic` "
+                                                     "requires "
+                                                     "`free_surface_level`");
+                                        }
+
+                                        if (domain->buoyancy_.option_ !=
+                                            buoyancyOption::buoyant)
+                                        {
+                                            errorMsg("open_channel_outlet "
+                                                     "requires a buoyant domain "
+                                                     "(gravity)");
+                                        }
+
+                                        bc.setType(boundaryConditionType::
+                                                       staticPressure);
+                                        pRef().registerSideFields(
+                                            domain->index(), iBoundary);
+
+                                        bc.addRawData("open_channel_outlet",
+                                                      true);
+                                        bc.addRawData(
+                                            "open_channel_automatic", true);
+                                        bc.addRawData(
+                                            "open_channel_free_surface_level",
+                                            massAndMomentumNode
+                                                ["free_surface_level"]
+                                                    .template as<scalar>());
+
+                                        scalar hysteresis = 0.05;
+                                        if (massAndMomentumNode
+                                                ["froude_hysteresis"])
+                                        {
+                                            hysteresis =
+                                                massAndMomentumNode
+                                                    ["froude_hysteresis"]
+                                                        .template as<scalar>();
+                                        }
+                                        bc.addRawData(
+                                            "open_channel_froude_hysteresis",
+                                            hysteresis);
+
+                                        label switchInterval = 50;
+                                        if (massAndMomentumNode
+                                                ["regime_switch_interval"])
+                                        {
+                                            switchInterval =
+                                                massAndMomentumNode
+                                                    ["regime_switch_interval"]
+                                                        .template as<label>();
+                                        }
+                                        bc.addRawData(
+                                            "open_channel_switch_interval",
+                                            switchInterval);
+
+                                        if (massAndMomentumNode["liquid_phase"])
+                                        {
+                                            bc.addRawData(
+                                                "open_channel_liquid_phase",
+                                                massAndMomentumNode
+                                                    ["liquid_phase"]
+                                                        .template as<
+                                                            std::string>());
+                                        }
+
+                                        bc.addRawData("value", scalar(0.0));
+                                    }
                                     else
                                     {
                                         errorMsg("open_channel_outlet: unknown "
                                                  "regime `" +
                                                  regime +
-                                                 "`; expected supercritical or "
-                                                 "subcritical");
+                                                 "`; expected supercritical, "
+                                                 "subcritical or automatic");
                                     }
                                 }
                                 else
