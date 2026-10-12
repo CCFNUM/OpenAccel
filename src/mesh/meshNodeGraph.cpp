@@ -5,12 +5,12 @@
 // Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
+#include "controls.h"
 #include "interface.h"
 #include "interfaceSideInfo.h"
 #include "ipInfo.h"
 #include "mesh.h"
 #include "messager.h"
-#include "controls.h"
 #include "zone.h"
 
 namespace accel

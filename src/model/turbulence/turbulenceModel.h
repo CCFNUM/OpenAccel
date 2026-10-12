@@ -80,6 +80,7 @@ public:
     using fieldBroker::duPlusdyPlusRef;
     using fieldBroker::epsilonRef;
     using fieldBroker::F1Ref;
+    using fieldBroker::frRef;
     using fieldBroker::gammaRef;
     using fieldBroker::kRef;
     using fieldBroker::lambdaEffRef;

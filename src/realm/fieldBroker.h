@@ -1006,6 +1006,10 @@ protected:
 
     const simpleScalarField& PkRef() const;
 
+    simpleScalarField& frRef();
+
+    const simpleScalarField& frRef() const;
+
     simpleScalarField& yPlusRef();
 
     const simpleScalarField& yPlusRef() const;

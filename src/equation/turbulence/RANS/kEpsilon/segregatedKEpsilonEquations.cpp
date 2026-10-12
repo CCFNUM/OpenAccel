@@ -38,6 +38,9 @@ void segregatedKEpsilonEquations::setup()
     tke_eq_->setup();
     tdr_eq_->setup();
 
+    FOREACH_DOMAIN_IF(setupCurvatureCorrection,
+                      domain->turbulence_.curvatureCorrection_);
+
     equation::isCreated_ = tke_eq_->isCreated() && tdr_eq_->isCreated();
 }
 
@@ -96,6 +99,8 @@ void segregatedKEpsilonEquations::preSolve()
 
 void segregatedKEpsilonEquations::solve()
 {
+    FOREACH_DOMAIN_IF(updateCurvatureCorrection,
+                      domain->turbulence_.curvatureCorrection_);
     FOREACH_DOMAIN(updateTurbulentProduction);
 
     tke_eq_->solve();

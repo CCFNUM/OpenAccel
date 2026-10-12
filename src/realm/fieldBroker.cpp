@@ -5510,6 +5510,24 @@ const simpleScalarField& fieldBroker::PkRef() const
                          stk::topology::NODE_RANK);
 };
 
+simpleScalarField& fieldBroker::frRef()
+{
+    RETURN_REF_ALLOC_AUX(realmPtr_->tRealm_->curvatureCorrectionFactor_,
+                         simpleScalarField,
+                         realmPtr_,
+                         turbRealm::fr_ID,
+                         stk::topology::NODE_RANK);
+};
+
+const simpleScalarField& fieldBroker::frRef() const
+{
+    RETURN_REF_ALLOC_AUX(realmPtr_->tRealm_->curvatureCorrectionFactor_,
+                         simpleScalarField,
+                         realmPtr_,
+                         turbRealm::fr_ID,
+                         stk::topology::NODE_RANK);
+};
+
 simpleScalarField& fieldBroker::uTauRef()
 {
     RETURN_REF_ALLOC_AUX_WALL(realmPtr_->tRealm_->uTau_,

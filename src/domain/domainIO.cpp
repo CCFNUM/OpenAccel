@@ -764,6 +764,58 @@ void domain::read_()
                     break;
             }
 
+            // Production correction uses a single value under its option.
+            if (turbulenceBlock["production_correction_coefficient"] ||
+                turbulenceBlock["curvature_correction_coefficient"])
+            {
+                errorMsg("Use curvature_correction with option: "
+                         "production_correction and value instead of "
+                         "separate coefficient settings");
+            }
+
+            const YAML::Node curvature =
+                turbulenceBlock["curvature_correction"];
+            if (curvature)
+            {
+                if (turbulence_.option_ == turbulenceOption::laminar)
+                {
+                    errorMsg("curvature_correction requires a two-equation "
+                             "turbulence model");
+                }
+                if (!curvature.IsMap() || !curvature["option"] ||
+                    curvature["option"].template as<std::string>() !=
+                        "production_correction")
+                {
+                    errorMsg("curvature_correction must be a block with "
+                             "option: production_correction");
+                }
+                if (curvature["coefficient"])
+                {
+                    errorMsg("Use value instead of coefficient under "
+                             "curvature_correction");
+                }
+
+                turbulence_.curvatureCorrection_ = true;
+                if (curvature["value"])
+                {
+                    turbulence_.curvatureCorrectionCoeff_ =
+                        curvature["value"].template as<scalar>();
+                }
+
+                if (!std::isfinite(turbulence_.curvatureCorrectionCoeff_) ||
+                    turbulence_.curvatureCorrectionCoeff_ < 0.0)
+                {
+                    errorMsg("curvature_correction value must be finite "
+                             "and nonnegative");
+                }
+            }
+
+            if (turbulence_.curvatureCorrection_ && turbulence_.transitional_)
+            {
+                errorMsg("production correction is not supported by the "
+                         "current transition-SST implementation");
+            }
+
             // optional override of the default eddy length scale
             if (turbulence_.option_ != turbulenceOption::laminar &&
                 turbulenceBlock["turbulent_eddy_length_scale"])
@@ -933,8 +985,8 @@ void domain::read_()
                             errorMsg(path + ": the pair members must differ");
                         }
 
-                        // phase roles from the domain material order (as in
-                        // CFX): the one listed first is the liquid
+                        // Phase roles follow the domain material order:
+                        // the first material is the liquid.
                         if (globalToLocalMaterialIndex(fpm.globalIndexA_) <
                             globalToLocalMaterialIndex(fpm.globalIndexB_))
                         {
@@ -1243,7 +1295,9 @@ void domain::read_()
                 {
                     const auto& materialBlock = materialBlockVector_[iMat];
                     if (!materialBlock["mechanical_properties"])
+                    {
                         continue;
+                    }
 
                     const auto& mechanicalPropertiesBlock =
                         materialBlock["mechanical_properties"];
@@ -1254,7 +1308,9 @@ void domain::read_()
                         mechanicalPropertiesBlock["kappa"];
 
                     if (hasC1C2Kappa)
+                    {
                         continue;
+                    }
 
                     const bool hasYoungPoisson =
                         mechanicalPropertiesBlock["young_modulus"] &&

@@ -49,6 +49,12 @@ struct turbulence
 
     // upper bound on the turbulent length scale; zero selects the default
     scalar maxTurbulentLengthScale_ = 0.0;
+
+    // Smirnov-Menter (2009) curvature/rotation correction for SST
+    bool curvatureCorrection_ = false;
+
+    // C_scale; 0 gives f_r = 1 everywhere (plain SST)
+    scalar curvatureCorrectionCoeff_ = 1.0;
 };
 
 struct multiphase

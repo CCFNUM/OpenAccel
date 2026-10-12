@@ -456,6 +456,30 @@ void kEpsilonModel::updateTurbulentProduction(
             }
         }
     }
+    // Apply correction to the normalized production.
+    if (domain->turbulence_.curvatureCorrection_)
+    {
+        const STKScalarField* frSTKFieldPtr = frRef().stkFieldPtr();
+        const stk::mesh::Selector selAllNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+        const stk::mesh::BucketVector& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+        const scalar* frb = nullptr;
+        scalar* Pkb = nullptr;
+        for (const stk::mesh::Bucket* nodeBucket : nodeBuckets)
+        {
+            frb = stk::mesh::field_data(*frSTKFieldPtr, *nodeBucket);
+            Pkb = stk::mesh::field_data(PkSTKFieldRef, *nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nodeBucket->size();
+                 ++iNode)
+            {
+                Pkb[iNode] *= frb[iNode];
+            }
+        }
+    }
 }
 
 void kEpsilonModel::updateTurbulentDynamicViscosity(

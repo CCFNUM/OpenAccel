@@ -233,7 +233,7 @@ public:
 // equations
 enum class equationID
 {
-// fluid equations
+    // fluid equations
     coupledNavierStokes,
     pressureCorrection,
     segregatedCorrelationTransitionShearStressTransport,
