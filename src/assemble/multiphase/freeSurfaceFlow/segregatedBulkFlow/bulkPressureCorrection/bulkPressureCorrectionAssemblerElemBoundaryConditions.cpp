@@ -101,12 +101,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundary_(
                                 switch (UBCType)
                                 {
                                     case boundaryConditionType::specifiedValue:
-                                        {
-                                            assembleElemTermsBoundaryInletSpecifiedVelocityAndPressure_(
-                                                domain, boundary, ctx);
-                                        }
-                                        break;
-
                                     case boundaryConditionType::
                                         specifiedDirection:
                                         {
