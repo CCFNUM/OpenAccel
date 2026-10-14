@@ -400,11 +400,19 @@ private:
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 
-    void updatePressureBoundarySideFieldAverageStaticPressure_(
+    void updatePressureBoundarySideFieldInletStaticPressure_(
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 
     void updatePressureBoundarySideFieldInletTotalPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary);
+
+    void updatePressureBoundarySideFieldOutletStaticPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary);
+
+    void updatePressureBoundarySideFieldOutletAverageStaticPressure_(
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 

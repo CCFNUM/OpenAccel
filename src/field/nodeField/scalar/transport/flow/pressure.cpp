@@ -42,11 +42,6 @@ pressure::pressure(realm* realmPtr,
     // force correct gradient for pressure: remove symmetric contributions to
     // gradient
     correctGradient_ = true;
-
-    // segregated solver: use prescribed boundary pressure in the gradient
-    {
-        usePrescribedValueForGrad_ = true;
-    }
 }
 
 void pressure::updateBoundarySideField(label iZone, label iBoundary)
@@ -60,24 +55,13 @@ void pressure::updateBoundarySideField(label iZone, label iBoundary)
     switch (physicalType)
     {
         case boundaryPhysicalType::inlet:
-        case boundaryPhysicalType::opening:
             {
                 switch (bcType)
                 {
                     case boundaryConditionType::staticPressure:
-                        {
-                            nodeScalarField::
-                                updateBoundarySideFieldSpecifiedValue(
-                                    iZone, iBoundary);
-                        }
-                        break;
-
                     case boundaryConditionType::totalPressure:
                         {
-                            // model-related: done in NS model
-
-                            assert(nodeSideFieldPtr_);
-                            assert(sideFieldPtr_);
+                            // model-related
                         }
                         break;
 
@@ -94,13 +78,6 @@ void pressure::updateBoundarySideField(label iZone, label iBoundary)
                 switch (bcType)
                 {
                     case boundaryConditionType::staticPressure:
-                        {
-                            nodeScalarField::
-                                updateBoundarySideFieldSpecifiedValue(
-                                    iZone, iBoundary);
-                        }
-                        break;
-
                     case boundaryConditionType::averageStaticPressure:
                         {
                             // model-related
@@ -108,6 +85,22 @@ void pressure::updateBoundarySideField(label iZone, label iBoundary)
                         break;
 
                     case boundaryConditionType::massFlowRate:
+                        break;
+
+                    default:
+                        nodeScalarField::updateBoundarySideField(iZone,
+                                                                 iBoundary);
+                        break;
+                }
+            }
+            break;
+
+        case boundaryPhysicalType::opening:
+            {
+                switch (bcType)
+                {
+                    case boundaryConditionType::staticPressure:
+                    case boundaryConditionType::totalPressure:
                         {
                             // model-related
                         }
