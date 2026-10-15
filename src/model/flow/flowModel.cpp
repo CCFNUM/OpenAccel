@@ -20833,389 +20833,882 @@ void flowModel::updatePressureBoundarySideFieldInletStaticPressure_(
     stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
     stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
 
-    switch (data.type())
+    auto option =
+        domain->materialRef().thermodynamicProperties_.equationOfState_.option_;
+
+    switch (option)
     {
-        case inputDataType::null:
-            break;
-
-        case inputDataType::constant:
-        case inputDataType::timeTable:
+        case equationOfStateOption::value:
             {
-                scalar pValue =
-                    data.type() == inputDataType::constant
-                        ? *data.value()
-                        : data.interpolate(
-                              this->meshRef().controlsRef().time)[0];
-
-                // get fields
-                auto& pSTKFieldRef = this->pRef().stkFieldRef();
-                auto& sidePSTKFieldRef =
-                    this->pRef().sideFieldRef().stkFieldRef();
-
-                // get more required fields
-                const auto& reversalFlowFlagSTKFieldRef =
-                    URef().reversalFlagRef().stkFieldRef();
-
-                // nodal fields to gather
-                std::vector<scalar> ws_p;
-
-                // master element
-                std::vector<scalar> ws_face_shape_function;
-
-                // define some common selectors
-                stk::mesh::Selector selAllSides =
-                    metaData.universal_part() &
-                    stk::mesh::selectUnion(boundary->parts());
-
-                const bool isShifted = this->pRef().isShifted();
-
-                // define vector of parent topos; should
-                // always be UNITY in size
-                std::vector<stk::topology> parentTopo;
-
-                // setup for buckets; union parts and
-                // ask for universal part
-                stk::mesh::BucketVector const& sideBuckets =
-                    bulkData.get_buckets(metaData.side_rank(), selAllSides);
-
-                for (stk::mesh::BucketVector::const_iterator ib =
-                         sideBuckets.begin();
-                     ib != sideBuckets.end();
-                     ++ib)
+                switch (data.type())
                 {
-                    stk::mesh::Bucket& sideBucket = **ib;
+                    case inputDataType::null:
+                        break;
 
-                    // face master element
-                    MasterElement* meFC =
-                        MasterElementRepo::get_surface_master_element(
-                            sideBucket.topology());
-                    const label nodesPerSide = meFC->nodesPerElement_;
-                    const label numScsBip = meFC->numIntPoints_;
-                    const label* ipNodeMap = meFC->ipNodeMap();
-
-                    // algorithm related; element/face
-                    ws_p.resize(nodesPerSide);
-                    ws_face_shape_function.resize(numScsBip * nodesPerSide);
-
-                    // pointers
-                    scalar* p_p = &ws_p[0];
-                    scalar* p_face_shape_function = &ws_face_shape_function[0];
-
-                    // shape functions
-                    if (isShifted)
-                    {
-                        meFC->shifted_shape_fcn(&p_face_shape_function[0]);
-                    }
-                    else
-                    {
-                        meFC->shape_fcn(&p_face_shape_function[0]);
-                    }
-
-                    const stk::mesh::Bucket::size_type nSidesPerBucket =
-                        sideBucket.size();
-                    for (stk::mesh::Bucket::size_type iSide = 0;
-                         iSide < nSidesPerBucket;
-                         ++iSide)
-                    {
-                        // get face
-                        stk::mesh::Entity side = sideBucket[iSide];
-
-                        //======================================
-                        // gather nodal data off of face
-                        //======================================
-                        stk::mesh::Entity const* face_node_rels =
-                            bulkData.begin_nodes(side);
-                        for (label ni = 0; ni < nodesPerSide; ++ni)
+                    case inputDataType::constant:
+                    case inputDataType::timeTable:
                         {
-                            stk::mesh::Entity node = face_node_rels[ni];
+                            scalar pValue =
+                                data.type() == inputDataType::constant
+                                    ? *data.value()
+                                    : data.interpolate(this->meshRef()
+                                                           .controlsRef()
+                                                           .time)[0];
 
-                            // gather scalars
-                            p_p[ni] =
-                                *stk::mesh::field_data(pSTKFieldRef, node);
-                        }
+                            // get fields
+                            auto& pSTKFieldRef = this->pRef().stkFieldRef();
+                            auto& sidePSTKFieldRef =
+                                this->pRef().sideFieldRef().stkFieldRef();
 
-                        // face data
-                        const label* rfflag = stk::mesh::field_data(
-                            reversalFlowFlagSTKFieldRef, side);
-                        scalar* pbc = stk::mesh::field_data(
-                            sidePSTKFieldRef, sideBucket, iSide);
+                            // get more required fields
+                            const auto& reversalFlowFlagSTKFieldRef =
+                                URef().reversalFlagRef().stkFieldRef();
 
-                        // accumulate ip areas around node
-                        for (label ip = 0; ip < numScsBip; ++ip)
-                        {
-                            if (rfflag[ip] == 1)
+                            // nodal fields to gather
+                            std::vector<scalar> ws_p;
+
+                            // master element
+                            std::vector<scalar> ws_face_shape_function;
+
+                            // define some common selectors
+                            stk::mesh::Selector selAllSides =
+                                metaData.universal_part() &
+                                stk::mesh::selectUnion(boundary->parts());
+
+                            const bool isShifted = this->pRef().isShifted();
+
+                            // define vector of parent topos; should
+                            // always be UNITY in size
+                            std::vector<stk::topology> parentTopo;
+
+                            // setup for buckets; union parts and
+                            // ask for universal part
+                            stk::mesh::BucketVector const& sideBuckets =
+                                bulkData.get_buckets(metaData.side_rank(),
+                                                     selAllSides);
+
+                            for (stk::mesh::BucketVector::const_iterator ib =
+                                     sideBuckets.begin();
+                                 ib != sideBuckets.end();
+                                 ++ib)
                             {
-                                // slip-wall ... zero-order
+                                stk::mesh::Bucket& sideBucket = **ib;
 
-                                pbc[ip] = 0.0;
+                                // face master element
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        sideBucket.topology());
+                                const label nodesPerSide =
+                                    meFC->nodesPerElement_;
+                                const label numScsBip = meFC->numIntPoints_;
+                                const label* ipNodeMap = meFC->ipNodeMap();
 
-                                const label offSetSF_face = ip * nodesPerSide;
-                                for (label ic = 0; ic < nodesPerSide; ++ic)
+                                // algorithm related; element/face
+                                ws_p.resize(nodesPerSide);
+                                ws_face_shape_function.resize(numScsBip *
+                                                              nodesPerSide);
+
+                                // pointers
+                                scalar* p_p = &ws_p[0];
+                                scalar* p_face_shape_function =
+                                    &ws_face_shape_function[0];
+
+                                // shape functions
+                                if (isShifted)
                                 {
-                                    const scalar r =
-                                        p_face_shape_function[offSetSF_face +
-                                                              ic];
-                                    pbc[ip] += r * p_p[ic];
+                                    meFC->shifted_shape_fcn(
+                                        &p_face_shape_function[0]);
                                 }
-                            }
-                            else
-                            {
-                                // copy from stored value
-                                pbc[ip] = pValue;
-                            }
-                        }
-                    }
-                }
-
-                // interpolate to side field
-                pRef().nodeSideFieldRef().interpolate(
-                    pRef().sideFieldRef(), domain->index(), boundary->index());
-
-                // translate to field
-                if (correctedBoundaryNodeValues)
-                {
-                    pRef().correctBoundaryNodes(domain->index(),
-                                                boundary->index());
-                }
-            }
-            break;
-
-        case inputDataType::expression:
-            {
-                typedef exprtk::symbol_table<scalar> symbol_table_t;
-                typedef exprtk::expression<scalar> expression_t;
-                typedef exprtk::parser<scalar> parser_t;
-
-                symbol_table_t symbol_table;
-                symbol_table.add_constants();
-
-                // declare function vars
-                scalar t, x, y, z;
-                symbol_table.add_variable("t", t);
-                symbol_table.add_variable("x", x);
-                symbol_table.add_variable("y", y);
-                symbol_table.add_variable("z", z);
-
-                expression_t expression;
-                expression.register_symbol_table(symbol_table);
-
-                parser_t parser;
-
-                if (!parser.compile(data.expression()[0], expression))
-                {
-                    errorMsg("Error in the expression "
-                             "provided for " +
-                             this->pRef().name());
-                }
-
-                // set time value
-                t = this->meshRef().controlsRef().time;
-
-                // this is always a constant value
-                const scalar beta =
-                    *(bc.template data<1>("blend_factor").value());
-
-                // get fields
-                auto& pSTKFieldRef = this->pRef().stkFieldRef();
-                auto& sidePSTKFieldRef =
-                    this->pRef().sideFieldRef().stkFieldRef();
-
-                // get more required fields
-                const auto& reversalFlowFlagSTKFieldRef =
-                    URef().reversalFlagRef().stkFieldRef();
-                const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
-                    stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
-
-                const bool isPShifted = this->pRef().isShifted();
-
-                // nodal fields to gather
-                std::vector<scalar> ws_p;
-                std::vector<scalar> ws_coordinates;
-
-                // master element
-                std::vector<scalar> ws_face_shape_function;
-                std::vector<scalar> ws_coordinate_face_shape_function;
-
-                // ip values
-                std::vector<scalar> coordBip(SPATIAL_DIM);
-
-                // pointers for fast access
-                scalar* p_coordBip = &coordBip[0];
-
-                // define some common selectors
-                stk::mesh::Selector selAllSides =
-                    metaData.universal_part() &
-                    stk::mesh::selectUnion(boundary->parts());
-
-                // define vector of parent topos; should
-                // always be UNITY in size
-                std::vector<stk::topology> parentTopo;
-
-                // setup for buckets; union parts and
-                // ask for universal part
-                stk::mesh::BucketVector const& sideBuckets =
-                    bulkData.get_buckets(metaData.side_rank(), selAllSides);
-
-                for (stk::mesh::BucketVector::const_iterator ib =
-                         sideBuckets.begin();
-                     ib != sideBuckets.end();
-                     ++ib)
-                {
-                    stk::mesh::Bucket& sideBucket = **ib;
-
-                    // face master element
-                    MasterElement* meFC =
-                        MasterElementRepo::get_surface_master_element(
-                            sideBucket.topology());
-                    const label nodesPerSide = meFC->nodesPerElement_;
-                    const label numScsBip = meFC->numIntPoints_;
-                    const label* ipNodeMap = meFC->ipNodeMap();
-
-                    // algorithm related; element/face
-                    ws_p.resize(nodesPerSide);
-                    ws_coordinates.resize(nodesPerSide * SPATIAL_DIM);
-                    ws_face_shape_function.resize(numScsBip * nodesPerSide);
-                    ws_coordinate_face_shape_function.resize(numScsBip *
-                                                             nodesPerSide);
-
-                    // pointers
-                    scalar* p_p = &ws_p[0];
-                    scalar* p_coordinates = &ws_coordinates[0];
-                    scalar* p_face_shape_function = &ws_face_shape_function[0];
-                    scalar* p_coordinate_face_shape_function =
-                        &ws_coordinate_face_shape_function[0];
-
-                    // shape functions; boundary
-                    if (isPShifted)
-                    {
-                        meFC->shifted_shape_fcn(&p_face_shape_function[0]);
-                    }
-                    else
-                    {
-                        meFC->shape_fcn(&p_face_shape_function[0]);
-                    }
-
-                    // Always use trilinear (standard) shape functions for
-                    // coordinates
-                    meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
-
-                    const stk::mesh::Bucket::size_type nSidesPerBucket =
-                        sideBucket.size();
-                    for (stk::mesh::Bucket::size_type iSide = 0;
-                         iSide < nSidesPerBucket;
-                         ++iSide)
-                    {
-                        // get face
-                        stk::mesh::Entity side = sideBucket[iSide];
-
-                        //======================================
-                        // gather nodal data off of face
-                        //======================================
-                        stk::mesh::Entity const* face_node_rels =
-                            bulkData.begin_nodes(side);
-                        for (label ni = 0; ni < nodesPerSide; ++ni)
-                        {
-                            stk::mesh::Entity node = face_node_rels[ni];
-
-                            // gather scalars
-                            p_p[ni] =
-                                *stk::mesh::field_data(pSTKFieldRef, node);
-
-                            // gather vectors
-                            const scalar* coords =
-                                stk::mesh::field_data(coordsSTKFieldRef, node);
-                            const label offSet = ni * SPATIAL_DIM;
-                            for (label j = 0; j < SPATIAL_DIM; ++j)
-                            {
-                                p_coordinates[offSet + j] = coords[j];
-                            }
-                        }
-
-                        // face data
-                        const label* rfflag = stk::mesh::field_data(
-                            reversalFlowFlagSTKFieldRef, side);
-                        scalar* pbc = stk::mesh::field_data(
-                            sidePSTKFieldRef, sideBucket, iSide);
-
-                        // accumulate ip areas around node
-                        for (label ip = 0; ip < numScsBip; ++ip)
-                        {
-                            if (rfflag[ip] == 1)
-                            {
-                                // slip-wall ... zero-order
-
-                                pbc[ip] = 0.0;
-
-                                const label offSetSF_face = ip * nodesPerSide;
-                                for (label ic = 0; ic < nodesPerSide; ++ic)
+                                else
                                 {
-                                    const scalar r =
-                                        p_face_shape_function[offSetSF_face +
-                                                              ic];
-                                    pbc[ip] += r * p_p[ic];
-                                }
-                            }
-                            else
-                            {
-                                // zero out vector quantities; form aMag
-                                for (label j = 0; j < SPATIAL_DIM; ++j)
-                                {
-                                    p_coordBip[j] = 0.0;
+                                    meFC->shape_fcn(&p_face_shape_function[0]);
                                 }
 
-                                // interpolate to bip
-                                const label offSetSF_face = ip * nodesPerSide;
-                                for (label ic = 0; ic < nodesPerSide; ++ic)
+                                const stk::mesh::Bucket::size_type
+                                    nSidesPerBucket = sideBucket.size();
+                                for (stk::mesh::Bucket::size_type iSide = 0;
+                                     iSide < nSidesPerBucket;
+                                     ++iSide)
                                 {
-                                    const scalar r =
-                                        p_face_shape_function[offSetSF_face +
-                                                              ic];
-                                    const scalar r_coord =
-                                        p_coordinate_face_shape_function
-                                            [offSetSF_face + ic];
+                                    // get face
+                                    stk::mesh::Entity side = sideBucket[iSide];
 
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                                    //======================================
+                                    // gather nodal data off of face
+                                    //======================================
+                                    stk::mesh::Entity const* face_node_rels =
+                                        bulkData.begin_nodes(side);
+                                    for (label ni = 0; ni < nodesPerSide; ++ni)
                                     {
-                                        p_coordBip[j] +=
-                                            r_coord *
-                                            p_coordinates[ic * SPATIAL_DIM + j];
+                                        stk::mesh::Entity node =
+                                            face_node_rels[ni];
+
+                                        // gather scalars
+                                        p_p[ni] = *stk::mesh::field_data(
+                                            pSTKFieldRef, node);
+                                    }
+
+                                    // face data
+                                    const label* rfflag = stk::mesh::field_data(
+                                        reversalFlowFlagSTKFieldRef, side);
+                                    scalar* pbc = stk::mesh::field_data(
+                                        sidePSTKFieldRef, sideBucket, iSide);
+
+                                    // accumulate ip areas around node
+                                    for (label ip = 0; ip < numScsBip; ++ip)
+                                    {
+                                        if (rfflag[ip] == 1)
+                                        {
+                                            // slip-wall ... zero-order
+
+                                            pbc[ip] = 0.0;
+
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                pbc[ip] += r * p_p[ic];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // copy from stored value
+                                            pbc[ip] = pValue;
+                                        }
                                     }
                                 }
+                            }
 
-#if SPATIAL_DIM == 3
-                                x = p_coordBip[0];
-                                y = p_coordBip[1];
-                                z = p_coordBip[2];
-#elif SPATIAL_DIM == 2
-                                x = p_coordBip[0];
-                                y = p_coordBip[1];
-#endif
+                            // interpolate to side field
+                            pRef().nodeSideFieldRef().interpolate(
+                                pRef().sideFieldRef(),
+                                domain->index(),
+                                boundary->index());
 
-                                scalar pValue = expression.value();
-
-                                // copy from stored value
-                                pbc[ip] = pValue;
+                            // translate to field
+                            if (correctedBoundaryNodeValues)
+                            {
+                                pRef().correctBoundaryNodes(domain->index(),
+                                                            boundary->index());
                             }
                         }
-                    }
-                }
+                        break;
 
-                // interpolate to side field
-                pRef().nodeSideFieldRef().interpolate(
-                    pRef().sideFieldRef(), domain->index(), boundary->index());
+                    case inputDataType::expression:
+                        {
+                            typedef exprtk::symbol_table<scalar> symbol_table_t;
+                            typedef exprtk::expression<scalar> expression_t;
+                            typedef exprtk::parser<scalar> parser_t;
 
-                // translate to field
-                if (correctedBoundaryNodeValues)
-                {
-                    pRef().correctBoundaryNodes(domain->index(),
-                                                boundary->index());
+                            symbol_table_t symbol_table;
+                            symbol_table.add_constants();
+
+                            // declare function vars
+                            scalar t, x, y, z;
+                            symbol_table.add_variable("t", t);
+                            symbol_table.add_variable("x", x);
+                            symbol_table.add_variable("y", y);
+                            symbol_table.add_variable("z", z);
+
+                            expression_t expression;
+                            expression.register_symbol_table(symbol_table);
+
+                            parser_t parser;
+
+                            if (!parser.compile(data.expression()[0],
+                                                expression))
+                            {
+                                errorMsg("Error in the expression "
+                                         "provided for " +
+                                         this->pRef().name());
+                            }
+
+                            // set time value
+                            t = this->meshRef().controlsRef().time;
+
+                            // this is always a constant value
+                            const scalar beta =
+                                *(bc.template data<1>("blend_factor").value());
+
+                            // get fields
+                            auto& pSTKFieldRef = this->pRef().stkFieldRef();
+                            auto& sidePSTKFieldRef =
+                                this->pRef().sideFieldRef().stkFieldRef();
+
+                            // get more required fields
+                            const auto& reversalFlowFlagSTKFieldRef =
+                                URef().reversalFlagRef().stkFieldRef();
+                            const auto& coordsSTKFieldRef =
+                                *metaData.get_field<scalar>(
+                                    stk::topology::NODE_RANK,
+                                    this->getCoordinatesID_(domain));
+
+                            const bool isPShifted = this->pRef().isShifted();
+
+                            // nodal fields to gather
+                            std::vector<scalar> ws_p;
+                            std::vector<scalar> ws_coordinates;
+
+                            // master element
+                            std::vector<scalar> ws_face_shape_function;
+                            std::vector<scalar>
+                                ws_coordinate_face_shape_function;
+
+                            // ip values
+                            std::vector<scalar> coordBip(SPATIAL_DIM);
+
+                            // pointers for fast access
+                            scalar* p_coordBip = &coordBip[0];
+
+                            // define some common selectors
+                            stk::mesh::Selector selAllSides =
+                                metaData.universal_part() &
+                                stk::mesh::selectUnion(boundary->parts());
+
+                            // define vector of parent topos; should
+                            // always be UNITY in size
+                            std::vector<stk::topology> parentTopo;
+
+                            // setup for buckets; union parts and
+                            // ask for universal part
+                            stk::mesh::BucketVector const& sideBuckets =
+                                bulkData.get_buckets(metaData.side_rank(),
+                                                     selAllSides);
+
+                            for (stk::mesh::BucketVector::const_iterator ib =
+                                     sideBuckets.begin();
+                                 ib != sideBuckets.end();
+                                 ++ib)
+                            {
+                                stk::mesh::Bucket& sideBucket = **ib;
+
+                                // face master element
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        sideBucket.topology());
+                                const label nodesPerSide =
+                                    meFC->nodesPerElement_;
+                                const label numScsBip = meFC->numIntPoints_;
+                                const label* ipNodeMap = meFC->ipNodeMap();
+
+                                // algorithm related; element/face
+                                ws_p.resize(nodesPerSide);
+                                ws_coordinates.resize(nodesPerSide *
+                                                      SPATIAL_DIM);
+                                ws_face_shape_function.resize(numScsBip *
+                                                              nodesPerSide);
+                                ws_coordinate_face_shape_function.resize(
+                                    numScsBip * nodesPerSide);
+
+                                // pointers
+                                scalar* p_p = &ws_p[0];
+                                scalar* p_coordinates = &ws_coordinates[0];
+                                scalar* p_face_shape_function =
+                                    &ws_face_shape_function[0];
+                                scalar* p_coordinate_face_shape_function =
+                                    &ws_coordinate_face_shape_function[0];
+
+                                // shape functions; boundary
+                                if (isPShifted)
+                                {
+                                    meFC->shifted_shape_fcn(
+                                        &p_face_shape_function[0]);
+                                }
+                                else
+                                {
+                                    meFC->shape_fcn(&p_face_shape_function[0]);
+                                }
+
+                                // Always use trilinear (standard) shape
+                                // functions for coordinates
+                                meFC->shape_fcn(
+                                    &p_coordinate_face_shape_function[0]);
+
+                                const stk::mesh::Bucket::size_type
+                                    nSidesPerBucket = sideBucket.size();
+                                for (stk::mesh::Bucket::size_type iSide = 0;
+                                     iSide < nSidesPerBucket;
+                                     ++iSide)
+                                {
+                                    // get face
+                                    stk::mesh::Entity side = sideBucket[iSide];
+
+                                    //======================================
+                                    // gather nodal data off of face
+                                    //======================================
+                                    stk::mesh::Entity const* face_node_rels =
+                                        bulkData.begin_nodes(side);
+                                    for (label ni = 0; ni < nodesPerSide; ++ni)
+                                    {
+                                        stk::mesh::Entity node =
+                                            face_node_rels[ni];
+
+                                        // gather scalars
+                                        p_p[ni] = *stk::mesh::field_data(
+                                            pSTKFieldRef, node);
+
+                                        // gather vectors
+                                        const scalar* coords =
+                                            stk::mesh::field_data(
+                                                coordsSTKFieldRef, node);
+                                        const label offSet = ni * SPATIAL_DIM;
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            p_coordinates[offSet + j] =
+                                                coords[j];
+                                        }
+                                    }
+
+                                    // face data
+                                    const label* rfflag = stk::mesh::field_data(
+                                        reversalFlowFlagSTKFieldRef, side);
+                                    scalar* pbc = stk::mesh::field_data(
+                                        sidePSTKFieldRef, sideBucket, iSide);
+
+                                    // accumulate ip areas around node
+                                    for (label ip = 0; ip < numScsBip; ++ip)
+                                    {
+                                        if (rfflag[ip] == 1)
+                                        {
+                                            // slip-wall ... zero-order
+
+                                            pbc[ip] = 0.0;
+
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                pbc[ip] += r * p_p[ic];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // zero out vector quantities; form
+                                            // aMag
+                                            for (label j = 0; j < SPATIAL_DIM;
+                                                 ++j)
+                                            {
+                                                p_coordBip[j] = 0.0;
+                                            }
+
+                                            // interpolate to bip
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                const scalar r_coord =
+                                                    p_coordinate_face_shape_function
+                                                        [offSetSF_face + ic];
+
+                                                for (label j = 0;
+                                                     j < SPATIAL_DIM;
+                                                     ++j)
+                                                {
+                                                    p_coordBip[j] +=
+                                                        r_coord *
+                                                        p_coordinates
+                                                            [ic * SPATIAL_DIM +
+                                                             j];
+                                                }
+                                            }
+
+#if SPATIAL_DIM == 3
+                                            x = p_coordBip[0];
+                                            y = p_coordBip[1];
+                                            z = p_coordBip[2];
+#elif SPATIAL_DIM == 2
+                                            x = p_coordBip[0];
+                                            y = p_coordBip[1];
+#endif
+
+                                            scalar pValue = expression.value();
+
+                                            // copy from stored value
+                                            pbc[ip] = pValue;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // interpolate to side field
+                            pRef().nodeSideFieldRef().interpolate(
+                                pRef().sideFieldRef(),
+                                domain->index(),
+                                boundary->index());
+
+                            // translate to field
+                            if (correctedBoundaryNodeValues)
+                            {
+                                pRef().correctBoundaryNodes(domain->index(),
+                                                            boundary->index());
+                            }
+                        }
+                        break;
+
+                    case inputDataType::profileData:
+                        {
+                            errorMsg("profile data not provided yet");
+                        }
+                        break;
                 }
             }
             break;
 
-        case inputDataType::profileData:
+        case equationOfStateOption::idealGas:
             {
-                errorMsg("profile data not provided yet");
+                switch (data.type())
+                {
+                    case inputDataType::null:
+                        break;
+
+                    case inputDataType::constant:
+                    case inputDataType::timeTable:
+                        {
+                            scalar pValue =
+                                data.type() == inputDataType::constant
+                                    ? *data.value()
+                                    : data.interpolate(this->meshRef()
+                                                           .controlsRef()
+                                                           .time)[0];
+
+                            // reference pressure
+                            const scalar referencePressure =
+                                domain->referencePressure();
+
+                            // offset the input value
+                            pValue += referencePressure;
+
+                            // get fields
+                            auto& pSTKFieldRef = this->pRef().stkFieldRef();
+                            auto& sidePSTKFieldRef =
+                                this->pRef().sideFieldRef().stkFieldRef();
+
+                            // get more required fields
+                            const auto& reversalFlowFlagSTKFieldRef =
+                                URef().reversalFlagRef().stkFieldRef();
+
+                            // nodal fields to gather
+                            std::vector<scalar> ws_p;
+
+                            // master element
+                            std::vector<scalar> ws_face_shape_function;
+
+                            // define some common selectors
+                            stk::mesh::Selector selAllSides =
+                                metaData.universal_part() &
+                                stk::mesh::selectUnion(boundary->parts());
+
+                            const bool isShifted = this->pRef().isShifted();
+
+                            // define vector of parent topos; should
+                            // always be UNITY in size
+                            std::vector<stk::topology> parentTopo;
+
+                            // setup for buckets; union parts and
+                            // ask for universal part
+                            stk::mesh::BucketVector const& sideBuckets =
+                                bulkData.get_buckets(metaData.side_rank(),
+                                                     selAllSides);
+
+                            for (stk::mesh::BucketVector::const_iterator ib =
+                                     sideBuckets.begin();
+                                 ib != sideBuckets.end();
+                                 ++ib)
+                            {
+                                stk::mesh::Bucket& sideBucket = **ib;
+
+                                // face master element
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        sideBucket.topology());
+                                const label nodesPerSide =
+                                    meFC->nodesPerElement_;
+                                const label numScsBip = meFC->numIntPoints_;
+                                const label* ipNodeMap = meFC->ipNodeMap();
+
+                                // algorithm related; element/face
+                                ws_p.resize(nodesPerSide);
+                                ws_face_shape_function.resize(numScsBip *
+                                                              nodesPerSide);
+
+                                // pointers
+                                scalar* p_p = &ws_p[0];
+                                scalar* p_face_shape_function =
+                                    &ws_face_shape_function[0];
+
+                                // shape functions
+                                if (isShifted)
+                                {
+                                    meFC->shifted_shape_fcn(
+                                        &p_face_shape_function[0]);
+                                }
+                                else
+                                {
+                                    meFC->shape_fcn(&p_face_shape_function[0]);
+                                }
+
+                                const stk::mesh::Bucket::size_type
+                                    nSidesPerBucket = sideBucket.size();
+                                for (stk::mesh::Bucket::size_type iSide = 0;
+                                     iSide < nSidesPerBucket;
+                                     ++iSide)
+                                {
+                                    // get face
+                                    stk::mesh::Entity side = sideBucket[iSide];
+
+                                    //======================================
+                                    // gather nodal data off of face
+                                    //======================================
+                                    stk::mesh::Entity const* face_node_rels =
+                                        bulkData.begin_nodes(side);
+                                    for (label ni = 0; ni < nodesPerSide; ++ni)
+                                    {
+                                        stk::mesh::Entity node =
+                                            face_node_rels[ni];
+
+                                        // gather scalars
+                                        p_p[ni] = *stk::mesh::field_data(
+                                            pSTKFieldRef, node);
+                                    }
+
+                                    // face data
+                                    const label* rfflag = stk::mesh::field_data(
+                                        reversalFlowFlagSTKFieldRef, side);
+                                    scalar* pbc = stk::mesh::field_data(
+                                        sidePSTKFieldRef, sideBucket, iSide);
+
+                                    // accumulate ip areas around node
+                                    for (label ip = 0; ip < numScsBip; ++ip)
+                                    {
+                                        if (rfflag[ip] == 1)
+                                        {
+                                            // slip-wall ... zero-order
+
+                                            pbc[ip] = 0.0;
+
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                pbc[ip] += r * p_p[ic];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // copy from stored value
+                                            pbc[ip] = pValue;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // interpolate to side field
+                            pRef().nodeSideFieldRef().interpolate(
+                                pRef().sideFieldRef(),
+                                domain->index(),
+                                boundary->index());
+
+                            // translate to field
+                            if (correctedBoundaryNodeValues)
+                            {
+                                pRef().correctBoundaryNodes(domain->index(),
+                                                            boundary->index());
+                            }
+                        }
+                        break;
+
+                    case inputDataType::expression:
+                        {
+                            // reference pressure
+                            const scalar referencePressure =
+                                domain->referencePressure();
+
+                            typedef exprtk::symbol_table<scalar> symbol_table_t;
+                            typedef exprtk::expression<scalar> expression_t;
+                            typedef exprtk::parser<scalar> parser_t;
+
+                            symbol_table_t symbol_table;
+                            symbol_table.add_constants();
+
+                            // declare function vars
+                            scalar t, x, y, z;
+                            symbol_table.add_variable("t", t);
+                            symbol_table.add_variable("x", x);
+                            symbol_table.add_variable("y", y);
+                            symbol_table.add_variable("z", z);
+
+                            expression_t expression;
+                            expression.register_symbol_table(symbol_table);
+
+                            parser_t parser;
+
+                            if (!parser.compile(data.expression()[0],
+                                                expression))
+                            {
+                                errorMsg("Error in the expression "
+                                         "provided for " +
+                                         this->pRef().name());
+                            }
+
+                            // set time value
+                            t = this->meshRef().controlsRef().time;
+
+                            // this is always a constant value
+                            const scalar beta =
+                                *(bc.template data<1>("blend_factor").value());
+
+                            // get fields
+                            auto& pSTKFieldRef = this->pRef().stkFieldRef();
+                            auto& sidePSTKFieldRef =
+                                this->pRef().sideFieldRef().stkFieldRef();
+
+                            // get more required fields
+                            const auto& reversalFlowFlagSTKFieldRef =
+                                URef().reversalFlagRef().stkFieldRef();
+                            const auto& coordsSTKFieldRef =
+                                *metaData.get_field<scalar>(
+                                    stk::topology::NODE_RANK,
+                                    this->getCoordinatesID_(domain));
+
+                            const bool isPShifted = this->pRef().isShifted();
+
+                            // nodal fields to gather
+                            std::vector<scalar> ws_p;
+                            std::vector<scalar> ws_coordinates;
+
+                            // master element
+                            std::vector<scalar> ws_face_shape_function;
+                            std::vector<scalar>
+                                ws_coordinate_face_shape_function;
+
+                            // ip values
+                            std::vector<scalar> coordBip(SPATIAL_DIM);
+
+                            // pointers for fast access
+                            scalar* p_coordBip = &coordBip[0];
+
+                            // define some common selectors
+                            stk::mesh::Selector selAllSides =
+                                metaData.universal_part() &
+                                stk::mesh::selectUnion(boundary->parts());
+
+                            // define vector of parent topos; should
+                            // always be UNITY in size
+                            std::vector<stk::topology> parentTopo;
+
+                            // setup for buckets; union parts and
+                            // ask for universal part
+                            stk::mesh::BucketVector const& sideBuckets =
+                                bulkData.get_buckets(metaData.side_rank(),
+                                                     selAllSides);
+
+                            for (stk::mesh::BucketVector::const_iterator ib =
+                                     sideBuckets.begin();
+                                 ib != sideBuckets.end();
+                                 ++ib)
+                            {
+                                stk::mesh::Bucket& sideBucket = **ib;
+
+                                // face master element
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        sideBucket.topology());
+                                const label nodesPerSide =
+                                    meFC->nodesPerElement_;
+                                const label numScsBip = meFC->numIntPoints_;
+                                const label* ipNodeMap = meFC->ipNodeMap();
+
+                                // algorithm related; element/face
+                                ws_p.resize(nodesPerSide);
+                                ws_coordinates.resize(nodesPerSide *
+                                                      SPATIAL_DIM);
+                                ws_face_shape_function.resize(numScsBip *
+                                                              nodesPerSide);
+                                ws_coordinate_face_shape_function.resize(
+                                    numScsBip * nodesPerSide);
+
+                                // pointers
+                                scalar* p_p = &ws_p[0];
+                                scalar* p_coordinates = &ws_coordinates[0];
+                                scalar* p_face_shape_function =
+                                    &ws_face_shape_function[0];
+                                scalar* p_coordinate_face_shape_function =
+                                    &ws_coordinate_face_shape_function[0];
+
+                                // shape functions; boundary
+                                if (isPShifted)
+                                {
+                                    meFC->shifted_shape_fcn(
+                                        &p_face_shape_function[0]);
+                                }
+                                else
+                                {
+                                    meFC->shape_fcn(&p_face_shape_function[0]);
+                                }
+
+                                // Always use trilinear (standard) shape
+                                // functions for coordinates
+                                meFC->shape_fcn(
+                                    &p_coordinate_face_shape_function[0]);
+
+                                const stk::mesh::Bucket::size_type
+                                    nSidesPerBucket = sideBucket.size();
+                                for (stk::mesh::Bucket::size_type iSide = 0;
+                                     iSide < nSidesPerBucket;
+                                     ++iSide)
+                                {
+                                    // get face
+                                    stk::mesh::Entity side = sideBucket[iSide];
+
+                                    //======================================
+                                    // gather nodal data off of face
+                                    //======================================
+                                    stk::mesh::Entity const* face_node_rels =
+                                        bulkData.begin_nodes(side);
+                                    for (label ni = 0; ni < nodesPerSide; ++ni)
+                                    {
+                                        stk::mesh::Entity node =
+                                            face_node_rels[ni];
+
+                                        // gather scalars
+                                        p_p[ni] = *stk::mesh::field_data(
+                                            pSTKFieldRef, node);
+
+                                        // gather vectors
+                                        const scalar* coords =
+                                            stk::mesh::field_data(
+                                                coordsSTKFieldRef, node);
+                                        const label offSet = ni * SPATIAL_DIM;
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            p_coordinates[offSet + j] =
+                                                coords[j];
+                                        }
+                                    }
+
+                                    // face data
+                                    const label* rfflag = stk::mesh::field_data(
+                                        reversalFlowFlagSTKFieldRef, side);
+                                    scalar* pbc = stk::mesh::field_data(
+                                        sidePSTKFieldRef, sideBucket, iSide);
+
+                                    // accumulate ip areas around node
+                                    for (label ip = 0; ip < numScsBip; ++ip)
+                                    {
+                                        if (rfflag[ip] == 1)
+                                        {
+                                            // slip-wall ... zero-order
+
+                                            pbc[ip] = 0.0;
+
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                pbc[ip] += r * p_p[ic];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // zero out vector quantities; form
+                                            // aMag
+                                            for (label j = 0; j < SPATIAL_DIM;
+                                                 ++j)
+                                            {
+                                                p_coordBip[j] = 0.0;
+                                            }
+
+                                            // interpolate to bip
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                const scalar r_coord =
+                                                    p_coordinate_face_shape_function
+                                                        [offSetSF_face + ic];
+
+                                                for (label j = 0;
+                                                     j < SPATIAL_DIM;
+                                                     ++j)
+                                                {
+                                                    p_coordBip[j] +=
+                                                        r_coord *
+                                                        p_coordinates
+                                                            [ic * SPATIAL_DIM +
+                                                             j];
+                                                }
+                                            }
+
+#if SPATIAL_DIM == 3
+                                            x = p_coordBip[0];
+                                            y = p_coordBip[1];
+                                            z = p_coordBip[2];
+#elif SPATIAL_DIM == 2
+                                            x = p_coordBip[0];
+                                            y = p_coordBip[1];
+#endif
+
+                                            scalar pValue = expression.value();
+
+                                            // copy from stored value
+                                            pbc[ip] =
+                                                pValue + referencePressure;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // interpolate to side field
+                            pRef().nodeSideFieldRef().interpolate(
+                                pRef().sideFieldRef(),
+                                domain->index(),
+                                boundary->index());
+
+                            // translate to field
+                            if (correctedBoundaryNodeValues)
+                            {
+                                pRef().correctBoundaryNodes(domain->index(),
+                                                            boundary->index());
+                            }
+                        }
+                        break;
+
+                    case inputDataType::profileData:
+                        {
+                            errorMsg("profile data not provided yet");
+                        }
+                        break;
+                }
             }
             break;
     }
@@ -22466,389 +22959,882 @@ void flowModel::updatePressureBoundarySideFieldOutletStaticPressure_(
     stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
     stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
 
-    switch (data.type())
+    auto option =
+        domain->materialRef().thermodynamicProperties_.equationOfState_.option_;
+
+    switch (option)
     {
-        case inputDataType::null:
-            break;
-
-        case inputDataType::constant:
-        case inputDataType::timeTable:
+        case equationOfStateOption::value:
             {
-                scalar pValue =
-                    data.type() == inputDataType::constant
-                        ? *data.value()
-                        : data.interpolate(
-                              this->meshRef().controlsRef().time)[0];
-
-                // get fields
-                auto& pSTKFieldRef = this->pRef().stkFieldRef();
-                auto& sidePSTKFieldRef =
-                    this->pRef().sideFieldRef().stkFieldRef();
-
-                // get more required fields
-                const auto& reversalFlowFlagSTKFieldRef =
-                    URef().reversalFlagRef().stkFieldRef();
-
-                // nodal fields to gather
-                std::vector<scalar> ws_p;
-
-                // master element
-                std::vector<scalar> ws_face_shape_function;
-
-                // define some common selectors
-                stk::mesh::Selector selAllSides =
-                    metaData.universal_part() &
-                    stk::mesh::selectUnion(boundary->parts());
-
-                const bool isShifted = this->pRef().isShifted();
-
-                // define vector of parent topos; should
-                // always be UNITY in size
-                std::vector<stk::topology> parentTopo;
-
-                // setup for buckets; union parts and
-                // ask for universal part
-                stk::mesh::BucketVector const& sideBuckets =
-                    bulkData.get_buckets(metaData.side_rank(), selAllSides);
-
-                for (stk::mesh::BucketVector::const_iterator ib =
-                         sideBuckets.begin();
-                     ib != sideBuckets.end();
-                     ++ib)
+                switch (data.type())
                 {
-                    stk::mesh::Bucket& sideBucket = **ib;
+                    case inputDataType::null:
+                        break;
 
-                    // face master element
-                    MasterElement* meFC =
-                        MasterElementRepo::get_surface_master_element(
-                            sideBucket.topology());
-                    const label nodesPerSide = meFC->nodesPerElement_;
-                    const label numScsBip = meFC->numIntPoints_;
-                    const label* ipNodeMap = meFC->ipNodeMap();
-
-                    // algorithm related; element/face
-                    ws_p.resize(nodesPerSide);
-                    ws_face_shape_function.resize(numScsBip * nodesPerSide);
-
-                    // pointers
-                    scalar* p_p = &ws_p[0];
-                    scalar* p_face_shape_function = &ws_face_shape_function[0];
-
-                    // shape functions
-                    if (isShifted)
-                    {
-                        meFC->shifted_shape_fcn(&p_face_shape_function[0]);
-                    }
-                    else
-                    {
-                        meFC->shape_fcn(&p_face_shape_function[0]);
-                    }
-
-                    const stk::mesh::Bucket::size_type nSidesPerBucket =
-                        sideBucket.size();
-                    for (stk::mesh::Bucket::size_type iSide = 0;
-                         iSide < nSidesPerBucket;
-                         ++iSide)
-                    {
-                        // get face
-                        stk::mesh::Entity side = sideBucket[iSide];
-
-                        //======================================
-                        // gather nodal data off of face
-                        //======================================
-                        stk::mesh::Entity const* face_node_rels =
-                            bulkData.begin_nodes(side);
-                        for (label ni = 0; ni < nodesPerSide; ++ni)
+                    case inputDataType::constant:
+                    case inputDataType::timeTable:
                         {
-                            stk::mesh::Entity node = face_node_rels[ni];
+                            scalar pValue =
+                                data.type() == inputDataType::constant
+                                    ? *data.value()
+                                    : data.interpolate(this->meshRef()
+                                                           .controlsRef()
+                                                           .time)[0];
 
-                            // gather scalars
-                            p_p[ni] =
-                                *stk::mesh::field_data(pSTKFieldRef, node);
-                        }
+                            // get fields
+                            auto& pSTKFieldRef = this->pRef().stkFieldRef();
+                            auto& sidePSTKFieldRef =
+                                this->pRef().sideFieldRef().stkFieldRef();
 
-                        // face data
-                        const label* rfflag = stk::mesh::field_data(
-                            reversalFlowFlagSTKFieldRef, side);
-                        scalar* pbc = stk::mesh::field_data(
-                            sidePSTKFieldRef, sideBucket, iSide);
+                            // get more required fields
+                            const auto& reversalFlowFlagSTKFieldRef =
+                                URef().reversalFlagRef().stkFieldRef();
 
-                        // accumulate ip areas around node
-                        for (label ip = 0; ip < numScsBip; ++ip)
-                        {
-                            if (rfflag[ip] == 1)
+                            // nodal fields to gather
+                            std::vector<scalar> ws_p;
+
+                            // master element
+                            std::vector<scalar> ws_face_shape_function;
+
+                            // define some common selectors
+                            stk::mesh::Selector selAllSides =
+                                metaData.universal_part() &
+                                stk::mesh::selectUnion(boundary->parts());
+
+                            const bool isShifted = this->pRef().isShifted();
+
+                            // define vector of parent topos; should
+                            // always be UNITY in size
+                            std::vector<stk::topology> parentTopo;
+
+                            // setup for buckets; union parts and
+                            // ask for universal part
+                            stk::mesh::BucketVector const& sideBuckets =
+                                bulkData.get_buckets(metaData.side_rank(),
+                                                     selAllSides);
+
+                            for (stk::mesh::BucketVector::const_iterator ib =
+                                     sideBuckets.begin();
+                                 ib != sideBuckets.end();
+                                 ++ib)
                             {
-                                // slip-wall ... zero-order
+                                stk::mesh::Bucket& sideBucket = **ib;
 
-                                pbc[ip] = 0.0;
+                                // face master element
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        sideBucket.topology());
+                                const label nodesPerSide =
+                                    meFC->nodesPerElement_;
+                                const label numScsBip = meFC->numIntPoints_;
+                                const label* ipNodeMap = meFC->ipNodeMap();
 
-                                const label offSetSF_face = ip * nodesPerSide;
-                                for (label ic = 0; ic < nodesPerSide; ++ic)
+                                // algorithm related; element/face
+                                ws_p.resize(nodesPerSide);
+                                ws_face_shape_function.resize(numScsBip *
+                                                              nodesPerSide);
+
+                                // pointers
+                                scalar* p_p = &ws_p[0];
+                                scalar* p_face_shape_function =
+                                    &ws_face_shape_function[0];
+
+                                // shape functions
+                                if (isShifted)
                                 {
-                                    const scalar r =
-                                        p_face_shape_function[offSetSF_face +
-                                                              ic];
-                                    pbc[ip] += r * p_p[ic];
+                                    meFC->shifted_shape_fcn(
+                                        &p_face_shape_function[0]);
                                 }
-                            }
-                            else
-                            {
-                                // copy from stored value
-                                pbc[ip] = pValue;
-                            }
-                        }
-                    }
-                }
-
-                // interpolate to side field
-                pRef().nodeSideFieldRef().interpolate(
-                    pRef().sideFieldRef(), domain->index(), boundary->index());
-
-                // translate to field
-                if (correctedBoundaryNodeValues)
-                {
-                    pRef().correctBoundaryNodes(domain->index(),
-                                                boundary->index());
-                }
-            }
-            break;
-
-        case inputDataType::expression:
-            {
-                typedef exprtk::symbol_table<scalar> symbol_table_t;
-                typedef exprtk::expression<scalar> expression_t;
-                typedef exprtk::parser<scalar> parser_t;
-
-                symbol_table_t symbol_table;
-                symbol_table.add_constants();
-
-                // declare function vars
-                scalar t, x, y, z;
-                symbol_table.add_variable("t", t);
-                symbol_table.add_variable("x", x);
-                symbol_table.add_variable("y", y);
-                symbol_table.add_variable("z", z);
-
-                expression_t expression;
-                expression.register_symbol_table(symbol_table);
-
-                parser_t parser;
-
-                if (!parser.compile(data.expression()[0], expression))
-                {
-                    errorMsg("Error in the expression "
-                             "provided for " +
-                             this->pRef().name());
-                }
-
-                // set time value
-                t = this->meshRef().controlsRef().time;
-
-                // this is always a constant value
-                const scalar beta =
-                    *(bc.template data<1>("blend_factor").value());
-
-                // get fields
-                auto& pSTKFieldRef = this->pRef().stkFieldRef();
-                auto& sidePSTKFieldRef =
-                    this->pRef().sideFieldRef().stkFieldRef();
-
-                // get more required fields
-                const auto& reversalFlowFlagSTKFieldRef =
-                    URef().reversalFlagRef().stkFieldRef();
-                const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
-                    stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
-
-                const bool isPShifted = this->pRef().isShifted();
-
-                // nodal fields to gather
-                std::vector<scalar> ws_p;
-                std::vector<scalar> ws_coordinates;
-
-                // master element
-                std::vector<scalar> ws_face_shape_function;
-                std::vector<scalar> ws_coordinate_face_shape_function;
-
-                // ip values
-                std::vector<scalar> coordBip(SPATIAL_DIM);
-
-                // pointers for fast access
-                scalar* p_coordBip = &coordBip[0];
-
-                // define some common selectors
-                stk::mesh::Selector selAllSides =
-                    metaData.universal_part() &
-                    stk::mesh::selectUnion(boundary->parts());
-
-                // define vector of parent topos; should
-                // always be UNITY in size
-                std::vector<stk::topology> parentTopo;
-
-                // setup for buckets; union parts and
-                // ask for universal part
-                stk::mesh::BucketVector const& sideBuckets =
-                    bulkData.get_buckets(metaData.side_rank(), selAllSides);
-
-                for (stk::mesh::BucketVector::const_iterator ib =
-                         sideBuckets.begin();
-                     ib != sideBuckets.end();
-                     ++ib)
-                {
-                    stk::mesh::Bucket& sideBucket = **ib;
-
-                    // face master element
-                    MasterElement* meFC =
-                        MasterElementRepo::get_surface_master_element(
-                            sideBucket.topology());
-                    const label nodesPerSide = meFC->nodesPerElement_;
-                    const label numScsBip = meFC->numIntPoints_;
-                    const label* ipNodeMap = meFC->ipNodeMap();
-
-                    // algorithm related; element/face
-                    ws_p.resize(nodesPerSide);
-                    ws_coordinates.resize(nodesPerSide * SPATIAL_DIM);
-                    ws_face_shape_function.resize(numScsBip * nodesPerSide);
-                    ws_coordinate_face_shape_function.resize(numScsBip *
-                                                             nodesPerSide);
-
-                    // pointers
-                    scalar* p_p = &ws_p[0];
-                    scalar* p_coordinates = &ws_coordinates[0];
-                    scalar* p_face_shape_function = &ws_face_shape_function[0];
-                    scalar* p_coordinate_face_shape_function =
-                        &ws_coordinate_face_shape_function[0];
-
-                    // shape functions; boundary
-                    if (isPShifted)
-                    {
-                        meFC->shifted_shape_fcn(&p_face_shape_function[0]);
-                    }
-                    else
-                    {
-                        meFC->shape_fcn(&p_face_shape_function[0]);
-                    }
-
-                    // Always use trilinear (standard) shape functions for
-                    // coordinates
-                    meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
-
-                    const stk::mesh::Bucket::size_type nSidesPerBucket =
-                        sideBucket.size();
-                    for (stk::mesh::Bucket::size_type iSide = 0;
-                         iSide < nSidesPerBucket;
-                         ++iSide)
-                    {
-                        // get face
-                        stk::mesh::Entity side = sideBucket[iSide];
-
-                        //======================================
-                        // gather nodal data off of face
-                        //======================================
-                        stk::mesh::Entity const* face_node_rels =
-                            bulkData.begin_nodes(side);
-                        for (label ni = 0; ni < nodesPerSide; ++ni)
-                        {
-                            stk::mesh::Entity node = face_node_rels[ni];
-
-                            // gather scalars
-                            p_p[ni] =
-                                *stk::mesh::field_data(pSTKFieldRef, node);
-
-                            // gather vectors
-                            const scalar* coords =
-                                stk::mesh::field_data(coordsSTKFieldRef, node);
-                            const label offSet = ni * SPATIAL_DIM;
-                            for (label j = 0; j < SPATIAL_DIM; ++j)
-                            {
-                                p_coordinates[offSet + j] = coords[j];
-                            }
-                        }
-
-                        // face data
-                        const label* rfflag = stk::mesh::field_data(
-                            reversalFlowFlagSTKFieldRef, side);
-                        scalar* pbc = stk::mesh::field_data(
-                            sidePSTKFieldRef, sideBucket, iSide);
-
-                        // accumulate ip areas around node
-                        for (label ip = 0; ip < numScsBip; ++ip)
-                        {
-                            if (rfflag[ip] == 1)
-                            {
-                                // slip-wall ... zero-order
-
-                                pbc[ip] = 0.0;
-
-                                const label offSetSF_face = ip * nodesPerSide;
-                                for (label ic = 0; ic < nodesPerSide; ++ic)
+                                else
                                 {
-                                    const scalar r =
-                                        p_face_shape_function[offSetSF_face +
-                                                              ic];
-                                    pbc[ip] += r * p_p[ic];
-                                }
-                            }
-                            else
-                            {
-                                // zero out vector quantities; form aMag
-                                for (label j = 0; j < SPATIAL_DIM; ++j)
-                                {
-                                    p_coordBip[j] = 0.0;
+                                    meFC->shape_fcn(&p_face_shape_function[0]);
                                 }
 
-                                // interpolate to bip
-                                const label offSetSF_face = ip * nodesPerSide;
-                                for (label ic = 0; ic < nodesPerSide; ++ic)
+                                const stk::mesh::Bucket::size_type
+                                    nSidesPerBucket = sideBucket.size();
+                                for (stk::mesh::Bucket::size_type iSide = 0;
+                                     iSide < nSidesPerBucket;
+                                     ++iSide)
                                 {
-                                    const scalar r =
-                                        p_face_shape_function[offSetSF_face +
-                                                              ic];
-                                    const scalar r_coord =
-                                        p_coordinate_face_shape_function
-                                            [offSetSF_face + ic];
+                                    // get face
+                                    stk::mesh::Entity side = sideBucket[iSide];
 
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                                    //======================================
+                                    // gather nodal data off of face
+                                    //======================================
+                                    stk::mesh::Entity const* face_node_rels =
+                                        bulkData.begin_nodes(side);
+                                    for (label ni = 0; ni < nodesPerSide; ++ni)
                                     {
-                                        p_coordBip[j] +=
-                                            r_coord *
-                                            p_coordinates[ic * SPATIAL_DIM + j];
+                                        stk::mesh::Entity node =
+                                            face_node_rels[ni];
+
+                                        // gather scalars
+                                        p_p[ni] = *stk::mesh::field_data(
+                                            pSTKFieldRef, node);
+                                    }
+
+                                    // face data
+                                    const label* rfflag = stk::mesh::field_data(
+                                        reversalFlowFlagSTKFieldRef, side);
+                                    scalar* pbc = stk::mesh::field_data(
+                                        sidePSTKFieldRef, sideBucket, iSide);
+
+                                    // accumulate ip areas around node
+                                    for (label ip = 0; ip < numScsBip; ++ip)
+                                    {
+                                        if (rfflag[ip] == 1)
+                                        {
+                                            // slip-wall ... zero-order
+
+                                            pbc[ip] = 0.0;
+
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                pbc[ip] += r * p_p[ic];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // copy from stored value
+                                            pbc[ip] = pValue;
+                                        }
                                     }
                                 }
+                            }
 
-#if SPATIAL_DIM == 3
-                                x = p_coordBip[0];
-                                y = p_coordBip[1];
-                                z = p_coordBip[2];
-#elif SPATIAL_DIM == 2
-                                x = p_coordBip[0];
-                                y = p_coordBip[1];
-#endif
+                            // interpolate to side field
+                            pRef().nodeSideFieldRef().interpolate(
+                                pRef().sideFieldRef(),
+                                domain->index(),
+                                boundary->index());
 
-                                scalar pValue = expression.value();
-
-                                // copy from stored value
-                                pbc[ip] = pValue;
+                            // translate to field
+                            if (correctedBoundaryNodeValues)
+                            {
+                                pRef().correctBoundaryNodes(domain->index(),
+                                                            boundary->index());
                             }
                         }
-                    }
-                }
+                        break;
 
-                // interpolate to side field
-                pRef().nodeSideFieldRef().interpolate(
-                    pRef().sideFieldRef(), domain->index(), boundary->index());
+                    case inputDataType::expression:
+                        {
+                            typedef exprtk::symbol_table<scalar> symbol_table_t;
+                            typedef exprtk::expression<scalar> expression_t;
+                            typedef exprtk::parser<scalar> parser_t;
 
-                // translate to field
-                if (correctedBoundaryNodeValues)
-                {
-                    pRef().correctBoundaryNodes(domain->index(),
-                                                boundary->index());
+                            symbol_table_t symbol_table;
+                            symbol_table.add_constants();
+
+                            // declare function vars
+                            scalar t, x, y, z;
+                            symbol_table.add_variable("t", t);
+                            symbol_table.add_variable("x", x);
+                            symbol_table.add_variable("y", y);
+                            symbol_table.add_variable("z", z);
+
+                            expression_t expression;
+                            expression.register_symbol_table(symbol_table);
+
+                            parser_t parser;
+
+                            if (!parser.compile(data.expression()[0],
+                                                expression))
+                            {
+                                errorMsg("Error in the expression "
+                                         "provided for " +
+                                         this->pRef().name());
+                            }
+
+                            // set time value
+                            t = this->meshRef().controlsRef().time;
+
+                            // this is always a constant value
+                            const scalar beta =
+                                *(bc.template data<1>("blend_factor").value());
+
+                            // get fields
+                            auto& pSTKFieldRef = this->pRef().stkFieldRef();
+                            auto& sidePSTKFieldRef =
+                                this->pRef().sideFieldRef().stkFieldRef();
+
+                            // get more required fields
+                            const auto& reversalFlowFlagSTKFieldRef =
+                                URef().reversalFlagRef().stkFieldRef();
+                            const auto& coordsSTKFieldRef =
+                                *metaData.get_field<scalar>(
+                                    stk::topology::NODE_RANK,
+                                    this->getCoordinatesID_(domain));
+
+                            const bool isPShifted = this->pRef().isShifted();
+
+                            // nodal fields to gather
+                            std::vector<scalar> ws_p;
+                            std::vector<scalar> ws_coordinates;
+
+                            // master element
+                            std::vector<scalar> ws_face_shape_function;
+                            std::vector<scalar>
+                                ws_coordinate_face_shape_function;
+
+                            // ip values
+                            std::vector<scalar> coordBip(SPATIAL_DIM);
+
+                            // pointers for fast access
+                            scalar* p_coordBip = &coordBip[0];
+
+                            // define some common selectors
+                            stk::mesh::Selector selAllSides =
+                                metaData.universal_part() &
+                                stk::mesh::selectUnion(boundary->parts());
+
+                            // define vector of parent topos; should
+                            // always be UNITY in size
+                            std::vector<stk::topology> parentTopo;
+
+                            // setup for buckets; union parts and
+                            // ask for universal part
+                            stk::mesh::BucketVector const& sideBuckets =
+                                bulkData.get_buckets(metaData.side_rank(),
+                                                     selAllSides);
+
+                            for (stk::mesh::BucketVector::const_iterator ib =
+                                     sideBuckets.begin();
+                                 ib != sideBuckets.end();
+                                 ++ib)
+                            {
+                                stk::mesh::Bucket& sideBucket = **ib;
+
+                                // face master element
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        sideBucket.topology());
+                                const label nodesPerSide =
+                                    meFC->nodesPerElement_;
+                                const label numScsBip = meFC->numIntPoints_;
+                                const label* ipNodeMap = meFC->ipNodeMap();
+
+                                // algorithm related; element/face
+                                ws_p.resize(nodesPerSide);
+                                ws_coordinates.resize(nodesPerSide *
+                                                      SPATIAL_DIM);
+                                ws_face_shape_function.resize(numScsBip *
+                                                              nodesPerSide);
+                                ws_coordinate_face_shape_function.resize(
+                                    numScsBip * nodesPerSide);
+
+                                // pointers
+                                scalar* p_p = &ws_p[0];
+                                scalar* p_coordinates = &ws_coordinates[0];
+                                scalar* p_face_shape_function =
+                                    &ws_face_shape_function[0];
+                                scalar* p_coordinate_face_shape_function =
+                                    &ws_coordinate_face_shape_function[0];
+
+                                // shape functions; boundary
+                                if (isPShifted)
+                                {
+                                    meFC->shifted_shape_fcn(
+                                        &p_face_shape_function[0]);
+                                }
+                                else
+                                {
+                                    meFC->shape_fcn(&p_face_shape_function[0]);
+                                }
+
+                                // Always use trilinear (standard) shape
+                                // functions for coordinates
+                                meFC->shape_fcn(
+                                    &p_coordinate_face_shape_function[0]);
+
+                                const stk::mesh::Bucket::size_type
+                                    nSidesPerBucket = sideBucket.size();
+                                for (stk::mesh::Bucket::size_type iSide = 0;
+                                     iSide < nSidesPerBucket;
+                                     ++iSide)
+                                {
+                                    // get face
+                                    stk::mesh::Entity side = sideBucket[iSide];
+
+                                    //======================================
+                                    // gather nodal data off of face
+                                    //======================================
+                                    stk::mesh::Entity const* face_node_rels =
+                                        bulkData.begin_nodes(side);
+                                    for (label ni = 0; ni < nodesPerSide; ++ni)
+                                    {
+                                        stk::mesh::Entity node =
+                                            face_node_rels[ni];
+
+                                        // gather scalars
+                                        p_p[ni] = *stk::mesh::field_data(
+                                            pSTKFieldRef, node);
+
+                                        // gather vectors
+                                        const scalar* coords =
+                                            stk::mesh::field_data(
+                                                coordsSTKFieldRef, node);
+                                        const label offSet = ni * SPATIAL_DIM;
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            p_coordinates[offSet + j] =
+                                                coords[j];
+                                        }
+                                    }
+
+                                    // face data
+                                    const label* rfflag = stk::mesh::field_data(
+                                        reversalFlowFlagSTKFieldRef, side);
+                                    scalar* pbc = stk::mesh::field_data(
+                                        sidePSTKFieldRef, sideBucket, iSide);
+
+                                    // accumulate ip areas around node
+                                    for (label ip = 0; ip < numScsBip; ++ip)
+                                    {
+                                        if (rfflag[ip] == 1)
+                                        {
+                                            // slip-wall ... zero-order
+
+                                            pbc[ip] = 0.0;
+
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                pbc[ip] += r * p_p[ic];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // zero out vector quantities; form
+                                            // aMag
+                                            for (label j = 0; j < SPATIAL_DIM;
+                                                 ++j)
+                                            {
+                                                p_coordBip[j] = 0.0;
+                                            }
+
+                                            // interpolate to bip
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                const scalar r_coord =
+                                                    p_coordinate_face_shape_function
+                                                        [offSetSF_face + ic];
+
+                                                for (label j = 0;
+                                                     j < SPATIAL_DIM;
+                                                     ++j)
+                                                {
+                                                    p_coordBip[j] +=
+                                                        r_coord *
+                                                        p_coordinates
+                                                            [ic * SPATIAL_DIM +
+                                                             j];
+                                                }
+                                            }
+
+#if SPATIAL_DIM == 3
+                                            x = p_coordBip[0];
+                                            y = p_coordBip[1];
+                                            z = p_coordBip[2];
+#elif SPATIAL_DIM == 2
+                                            x = p_coordBip[0];
+                                            y = p_coordBip[1];
+#endif
+
+                                            scalar pValue = expression.value();
+
+                                            // copy from stored value
+                                            pbc[ip] = pValue;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // interpolate to side field
+                            pRef().nodeSideFieldRef().interpolate(
+                                pRef().sideFieldRef(),
+                                domain->index(),
+                                boundary->index());
+
+                            // translate to field
+                            if (correctedBoundaryNodeValues)
+                            {
+                                pRef().correctBoundaryNodes(domain->index(),
+                                                            boundary->index());
+                            }
+                        }
+                        break;
+
+                    case inputDataType::profileData:
+                        {
+                            errorMsg("profile data not provided yet");
+                        }
+                        break;
                 }
             }
             break;
 
-        case inputDataType::profileData:
+        case equationOfStateOption::idealGas:
             {
-                errorMsg("profile data not provided yet");
+                switch (data.type())
+                {
+                    case inputDataType::null:
+                        break;
+
+                    case inputDataType::constant:
+                    case inputDataType::timeTable:
+                        {
+                            scalar pValue =
+                                data.type() == inputDataType::constant
+                                    ? *data.value()
+                                    : data.interpolate(this->meshRef()
+                                                           .controlsRef()
+                                                           .time)[0];
+
+                            // reference pressure
+                            const scalar referencePressure =
+                                domain->referencePressure();
+
+                            // offset the input value
+                            pValue += referencePressure;
+
+                            // get fields
+                            auto& pSTKFieldRef = this->pRef().stkFieldRef();
+                            auto& sidePSTKFieldRef =
+                                this->pRef().sideFieldRef().stkFieldRef();
+
+                            // get more required fields
+                            const auto& reversalFlowFlagSTKFieldRef =
+                                URef().reversalFlagRef().stkFieldRef();
+
+                            // nodal fields to gather
+                            std::vector<scalar> ws_p;
+
+                            // master element
+                            std::vector<scalar> ws_face_shape_function;
+
+                            // define some common selectors
+                            stk::mesh::Selector selAllSides =
+                                metaData.universal_part() &
+                                stk::mesh::selectUnion(boundary->parts());
+
+                            const bool isShifted = this->pRef().isShifted();
+
+                            // define vector of parent topos; should
+                            // always be UNITY in size
+                            std::vector<stk::topology> parentTopo;
+
+                            // setup for buckets; union parts and
+                            // ask for universal part
+                            stk::mesh::BucketVector const& sideBuckets =
+                                bulkData.get_buckets(metaData.side_rank(),
+                                                     selAllSides);
+
+                            for (stk::mesh::BucketVector::const_iterator ib =
+                                     sideBuckets.begin();
+                                 ib != sideBuckets.end();
+                                 ++ib)
+                            {
+                                stk::mesh::Bucket& sideBucket = **ib;
+
+                                // face master element
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        sideBucket.topology());
+                                const label nodesPerSide =
+                                    meFC->nodesPerElement_;
+                                const label numScsBip = meFC->numIntPoints_;
+                                const label* ipNodeMap = meFC->ipNodeMap();
+
+                                // algorithm related; element/face
+                                ws_p.resize(nodesPerSide);
+                                ws_face_shape_function.resize(numScsBip *
+                                                              nodesPerSide);
+
+                                // pointers
+                                scalar* p_p = &ws_p[0];
+                                scalar* p_face_shape_function =
+                                    &ws_face_shape_function[0];
+
+                                // shape functions
+                                if (isShifted)
+                                {
+                                    meFC->shifted_shape_fcn(
+                                        &p_face_shape_function[0]);
+                                }
+                                else
+                                {
+                                    meFC->shape_fcn(&p_face_shape_function[0]);
+                                }
+
+                                const stk::mesh::Bucket::size_type
+                                    nSidesPerBucket = sideBucket.size();
+                                for (stk::mesh::Bucket::size_type iSide = 0;
+                                     iSide < nSidesPerBucket;
+                                     ++iSide)
+                                {
+                                    // get face
+                                    stk::mesh::Entity side = sideBucket[iSide];
+
+                                    //======================================
+                                    // gather nodal data off of face
+                                    //======================================
+                                    stk::mesh::Entity const* face_node_rels =
+                                        bulkData.begin_nodes(side);
+                                    for (label ni = 0; ni < nodesPerSide; ++ni)
+                                    {
+                                        stk::mesh::Entity node =
+                                            face_node_rels[ni];
+
+                                        // gather scalars
+                                        p_p[ni] = *stk::mesh::field_data(
+                                            pSTKFieldRef, node);
+                                    }
+
+                                    // face data
+                                    const label* rfflag = stk::mesh::field_data(
+                                        reversalFlowFlagSTKFieldRef, side);
+                                    scalar* pbc = stk::mesh::field_data(
+                                        sidePSTKFieldRef, sideBucket, iSide);
+
+                                    // accumulate ip areas around node
+                                    for (label ip = 0; ip < numScsBip; ++ip)
+                                    {
+                                        if (rfflag[ip] == 1)
+                                        {
+                                            // slip-wall ... zero-order
+
+                                            pbc[ip] = 0.0;
+
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                pbc[ip] += r * p_p[ic];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // copy from stored value
+                                            pbc[ip] = pValue;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // interpolate to side field
+                            pRef().nodeSideFieldRef().interpolate(
+                                pRef().sideFieldRef(),
+                                domain->index(),
+                                boundary->index());
+
+                            // translate to field
+                            if (correctedBoundaryNodeValues)
+                            {
+                                pRef().correctBoundaryNodes(domain->index(),
+                                                            boundary->index());
+                            }
+                        }
+                        break;
+
+                    case inputDataType::expression:
+                        {
+                            // reference pressure
+                            const scalar referencePressure =
+                                domain->referencePressure();
+
+                            typedef exprtk::symbol_table<scalar> symbol_table_t;
+                            typedef exprtk::expression<scalar> expression_t;
+                            typedef exprtk::parser<scalar> parser_t;
+
+                            symbol_table_t symbol_table;
+                            symbol_table.add_constants();
+
+                            // declare function vars
+                            scalar t, x, y, z;
+                            symbol_table.add_variable("t", t);
+                            symbol_table.add_variable("x", x);
+                            symbol_table.add_variable("y", y);
+                            symbol_table.add_variable("z", z);
+
+                            expression_t expression;
+                            expression.register_symbol_table(symbol_table);
+
+                            parser_t parser;
+
+                            if (!parser.compile(data.expression()[0],
+                                                expression))
+                            {
+                                errorMsg("Error in the expression "
+                                         "provided for " +
+                                         this->pRef().name());
+                            }
+
+                            // set time value
+                            t = this->meshRef().controlsRef().time;
+
+                            // this is always a constant value
+                            const scalar beta =
+                                *(bc.template data<1>("blend_factor").value());
+
+                            // get fields
+                            auto& pSTKFieldRef = this->pRef().stkFieldRef();
+                            auto& sidePSTKFieldRef =
+                                this->pRef().sideFieldRef().stkFieldRef();
+
+                            // get more required fields
+                            const auto& reversalFlowFlagSTKFieldRef =
+                                URef().reversalFlagRef().stkFieldRef();
+                            const auto& coordsSTKFieldRef =
+                                *metaData.get_field<scalar>(
+                                    stk::topology::NODE_RANK,
+                                    this->getCoordinatesID_(domain));
+
+                            const bool isPShifted = this->pRef().isShifted();
+
+                            // nodal fields to gather
+                            std::vector<scalar> ws_p;
+                            std::vector<scalar> ws_coordinates;
+
+                            // master element
+                            std::vector<scalar> ws_face_shape_function;
+                            std::vector<scalar>
+                                ws_coordinate_face_shape_function;
+
+                            // ip values
+                            std::vector<scalar> coordBip(SPATIAL_DIM);
+
+                            // pointers for fast access
+                            scalar* p_coordBip = &coordBip[0];
+
+                            // define some common selectors
+                            stk::mesh::Selector selAllSides =
+                                metaData.universal_part() &
+                                stk::mesh::selectUnion(boundary->parts());
+
+                            // define vector of parent topos; should
+                            // always be UNITY in size
+                            std::vector<stk::topology> parentTopo;
+
+                            // setup for buckets; union parts and
+                            // ask for universal part
+                            stk::mesh::BucketVector const& sideBuckets =
+                                bulkData.get_buckets(metaData.side_rank(),
+                                                     selAllSides);
+
+                            for (stk::mesh::BucketVector::const_iterator ib =
+                                     sideBuckets.begin();
+                                 ib != sideBuckets.end();
+                                 ++ib)
+                            {
+                                stk::mesh::Bucket& sideBucket = **ib;
+
+                                // face master element
+                                MasterElement* meFC = MasterElementRepo::
+                                    get_surface_master_element(
+                                        sideBucket.topology());
+                                const label nodesPerSide =
+                                    meFC->nodesPerElement_;
+                                const label numScsBip = meFC->numIntPoints_;
+                                const label* ipNodeMap = meFC->ipNodeMap();
+
+                                // algorithm related; element/face
+                                ws_p.resize(nodesPerSide);
+                                ws_coordinates.resize(nodesPerSide *
+                                                      SPATIAL_DIM);
+                                ws_face_shape_function.resize(numScsBip *
+                                                              nodesPerSide);
+                                ws_coordinate_face_shape_function.resize(
+                                    numScsBip * nodesPerSide);
+
+                                // pointers
+                                scalar* p_p = &ws_p[0];
+                                scalar* p_coordinates = &ws_coordinates[0];
+                                scalar* p_face_shape_function =
+                                    &ws_face_shape_function[0];
+                                scalar* p_coordinate_face_shape_function =
+                                    &ws_coordinate_face_shape_function[0];
+
+                                // shape functions; boundary
+                                if (isPShifted)
+                                {
+                                    meFC->shifted_shape_fcn(
+                                        &p_face_shape_function[0]);
+                                }
+                                else
+                                {
+                                    meFC->shape_fcn(&p_face_shape_function[0]);
+                                }
+
+                                // Always use trilinear (standard) shape
+                                // functions for coordinates
+                                meFC->shape_fcn(
+                                    &p_coordinate_face_shape_function[0]);
+
+                                const stk::mesh::Bucket::size_type
+                                    nSidesPerBucket = sideBucket.size();
+                                for (stk::mesh::Bucket::size_type iSide = 0;
+                                     iSide < nSidesPerBucket;
+                                     ++iSide)
+                                {
+                                    // get face
+                                    stk::mesh::Entity side = sideBucket[iSide];
+
+                                    //======================================
+                                    // gather nodal data off of face
+                                    //======================================
+                                    stk::mesh::Entity const* face_node_rels =
+                                        bulkData.begin_nodes(side);
+                                    for (label ni = 0; ni < nodesPerSide; ++ni)
+                                    {
+                                        stk::mesh::Entity node =
+                                            face_node_rels[ni];
+
+                                        // gather scalars
+                                        p_p[ni] = *stk::mesh::field_data(
+                                            pSTKFieldRef, node);
+
+                                        // gather vectors
+                                        const scalar* coords =
+                                            stk::mesh::field_data(
+                                                coordsSTKFieldRef, node);
+                                        const label offSet = ni * SPATIAL_DIM;
+                                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                                        {
+                                            p_coordinates[offSet + j] =
+                                                coords[j];
+                                        }
+                                    }
+
+                                    // face data
+                                    const label* rfflag = stk::mesh::field_data(
+                                        reversalFlowFlagSTKFieldRef, side);
+                                    scalar* pbc = stk::mesh::field_data(
+                                        sidePSTKFieldRef, sideBucket, iSide);
+
+                                    // accumulate ip areas around node
+                                    for (label ip = 0; ip < numScsBip; ++ip)
+                                    {
+                                        if (rfflag[ip] == 1)
+                                        {
+                                            // slip-wall ... zero-order
+
+                                            pbc[ip] = 0.0;
+
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                pbc[ip] += r * p_p[ic];
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // zero out vector quantities; form
+                                            // aMag
+                                            for (label j = 0; j < SPATIAL_DIM;
+                                                 ++j)
+                                            {
+                                                p_coordBip[j] = 0.0;
+                                            }
+
+                                            // interpolate to bip
+                                            const label offSetSF_face =
+                                                ip * nodesPerSide;
+                                            for (label ic = 0;
+                                                 ic < nodesPerSide;
+                                                 ++ic)
+                                            {
+                                                const scalar r =
+                                                    p_face_shape_function
+                                                        [offSetSF_face + ic];
+                                                const scalar r_coord =
+                                                    p_coordinate_face_shape_function
+                                                        [offSetSF_face + ic];
+
+                                                for (label j = 0;
+                                                     j < SPATIAL_DIM;
+                                                     ++j)
+                                                {
+                                                    p_coordBip[j] +=
+                                                        r_coord *
+                                                        p_coordinates
+                                                            [ic * SPATIAL_DIM +
+                                                             j];
+                                                }
+                                            }
+
+#if SPATIAL_DIM == 3
+                                            x = p_coordBip[0];
+                                            y = p_coordBip[1];
+                                            z = p_coordBip[2];
+#elif SPATIAL_DIM == 2
+                                            x = p_coordBip[0];
+                                            y = p_coordBip[1];
+#endif
+
+                                            scalar pValue = expression.value();
+
+                                            // copy from stored value
+                                            pbc[ip] =
+                                                pValue + referencePressure;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // interpolate to side field
+                            pRef().nodeSideFieldRef().interpolate(
+                                pRef().sideFieldRef(),
+                                domain->index(),
+                                boundary->index());
+
+                            // translate to field
+                            if (correctedBoundaryNodeValues)
+                            {
+                                pRef().correctBoundaryNodes(domain->index(),
+                                                            boundary->index());
+                            }
+                        }
+                        break;
+
+                    case inputDataType::profileData:
+                        {
+                            errorMsg("profile data not provided yet");
+                        }
+                        break;
+                }
             }
             break;
     }
