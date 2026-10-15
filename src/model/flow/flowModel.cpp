@@ -26365,7 +26365,9 @@ void flowModel::updatePressureBoundarySideFieldOpening_(
                                         {
                                             // outflow: p = p_spec
 
-                                            pbc[ip] = openValue;
+                                            // relative pressure required here
+                                            pbc[ip] =
+                                                openValue - referencePressure;
                                         }
                                         else
                                         {
@@ -26458,8 +26460,7 @@ void flowModel::updatePressureBoundarySideFieldOpening_(
                                             // relative pressure required here
                                             pbc[ip] =
                                                 std::min(
-                                                    (openValue +
-                                                     referencePressure) *
+                                                    openValue *
                                                         std::pow(
                                                             1.0 + (gammaBip -
                                                                    1.0) /
@@ -26470,8 +26471,7 @@ void flowModel::updatePressureBoundarySideFieldOpening_(
                                                             -gammaBip /
                                                                 (gammaBip -
                                                                  1.0)),
-                                                    (openValue +
-                                                     referencePressure)) -
+                                                    openValue) -
                                                 referencePressure;
                                         }
                                     }
@@ -26730,6 +26730,7 @@ void flowModel::updatePressureBoundarySideFieldOpening_(
                                             scalar openValue =
                                                 expression.value();
 
+                                            // relative pressure required here
                                             pbc[ip] = openValue;
                                         }
                                         else
@@ -26836,11 +26837,14 @@ void flowModel::updatePressureBoundarySideFieldOpening_(
                                             y = p_coordBip[1];
 #endif
 
-                                            // absolute total pressure
+                                            // absolute total pressure only for
+                                            // properly calculation of static
+                                            // pressure
                                             scalar openValue =
                                                 referencePressure +
                                                 expression.value();
 
+                                            // relative pressure required here
                                             pbc[ip] =
                                                 std::min(
                                                     openValue *
