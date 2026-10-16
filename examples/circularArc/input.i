@@ -17,7 +17,7 @@ simulation:
             reference_pressure: 101325
           fluid_models:
             heat_transfer:
-                option: thermal_energy
+                option: total_energy
           boundaries:
           - name: inlet
             type: inlet
