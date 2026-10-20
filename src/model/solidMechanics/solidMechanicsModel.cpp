@@ -842,8 +842,10 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
                     aMag0 += axj * axj;
                 }
 
-                // degenerate (zero-area) ip: carries no force
-                if (aMag0 < SMALL)
+                // degenerate (zero-area) ip: carries no force. aMag0 is the
+                // squared area: compare with VSMALL, not SMALL, or every ip
+                // below ~1.5e-8 m^2 (sub-mm faces) loses its traction
+                if (aMag0 < VSMALL)
                 {
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
@@ -1366,6 +1368,7 @@ void solidMechanicsModel::updateStressAndStrain_(
     // FEM: post-processed stress/strain must match the solve's model
     bool useNeoHookeanStress = false;
     bool useMooneyRivlinStress = false;
+    bool useSaintVenantKirchhoffStress = false;
 
     // c1/c2/kappa are per-domain constants, fetched once
     scalar mooneyC1 = 0.0;
@@ -1380,6 +1383,10 @@ void solidMechanicsModel::updateStressAndStrain_(
         // same for the Flory-split Mooney-Rivlin model
         useMooneyRivlinStress = (domain->solidMechanics_.option_ ==
                                  solidMechanicsOption::modifiedMooneyRivlin);
+
+        useSaintVenantKirchhoffStress =
+            (domain->solidMechanics_.option_ ==
+             solidMechanicsOption::saintVenantKirchhoff);
 
         if (useMooneyRivlinStress)
         {
@@ -1688,6 +1695,86 @@ void solidMechanicsModel::updateStressAndStrain_(
                             }
                         }
                     }
+                    else if (useSaintVenantKirchhoffStress)
+                    {
+                        // Deformation gradient: F = I + grad_X(u)
+                        scalar F[SPATIAL_DIM * SPATIAL_DIM];
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                                F[i * SPATIAL_DIM + j] =
+                                    delta_ij + p_grad_u[i * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // J = det(F)
+#if SPATIAL_DIM == 2
+                        const scalar J = F[0] * F[3] - F[1] * F[2];
+#elif SPATIAL_DIM == 3
+                        const scalar J = F[0] * (F[4] * F[8] - F[5] * F[7]) -
+                                         F[1] * (F[3] * F[8] - F[5] * F[6]) +
+                                         F[2] * (F[3] * F[7] - F[4] * F[6]);
+#endif
+
+                        // Green-Lagrange E = 0.5(F^T F - I)
+                        scalar Egl[SPATIAL_DIM * SPATIAL_DIM];
+                        scalar trE = 0.0;
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                                scalar c_ij = 0.0;
+                                for (label kk = 0; kk < SPATIAL_DIM; ++kk)
+                                {
+                                    c_ij += F[kk * SPATIAL_DIM + i] *
+                                            F[kk * SPATIAL_DIM + j];
+                                }
+                                Egl[i * SPATIAL_DIM + j] =
+                                    0.5 * (c_ij - delta_ij);
+                            }
+                            trE += Egl[i * SPATIAL_DIM + i];
+                        }
+
+                        // 2nd PK S = lambda tr(E) I + 2 mu E
+                        scalar S[SPATIAL_DIM * SPATIAL_DIM];
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar delta_ij = (i == j) ? 1.0 : 0.0;
+                                S[i * SPATIAL_DIM + j] =
+                                    lambda * trE * delta_ij +
+                                    2.0 * mu * Egl[i * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        // Cauchy sigma = (1/J) F S F^T
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                scalar sigma_ij = 0.0;
+                                for (label k = 0; k < SPATIAL_DIM; ++k)
+                                {
+                                    for (label l = 0; l < SPATIAL_DIM; ++l)
+                                    {
+                                        sigma_ij += F[i * SPATIAL_DIM + k] *
+                                                    S[k * SPATIAL_DIM + l] *
+                                                    F[j * SPATIAL_DIM + l];
+                                    }
+                                }
+
+                                p_stress[i * SPATIAL_DIM + j] +=
+                                    sigma_ij / J / numScvIp;
+
+                                p_strain[i * SPATIAL_DIM + j] +=
+                                    Egl[i * SPATIAL_DIM + j] / numScvIp;
+                            }
+                        }
+                    }
                     else
                     {
                         // infinitesimal strain: eps = 0.5*(grad u + grad u^T)
@@ -1705,7 +1792,8 @@ void solidMechanicsModel::updateStressAndStrain_(
                     }
                 }
 
-                if (!useNeoHookeanStress && !useMooneyRivlinStress)
+                if (!useNeoHookeanStress && !useMooneyRivlinStress &&
+                    !useSaintVenantKirchhoffStress)
                 {
                     // linear elastic: sigma = lambda*tr(eps)*I + 2*mu*eps
                     scalar trace_strain = 0.0;

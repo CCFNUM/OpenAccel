@@ -136,6 +136,11 @@ private:
     std::unique_ptr<Assembler> assembler_;
 
     std::shared_ptr<std::ofstream> robinAlphaStream_;
+
+    // timestep and FSI iteration of the last Robin wall flux reset (once per
+    // FSI iteration, also with segregated_flow sub-iterations)
+    label rnWallFluxResetStep_ = -1;
+    label rnWallFluxResetIter_ = -1;
 };
 
 } /* namespace accel */

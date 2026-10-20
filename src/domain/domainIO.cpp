@@ -1409,10 +1409,13 @@ void domain::read_()
                 }
             }
 
-            // linear_elastic and neo_hookean need E and nu
+            // linear_elastic, neo_hookean and saint_venant_kirchhoff need E
+            // and nu
             if (solidMechanics_.option_ ==
                     solidMechanicsOption::linearElastic ||
-                solidMechanics_.option_ == solidMechanicsOption::neoHookean)
+                solidMechanics_.option_ == solidMechanicsOption::neoHookean ||
+                solidMechanics_.option_ ==
+                    solidMechanicsOption::saintVenantKirchhoff)
             {
                 for (label iMat = 0;
                      iMat < static_cast<label>(materialVector_.size());

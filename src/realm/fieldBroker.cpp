@@ -630,6 +630,11 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
                                     bc.setType(
                                         boundaryConditionType::zeroGradient);
                                 }
+                                else if (option == "windkessel_pressure")
+                                {
+                                    bc.setType(
+                                        boundaryConditionType::zeroGradient);
+                                }
                                 else if (option == "mass_flow_rate")
                                 {
                                     bc.setType(
@@ -1360,6 +1365,29 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
                                     bc.query<1>(massAndMomentumNode,
                                                 "blend_factor",
                                                 "pressure_profile_blend");
+                                    pRef().registerSideFields(domain->index(),
+                                                              iBoundary);
+                                }
+                                else if (option == "windkessel_pressure")
+                                {
+                                    // three-element Windkessel: distal
+                                    // resistance R, characteristic
+                                    // resistance Rch [Pa s/m^3] and
+                                    // compliance C [m^3/Pa]
+                                    bc.setType(boundaryConditionType::
+                                                   windkesselPressure);
+                                    bc.queryConstantValue<1>(
+                                        massAndMomentumNode,
+                                        "resistance",
+                                        "resistance");
+                                    bc.queryConstantValue<1>(
+                                        massAndMomentumNode,
+                                        "characteristic_resistance",
+                                        "characteristic_resistance");
+                                    bc.queryConstantValue<1>(
+                                        massAndMomentumNode,
+                                        "compliance",
+                                        "compliance");
                                     pRef().registerSideFields(domain->index(),
                                                               iBoundary);
                                 }

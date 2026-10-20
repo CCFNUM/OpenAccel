@@ -25,6 +25,10 @@ public:
 
     void update();
 
+    // FSI interface residual of the solid predictor (iteration 0): enters the
+    // timestep maxima of the dual norm (solids4foam updateResidual)
+    void updatePredictor();
+
     // false: convergence falls back to the equation residuals
     bool hasCriteria() const;
 

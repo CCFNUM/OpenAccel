@@ -320,6 +320,9 @@ void simulation::runTransient()
         // pre work: update time states
         preWork();
 
+        // FSI: solid predictor with the previous-timestep fluid load
+        predictSolidDisplacement_();
+
         for (controlsRef().iter = 1; controlsRef().iter <= maxCoeffIterations;
              controlsRef().iter++)
         {
@@ -445,56 +448,113 @@ void simulation::assembleAndSolveSystems()
             }
         }
 
-        if (messager::master() && equation->subIters() > 1)
+        solveEquation_(*equation);
+    }
+}
+
+void simulation::solveEquation_(equation& eq)
+{
+    if (messager::master() && eq.subIters() > 1)
+    {
+        std::cout << std::endl << "Sub-iterating " + eq.name() << ":\n";
+    }
+
+    for (label subIter = 1; subIter <= eq.subIters(); subIter++)
+    {
+        eq.setCurrentSubIter(subIter);
+
+        // only print sub-iter if it is active (> 1)
+        if (messager::master() && eq.subIters() > 1)
         {
-            std::cout << std::endl
-                      << "Sub-iterating " + equation->name() << ":\n";
+            std::cout << std::endl << " sub-iter: " << subIter << "\n";
         }
 
-        for (label subIter = 1; subIter <= equation->subIters(); subIter++)
+        // 1.)
+        if (messager::master() && verbose_ > 1)
         {
-            equation->setCurrentSubIter(subIter);
-
-            // only print sub-iter if it is active (> 1)
-            if (messager::master() && equation->subIters() > 1)
-            {
-                std::cout << std::endl << " sub-iter: " << subIter << "\n";
-            }
-
-            // 1.)
-            if (messager::master() && verbose_ > 1)
-            {
-                std::cout << "\t pre-solve equation: " << equation->name()
-                          << "\n";
-            }
-            equation->preSolve();
-
-            // 2.)
-            if (messager::master() && verbose_ > 1)
-            {
-                std::cout << "\t solve equation: " << equation->name() << "\n";
-            }
-            // FIXME: This check may not apply
-            // for segregated equation queues(?):
-            // if (!equation->isConverged()) {
-            // equation->solve();
-            // }
-            equation->solve(); // conservative choice
-
-            // 3.)
-            if (messager::master() && verbose_ > 1)
-            {
-                std::cout << "\t post-solve equation: " << equation->name()
-                          << "\n";
-            }
-            equation->postSolve();
-
-            // if converged .. break sub-iter loop
-            if (equation->isConverged())
-            {
-                break;
-            }
+            std::cout << "\t pre-solve equation: " << eq.name() << "\n";
         }
+        eq.preSolve();
+
+        // 2.)
+        if (messager::master() && verbose_ > 1)
+        {
+            std::cout << "\t solve equation: " << eq.name() << "\n";
+        }
+        // FIXME: This check may not apply
+        // for segregated equation queues(?):
+        // if (!eq.isConverged()) {
+        // eq.solve();
+        // }
+        eq.solve(); // conservative choice
+
+        // 3.)
+        if (messager::master() && verbose_ > 1)
+        {
+            std::cout << "\t post-solve equation: " << eq.name() << "\n";
+        }
+        eq.postSolve();
+
+        // if converged .. break sub-iter loop
+        if (eq.isConverged())
+        {
+            break;
+        }
+    }
+}
+
+void simulation::predictSolidDisplacement_()
+{
+    bool predict = false;
+    for (const interface* interf : meshRef().interfaceVector())
+    {
+        if (interf->isFluidSolidType() && interf->predictSolidDisplacement())
+        {
+            predict = true;
+        }
+    }
+
+    // the solid is frozen until all interfaces are coupled
+    if (!predict || !allFsiCoupled())
+    {
+        return;
+    }
+
+    if (messager::master())
+    {
+        std::cout << std::endl
+                  << "Solid displacement predictor (previous-timestep fluid "
+                  << "load)" << std::endl
+                  << std::endl;
+    }
+
+    // iteration 0: the predictor is the first iterate of the FSI sequence
+    // (relaxation, convergence acceleration and FSI residual)
+    controlsRef().iter = 0;
+
+    for (auto& equation : equationVector_)
+    {
+        if (equation->getID() == equationID::solidDisplacement)
+        {
+            solveEquation_(*equation);
+        }
+    }
+
+    if (fsiConvergence* fsiConv = getFsiConvergence_())
+    {
+        fsiConv->updatePredictor();
+    }
+
+    // fluid mesh to the predicted interface position (frozen mesh motion is
+    // updated once in preWork())
+    if ((this->meshRef().anyZoneMeshDeforming() ||
+         this->meshRef().anyZoneMeshTransforming()) &&
+        !controlsRef()
+             .solverRef()
+             .solverControl_.advancedOptions_.equationControls_.meshMotion_
+             .freezePerTimestep_)
+    {
+        meshMotionPtr_->update();
     }
 }
 

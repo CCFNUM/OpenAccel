@@ -1001,6 +1001,7 @@ void flowModel::initializePressure(const std::shared_ptr<domain> domain)
                         {
                             case boundaryConditionType::staticPressure:
                             case boundaryConditionType::averageStaticPressure:
+                            case boundaryConditionType::windkesselPressure:
                             case boundaryConditionType::totalPressure:
                                 {
                                     // get side fields
@@ -1229,6 +1230,7 @@ void flowModel::initializePressure(const std::shared_ptr<domain> domain)
                     {
                         case boundaryConditionType::staticPressure:
                         case boundaryConditionType::averageStaticPressure:
+                        case boundaryConditionType::windkesselPressure:
                         case boundaryConditionType::totalPressure:
                             {
                                 // get side fields
@@ -2126,6 +2128,7 @@ void flowModel::updatePressure(const std::shared_ptr<domain> domain)
                                 break;
 
                             case boundaryConditionType::averageStaticPressure:
+                            case boundaryConditionType::windkesselPressure:
                             case boundaryConditionType::totalPressure:
                                 {
                                     const auto& mesh = this->meshRef();
@@ -2435,6 +2438,7 @@ void flowModel::updatePressure(const std::shared_ptr<domain> domain)
                             break;
 
                         case boundaryConditionType::averageStaticPressure:
+                        case boundaryConditionType::windkesselPressure:
                         case boundaryConditionType::totalPressure:
                             {
                                 const auto& mesh = this->meshRef();
@@ -5672,6 +5676,7 @@ void flowModel::updateMassFlowRateBoundaryField_(
                 {
                     case boundaryConditionType::staticPressure:
                     case boundaryConditionType::averageStaticPressure:
+                    case boundaryConditionType::windkesselPressure:
                         {
                             switch (UBCType)
                             {
@@ -6972,6 +6977,7 @@ void flowModel::updateMassFlowRateBoundaryField_(
                 {
                     case boundaryConditionType::staticPressure:
                     case boundaryConditionType::averageStaticPressure:
+                    case boundaryConditionType::windkesselPressure:
                         {
                             switch (UBCType)
                             {
@@ -15404,6 +15410,7 @@ void flowModel::updateFlowReversalFlag_(const std::shared_ptr<domain> domain,
                     {
                         case boundaryConditionType::staticPressure:
                         case boundaryConditionType::averageStaticPressure:
+                        case boundaryConditionType::windkesselPressure:
                             {
                                 // common
                                 stk::mesh::BulkData& bulkData =
@@ -17046,6 +17053,13 @@ void flowModel::updatePressureSideFields_(const std::shared_ptr<domain> domain)
                         case boundaryConditionType::averageStaticPressure:
                             {
                                 updatePressureBoundarySideFieldOutletAverageStaticPressure_(
+                                    domain, boundary);
+                            }
+                            break;
+
+                        case boundaryConditionType::windkesselPressure:
+                            {
+                                updatePressureBoundarySideFieldWindkessel_(
                                     domain, boundary);
                             }
                             break;
@@ -21715,6 +21729,252 @@ void flowModel::updatePressureBoundarySideFieldInletStaticPressure_(
                 }
             }
             break;
+    }
+}
+
+void flowModel::updatePressureBoundarySideFieldWindkessel_(
+    const std::shared_ptr<domain> domain,
+    const boundary* boundary)
+{
+    // Three-element Windkessel outlet (solids4foam windkesselPressure):
+    //
+    //   p + C R dp/dt = (R + Rch) Q + C R Rch dQ/dt
+    //
+    // R: distal resistance, Rch: characteristic resistance, C: compliance,
+    // Q: volumetric outflow rate through the boundary at the current
+    // iteration. Backward Euler on the first time step, second-order backward
+    // differences afterwards. The resulting pressure is imposed uniformly as a
+    // static pressure.
+
+    // get boundary condition data (constant values)
+    auto& bc = pRef().boundaryConditionRef(domain->index(), boundary->index());
+    const scalar R = *(bc.data<1>("resistance").value());
+    const scalar Rch = *(bc.data<1>("characteristic_resistance").value());
+    const scalar C = *(bc.data<1>("compliance").value());
+
+    // boolean to translate boundary values to field
+    bool correctedBoundaryNodeValues = pRef().correctedBoundaryNodeValues();
+
+    // common
+    stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+
+    // get fields
+    const auto& mDotSideSTKFieldRef = mDotRef().sideFieldRef().stkFieldRef();
+    const auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
+    auto& sidePSTKFieldRef = this->pRef().sideFieldRef().stkFieldRef();
+
+    // volumetric flow rate and area-averaged pressure over the boundary
+    scalar Qn = 0.0;
+    scalar pBoundary = 0.0;
+    scalar area = 0.0;
+    {
+        // Get geometric fields
+        STKScalarField& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+            metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+
+        // nodal fields to gather
+        std::vector<scalar> ws_rho;
+
+        // master element
+        std::vector<scalar> ws_face_shape_function;
+
+        // define some common selectors
+        stk::mesh::Selector selOwnedSides =
+            metaData.locally_owned_part() &
+            stk::mesh::selectUnion(boundary->parts());
+
+        stk::mesh::BucketVector const& sideBuckets =
+            bulkData.get_buckets(metaData.side_rank(), selOwnedSides);
+
+        for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+             ib != sideBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& sideBucket = **ib;
+
+            // face master element
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
+            const label nodesPerSide = meFC->nodesPerElement_;
+            const label numScsBip = meFC->numIntPoints_;
+
+            // algorithm related; element/face
+            ws_rho.resize(nodesPerSide);
+            ws_face_shape_function.resize(numScsBip * nodesPerSide);
+
+            // pointers
+            scalar* p_rho = &ws_rho[0];
+            scalar* p_face_shape_function = &ws_face_shape_function[0];
+
+            // shape functions
+            meFC->shape_fcn(&p_face_shape_function[0]);
+
+            const stk::mesh::Bucket::size_type nSidesPerBucket =
+                sideBucket.size();
+            for (stk::mesh::Bucket::size_type iSide = 0;
+                 iSide < nSidesPerBucket;
+                 ++iSide)
+            {
+                // get face
+                stk::mesh::Entity side = sideBucket[iSide];
+
+                //======================================
+                // gather nodal data off of face
+                //======================================
+                stk::mesh::Entity const* face_node_rels =
+                    bulkData.begin_nodes(side);
+                for (label ni = 0; ni < nodesPerSide; ++ni)
+                {
+                    stk::mesh::Entity node = face_node_rels[ni];
+
+                    // gather scalars
+                    p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                }
+
+                // face data
+                const scalar* areaVec = stk::mesh::field_data(
+                    exposedAreaVecSTKFieldRef, sideBucket, iSide);
+                const scalar* mDot =
+                    stk::mesh::field_data(mDotSideSTKFieldRef, side);
+                const scalar* pbc =
+                    stk::mesh::field_data(sidePSTKFieldRef, side);
+
+                for (label ip = 0; ip < numScsBip; ++ip)
+                {
+                    const label offSetAreaVec = ip * SPATIAL_DIM;
+                    const label offSetSF_face = ip * nodesPerSide;
+
+                    scalar aMag = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar axj = areaVec[offSetAreaVec + j];
+                        aMag += axj * axj;
+                    }
+                    aMag = std::sqrt(aMag);
+
+                    // interpolate to bip
+                    scalar rhoIp = 0.0;
+                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                    {
+                        rhoIp += p_face_shape_function[offSetSF_face + ic] *
+                                 p_rho[ic];
+                    }
+
+                    // outflow is positive
+                    Qn += mDot[ip] / rhoIp;
+                    pBoundary += pbc[ip] * aMag;
+                    area += aMag;
+                }
+            }
+        }
+
+        // sync
+        if (messager::parallel())
+        {
+            messager::sumReduce(Qn);
+            messager::sumReduce(pBoundary);
+            messager::sumReduce(area);
+        }
+
+        // normalize
+        pBoundary /= area;
+    }
+
+    // shift the history at the first update of a new time step: the boundary
+    // pressure and flow rate are still those of the end of the previous step
+    auto& state = windkesselStates_[std::make_pair(
+        static_cast<label>(domain->index()),
+        static_cast<label>(boundary->index()))];
+    const label timeStepCount = controlsRef().getTimeStepCount();
+    if (state.timeStepCount != timeStepCount)
+    {
+        state.timeStepCount = timeStepCount;
+        state.nTimeSteps++;
+
+        state.poo = state.po;
+        state.po = pBoundary;
+
+        state.Qoo = state.Qo;
+        state.Qo = Qn;
+
+        if (messager::master() && state.nTimeSteps > 1)
+        {
+            std::cout << "Windkessel [" << boundary->name()
+                      << "]: Q = " << std::scientific << std::setprecision(4)
+                      << state.Qo << " m^3/s, p = " << state.po << " Pa"
+                      << std::endl;
+        }
+    }
+
+    const scalar dt = controlsRef().getTimestep();
+    const scalar& po = state.po;
+    const scalar& poo = state.poo;
+    const scalar& Qo = state.Qo;
+    const scalar& Qoo = state.Qoo;
+
+    scalar pn = po;
+    if (state.nTimeSteps > 1)
+    {
+        pn = (3.0 * Qn + Qoo - 4.0 * Qo) * C * R * Rch / (2.0 * dt) +
+             (Rch + R) * Qn - (poo - 4.0 * po) * C * R / (2.0 * dt);
+
+        pn /= 1.0 + 3.0 * C * R / (2.0 * dt);
+    }
+    else
+    {
+        pn = (Qn - Qo) * C * R * Rch / dt + (Rch + R) * Qn + po * C * R / dt;
+
+        pn /= 1.0 + C * R / dt;
+    }
+
+    state.pn = pn;
+
+    // apply the uniform pressure to the boundary ips
+    {
+        stk::mesh::Selector selAllSides =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(boundary->parts());
+
+        stk::mesh::BucketVector const& sideBuckets =
+            bulkData.get_buckets(metaData.side_rank(), selAllSides);
+
+        for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+             ib != sideBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& sideBucket = **ib;
+
+            // face master element
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
+            const label numScsBip = meFC->numIntPoints_;
+
+            const stk::mesh::Bucket::size_type nSidesPerBucket =
+                sideBucket.size();
+            for (stk::mesh::Bucket::size_type iSide = 0;
+                 iSide < nSidesPerBucket;
+                 ++iSide)
+            {
+                scalar* pbc =
+                    stk::mesh::field_data(sidePSTKFieldRef, sideBucket, iSide);
+
+                for (label ip = 0; ip < numScsBip; ++ip)
+                {
+                    pbc[ip] = pn;
+                }
+            }
+        }
+    }
+
+    // interpolate to side field
+    pRef().nodeSideFieldRef().interpolate(
+        pRef().sideFieldRef(), domain->index(), boundary->index());
+
+    // translate to field
+    if (correctedBoundaryNodeValues)
+    {
+        pRef().correctBoundaryNodes(domain->index(), boundary->index());
     }
 }
 

@@ -126,7 +126,9 @@ std::unordered_map<std::string, solidMechanicsOption> solidMechanicsOptionMap{
     // deprecated alias (warned in domain::read_())
     {"simplified_new_hookean", solidMechanicsOption::neoHookean},
     {"mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin},
-    {"modified_mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin}};
+    {"modified_mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin},
+    {"saint_venant_kirchhoff", solidMechanicsOption::saintVenantKirchhoff},
+    {"st_venant_kirchhoff", solidMechanicsOption::saintVenantKirchhoff}};
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s)
 {
@@ -698,6 +700,7 @@ std::unordered_map<std::string, boundaryConditionType> boundaryConditionTypeMap{
     {"mass_flow_rate", boundaryConditionType::massFlowRate},
     {"static_pressure", boundaryConditionType::staticPressure},
     {"average_static_pressure", boundaryConditionType::averageStaticPressure},
+    {"windkessel_pressure", boundaryConditionType::windkesselPressure},
     {"total_pressure", boundaryConditionType::totalPressure},
     {"static_temperature", boundaryConditionType::staticTemperature},
     {"total_temperature", boundaryConditionType::totalTemperature},

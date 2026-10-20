@@ -10,6 +10,7 @@
 #include "linear_elasticity.hpp"
 #include "sfem_GeneratedModifiedMooneyRivlin_c_abi.hpp"
 #include "sfem_GeneratedNeoHookeanOgden_element_api.hpp"
+#include "sfem_GeneratedSaintVenantKirchhoff_element_api.hpp"
 #endif /* HAS_SFEM */
 
 namespace accel
@@ -207,6 +208,91 @@ void assembleSfemNeoHookeanElement(
         rhs[row] = -gradient[row];
 }
 
+// Saint Venant-Kirchhoff: psi = lambda/2 tr(E)^2 + mu E:E, E = (F^T F - I)/2
+void assembleSfemSaintVenantKirchhoffElement(
+    const smesh::ElemType sfemElementType,
+    const label nodesPerElement,
+    const scalar lambda,
+    const scalar mu,
+    const std::vector<std::vector<scalar>>& coordinates,
+    const std::vector<scalar>& displacement,
+    std::vector<scalar>& rhs,
+    std::vector<scalar>& lhs)
+{
+    const label dofsPerElement = nodesPerElement * SPATIAL_DIM;
+    const label lhsSize = dofsPerElement * dofsPerElement;
+
+    std::vector<scalar> gradient(dofsPerElement, 0.0);
+    std::vector<scalar> hessian(lhsSize, 0.0);
+    std::vector<const scalar*> coordinateStreams(dofsPerElement);
+    std::vector<const scalar*> displacementStreams(dofsPerElement);
+    std::vector<scalar*> gradientStreams(dofsPerElement);
+    std::vector<scalar*> hessianStreams(lhsSize);
+
+    // SFEM kernels take SoA input; pass a single-element batch
+    for (label node = 0; node < nodesPerElement; ++node)
+    {
+        for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+        {
+            const label dof = node * SPATIAL_DIM + dim;
+            coordinateStreams[dof] = &coordinates[dim][node];
+            displacementStreams[dof] = &displacement[dof];
+            gradientStreams[dof] = &gradient[dof];
+        }
+    }
+
+    for (label entry = 0; entry < lhsSize; ++entry)
+        hessianStreams[entry] = &hessian[entry];
+
+#if SPATIAL_DIM == 2
+    const int gradientStatus =
+        sfem::codegen::saint_venant_kirchhoff_gradient_2d_esoa<scalar, 1>(
+            sfemElementType,
+            1,
+            coordinateStreams.data(),
+            lambda,
+            mu,
+            displacementStreams.data(),
+            gradientStreams.data());
+    const int hessianStatus =
+        sfem::codegen::saint_venant_kirchhoff_hessian_2d_ecoords_soa<scalar, 1>(
+            sfemElementType,
+            1,
+            coordinateStreams.data(),
+            lambda,
+            mu,
+            displacementStreams.data(),
+            hessianStreams.data());
+#else
+    const int gradientStatus =
+        sfem::codegen::saint_venant_kirchhoff_gradient_3d_esoa<scalar, 1>(
+            sfemElementType,
+            1,
+            coordinateStreams.data(),
+            lambda,
+            mu,
+            displacementStreams.data(),
+            gradientStreams.data());
+    const int hessianStatus =
+        sfem::codegen::saint_venant_kirchhoff_hessian_3d_ecoords_soa<scalar, 1>(
+            sfemElementType,
+            1,
+            coordinateStreams.data(),
+            lambda,
+            mu,
+            displacementStreams.data(),
+            hessianStreams.data());
+#endif
+
+    STK_ThrowRequireMsg(gradientStatus == SFEM_SUCCESS &&
+                            hessianStatus == SFEM_SUCCESS,
+                        "sfem Saint Venant-Kirchhoff elemental kernel failed");
+
+    lhs = std::move(hessian);
+    for (label row = 0; row < dofsPerElement; ++row)
+        rhs[row] = -gradient[row];
+}
+
 #if SPATIAL_DIM == 2
 // SFEM MR has only a mesh-level BSR ABI: wrap one element as a mesh
 void assembleSfemModifiedMooneyRivlinElement(
@@ -321,6 +407,11 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
 {
     if (field_broker_->controlsRef().isCvfemSolidMechanics())
     {
+        STK_ThrowRequireMsg(domain->solidMechanics_.option_ !=
+                                solidMechanicsOption::saintVenantKirchhoff,
+                            "saint_venant_kirchhoff is only available with "
+                            "solid_assembler_type: sfem");
+
         const auto& mesh = field_broker_->meshRef();
         Matrix& A = ctx->getAMatrix();
         Vector& b = ctx->getBVector();
@@ -821,7 +912,8 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         STK_ThrowRequireMsg(
             solidMechOption == solidMechanicsOption::linearElastic ||
                 solidMechOption == solidMechanicsOption::neoHookean ||
-                solidMechOption == solidMechanicsOption::modifiedMooneyRivlin,
+                solidMechOption == solidMechanicsOption::modifiedMooneyRivlin ||
+                solidMechOption == solidMechanicsOption::saintVenantKirchhoff,
             "Unsupported FEM solid mechanics option");
 #if SPATIAL_DIM == 3
         STK_ThrowRequireMsg(
@@ -955,6 +1047,18 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                                                   displacement,
                                                   rhs,
                                                   lhs);
+                }
+                else if (solidMechOption ==
+                         solidMechanicsOption::saintVenantKirchhoff)
+                {
+                    assembleSfemSaintVenantKirchhoffElement(sfemElementType,
+                                                            nodesPerElement,
+                                                            lambda,
+                                                            mu,
+                                                            hyperCoordinates,
+                                                            displacement,
+                                                            rhs,
+                                                            lhs);
                 }
 #if SPATIAL_DIM == 2
                 else if (solidMechOption ==

@@ -171,6 +171,13 @@ private:
 
     fsiConvergence* getFsiConvergence_();
 
+    // pre-solve, solve and post-solve of one equation with its sub-iterations
+    void solveEquation_(equation& eq);
+
+    // FSI: solid solve with the previous-timestep fluid load before the first
+    // outer iteration of a timestep (predict_solid_displacement)
+    void predictSolidDisplacement_();
+
 public:
     // Constructors
 

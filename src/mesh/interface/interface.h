@@ -83,6 +83,10 @@ protected:
     // area
     bool useDeformedArea_ = true;
 
+    // solve the solid once with the previous-timestep fluid load before the
+    // first FSI iteration (solids4foam predictSolid)
+    bool predictSolidDisplacement_ = false;
+
     // DN (zero-gradient pressure) or RN (mixed BC with solid inertia)
     fsiCouplingMethod couplingMethod_ = fsiCouplingMethod::dirichletNeumann;
 
@@ -235,6 +239,11 @@ public:
     bool useDeformedArea() const
     {
         return useDeformedArea_;
+    };
+
+    bool predictSolidDisplacement() const
+    {
+        return predictSolidDisplacement_;
     };
 
     bool isRobinNeumann() const

@@ -117,6 +117,13 @@ void interface::read(const YAML::Node& inputNode)
                     couplingNode["use_deformed_area"].template as<bool>();
             }
 
+            if (couplingNode["predict_solid_displacement"])
+            {
+                predictSolidDisplacement_ =
+                    couplingNode["predict_solid_displacement"]
+                        .template as<bool>();
+            }
+
             if (couplingNode["coupling_start_time"])
             {
                 couplingStartTime_ =

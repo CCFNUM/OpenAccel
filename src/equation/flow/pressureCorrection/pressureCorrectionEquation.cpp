@@ -180,6 +180,18 @@ void pressureCorrectionEquation::startOfOuterIteration()
         return;
     }
 
+    // the corrector loop restarts at every segregated_flow sub-iteration: Q_vol
+    // and E belong to the FSI iteration (the Robin condition references the
+    // previous FSI iterate), so the later sub-iterations keep them
+    const label step = model_->controlsRef().getTimeStepCount();
+    const label iter = model_->controlsRef().iter;
+    if (step == rnWallFluxResetStep_ && iter == rnWallFluxResetIter_)
+    {
+        return;
+    }
+    rnWallFluxResetStep_ = step;
+    rnWallFluxResetIter_ = iter;
+
     // reset Q_vol; E is recomputed and frozen at the first corrector
     FOREACH_DOMAIN(model_->zeroRnWallFlux);
     FOREACH_DOMAIN(model_->zeroRnWallFluxE);

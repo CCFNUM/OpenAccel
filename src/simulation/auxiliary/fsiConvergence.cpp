@@ -153,6 +153,22 @@ void fsiConvergence::update()
     }
 }
 
+void fsiConvergence::updatePredictor()
+{
+    if (!enabled())
+    {
+        return;
+    }
+
+    const auto& fsiConv =
+        sim_.controlsRef()
+            .solverRef()
+            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
+
+    fsiInterfaceResidualNorm_ = 0.0;
+    updateFsiInterfaceResidual_(fsiConv.printResiduals_);
+}
+
 void fsiConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
 {
     solidDisplacementEquation* solidEq = nullptr;
