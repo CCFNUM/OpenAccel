@@ -11,6 +11,7 @@
 #include "linearSolver.h"
 #include "macros.h"
 #include "mesh.h"
+#include "messager.h"
 #include "residual.h"
 #include "scaling.h"
 #include "schur.h"
@@ -723,6 +724,33 @@ void linearSystem<N>::convergenceReport_()
 
     // additional reporting from linear solver
     lsolver_->report();
+
+    // stop on a non-finite residual (expert_parameters: abort_on_nan).
+    // Only ranks in this system's graph get here, so stop with MPI_Abort (no
+    // collective): the other ranks may already wait in the next collective
+    if (sim_.controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.abortOnNan_)
+    {
+        for (int i = 0; i < LinearSolver::BLOCKSIZE; i++)
+        {
+            if (!isFiniteValue(residual[i]) ||
+                !isFiniteValue(cdata.solver_initial_res[i]) ||
+                !isFiniteValue(cdata.solver_final_res[i]))
+            {
+                std::cerr << "abort_on_nan: " << equation_name_[i]
+                          << " residual is not finite (RMS " << residual[i]
+                          << ", linear solver " << cdata.solver_initial_res[i]
+                          << "/" << cdata.solver_final_res[i]
+                          << ") at t = " << sim_.controlsRef().time
+                          << " s, outer iteration " << sim_.getIterationCount()
+                          << "; set expert_parameters: abort_on_nan: false "
+                             "to continue"
+                          << std::endl;
+                MPI_Abort(messager::comm(), 1);
+            }
+        }
+    }
 
     // update residual and check convergence
     control_residual = residual;

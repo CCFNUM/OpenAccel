@@ -12,6 +12,10 @@
 #include "equation.h"
 #include "freeSurfaceFlowModel.h"
 #include "linearSystem.h"
+#include "robinNeumannParams.h"
+
+#include <fstream>
+#include <unordered_map>
 
 namespace accel
 {
@@ -42,11 +46,25 @@ public:
 
     void postSolve() override;
 
+    // before each corrector loop: reset Q_vol (Tukovic Eq. 30), freeze E at the
+    // first corrector
+    void startOfOuterIteration();
+
     void preTimeStep() override;
+
+    void postTimeStep() override;
 
     void printScales() override;
 
+    // per-BIP Robin acceleration term (fsiConvergence diagnostics)
+    const std::unordered_map<uint64_t, scalar>& robinAccelTermMap() const
+    {
+        return assembler_->robinAccelTermMap();
+    }
+
 protected:
+    bool anyDomainHasRobinNeumannFsi_() const;
+
     void setResidualScales_() override;
 
     // Pressure-correction-specific override of the generic field corrector.
@@ -116,6 +134,13 @@ protected:
 
 private:
     std::unique_ptr<Assembler> assembler_;
+
+    std::shared_ptr<std::ofstream> robinAlphaStream_;
+
+    // timestep and FSI iteration of the last Robin wall flux reset (once per
+    // FSI iteration, also with segregated_flow sub-iterations)
+    label rnWallFluxResetStep_ = -1;
+    label rnWallFluxResetIter_ = -1;
 };
 
 } /* namespace accel */

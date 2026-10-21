@@ -89,18 +89,44 @@ label controls::getNumberOfStates() const
     // 3 for second order accurate
     if (analysisType_.transient_)
     {
+        // Each scheme needs (levels used + 1) states: +1 state because STK
+        // restart drops the last state. The fields share one state count, so
+        // take the max over the fluid and the solid scheme.
+
+        // Fluid scheme states
         switch (solver_.solverControl_.basicSettings_.transientScheme_)
         {
             case transientSchemeType::firstOrderBackwardEuler:
-                numberOfStates = 3; // +1 state because STK restart drops last
+                numberOfStates = std::max(numberOfStates, label(3));
                 break;
 
             case transientSchemeType::secondOrderBackwardEuler:
-                numberOfStates = 4; // +1 state because STK restart drops last
+                numberOfStates = std::max(numberOfStates, label(4));
                 break;
 
             default:
                 break;
+        }
+
+        // Solid scheme states: only with a solid mechanics domain, so that
+        // pure-fluid runs keep the fluid-scheme count
+        if (anySolidMechanics_)
+        {
+            switch (solver_.solverControl_.basicSettings_.solidTransientScheme_)
+            {
+                case solidTransientSchemeType::eulerD2dt2:
+                    numberOfStates = std::max(numberOfStates, label(4));
+                    break;
+
+                case solidTransientSchemeType::backwardD2dt2:
+                    // uses 5 levels; the +1 restart state would exceed the
+                    // timestep history (DT_ENTRIES), so no restart margin
+                    numberOfStates = std::max(numberOfStates, label(5));
+                    break;
+
+                default:
+                    break;
+            }
         }
     }
     assert(numberOfStates - 1 <= analysisTypeDictionary::DT_ENTRIES);

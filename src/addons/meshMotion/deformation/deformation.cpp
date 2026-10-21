@@ -102,6 +102,19 @@ void deformation::initialize()
 
 void deformation::update()
 {
+    bool anyDisplacementDiffusion = false;
+    for (auto domain :
+         meshMotionPtr_->realmRef().simulationRef().domainVector())
+    {
+        if (domain->zonePtr()->meshDeforming() &&
+            domain->zonePtr()->deformationRef().model() ==
+                meshDeformationModel::displacementDiffusion)
+            anyDisplacementDiffusion = true;
+    }
+
+    if (!anyDisplacementDiffusion)
+        return;
+
     // solve for the displacement field due to wall motion
     if (displacementDiffusionEquation_)
     {

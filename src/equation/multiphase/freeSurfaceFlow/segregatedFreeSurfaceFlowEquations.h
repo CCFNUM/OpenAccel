@@ -45,11 +45,18 @@ public:
 
     void preTimeStep() override;
 
+    void postTimeStep() override;
+
     void printScales() override;
 
     equationID getID() override
     {
         return ID;
+    }
+
+    bulkPressureCorrectionEquation* pCorrEqPtr() const
+    {
+        return pCorr_eq_.get();
     }
 
 private:

@@ -284,7 +284,8 @@ enum class solidMechanicsOption
     none,
     linearElastic,
     neoHookean,
-    modifiedMooneyRivlin
+    modifiedMooneyRivlin,
+    saintVenantKirchhoff
 };
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s);
@@ -465,6 +466,16 @@ enum class transientSchemeType
 
 transientSchemeType convertTransientSchemeTypeFromString(std::string s);
 
+// Solid mechanics d2dt2 (second time derivative) scheme
+enum class solidTransientSchemeType
+{
+    eulerD2dt2,
+    backwardD2dt2
+};
+
+solidTransientSchemeType
+convertSolidTransientSchemeTypeFromString(std::string s);
+
 struct BDF1
 {
     static std::array<scalar, 2> coeff();
@@ -511,6 +522,24 @@ enum class advectionSchemeType
 
 advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s);
 
+// Advection schemes for the volume fraction equation. Selected per domain via
+// free_surface_model/advection_scheme; only meaningful when the global
+// advection scheme is high_resolution.
+enum class vofAdvectionSchemeType
+{
+    barthJespersen,
+    vanLeer,
+    mstoic,
+    msuperbee,
+    hyperC,
+    stacs,
+    cicsam
+};
+
+vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s);
+
+std::string toString(vofAdvectionSchemeType type);
+
 // Physical bounadaries
 enum class boundaryPhysicalType
 {
@@ -540,6 +569,7 @@ enum class boundaryConditionType
     specifiedDirection,            // specific to velocity
     staticPressure,                // specific to pressure
     averageStaticPressure,         // specific to pressure
+    windkesselPressure,            // specific to pressure
     totalPressure,                 // specific to pressure
     staticTemperature,             // specific to temperature
     totalTemperature,              // specific to temperature
@@ -712,14 +742,14 @@ enum class accelerationType
 
 accelerationType convertAccelerationTypeFromString(std::string s);
 
-// Physics convergence type
-enum class physicsConvergenceType
+// FSI convergence type
+enum class fsiConvergenceType
 {
     fsiInterfaceResidual,
     fsiForceResidual
 };
 
-physicsConvergenceType convertPhysicsConvergenceTypeFromString(std::string s);
+fsiConvergenceType convertFsiConvergenceTypeFromString(std::string s);
 
 // Pressure level information specification
 enum class pressureLevelInformationSpecification
@@ -794,6 +824,14 @@ enum class meshStiffnessSpecificationType
 
 meshStiffnessSpecificationType
 convertMeshStiffnessSpecificationTypeFromString(std::string s);
+
+enum class fsiCouplingMethod
+{
+    dirichletNeumann,
+    robinNeumann
+};
+
+fsiCouplingMethod convertFsiCouplingMethodFromString(std::string s);
 
 // Boundary relative frame type
 enum class boundaryRelativeFrameType

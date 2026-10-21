@@ -29,8 +29,16 @@ void mesh::lazyInitializeNodeGraph_()
 std::unique_ptr<nodeGraph>
 mesh::createNodeGraph_(const ::linearSolver::GraphLayout layout)
 {
+    // solid mechanics couples all element nodes (x-y terms of diagonal
+    // partners): the reduced stencil would drop them. Decided here, not in
+    // the constructor: solid domains are only known after the mesh is created
+    const bool reduced =
+        controlsPtr_->isReducedStencil() && !controlsPtr_->anySolidMechanics();
+    const ::linearSolver::GraphLayout stencil =
+        reduced ? ::linearSolver::GraphLayout::Stencil__Reduced
+                : ::linearSolver::GraphLayout::Stencil__Full;
     return std::make_unique<nodeGraph>(
-        messager::comm(), this, layout | stencil_);
+        messager::comm(), this, layout | stencil);
 }
 
 std::vector<label> mesh::zoneKey_(const std::vector<const zone*>& zones) const

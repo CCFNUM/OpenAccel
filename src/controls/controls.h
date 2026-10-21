@@ -63,6 +63,8 @@ struct solverDictionary
                 advectionSchemeType::upwind;
             transientSchemeType transientScheme_ =
                 transientSchemeType::firstOrderBackwardEuler;
+            solidTransientSchemeType solidTransientScheme_ =
+                solidTransientSchemeType::eulerD2dt2;
 
             struct relaxationParametersDictionary
             {
@@ -79,6 +81,9 @@ struct solverDictionary
             {
                 label minIterations_ = 1;
                 label maxIterations_ = 100;
+                // outer-iteration cap until all interfaces are coupled (-1:
+                // unset)
+                label maxIterationsUncoupled_ = -1;
                 scalar physicalTimescale_ = 1.0;
 
                 relaxationParametersDictionary relaxationParameters_;
@@ -150,16 +155,19 @@ struct solverDictionary
                 residualType residualType_ = residualType::RMS;
                 scalar residualTarget_ = 1e-4;
 
-                struct physicsConvergenceDictionary
+                struct fsiConvergenceDictionary
                 {
                     bool enabled_ = false;
-                    bool writeResiduals_ = false;
-                    std::vector<physicsConvergenceType> criteria_;
+                    bool printResiduals_ = false;
+                    std::vector<fsiConvergenceType> criteria_;
                     scalar fsiInterfaceResidualTarget_ = 1e-3;
                     scalar fsiForceResidualTarget_ = 1e-3;
+
+                    // write postProcessing/fsi_diagnostics.out
+                    bool diagnosticsEnabled_ = false;
                 };
 
-                physicsConvergenceDictionary physicsConvergence_;
+                fsiConvergenceDictionary fsiConvergence_;
             };
 
             convergenceControlDictionary convergenceControl_;
@@ -257,6 +265,8 @@ struct solverDictionary
             bool strongDirichletWallScale_ = false;
             scalar volumeFractionBlendingFactorMax_ = 2.0;
             bool bandwidthReduction_ = true;
+            // stop the run when an equation residual becomes NaN/Inf
+            bool abortOnNan_ = true;
             bool nodeReordering_ = false;
             bool forceWallDistanceCalculation_ = false;
             bool disablePhysics_ = false;
@@ -423,6 +433,22 @@ public:
 
     label getNumberOfStates() const;
 
+    solidTransientSchemeType getSolidTransientScheme() const
+    {
+        return solverRef().solverControl_.basicSettings_.solidTransientScheme_;
+    }
+
+    // set when a domain solves solid mechanics (solid scheme states)
+    void setAnySolidMechanics(bool value)
+    {
+        anySolidMechanics_ = value;
+    }
+
+    bool anySolidMechanics() const
+    {
+        return anySolidMechanics_;
+    }
+
     Profiler& getProfiler()
     {
         return profiler_;
@@ -483,6 +509,8 @@ private:
     solverDictionary solver_;
 
     Profiler profiler_;
+
+    bool anySolidMechanics_ = false;
 
     stk::util::ParameterList restartParameter_;
 

@@ -90,6 +90,101 @@ void interface::read(const YAML::Node& inputNode)
         }
     }
 
+    // FSI coupling settings (fluid-solid interfaces only)
+    if (inputNode["coupling"])
+    {
+        if (type_ != interfaceType::fluid_solid)
+        {
+            if (messager::master())
+            {
+                warningMsg("coupling block is ignored: interface is not of "
+                           "fluid_solid type");
+            }
+        }
+        else
+        {
+            const YAML::Node& couplingNode = inputNode["coupling"];
+
+            if (couplingNode["method"])
+            {
+                couplingMethod_ = convertFsiCouplingMethodFromString(
+                    couplingNode["method"].template as<std::string>());
+            }
+
+            if (couplingNode["use_deformed_area"])
+            {
+                useDeformedArea_ =
+                    couplingNode["use_deformed_area"].template as<bool>();
+            }
+
+            if (couplingNode["predict_solid_displacement"])
+            {
+                predictSolidDisplacement_ =
+                    couplingNode["predict_solid_displacement"]
+                        .template as<bool>();
+            }
+
+            if (couplingNode["coupling_start_time"])
+            {
+                couplingStartTime_ =
+                    couplingNode["coupling_start_time"].template as<scalar>();
+            }
+
+            if (couplingNode["write_force_balance"])
+            {
+                writeForceBalance_ =
+                    couplingNode["write_force_balance"].template as<bool>();
+            }
+
+            if (couplingNode["robin_parameters"])
+            {
+                const YAML::Node& robinNode = couplingNode["robin_parameters"];
+
+                if (robinNode["reference_fluid_density"])
+                {
+                    robinReferenceFluidDensity_ =
+                        robinNode["reference_fluid_density"]
+                            .template as<scalar>();
+                    if (!(robinReferenceFluidDensity_ > 0.0))
+                    {
+                        errorMsg("reference_fluid_density must be > 0");
+                    }
+                    // explicit override; otherwise the local rho_bip is used
+                    useReferenceFluidDensity_ = true;
+                }
+
+                if (robinNode["write_robin_alpha"])
+                {
+                    writeRobinAlpha_ =
+                        robinNode["write_robin_alpha"].template as<bool>();
+                }
+
+                if (robinNode["rn_accel_relaxation"])
+                {
+                    const scalar beta =
+                        robinNode["rn_accel_relaxation"].template as<scalar>();
+                    if (beta <= 0.0 || beta > 1.0)
+                    {
+                        errorMsg("rn_accel_relaxation must be in "
+                                 "(0, 1]");
+                    }
+                    rnAccelRelaxation_ = beta;
+                }
+
+                if (robinNode["solid_thickness"])
+                {
+                    solidThickness_ =
+                        robinNode["solid_thickness"].template as<scalar>();
+                    if (!(solidThickness_ > 0.0))
+                    {
+                        errorMsg("solid_thickness must be > 0");
+                    }
+                    usePhysicalSolidThickness_ = true;
+                }
+            }
+        }
+    }
+
     // overlap check tolerance
     if (inputNode["overlap_check_tolerance"])
     {

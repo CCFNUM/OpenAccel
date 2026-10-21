@@ -630,6 +630,11 @@ void fieldBroker::setupVelocity(const std::shared_ptr<domain> domain)
                                     bc.setType(
                                         boundaryConditionType::zeroGradient);
                                 }
+                                else if (option == "windkessel_pressure")
+                                {
+                                    bc.setType(
+                                        boundaryConditionType::zeroGradient);
+                                }
                                 else if (option == "mass_flow_rate")
                                 {
                                     bc.setType(
@@ -1360,6 +1365,29 @@ void fieldBroker::setupPressure(const std::shared_ptr<domain> domain)
                                     bc.query<1>(massAndMomentumNode,
                                                 "blend_factor",
                                                 "pressure_profile_blend");
+                                    pRef().registerSideFields(domain->index(),
+                                                              iBoundary);
+                                }
+                                else if (option == "windkessel_pressure")
+                                {
+                                    // three-element Windkessel: distal
+                                    // resistance R, characteristic
+                                    // resistance Rch [Pa s/m^3] and
+                                    // compliance C [m^3/Pa]
+                                    bc.setType(boundaryConditionType::
+                                                   windkesselPressure);
+                                    bc.queryConstantValue<1>(
+                                        massAndMomentumNode,
+                                        "resistance",
+                                        "resistance");
+                                    bc.queryConstantValue<1>(
+                                        massAndMomentumNode,
+                                        "characteristic_resistance",
+                                        "characteristic_resistance");
+                                    bc.queryConstantValue<1>(
+                                        massAndMomentumNode,
+                                        "compliance",
+                                        "compliance");
                                     pRef().registerSideFields(domain->index(),
                                                               iBoundary);
                                 }
@@ -3099,6 +3127,16 @@ void fieldBroker::setupDisplacement(const std::shared_ptr<domain> domain)
         initialCondition::setupFieldInitializationOverDomainFromValues(
             DRef(), domain->index(), std::vector<scalar>(SPATIAL_DIM, 0.0));
 
+        // X^k on the same domains as D (solid writes, fluid receives)
+        if (solidCorrectionRef().isZoneUnset(domain->index()))
+        {
+            solidCorrectionRef().setZone(domain->index());
+            initialCondition::setupFieldInitializationOverDomainFromValues(
+                solidCorrectionRef(),
+                domain->index(),
+                std::vector<scalar>(SPATIAL_DIM, 0.0));
+        }
+
         // for a fluid-solid interface, the interface side in this domain will
         // act as a dirichlet boundary for the displacement diffusion equation,
         // which is being solved over this domain, thus, side fields on the
@@ -3411,6 +3449,102 @@ void fieldBroker::setupHeatFlowRate(const std::shared_ptr<domain> domain)
         {
             this->qDotRef().registerSideField(domain->index(), iBoundary);
         }
+    }
+}
+
+void fieldBroker::setupRnWallAcceleration(const std::shared_ptr<domain> domain)
+{
+    if (this->aWallBcRef().isZoneUnset(domain->index()))
+    {
+        this->aWallBcRef().setZone(domain->index());
+
+        // RN interfaces only, this domain's side; no boundary registration
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType() && interf->isRobinNeumann())
+            {
+                this->aWallBcRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), interf->isMasterZone(domain->index()));
+            }
+        }
+    }
+}
+
+void fieldBroker::setupRnWallFlux(const std::shared_ptr<domain> domain)
+{
+    if (this->rnWallFluxRef().isZoneUnset(domain->index()))
+    {
+        this->rnWallFluxRef().setZone(domain->index());
+
+        // as setupRnWallAcceleration()
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType() && interf->isRobinNeumann())
+            {
+                this->rnWallFluxRef().registerSideFieldsForInterfaceSide(
+                    interf->index(), interf->isMasterZone(domain->index()));
+            }
+        }
+    }
+}
+
+void fieldBroker::zeroRnWallFlux(const std::shared_ptr<domain> domain)
+{
+    // zero the stored wall flux on this domain's RN interface sides
+    auto& rnWallFluxSideSTKFieldRef =
+        this->rnWallFluxRef().sideFieldRef().stkFieldRef();
+
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (!interf->isFluidSolidType() || !interf->isRobinNeumann())
+        {
+            continue;
+        }
+
+        const auto* interfaceSideInfoPtr =
+            interf->interfaceSideInfoPtr(domain->index());
+
+        ops::zero(&rnWallFluxSideSTKFieldRef,
+                  interfaceSideInfoPtr->currentPartVec_);
+    }
+}
+
+void fieldBroker::setupRnWallFluxE(const std::shared_ptr<domain> domain)
+{
+    if (this->rnWallFluxERef().isZoneUnset(domain->index()))
+    {
+        this->rnWallFluxERef().setZone(domain->index());
+
+        // as setupRnWallAcceleration()
+        for (interface* interf : domain->interfacesRef())
+        {
+            if (interf->isFluidSolidType() && interf->isRobinNeumann())
+            {
+                this->rnWallFluxERef().registerSideFieldsForInterfaceSide(
+                    interf->index(), interf->isMasterZone(domain->index()));
+            }
+        }
+    }
+}
+
+void fieldBroker::zeroRnWallFluxE(const std::shared_ptr<domain> domain)
+{
+    // zero the frozen Robin term E on this domain's RN interface sides
+    auto& rnWallFluxESideSTKFieldRef =
+        this->rnWallFluxERef().sideFieldRef().stkFieldRef();
+
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (!interf->isFluidSolidType() || !interf->isRobinNeumann())
+        {
+            continue;
+        }
+
+        const auto* interfaceSideInfoPtr =
+            interf->interfaceSideInfoPtr(domain->index());
+
+        ops::zero(&rnWallFluxESideSTKFieldRef,
+                  interfaceSideInfoPtr->currentPartVec_);
     }
 }
 
@@ -5342,6 +5476,60 @@ const heatFlowRate& fieldBroker::qDotRef() const
         realmPtr_->qDot_, heatFlowRate, realmPtr_, realm::qDot_ID, n_states);
 }
 
+interfaceScalarField& fieldBroker::aWallBcRef()
+{
+    RETURN_REF_ALLOC(realmPtr_->aWallBc_,
+                     interfaceScalarField,
+                     realmPtr_,
+                     realm::aWallBc_ID,
+                     n_states);
+}
+
+const interfaceScalarField& fieldBroker::aWallBcRef() const
+{
+    RETURN_REF_ALLOC(realmPtr_->aWallBc_,
+                     interfaceScalarField,
+                     realmPtr_,
+                     realm::aWallBc_ID,
+                     n_states);
+}
+
+interfaceScalarField& fieldBroker::rnWallFluxRef()
+{
+    RETURN_REF_ALLOC(realmPtr_->rnWallFlux_,
+                     interfaceScalarField,
+                     realmPtr_,
+                     realm::rnWallFlux_ID,
+                     n_states);
+}
+
+const interfaceScalarField& fieldBroker::rnWallFluxRef() const
+{
+    RETURN_REF_ALLOC(realmPtr_->rnWallFlux_,
+                     interfaceScalarField,
+                     realmPtr_,
+                     realm::rnWallFlux_ID,
+                     n_states);
+}
+
+interfaceScalarField& fieldBroker::rnWallFluxERef()
+{
+    RETURN_REF_ALLOC(realmPtr_->rnWallFluxE_,
+                     interfaceScalarField,
+                     realmPtr_,
+                     realm::rnWallFluxE_ID,
+                     n_states);
+}
+
+const interfaceScalarField& fieldBroker::rnWallFluxERef() const
+{
+    RETURN_REF_ALLOC(realmPtr_->rnWallFluxE_,
+                     interfaceScalarField,
+                     realmPtr_,
+                     realm::rnWallFluxE_ID,
+                     n_states);
+}
+
 momentumFlowRate& fieldBroker::pDotRef()
 {
     RETURN_REF_ALLOC(realmPtr_->pDot_,
@@ -5724,6 +5912,32 @@ const displacement& fieldBroker::DRef() const
 {
     RETURN_REF_ALLOC(
         realmPtr_->D_, displacement, realmPtr_, realm::D_ID, n_states);
+}
+
+nodeVectorField& fieldBroker::solidCorrectionRef()
+{
+    RETURN_REF_ALLOC(realmPtr_->solidCorrection_,
+                     nodeVectorField,
+                     realmPtr_,
+                     realm::solidCorrection_ID,
+                     n_states,
+                     false,
+                     false,
+                     false,
+                     false);
+}
+
+const nodeVectorField& fieldBroker::solidCorrectionRef() const
+{
+    RETURN_REF_ALLOC(realmPtr_->solidCorrection_,
+                     nodeVectorField,
+                     realmPtr_,
+                     realm::solidCorrection_ID,
+                     n_states,
+                     false,
+                     false,
+                     false,
+                     false);
 }
 
 simpleTensorField& fieldBroker::stressRef()

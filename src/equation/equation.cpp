@@ -172,6 +172,13 @@ void equation::initializeAcceleration_()
         cfg.iqnIlsRegularization =
             eqAccel["iqn_ils_regularization"].template as<scalar>();
     }
+    if (eqAccel["write_omega"])
+    {
+        cfg.writeOmega = eqAccel["write_omega"].template as<bool>();
+    }
+
+    cfg.sim = &domainVector_[0]->simulationRef();
+    cfg.name = this->name();
 
     accelerationPtr_ = std::make_unique<convergenceAcceleration>(cfg);
 }

@@ -68,6 +68,7 @@ target_sources(main_obj PRIVATE
 # full path and location of headers is inside src)
 target_include_directories(main_obj PUBLIC
     ${DIR}
+    ${DIR}/auxiliary
     ############################################################################
     ${DIR}/flow/segregatedFlow/navierStokes
     ${DIR}/flow/segregatedFlow/pressureCorrection

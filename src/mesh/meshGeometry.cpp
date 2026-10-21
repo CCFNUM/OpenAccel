@@ -1528,11 +1528,14 @@ void mesh::computeDeformedExposedAreaVector(
     stk::mesh::BulkData& bulkData = this->bulkDataRef();
     stk::mesh::MetaData& metaData = this->metaDataRef();
 
-    // reference coordinates; displacement added below
-    STKScalarField* coordinates = metaData.get_field<scalar>(
+    // reference coordinates: original_coordinates if the zone moves, else
+    // coordinates
+    STKScalarField* currentCoordinates = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, this->getCoordinateFieldName());
+    STKScalarField* originalCoordinates = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, mesh::original_coordinates_ID);
 
-    // same selector as updateExposedAreaVectorField_()
+    // same selector (and side order) as updateExposedAreaVectorField_()
     stk::mesh::Selector selAllSides =
         metaData.universal_part() & stk::mesh::selectUnion(parts);
     stk::mesh::BucketVector const& sideBuckets =
@@ -1586,7 +1589,14 @@ void mesh::computeDeformedExposedAreaVector(
             for (label ni = 0; ni < num_nodes; ++ni)
             {
                 stk::mesh::Entity node = sideNodeRels[ni];
-                scalar* coords = stk::mesh::field_data(*coordinates, node);
+                scalar* coords =
+                    originalCoordinates
+                        ? stk::mesh::field_data(*originalCoordinates, node)
+                        : nullptr;
+                if (!coords)
+                {
+                    coords = stk::mesh::field_data(*currentCoordinates, node);
+                }
                 scalar* disp = stk::mesh::field_data(displacementField, node);
                 const label offSet = ni * SPATIAL_DIM;
                 for (label j = 0; j < SPATIAL_DIM; ++j)

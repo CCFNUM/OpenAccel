@@ -84,6 +84,7 @@ void pressure::updateBoundarySideField(label iZone, label iBoundary)
                 {
                     case boundaryConditionType::staticPressure:
                     case boundaryConditionType::averageStaticPressure:
+                    case boundaryConditionType::windkesselPressure:
                         {
                             // model-related
                         }

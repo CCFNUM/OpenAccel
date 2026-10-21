@@ -7,6 +7,9 @@
 // code
 #include "macros.h"
 
+#include <bit>
+#include <cstdint>
+
 namespace accel
 {
 
@@ -20,6 +23,13 @@ void tolower(std::string& s)
 void errorMsg(std::string msg)
 {
     throw std::runtime_error(msg);
+}
+
+bool isFiniteValue(double x)
+{
+    // all-ones exponent bits mark NaN and Inf
+    const auto bits = std::bit_cast<std::uint64_t>(x);
+    return (bits & 0x7ff0000000000000ULL) != 0x7ff0000000000000ULL;
 }
 
 void warningMsg(std::string msg)
