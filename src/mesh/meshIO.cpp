@@ -139,6 +139,15 @@ void mesh::read(const YAML::Node& inputNode)
             }
         }
 
+        // Legacy restart databases store dt_0 .. dt_3 as separate globals.
+        // IOSS would otherwise combine dt_1 .. dt_3 into one vector, making
+        // old checkpoints unreadable. New checkpoints store dt_history.
+        if (restart_ctrl.isRestart_)
+        {
+            ioBrokerPtr_->property_add(
+                Ioss::Property("IGNORE_REALN_FIELDS", "TRUE"));
+        }
+
         // Initialize meta data (from exodus file)
         ioBrokerPtr_->add_mesh_database(meshFilePath,
                                         restart_ctrl.isRestart_

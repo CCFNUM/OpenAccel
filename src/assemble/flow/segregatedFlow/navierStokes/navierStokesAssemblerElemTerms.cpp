@@ -7,6 +7,7 @@
 // code
 #include "flowModel.h"
 #include "navierStokesAssembler.h"
+#include "simulation.h"
 
 namespace accel
 {
@@ -30,6 +31,89 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
         model_->controlsRef()
             .solverRef()
             .solverControl_.expertParameters_.nsoFourthOrderFac_;
+
+    // EXPERIMENTAL: central blending of the advected momentum ip value.
+    //
+    // solver: solver_control: expert_parameters:
+    //     momentum_advection_central_fraction: gamma   (0 <= gamma <= 1)
+    //
+    // The ip value used in the momentum advection flux becomes
+    //     u_ip = (1 - gamma) * u_hr + gamma * u_central
+    // with u_hr the existing upwind / limited linear-upwind (high-resolution)
+    // extrapolation and u_central = sum_k N_k(ip) u_k the shape-function
+    // (central) interpolation at the scs ip (the same interpolation used for
+    // every other ip value here). The mass flux (Rhie-Chow) and the implicit
+    // part are unchanged: the matrix keeps the first-order upwind Jacobian and
+    // the difference is a deferred correction on the right-hand side, like the
+    // existing high-resolution correction. gamma = 0 (default, key absent) is
+    // the existing scheme, bit for bit; gamma = 1 is pure central advection.
+    // Read directly from the input so that no widely included header changes.
+    scalar centralFrac = 0.0;
+    {
+        const YAML::Node solverControl =
+            model_->realmRef().simulationRef().getYAMLSolverControlNode();
+        const YAML::Node expert = solverControl["expert_parameters"];
+        if (expert && expert["momentum_advection_central_fraction"])
+        {
+            centralFrac = expert["momentum_advection_central_fraction"]
+                              .template as<scalar>();
+            if (!(centralFrac >= 0.0 && centralFrac <= 1.0))
+            {
+                errorMsg("momentum_advection_central_fraction must be in "
+                         "[0, 1]");
+            }
+            static bool reported = false;
+            if (!reported && messager::master())
+            {
+                std::cout << "[momentum advection] central fraction = "
+                          << centralFrac << std::endl;
+            }
+            reported = true;
+        }
+    }
+
+    // EXPERIMENTAL: kinetic-energy-conserving central value.
+    //
+    // solver: solver_control: expert_parameters:
+    //     momentum_advection_central_interpolation: trilinear | edge
+    //
+    // trilinear (default, key absent): u_central = sum_k N_k(ip) u_k over all
+    // element nodes, the existing behaviour, bit for bit.
+    // edge: u_central = (u_L + u_R) / 2 with L, R the two nodes whose control
+    // volumes share the sub-control surface. With this value the advection
+    // term telescopes: sum_i u_i . (advection)_i = -1/2 sum_i |u_i|^2 div_i,
+    // which the -div*U node term cancels to O(div), so advection neither
+    // creates nor destroys resolved kinetic energy (like OpenFOAM's Gauss
+    // linear with weight 1/2). The trilinear value does not telescope and was
+    // measured to add ~2 % of the input power (runs/budget_diag).
+    bool centralEdge = false;
+    {
+        const YAML::Node solverControl =
+            model_->realmRef().simulationRef().getYAMLSolverControlNode();
+        const YAML::Node expert = solverControl["expert_parameters"];
+        if (expert && expert["momentum_advection_central_interpolation"])
+        {
+            const std::string kind =
+                expert["momentum_advection_central_interpolation"]
+                    .template as<std::string>();
+            if (kind == "edge")
+            {
+                centralEdge = true;
+            }
+            else if (kind != "trilinear")
+            {
+                errorMsg("momentum_advection_central_interpolation must be "
+                         "trilinear or edge");
+            }
+            static bool reportedEdge = false;
+            if (!reportedEdge && messager::master())
+            {
+                std::cout << "[momentum advection] central interpolation = "
+                          << kind << std::endl;
+            }
+            reportedEdge = true;
+        }
+    }
 
     stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     stk::mesh::MetaData& metaData = mesh.metaDataRef();
@@ -373,8 +457,15 @@ void navierStokesAssembler::assembleElemTermsInterior_(const domain* domain,
                         }
                     }
 
-                    // total upwind advection
-                    const scalar aflux = tmDot * (uiUpwind + dcorr);
+                    // total upwind advection (optionally blended with the
+                    // central ip value, see centralFrac and centralEdge above)
+                    const scalar uiCentral =
+                        centralEdge ? 0.5 * (p_UIpL[i] + p_UIpR[i]) : p_UIp[i];
+                    const scalar aflux =
+                        centralFrac > 0.0
+                            ? tmDot * ((1.0 - centralFrac) * (uiUpwind + dcorr) +
+                                       centralFrac * uiCentral)
+                            : tmDot * (uiUpwind + dcorr);
 
                     // divU stress term
                     const scalar divUstress = 2.0 / 3.0 * muEffIp * divU *

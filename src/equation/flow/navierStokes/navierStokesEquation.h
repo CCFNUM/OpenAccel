@@ -54,6 +54,8 @@ protected:
 
 private:
     std::unique_ptr<Assembler> assembler_;
+
+    void updateBulkVelocityForce_(const std::shared_ptr<domain> domain);
 };
 
 } /* namespace accel */

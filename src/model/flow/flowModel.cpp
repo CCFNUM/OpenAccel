@@ -26893,7 +26893,11 @@ void flowModel::updatePressureBoundarySideFieldOpening_(
 
 void flowModel::updateUWallCoeffs(const std::shared_ptr<domain> domain)
 {
-    if (domain->turbulence_.option_ == turbulenceOption::laminar)
+    // Low-Re (wall-resolved) no-slip treatment. Also used by the
+    // Smagorinsky LES model, which resolves the near-wall layer and has
+    // no wall function of its own.
+    if (domain->turbulence_.option_ == turbulenceOption::laminar ||
+        domain->turbulence_.option_ == turbulenceOption::smagorinsky)
     {
         const auto& mesh = this->meshRef();
         stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
@@ -27242,7 +27246,11 @@ void flowModel::updateUWallCoeffs(const std::shared_ptr<domain> domain)
 
 void flowModel::updateWallShearStress(const std::shared_ptr<domain> domain)
 {
-    if (domain->turbulence_.option_ == turbulenceOption::laminar)
+    // Low-Re (wall-resolved) no-slip treatment. Also used by the
+    // Smagorinsky LES model, which resolves the near-wall layer and has
+    // no wall function of its own.
+    if (domain->turbulence_.option_ == turbulenceOption::laminar ||
+        domain->turbulence_.option_ == turbulenceOption::smagorinsky)
     {
         const auto& mesh = this->meshRef();
         const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();

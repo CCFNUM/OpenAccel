@@ -9,6 +9,9 @@
 #include "messager.h"
 #include "version.h"
 
+// Ioss
+#include <Ioss_Region.h>
+
 // std
 #include <algorithm>
 #include <cmath>
@@ -152,34 +155,133 @@ void controls::setRestartParam()
     restartParameter_.set_value("io_lastRestart", io.lastRestart_);
 
     restartParameter_.set_value("maxCourant", maxCourant_);
+    if (bulkForceParamRegistered_)
+    {
+        restartParameter_.set_value("bulkForceIntegral", bulkForceIntegral_);
+    }
+}
+
+void controls::registerBulkForceRestartParam()
+{
+    if (!bulkForceParamRegistered_)
+    {
+        restartParameter_.set_param(
+            "bulkForceIntegral", bulkForceIntegral_, false, true);
+        bulkForceParamRegistered_ = true;
+    }
 }
 
 void controls::deserializeRestartParam(
     const stk::io::StkMeshIoBroker& io_broker)
 {
+    // nodeField calls this for each restored field, but all fields share one
+    // restart database state and the globals must be restored only once.
+    if (restartParamsDeserialized_)
+    {
+        return;
+    }
     if (!isTransient())
     {
         // For steady-state, globalIter is recovered from the field
         // time_restored() in nodeField::initialize(). The dt_* and
         // timeStepCount parameters are only relevant to transient runs.
         io_broker.get_global("globalIter", globalIter);
+        restartParamsDeserialized_ = true;
         return;
     }
 
+    // Global variables are stored per database step and are read from the
+    // current state of the input region. No state is active right after
+    // create_input_mesh(), in which case the reads silently return zeros
+    // (timeStepCount = globalIter = 0 and an all-zero dt history, which makes
+    // the BDF2 coefficients divide by zero). Select the restart step
+    // explicitly: the latest time by default, as for the restored fields,
+    // otherwise the step closest to the requested restart time.
+    auto region = io_broker.get_input_ioss_region();
+    const int nStates = region->get_property("state_count").get_int();
+    if (nStates < 1)
+    {
+        errorMsg("restart: database contains no time steps");
+    }
+
+    int step = region->get_max_time().first;
+    const scalar requestedTime = solver_.restartControl_.restartTime_;
+    if (requestedTime != 0.0)
+    {
+        scalar minDiff = VBIG;
+        for (int s = 1; s <= nStates; s++)
+        {
+            const scalar diff =
+                std::abs(region->get_state_time(s) - requestedTime);
+            if (diff < minDiff)
+            {
+                minDiff = diff;
+                step = s;
+            }
+        }
+    }
+
+    const scalar stepTime = region->begin_state(step);
     io_broker.get_global("timeStepCount", analysisType_.timeStepCount_);
     io_broker.get_global("globalIter", globalIter);
     std::vector<scalar> dt_history;
-    io_broker.get_global("dt_history", dt_history);
-    assert(dt_history.size() == analysisTypeDictionary::DT_ENTRIES);
-    std::copy(
-        dt_history.begin(), dt_history.end(), analysisType_.timestep_.begin());
+    if (io_broker.get_global("dt_history", dt_history, false))
+    {
+        if (dt_history.size() != analysisTypeDictionary::DT_ENTRIES)
+        {
+            errorMsg("restart: invalid dt_history length");
+        }
+        std::copy(dt_history.begin(), dt_history.end(),
+                  analysisType_.timestep_.begin());
+    }
+    else
+    {
+        // Checkpoints from before the dt_history change store newest-first
+        // scalar globals dt_0 through dt_3. Preserve their ring positions.
+        for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; ++i)
+        {
+            scalar dt = 0.0;
+            const std::string name = "dt_" + std::to_string(i);
+            if (!io_broker.get_global(name, dt, false) ||
+                !(dt > 0.0) || !std::isfinite(dt))
+            {
+                errorMsg("restart: missing or invalid " + name);
+            }
+            analysisType_.timestep_[timestepPosition_(-i)] = dt;
+        }
+    }
 
     auto& io = solver_.outputControl_;
-    io_broker.get_global("io_lastResults", io.lastResults_);
-    io_broker.get_global("io_lastResultsTime", io.lastResultsTime_);
-    io_broker.get_global("io_lastRestart", io.lastRestart_);
+    // These I/O counters were added after the legacy checkpoints.
+    io_broker.get_global("io_lastResults", io.lastResults_, false);
+    io_broker.get_global("io_lastResultsTime", io.lastResultsTime_, false);
+    io_broker.get_global("io_lastRestart", io.lastRestart_, false);
 
-    io_broker.get_global("maxCourant", maxCourant_);
+    io_broker.get_global("maxCourant", maxCourant_, false);
+    // Optional: a restart without a controller starts from the input force.
+    bulkForceIntegralRestored_ =
+        io_broker.get_global("bulkForceIntegral", bulkForceIntegral_, false);
+    region->end_state(step);
+    restartParamsDeserialized_ = true;
+
+    if (messager::master())
+    {
+        std::cout << "Restart parameters restored from database step " << step
+                  << " (time " << std::scientific << stepTime
+                  << "): timeStepCount = " << analysisType_.timeStepCount_
+                  << ", globalIter = " << globalIter << ", dt history = [";
+        for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; ++i)
+        {
+            std::cout << (i ? ", " : "") << getTimestep(-i);
+        }
+        std::cout << "]";
+        if (bulkForceIntegralRestored_)
+        {
+            std::cout << ", bulkForceIntegral = " << std::setprecision(10)
+                      << bulkForceIntegral_;
+        }
+        std::cout << std::defaultfloat << std::endl;
+    }
 }
 
 void controls::registerRestartField(const std::string& fieldName)

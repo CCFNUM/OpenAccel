@@ -240,6 +240,7 @@ enum class equationID
     segregatedFlow,
     segregatedFreeSurfaceFlow,
     segregatedKEpsilon,
+    smagorinskyLES,
     segregatedShearStressTransport,
     segregatedTransitionShearStressTransport,
     transitionOnsetReynoldsNumber,
@@ -293,6 +294,7 @@ solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s);
 enum class turbulenceOption
 {
     laminar,
+    smagorinsky,
     shearStressTransport,
     kEpsilon
 };

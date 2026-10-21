@@ -25,6 +25,7 @@
 #include "segregatedFlowEquations.h" // Navier-Stokes (segregated: coupled momentum, scalar pressure correction)
 
 // turbulence
+#include "smagorinskyLESEquations.h"
 #include "segregatedShearStressTransportEquations.h"
 #include "segregatedKEpsilonEquations.h"
 #include "segregatedTransitionShearStressTransportEquations.h"

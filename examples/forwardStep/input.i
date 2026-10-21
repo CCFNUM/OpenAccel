@@ -42,7 +42,7 @@ simulation:
             location: [obstacle]
             boundary_details:
                 mass_and_momentum:
-                    option: free_slip_wall              
+                    option: free_slip_wall
           - name: symmetry
             type: symmetry
             location: [bottom, top]
@@ -94,7 +94,7 @@ simulation:
             expert_parameters:
                 consistent: true
                 high_speed_blend_damping: true # limiter limit-cycles at the bow shock without it
-                relax_gradients: false                  
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 10

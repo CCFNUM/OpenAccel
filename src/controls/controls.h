@@ -434,6 +434,25 @@ public:
 
     void deserializeRestartParam(const stk::io::StkMeshIoBroker& io_broker);
 
+    // bulk-velocity controller restart state (integral force); only written
+    // to restart databases if a controller registered it
+    void registerBulkForceRestartParam();
+
+    bool bulkForceIntegralRestored() const
+    {
+        return bulkForceIntegralRestored_;
+    }
+
+    scalar bulkForceIntegral() const
+    {
+        return bulkForceIntegral_;
+    }
+
+    void setBulkForceIntegral(const scalar value)
+    {
+        bulkForceIntegral_ = value;
+    }
+
     void registerRestartField(const std::string& fieldName);
 
     scalar getTotalTime() const;
@@ -485,6 +504,14 @@ private:
     Profiler profiler_;
 
     stk::util::ParameterList restartParameter_;
+
+    bool bulkForceParamRegistered_{false};
+
+    bool bulkForceIntegralRestored_{false};
+
+    scalar bulkForceIntegral_{0};
+
+    bool restartParamsDeserialized_{false};
 
     scalar maxCourant_{-1};
 

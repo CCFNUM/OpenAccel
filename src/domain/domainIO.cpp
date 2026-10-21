@@ -649,6 +649,46 @@ void domain::read_()
                 case turbulenceOption::laminar:
                     break;
 
+                case turbulenceOption::smagorinsky:
+                    {
+                        equations_[static_cast<int>(
+                            equationID::smagorinskyLES)] = true;
+
+                        // query the Smagorinsky constant Cs; defaults to the
+                        // value set in the turbulence dictionary
+                        if (turbulenceBlock["smagorinsky_constant"])
+                        {
+                            turbulence_.smagorinskyConstant_ =
+                                turbulenceBlock["smagorinsky_constant"]
+                                    .template as<scalar>();
+
+                            if (turbulence_.smagorinskyConstant_ <= 0.0)
+                            {
+                                errorMsg("smagorinsky_constant must be "
+                                         "positive in turbulence model of "
+                                         "domain " +
+                                         this->name());
+                            }
+                        }
+
+                        // query the Van Driest damping constant A+; defaults
+                        // to the value set in the turbulence dictionary
+                        if (turbulenceBlock["van_driest_a_plus"])
+                        {
+                            turbulence_.vanDriestAPlus_ =
+                                turbulenceBlock["van_driest_a_plus"]
+                                    .template as<scalar>();
+
+                            if (turbulence_.vanDriestAPlus_ <= 0.0)
+                            {
+                                errorMsg("van_driest_a_plus must be positive "
+                                         "in turbulence model of domain " +
+                                         this->name());
+                            }
+                        }
+                    }
+                    break;
+
                 case turbulenceOption::kEpsilon:
                     {
                         equations_[static_cast<int>(
@@ -1620,6 +1660,71 @@ void domain::read_()
                 generalMomentumSource_.redistributeInRhieChow_ =
                     generalMomentumSourceBlock["redistribute_in_rhie_chow"]
                         .template as<bool>();
+            }
+
+            // optional bulk-velocity controller: `source` is then only the
+            // initial force estimate, it is replaced (not added to) by the
+            // controlled force
+            if (generalMomentumSourceBlock["bulk_velocity_control"])
+            {
+                const auto& ctrlBlock =
+                    generalMomentumSourceBlock["bulk_velocity_control"];
+                auto& ctrl = generalMomentumSource_.bulkVelocityControl_;
+                ctrl.active_ = true;
+
+                if (!ctrlBlock["target_bulk_velocity"])
+                {
+                    errorMsg("bulk_velocity_control in domain " +
+                             this->name() +
+                             ": target_bulk_velocity is required");
+                }
+                ctrl.targetBulkVelocity_ =
+                    ctrlBlock["target_bulk_velocity"].template as<scalar>();
+
+                if (ctrlBlock["response_time"])
+                {
+                    ctrl.responseTime_ =
+                        ctrlBlock["response_time"].template as<scalar>();
+                }
+                if (!(ctrl.responseTime_ > 0))
+                {
+                    errorMsg("bulk_velocity_control in domain " +
+                             this->name() + ": response_time must be > 0");
+                }
+
+                // flow direction: given, or that of the source vector
+                std::vector<scalar> dir =
+                    ctrlBlock["direction"]
+                        ? ctrlBlock["direction"]
+                              .template as<std::vector<scalar>>()
+                        : generalMomentumSource_.value_;
+                if (static_cast<label>(dir.size()) != SPATIAL_DIM)
+                {
+                    errorMsg("bulk_velocity_control in domain " +
+                             this->name() + ": direction must have " +
+                             std::to_string(SPATIAL_DIM) + " components");
+                }
+                scalar mag = 0.0;
+                for (const scalar d : dir)
+                {
+                    mag += d * d;
+                }
+                mag = std::sqrt(mag);
+                if (!(mag > 0))
+                {
+                    errorMsg("bulk_velocity_control in domain " +
+                             this->name() +
+                             ": direction undefined (give `direction` or a "
+                             "non-zero `source`)");
+                }
+                for (label i = 0; i < SPATIAL_DIM; i++)
+                {
+                    ctrl.direction_[i] = dir[i] / mag;
+                }
+
+                // restart state (integral force) must be declared before
+                // the restart database is created
+                simulationPtr_->controlsRef().registerBulkForceRestartParam();
             }
         }
     }

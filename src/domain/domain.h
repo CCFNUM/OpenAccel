@@ -44,6 +44,19 @@ struct turbulence
     wallFunctionType wallFunctionType_ = wallFunctionType::standard;
     turbulentFluxClosureForHeatTransfer turbulentFluxClosureForHeatTransfer_;
 
+    // Smagorinsky LES coefficients. These are the single source of truth for
+    // the model; `SmagorinskyLESModel` reads them per domain.
+    //
+    // smagorinskyConstant_: Cs. Default 0.17 is Lilly's (1967) value for
+    // isotropic turbulence. Wall-bounded shear flows are usually better served
+    // by Cs ~ 0.10 (Deardorff 1970; Moin & Kim, JFM 118, 1982); set it per
+    // domain via the `smagorinsky_constant` key.
+    //
+    // vanDriestAPlus_: A+ in the near-wall damping of the mixing length,
+    // l = Cs * delta * (1 - exp(-yPlus / A+)) (Van Driest 1956).
+    scalar smagorinskyConstant_ = 0.17;
+    scalar vanDriestAPlus_ = 25.0;
+
     // prescribed eddy length scale; zero selects the default
     scalar eddyLengthScale_ = 0.0;
 
@@ -259,6 +272,28 @@ struct generalMomentumSource : source
     }
 
     bool redistributeInRhieChow_ = false;
+
+    // Optional bulk-velocity controller (periodic channels/pipes). When
+    // active, value_ is overwritten once per time step with F * direction_,
+    // where F is updated from the volume-averaged velocity along direction_
+    // (see navierStokesEquation::updateBulkVelocityForce_). The input
+    // `source` then only serves as the initial force estimate.
+    struct bulkVelocityControl
+    {
+        bool active_ = false;
+        scalar targetBulkVelocity_ = 0.0;
+        // closed-loop response time T of the PI law (critically damped:
+        // Kp = 2/T, Ki = 1/T^2)
+        scalar responseTime_ = 1.0;
+        std::vector<scalar> direction_ = std::vector<scalar>(SPATIAL_DIM, 0.0);
+
+        // state
+        bool initialized_ = false;
+        scalar integralForce_ = 0.0; // integral part of F (restart state)
+        scalar force_ = 0.0;         // F applied in the current time step
+        scalar bulkVelocity_ = 0.0;  // Ub at the start of the current step
+        scalar totalVolume_ = 0.0;
+    } bulkVelocityControl_;
 };
 
 class domain

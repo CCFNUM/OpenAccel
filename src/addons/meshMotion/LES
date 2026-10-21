@@ -1,0 +1,30 @@
+#ifndef SMAGORINSKY_LES_MODEL_H
+#define SMAGORINSKY_LES_MODEL_H
+
+#include "model/turbulence/turbulenceModel.h"
+#include "field/nodeField/nodeScalarField.h"
+
+// Forward declarations
+class realm;
+
+class SmagorinskyLESModel : public turbulenceModel
+{
+public:
+    SmagorinskyLESModel(realm* realmPtr);
+    virtual ~SmagorinskyLESModel() = default;
+
+    // The main hook that OpenAccel's solver will call
+    void updateTurbulentDynamicViscosity(const std::shared_ptr<domain> domain) override;
+
+private:
+    // Helper function to calculate Delta = V^(1/3)
+    void computeLesFilterWidth_(const std::shared_ptr<domain> domain);
+
+    // Smagorinsky constant
+    const double Cs_ = 0.17;
+    
+    // Nodal field wrapper for the filter width
+    nodeScalarField lesFilterWidth_;
+};
+
+#endif // SMAGORINSKY_LES_MODEL_H
