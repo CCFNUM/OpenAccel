@@ -232,6 +232,10 @@ void segregatedFlowEquations::solve()
             }
         }
     }
+
+#ifdef HAS_UTOPIA
+    U_eq_->utopiaUpdateSolution();
+#endif /* HAS_UTOPIA */
 }
 
 void segregatedFlowEquations::postSolve()
@@ -248,7 +252,15 @@ void segregatedFlowEquations::postSolve()
     FOREACH_DOMAIN(updateInterfaceMassImbalance_);
     FOREACH_DOMAIN(updateInterfaceMomentumImbalance_);
 
+#ifdef HAS_UTOPIA
+    U_eq_->utopiaResetFluid();
+#endif /* HAS_UTOPIA */
+
     this->reportFlowData_();
+
+#ifdef HAS_UTOPIA
+    U_eq_->utopiaReportNormIncrement();
+#endif /* HAS_UTOPIA */
 }
 
 void segregatedFlowEquations::preTimeStep()

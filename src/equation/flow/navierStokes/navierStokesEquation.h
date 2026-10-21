@@ -12,6 +12,9 @@
 #include "flowModel.h"
 #include "linearSystem.h"
 #include "navierStokesAssembler.h"
+#ifdef HAS_UTOPIA
+#include "ContextUtopia.h"
+#endif /* HAS_UTOPIA */
 
 namespace accel
 {
@@ -49,8 +52,23 @@ public:
     {
         return ID;
     }
+
+#ifdef HAS_UTOPIA
+    // This API is only defined for segregated FSI via Utopia
+    void utopiaUpdateSolution();
+    void utopiaResetFluid();
+    void utopiaReportNormIncrement();
+
 protected:
+    void utopiaSegregatedVelocityIncrement_();
+#else
+protected:
+#endif /* HAS_UTOPIA */
     void setResidualScales_() override;
+
+#ifdef HAS_UTOPIA
+    std::shared_ptr<fsi::ContextUtopia<linearSystem::BLOCKSIZE>> ctx_fsi_;
+#endif /* HAS_UTOPIA */
 
 private:
     std::unique_ptr<Assembler> assembler_;

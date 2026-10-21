@@ -267,7 +267,12 @@ bool domain::isWallDistanceRequired() const
         }
     }
 
-    if (this->turbulence_.option_ != turbulenceOption::laminar)
+    // turbulence is not solved with physics disabled
+    if (this->turbulence_.option_ != turbulenceOption::laminar &&
+        !this->meshRef()
+             .controlsRef()
+             .solverRef()
+             .solverControl_.expertParameters_.disablePhysics_)
     {
         state = true;
     }

@@ -394,6 +394,10 @@ void segregatedFreeSurfaceFlowEquations::solve()
             }
         }
     }
+
+#ifdef HAS_UTOPIA
+    U_eq_->utopiaUpdateSolution();
+#endif /* HAS_UTOPIA */
 }
 
 void segregatedFreeSurfaceFlowEquations::postSolve()
@@ -409,7 +413,15 @@ void segregatedFreeSurfaceFlowEquations::postSolve()
     FOREACH_DOMAIN(updateMassImbalance_);
     FOREACH_DOMAIN(updateInterfaceMassImbalance_);
 
+#ifdef HAS_UTOPIA
+    U_eq_->utopiaResetFluid();
+#endif /* HAS_UTOPIA */
+
     this->reportFlowData_();
+
+#ifdef HAS_UTOPIA
+    U_eq_->utopiaReportNormIncrement();
+#endif /* HAS_UTOPIA */
 }
 
 void segregatedFreeSurfaceFlowEquations::preTimeStep()

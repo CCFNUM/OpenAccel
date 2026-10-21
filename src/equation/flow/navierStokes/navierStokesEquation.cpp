@@ -48,6 +48,12 @@ void navierStokesEquation::checkDomain(const std::shared_ptr<domain> domain)
 bool navierStokesEquation::isConverged() const
 {
     bool converged = linearSystem::isConverged();
+#ifdef HAS_UTOPIA
+    if (ctx_fsi_)
+    {
+        converged = converged && ctx_fsi_->isConverged();
+    }
+#endif /* HAS_UTOPIA */
     return converged;
 }
 
@@ -137,6 +143,27 @@ void navierStokesEquation::postInitialize()
         FOREACH_DOMAIN(model_->updateMassDivergenceField);
     }
 
+#ifdef HAS_UTOPIA
+    // create relevant overrides to the system
+    if (linearSystem::simulationRef().overridesPtr()->fsi())
+    {
+        const YAML::Node fsi_node =
+            linearSystem::simulationRef().overridesPtr()->getFSINode();
+        if (fsi_node)
+        {
+            ctx_fsi_ =
+                std::make_shared<fsi::ContextUtopia<linearSystem::BLOCKSIZE>>(
+                    linearSystem::getContext());
+            ctx_fsi_->init(model_->fieldBroker::meshRef().bulkDataRef(),
+                           fsi_node,
+                           linearSystem::simulationRef());
+            ctx_fsi_->filterVelocityBoundaryNodeID(
+                model_->fieldBroker::meshRef(), model_->URef());
+            this->lsolver_->setContext(ctx_fsi_);
+        }
+    }
+#endif /* HAS_UTOPIA */
+
     equation::isInitialized_ = true;
 }
 
@@ -179,6 +206,14 @@ void navierStokesEquation::solve()
              .solverRef()
              .solverControl_.expertParameters_.disableMomentumPredictor_)
     {
+#ifdef HAS_UTOPIA
+        if (ctx_fsi_)
+        {
+            linearSystem::simulationRef().getProfiler().push("fsi_assembly");
+            ctx_fsi_->applyConstraints();
+            linearSystem::simulationRef().getProfiler().pop();
+        }
+#endif /* HAS_UTOPIA */
 
         // solve linear system
         if (ctx->getGraph()->isGraphMember())
@@ -230,6 +265,13 @@ void navierStokesEquation::preTimeStep()
 {
     FOREACH_DOMAIN(model_->updateVelocityPrevTimeField);
     FOREACH_DOMAIN(model_->updateDensityPrevTimeField);
+
+#ifdef HAS_UTOPIA
+    if (ctx_fsi_)
+    {
+        ctx_fsi_->preTimeStep(model_->controlsRef().getTimestep());
+    }
+#endif /* HAS_UTOPIA */
 }
 
 void navierStokesEquation::setResidualScales_()
@@ -256,5 +298,72 @@ void navierStokesEquation::printScales()
                   << std::endl;
     }
 }
+
+#ifdef HAS_UTOPIA
+void navierStokesEquation::utopiaUpdateSolution()
+{
+    if (ctx_fsi_)
+    {
+        this->utopiaSegregatedVelocityIncrement_();
+        // FIXME [faw 2026-09-01]: currently line-search is performed in
+        // `updateSolution` to determine the relaxation factor `alpha_`.  This
+        // relaxation should also affect increments computed from momentum and
+        // pressure which cannot be accounted for when `utopiaUpdateSolution` is
+        // called.  The line search would need to happen earlier in the
+        // algorithm.
+        ctx_fsi_->updateSolution(); // apply velocity correction to solid
+    }
+}
+
+void navierStokesEquation::utopiaResetFluid()
+{
+    if (ctx_fsi_)
+    {
+        ctx_fsi_->synchronizeVelocity(); // update fluid_velocity_ given current
+        ctx_fsi_->resetFluid();          // restore original fluid node-graph
+    }
+}
+
+void navierStokesEquation::utopiaReportNormIncrement()
+{
+    if (ctx_fsi_)
+    {
+        ctx_fsi_->cout() << "\n[FSI] Norm increment: " << std::scientific
+                         << std::setprecision(3) << std::setw(10) << std::right
+                         << ctx_fsi_->getNormIncrement() << '\n';
+    }
+}
+
+void navierStokesEquation::utopiaSegregatedVelocityIncrement_()
+{
+    if (ctx_fsi_)
+    {
+        constexpr size_t BS = linearSystem::BLOCKSIZE;
+        const auto& U_curr = model_->URef().stkFieldRef();
+        const auto& U_prev = model_->URef().prevIterRef().stkFieldRef();
+
+        auto& coeff = ctx_fsi_->getCoefficients();
+        scalar* const base_ptr = coeff.getXVector().data();
+
+        const stk::mesh::MetaData& metaData = model_->meshRef().metaDataRef();
+        const stk::mesh::BulkData& bulkData = model_->meshRef().bulkDataRef();
+        for (const auto bucket : bulkData.get_buckets(
+                 stk::topology::NODE_RANK, metaData.locally_owned_part()))
+        {
+            const scalar* const un = stk::mesh::field_data(U_curr, *bucket);
+            const scalar* const unm1 = stk::mesh::field_data(U_prev, *bucket);
+            for (size_t i = 0; i < bucket->size(); i++)
+            {
+                const unsigned idx = bulkData.local_id((*bucket)[i]);
+                scalar* const u = base_ptr + BS * idx;
+                for (size_t c = 0; c < BS; c++)
+                {
+                    u[c] = un[i * BS + c] - unm1[i * BS + c];
+                }
+            }
+        }
+    }
+}
+#endif /* HAS_UTOPIA */
 
 } /* namespace accel */

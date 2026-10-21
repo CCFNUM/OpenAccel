@@ -106,6 +106,27 @@ void bulkNavierStokesEquation::postInitialize()
     {
         FOREACH_DOMAIN(model_->flowModel::updateMassDivergenceField);
     }
+
+#ifdef HAS_UTOPIA
+    // create relevant overrides to the system
+    if (linearSystem::simulationRef().overridesPtr()->fsi())
+    {
+        const YAML::Node fsi_node =
+            linearSystem::simulationRef().overridesPtr()->getFSINode();
+        if (fsi_node)
+        {
+            ctx_fsi_ =
+                std::make_shared<fsi::ContextUtopia<linearSystem::BLOCKSIZE>>(
+                    linearSystem::getContext());
+            ctx_fsi_->init(model_->fieldBroker::meshRef().bulkDataRef(),
+                           fsi_node,
+                           linearSystem::simulationRef());
+            ctx_fsi_->filterVelocityBoundaryNodeID(
+                model_->fieldBroker::meshRef(), model_->URef());
+            this->lsolver_->setContext(ctx_fsi_);
+        }
+    }
+#endif /* HAS_UTOPIA */
 }
 
 void bulkNavierStokesEquation::preSolve()

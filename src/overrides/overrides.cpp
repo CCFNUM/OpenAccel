@@ -18,6 +18,29 @@ overrides::overrides(realm* realm) : realmPtr_(realm)
 
 void overrides::read(const YAML::Node& inputNode)
 {
+#ifdef HAS_UTOPIA
+    const auto& physicalAnalysisNode = inputNode["physical_analysis"];
+
+    if (physicalAnalysisNode["overrides"])
+    {
+        const auto& overridesNode = physicalAnalysisNode["overrides"];
+
+        if (overridesNode["fsi"])
+        {
+            fsi_ = true;
+        }
+    }
+#endif /* HAS_UTOPIA */
 }
+
+#ifdef HAS_UTOPIA
+YAML::Node overrides::getFSINode() const
+{
+    assert(fsi_);
+
+    return realmPtr_->simulationRef()
+        .getYAMLPhysicalAnalysisNode()["overrides"]["fsi"];
+}
+#endif /* HAS_UTOPIA */
 
 } // namespace accel

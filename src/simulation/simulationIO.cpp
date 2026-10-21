@@ -613,7 +613,8 @@ void simulation::initializeOutput_()
     auto& io = controlsRef().solverRef().outputControl_;
     auto& restart = controlsRef().solverRef().restartControl_;
 
-    // results
+    // results (controlsIO.cpp checks if files exist if run is a restart which
+    // sets stk::io::APPEND_RESULTS)
     io.propertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
     io.fileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
         io.filePath_, io.writeMode_, *io.propertyManagerPtr_.get());

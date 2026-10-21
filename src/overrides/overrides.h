@@ -21,12 +21,27 @@ class overrides
 private:
     realm* realmPtr_;
 
+#ifdef HAS_UTOPIA
+    bool fsi_ = false;
+#endif /* HAS_UTOPIA */
+
 public:
     overrides(realm* realm);
 
     // operations
 
     void read(const YAML::Node& inputNode);
+
+#ifdef HAS_UTOPIA
+    // access
+
+    bool fsi() const
+    {
+        return fsi_;
+    }
+
+    YAML::Node getFSINode() const;
+#endif /* HAS_UTOPIA */
 };
 
 } // namespace accel

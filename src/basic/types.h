@@ -769,19 +769,10 @@ convertMeshDeformationSpecificationFromString(std::string s);
 // Mesh deformation model
 enum class meshDeformationModel
 {
-    displacementDiffusion
+    displacementDiffusion,
 };
 
 meshDeformationModel convertMeshDeformationModelTypeFromString(std::string s);
-
-// Mesh deformation backend (expert parameter)
-enum class meshDeformationBackend
-{
-    displacementDiffusion,
-    lithe
-};
-
-meshDeformationBackend convertMeshDeformationBackendFromString(std::string s);
 
 // Mesh stiffness specification
 enum class meshStiffnessSpecificationType

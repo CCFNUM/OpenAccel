@@ -9,9 +9,12 @@
 #include "messager.h"
 #include "version.h"
 
+#include <stk_io/StkIoUtils.hpp>
+
 // std
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -652,6 +655,23 @@ fs::path controls::getAdaptiveTimesteppingDirectory() const
     fs::path dir = getWorkingDirectory() / "adaptiveTimeStepping";
     fs::create_directories(dir);
     return dir;
+}
+
+bool controls::hasSTKDatabase(const std::string& baseName)
+{
+    // This method checks if the STK database with `baseName` exists.
+    const int size = messager::nProcs();
+    const int rank = messager::myProcNo();
+    const std::string database_name =
+        stk::io::construct_filename_for_serial_or_parallel(
+            baseName, size, rank);
+    if (!fs::exists(fs::path(database_name)))
+    {
+        errorMsg("STK database '" + baseName + "' not accessible on rank " +
+                 std::to_string(rank));
+        return false;
+    }
+    return true;
 }
 
 } // namespace accel

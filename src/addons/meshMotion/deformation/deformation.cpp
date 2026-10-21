@@ -15,30 +15,25 @@ namespace accel
 deformation::deformation(meshMotion* meshMotionPtr)
     : meshMotionPtr_(meshMotionPtr)
 {
-    const meshDeformationBackend backend =
-        meshMotionPtr_->meshRef()
-            .controlsRef()
-            .solverRef()
-            .solverControl_.expertParameters_.meshDeformationBackend_;
-
-    // register the deforming domains with the selected backend
+    // register the deforming domains with the model of their zone
     for (auto domain :
          meshMotionPtr_->realmRef().simulationRef().domainVector())
     {
         if (!domain->hasEquation(equationID::displacementDiffusion))
             continue;
 
-        switch (backend)
+        switch (domain->zonePtr()->deformationRef().model())
         {
-
-            default:
-                if (displacementDiffusionEquation_ == nullptr)
+            case meshDeformationModel::displacementDiffusion:
                 {
-                    displacementDiffusionEquation_ =
-                        std::make_unique<displacementDiffusionEquation>(
-                            &meshMotionPtr_->realmRef());
+                    if (displacementDiffusionEquation_ == nullptr)
+                    {
+                        displacementDiffusionEquation_ =
+                            std::make_unique<displacementDiffusionEquation>(
+                                &meshMotionPtr_->realmRef());
+                    }
+                    displacementDiffusionEquation_->addDomain(domain);
                 }
-                displacementDiffusionEquation_->addDomain(domain);
                 break;
         }
     }

@@ -1151,8 +1151,9 @@ convertMeshDeformationSpecificationFromString(std::string s)
 // Mesh deformation model
 
 std::unordered_map<std::string, meshDeformationModel>
-    meshDeformationModelTypeMap{{"displacement_diffusion",
-                                 meshDeformationModel::displacementDiffusion}};
+    meshDeformationModelTypeMap{
+        {"displacement_diffusion", meshDeformationModel::displacementDiffusion},
+};
 
 meshDeformationModel convertMeshDeformationModelTypeFromString(std::string s)
 {
@@ -1167,30 +1168,6 @@ meshDeformationModel convertMeshDeformationModelTypeFromString(std::string s)
     }
 
     return meshDeformationModel::displacementDiffusion; // useless
-}
-
-// Mesh deformation backend
-
-std::unordered_map<std::string, meshDeformationBackend>
-    meshDeformationBackendMap{{"displacement_diffusion",
-                               meshDeformationBackend::displacementDiffusion},
-                              {"lithe", meshDeformationBackend::lithe},
-                              {"idw", meshDeformationBackend::lithe}};
-
-meshDeformationBackend convertMeshDeformationBackendFromString(std::string s)
-{
-    auto it = meshDeformationBackendMap.find(s);
-    if (it != meshDeformationBackendMap.end())
-    {
-        return it->second;
-    }
-    else
-    {
-        errorMsg("Invalid mesh deformation backend: " + s +
-                 " (displacement_diffusion or lithe)");
-    }
-
-    return meshDeformationBackend::displacementDiffusion; // useless
 }
 
 // Mesh stiffness specification

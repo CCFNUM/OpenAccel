@@ -279,31 +279,6 @@ struct solverDictionary
                 nonconformalMethod::discontinuousGalerkin;
             gradientAveragingType cvpgType_ = gradientAveragingType::arithAver;
 
-            // mesh deformation backend: displacement diffusion or lithe (IDW)
-            meshDeformationBackend meshDeformationBackend_ =
-                meshDeformationBackend::displacementDiffusion;
-
-            struct litheDictionary
-            {
-                scalar aExp_ = 3.0;
-                scalar bExp_ = 5.0;
-                scalar alpha_ = 0.25;
-                scalar LdefFact_ = 1.0;
-                scalar errTol_ = 5.0e-4;
-                bool exact_ = false;
-                bool useRotations_ = true;
-                bool zeroCornerRotations_ = true;
-                scalar cornerAngle_ = 30.0;
-                label bucketSize_ = 18;
-                // mirror the surface across planar symmetry boundaries
-                bool symmetryPlanes_ = true;
-                // rebuild the IDW reference from the current mesh every N
-                // timesteps (0 = always morph from the initial mesh)
-                label reanchorInterval_ = 0;
-            };
-
-            litheDictionary lithe_;
-
             // Discretisation of the total-enthalpy viscous work flux tau.U
             viscousWorkType viscousWorkType_ = viscousWorkType::elementCentre;
             // Stress carried by the total-enthalpy viscous work flux
@@ -466,6 +441,8 @@ public:
     fs::path getResultsDirectory() const;
 
     fs::path getAdaptiveTimesteppingDirectory() const;
+
+    static bool hasSTKDatabase(const std::string& baseName);
 
     // Run loop-related public variables
 

@@ -16,32 +16,6 @@
 namespace accel
 {
 
-namespace
-{
-// Ioss per-processor database naming: <base>.<nProcs>.<rank> with the rank
-// zero-padded to the width of the processor count, e.g. restart.bin.16.07.
-// A serial run (nProcs == 1) writes the plain base name.
-bool isDecomposedDatabase(const fs::path& base)
-{
-    const int nProcs = messager::nProcs();
-
-    if (nProcs == 1)
-    {
-        return false;
-    }
-
-    std::string rank = std::to_string(messager::myProcNo());
-    const size_t width = std::to_string(nProcs).size();
-    if (rank.size() < width)
-    {
-        rank.insert(0, width - rank.size(), '0');
-    }
-
-    return fs::exists(base.string() + "." + std::to_string(nProcs) + "." +
-                      rank);
-}
-} // namespace
-
 // Operations
 
 void mesh::read(const YAML::Node& inputNode)
@@ -76,12 +50,9 @@ void mesh::read(const YAML::Node& inputNode)
         {
             meshFilePath = restart_ctrl.inputFilePath_;
 
-            // A restart database written by a parallel run is decomposed (one
-            // file per rank) and its rank layout is fixed: it must be read
-            // as-is, so automatic decomposition is disabled. A serial restart
-            // database (e.g. written by a serial run) is decomposed on the fly
-            // like a mesh database.
-            if (isDecomposedDatabase(meshFilePath))
+            // STK writes restart databases per rank: disable automatic
+            // decomposition (and file must exist)
+            if (controls::hasSTKDatabase(meshFilePath))
             {
                 decomposition_ctrl.method_ = "";
             }

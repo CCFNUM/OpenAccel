@@ -1,0 +1,13 @@
+# File       : CMakeLists.txt
+# Created    : Thu Oct 16 2025 08:17:36 (+0200)
+# Author     : Fabian Wermelinger
+# Description: CMake build definitions
+# Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
+
+set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
+
+# define header directories (required since #include statements do not quote
+# full path and location of headers is inside src)
+target_include_directories(main_obj PUBLIC
+    ${DIR}/utopia
+)

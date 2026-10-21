@@ -11,6 +11,7 @@ option(WITH_AMGSOLVER "Build with AMG solver" OFF)
 option(WITH_CANONICAL_SUFFIX "Enable canonical executable suffix" OFF)
 option(WITH_DEBUG_LIB "Build debugging utilities library" OFF)
 option(WITH_FASTMATH "Use fast math optimization" OFF)
+option(WITH_FSI "Build with Utopia FSI support" OFF)
 option(WITH_SFEM "Build with the SFEM solid mechanics backend" OFF)
 option(WITH_THERMAL_TEMPERATURE "Enable thermal temperature energy equation" OFF)
 option(WITH_TRILINOS_SOLVER "Enable Trilinos solver support" ON)
@@ -155,6 +156,18 @@ else()
     message("-- HYPRE functionalities are DISABLED")
 endif()
 
+# FSI
+if(WITH_FSI)
+    set(CMAKE_PREFIX_PATH ${UtopiaFE_DIR}/lib/cmake ${CMAKE_PREFIX_PATH})
+    add_compile_definitions(HAS_FSI)
+    find_package(UtopiaFE REQUIRED HINTS ${UtopiaFE_DIR} $ENV{UTOPIA_FE_DIR}/lib/cmake)
+    if(UtopiaFE_FOUND)
+        add_compile_definitions(HAS_UTOPIA)
+        message("-- Compiling sources with FSI support")
+    else()
+        message(FATAL_ERROR "FSI: cannot find UtopiaFE requirement!")
+    endif()
+endif()
 # SFEM: FEM solid mechanics backend (solid_assembler_type: sfem)
 if(WITH_SFEM)
     add_compile_definitions(HAS_SFEM)
@@ -198,6 +211,11 @@ target_include_directories(main_obj PUBLIC
 
 # linear solver library
 target_link_libraries(main_obj PUBLIC ${libLinSolve})
+
+# Link to Utopia FSI library (before trilinos)
+if(WITH_FSI)
+    target_link_libraries(main_obj PUBLIC UtopiaFE::utopia_fe)
+endif()
 
 # Link your executable with Trilinos libraries
 target_link_libraries(main_obj PUBLIC ${Trilinos_LIBRARIES})
@@ -266,11 +284,14 @@ target_link_libraries(${exec} PRIVATE main_obj)
 # main.cpp prints the git hash and version for --build-info.
 target_link_libraries(${exec} PRIVATE git_version)
 
+install(TARGETS ${exec} DESTINATION bin)
+
 # debugging utilities
 if(WITH_DEBUG_LIB)
-    add_library(debug OBJECT
+    add_library(debug_obj OBJECT
         debug/debug.cpp
     )
-    target_compile_options(debug PRIVATE -O0 -g -UNDEBUG) # always build this object library in debug mode
-    target_link_libraries(debug PRIVATE main_obj)
+    target_compile_options(debug_obj PRIVATE -O0 -g -UNDEBUG) # always build this object library in debug mode
+    target_link_libraries(debug_obj PRIVATE main_obj)
+    target_link_libraries(${exec} PRIVATE debug_obj)
 endif()

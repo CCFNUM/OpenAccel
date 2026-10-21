@@ -41,6 +41,23 @@ void zoneDeformation::read(const YAML::Node& inputNode)
                             meshMotionModelBlock["option"]
                                 .template as<std::string>());
 
+                        if (model_ ==
+                            meshDeformationModel::displacementDiffusion)
+                        {
+                            if (!meshMotionModelBlock["mesh_stiffness"])
+                            {
+                                warningMsg("Using default parameter for mesh "
+                                           "stiffness.");
+                            }
+                        }
+                        else
+                        {
+                            errorMsg("Mesh motion model `" +
+                                     meshMotionModelBlock["option"]
+                                         .template as<std::string>() +
+                                     "` is not supported");
+                        }
+
                         if (meshMotionModelBlock["mesh_stiffness"])
                         {
                             const auto& meshStiffnessBlock =
@@ -158,15 +175,6 @@ void zoneDeformation::read(const YAML::Node& inputNode)
                                     }
                                 }
                             }
-                            else
-                            {
-                                errorMsg(
-                                    "Option for mesh stiffness not provided");
-                            }
-                        }
-                        else
-                        {
-                            errorMsg("Mesh stiffness not provided");
                         }
                     }
                     else

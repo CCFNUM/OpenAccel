@@ -18,6 +18,9 @@
 #ifdef HAS_HYPRE
 #include <HYPRE_utilities.h>
 #endif /* HAS_HYPRE */
+#ifdef HAS_UTOPIA
+#include "utopia.hpp"
+#endif /* HAS_UTOPIA */
 
 // code libraries
 #include "macros.h"
@@ -110,7 +113,12 @@ int main(int argc, char* argv[])
 #ifdef HAS_HYPRE
     HYPRE_Initialize();
 #endif /* HAS_HYPRE */
+
+#ifdef HAS_UTOPIA
+    utopia::Utopia::Init(argc, argv);
+#else
     Kokkos::initialize(argc, argv);
+#endif /* HAS_UTOPIA */
     {
         // create and run simulation
         Sim* realm = new Sim(argc, const_cast<const char**>(argv));
@@ -119,7 +127,12 @@ int main(int argc, char* argv[])
 
         delete realm;
     }
+
+#ifdef HAS_UTOPIA
+    utopia::Utopia::Finalize();
+#else
     Kokkos::finalize();
+#endif /* HAS_UTOPIA */
 
 #ifdef HAS_HYPRE
     HYPRE_Finalize();
