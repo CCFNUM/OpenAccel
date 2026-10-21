@@ -1,7 +1,7 @@
 # vim: ft=yaml
 # This is a 2D case and must be run with a 2D-compiled binary.
 mesh:
-    file_path: mesh.e
+    file_path: mesh_32bit.e
 simulation:
     verbose: 1
     physical_analysis:

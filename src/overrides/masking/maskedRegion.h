@@ -10,6 +10,11 @@
 // code
 #include "types.h"
 
+#include <algorithm>
+#include <map>
+#include <stdexcept>
+#include <vector>
+
 namespace accel
 {
 
@@ -66,6 +71,9 @@ private:
     // the layer the wall law is anchored on
     label forcedLayers_ = 1;
     label referenceLayer_ = 2;
+
+    // Requested ring number -> locally owned node handles.
+    std::map<label, std::vector<stk::mesh::Entity>> retainedRings_;
 
     maskWallTreatment wallTreatment_ = maskWallTreatment::wallFunction;
 
@@ -163,6 +171,23 @@ public:
     label referenceLayer() const
     {
         return referenceLayer_;
+    }
+
+    const std::vector<stk::mesh::Entity>& nodesInRing(label ring) const
+    {
+        return retainedRings_.at(ring);
+    }
+
+    label layerSearchDepth() const
+    {
+        label depth = std::max(forcedLayers_, referenceLayer_);
+
+        if (!retainedRings_.empty())
+        {
+            depth = std::max(depth, retainedRings_.rbegin()->first);
+        }
+
+        return depth;
     }
 
     // closest point on the body surface: distance and unit normal into the

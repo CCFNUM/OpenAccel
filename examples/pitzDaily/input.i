@@ -95,7 +95,7 @@ simulation:
                 relax_gradients: false
                 incremental_gradient_change: false
                 consistent: true
-                wall_distance_method: mesh_wave
+                wall_distance_method: signed_distance_function
         output_control:
             file_path: results.e
             output_frequency: 50

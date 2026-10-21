@@ -81,3 +81,7 @@ target_sources(main_obj PRIVATE
 target_sources(main_obj PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/core/nalu/src/NaluEnv.C
 )
+
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ssdf/CMakeLists.txt)
+    message(FATAL_ERROR "SSDF submodule is missing, run: git submodule update --init --recursive")
+endif()
