@@ -8,6 +8,9 @@
 #include "masking.h"
 #include "types.h"
 
+#include <string>
+#include <vector>
+
 namespace accel
 {
 
@@ -19,13 +22,12 @@ private:
     wallDistance* wallDistancePtr_;
 
     void computeWallDistance_();
+    void computeMaskedImmersedDistance_();
 
-    void computeImmersedSolidDistance_(
-        const masking& masks,
-        const std::vector<stk::mesh::Entity>& queryNodes,
-        const std::vector<scalar>& x,
-        const std::vector<scalar>& y,
-        const std::vector<scalar>& z);
+    static constexpr char immersedDistanceFieldName_[] =
+        "signed_distance";
+
+    void declareImmersedDistanceField_();
 
 public:
     // Constructors

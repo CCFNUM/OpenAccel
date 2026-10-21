@@ -13,6 +13,7 @@
 #include "simulation.h"
 
 #include <graph/layers.hpp>
+#include <iostream>
 
 namespace accel
 {
@@ -88,10 +89,17 @@ void masking::classify_()
 
         region.markCovered(seeds);
 
-        // one layer past the reference layer is all the wall treatment needs
-        computeLayers_(seeds, layers, region.referenceLayer() + 1);
+        // Include all rings needed by the wall treatment and requested access.
+        computeLayers_(seeds, layers, region.layerSearchDepth() + 1);
 
         region.takeLayers(layers);
+
+        std::cout
+        << "Body " << region.name()
+        << ": ring 1 = " << region.nodesInRing(1).size()
+        << " nodes, ring 2 = " << region.nodesInRing(2).size()
+        << " nodes"
+        << std::endl;
 
         for (label i = 0; i < npoints; ++i)
         {

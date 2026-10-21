@@ -184,6 +184,31 @@ void maskedRegion::read(const YAML::Node& regionNode)
         referenceLayer_ = regionNode["reference_layer"].template as<label>();
     }
 
+    retainedRings_.clear();
+
+    if (regionNode["retain_rings"])
+    {
+        const auto requested = regionNode["retain_rings"];
+
+        if (!requested.IsSequence())
+        {
+            throw std::runtime_error("retain_rings must be a list");
+        }
+
+        for (const auto& entry : requested)
+        {
+            const label ring = entry.as<label>();
+
+            if (ring < 1 || ring > 254)
+            {
+                throw std::runtime_error(
+                    "retain_rings entries must be between 1 and 254");
+            }
+
+            retainedRings_.try_emplace(ring);
+        }
+    }
+
     if (regionNode["wall_treatment"])
     {
         wallTreatment_ = convertMaskWallTreatmentFromString(
@@ -906,6 +931,13 @@ void maskedRegion::takeLayers_(const std::vector<uint8_t>& layers)
     ringReferenceDistances_.clear();
     ringVelocities_.clear();
 
+    for (auto& entry : retainedRings_)
+    {
+        entry.second.clear();
+    }
+
+    const auto domainSelector = selectDomains_();
+
     const bool owned = true;
 
     for (label i = 0; i < masks->graphNodeCount(); ++i)
@@ -919,6 +951,14 @@ void maskedRegion::takeLayers_(const std::vector<uint8_t>& layers)
         }
 
         const label layer = static_cast<label>(layers[i]);
+
+        const auto selected = retainedRings_.find(layer);
+
+        if (selected != retainedRings_.end() &&
+            domainSelector(bulkData.bucket(node)))
+        {
+            selected->second.push_back(node);
+        }
 
         if (layer == 0)
         {
