@@ -7,6 +7,9 @@
 // code
 #include "types.h"
 
+// std
+#include <cmath>
+
 namespace accel
 {
 
@@ -444,7 +447,17 @@ std::array<scalar, 3> BDF2::coeff(const scalar dt_curr, const scalar dt_prev)
     // coefficients for first step where dt_prev does not exist.
     //
     // generic interpolation coefficients for BDF2 (non-const timesteps)
-    assert(std::abs(dt_prev) != 0);
+    //
+    // Hard check (not an assert, which is compiled out in Release): a zero
+    // or non-finite previous timestep, e.g. from an incompletely restored
+    // restart, would otherwise silently turn the whole solution into NaN.
+    if (!(std::isfinite(dt_prev) && dt_prev > 0) ||
+        !(std::isfinite(dt_curr) && dt_curr > 0))
+    {
+        errorMsg("BDF2::coeff: invalid timestep history (dt_curr = " +
+                 std::to_string(dt_curr) +
+                 ", dt_prev = " + std::to_string(dt_prev) + ")");
+    }
     const scalar omega_n = dt_curr / dt_prev;
     constexpr scalar one = 1.0;
     constexpr scalar two = 2.0;

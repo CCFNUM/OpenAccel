@@ -779,8 +779,28 @@ void nodeField<N, M>::initialize(label iZone, bool force)
     this->setIsInitialized(iZone);
 
     // supplementary tasks for transient simulations, primarily for second order
-    // transient schemes
-    this->updatePrevTimeField(iZone);
+    // transient schemes.
+    //
+    // Different when a restart restored the previous time state as well: the
+    // time levels are shifted at the start of every time step (preTimeStep:
+    // n-1 <- n <- current), which rebuilds the correct history from the
+    // restored current and StateN data. Shifting here too would overwrite the
+    // restored StateN with the current state, i.e. the first BDF2 step after
+    // a restart would use U^{n-1} = U^n. Only the older levels are filled
+    // (StateNM1 <- StateN), so that quantities evaluated before the first
+    // step (e.g. the transient part of the mass divergence) see a consistent
+    // history instead of unset data.
+    if (restoredWithPrevTimeState_)
+    {
+        if (prevTimeFieldPtr_ != nullptr)
+        {
+            this->prevTimeRef().updatePrevTimeField(iZone);
+        }
+    }
+    else
+    {
+        this->updatePrevTimeField(iZone);
+    }
 }
 
 template <size_t N, size_t M>
@@ -834,6 +854,49 @@ void nodeField<N, M>::initializeField(label iZone)
                 std::cout << "Field " + this->name() +
                                  " has been restored at time "
                           << std::scientific << mf.time_restored() << std::endl;
+            }
+
+            // all restored states of the field
+            std::vector<const stk::mesh::FieldBase*> stateFields;
+            for (unsigned s = 0; s < theField->number_of_states(); s++)
+            {
+                stateFields.push_back(theField->field_state(
+                    static_cast<stk::mesh::FieldState>(s)));
+            }
+
+            // The restart database holds the owned and shared nodes of each
+            // rank only: propagate the restored data to the ghosted copies
+            // (aura and interface ghosting), which would otherwise keep unset
+            // values (NaN in the first pressure-correction system of a
+            // parallel restart).
+            if (messager::parallel())
+            {
+                stk::mesh::communicate_field_data(this->bulkDataRef(),
+                                                  stateFields);
+                for (label iInterface = 0;
+                     iInterface < this->meshPtr()->nInterfaces();
+                     iInterface++)
+                {
+                    const auto& interf =
+                        this->meshRef().interfaceRef(iInterface);
+                    if (interf.interfaceGhosting_)
+                    {
+                        stk::mesh::communicate_field_data(
+                            *interf.interfaceGhosting_, stateFields);
+                    }
+                }
+            }
+
+            // was the previous time state (StateN) in the database as well?
+            if (theField->number_of_states() > 1)
+            {
+                auto region = this->meshRef().ioBrokerRef().get_input_ioss_region();
+                restoredWithPrevTimeState_ =
+                    stk::io::field_state_exists_on_io_entity(
+                        theField->name(),
+                        theField,
+                        stk::mesh::StateN,
+                        region->get_node_blocks()[0]);
             }
 
             // FIXME: Since we operate on fields individually

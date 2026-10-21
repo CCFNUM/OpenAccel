@@ -12,21 +12,20 @@
 namespace accel
 {
 
+// Smagorinsky SGS model with Van Driest near-wall damping:
+//
+//   mut = rho * (Cs * delta * fD)^2 * |S|,  fD = 1 - exp(-yPlus / APlus)
+//
+// The coefficients Cs and APlus are owned per domain by `struct turbulence`
+// in domain.h (keys `smagorinsky_constant` / `van_driest_a_plus`); they are
+// deliberately not duplicated here.
 class SmagorinskyLESModel : public turbulenceModel
 {
-private:
-    scalar Cs_ = 0.17;
-
 public:
     SmagorinskyLESModel(realm* realm);
 
     void updateTurbulentDynamicViscosity(
         const std::shared_ptr<domain> domain) override;
-
-    scalar Cs() const
-    {
-        return Cs_;
-    }
 };
 
 } /* namespace accel */

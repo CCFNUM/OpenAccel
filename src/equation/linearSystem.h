@@ -24,6 +24,9 @@
 #include "PETScSolver.h"
 #include "TrilinosSolver.h"
 
+// std
+#include <cmath>
+
 namespace accel
 {
 
@@ -745,6 +748,22 @@ void linearSystem<N>::convergenceReport_()
 
     // additional reporting from linear solver
     lsolver_->report();
+
+    // abort on a non-finite residual: the solution has diverged (or was
+    // corrupted) and continuing would only report NaN as a successful run.
+    // Residual norms are global, so all ranks take this branch together.
+    for (int i = 0; i < LinearSolver::BLOCKSIZE; i++)
+    {
+        if (!std::isfinite(residual[i]))
+        {
+            errorMsg("linearSystem: non-finite residual in equation `" +
+                     equation_name_[i] + "` at time " +
+                     std::to_string(sim_.controlsRef().time) +
+                     ", iteration " +
+                     std::to_string(sim_.getIterationCount()) +
+                     ": solution diverged");
+        }
+    }
 
     // update residual and check convergence
     control_residual = residual;

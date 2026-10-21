@@ -8,6 +8,7 @@
 #include "mesh.h"
 #include "messager.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace accel
@@ -22,13 +23,17 @@ void SmagorinskyLESModel::updateTurbulentDynamicViscosity(
     const std::shared_ptr<domain> domain)
 {
     const scalar urf = this->mutRef().urf();
-    const scalar Cs = this->Cs();
+
+    // model coefficients are owned per domain (see `struct turbulence`)
+    const scalar Cs = domain->turbulence_.smagorinskyConstant_;
+    const scalar APlus = domain->turbulence_.vanDriestAPlus_;
 
     stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
     stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
 
     STKScalarField* mutSTKFieldPtr = this->mutRef().stkFieldPtr();
     const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
+    const STKScalarField* muSTKFieldPtr = this->muRef().stkFieldPtr();
     const STKScalarField* dualNodalVolumeSTKFieldPtr =
         metaData.get_field<scalar>(stk::topology::NODE_RANK,
                                    mesh::dual_nodal_volume_ID);
@@ -40,6 +45,18 @@ void SmagorinskyLESModel::updateTurbulentDynamicViscosity(
         errorMsg("SmagorinskyLESModel: dual_nodal_volume field is not available");
         return;
     }
+
+    // Van Driest near-wall damping. It is only meaningful when the domain
+    // actually bounds a no-slip wall: without one, `minimum_distance_to_wall`
+    // carries no wall information (it is zero-filled) and applying the damping
+    // would erroneously annihilate the SGS viscosity everywhere. In that case
+    // the model falls back to undamped Smagorinsky.
+    const STKScalarField* yMinSTKFieldPtr =
+        this->yMinRef().stkFieldPtr();
+
+    const bool applyWallDamping =
+        !this->collectNoSlipWallParts_(domain).empty() &&
+        yMinSTKFieldPtr != nullptr && muSTKFieldPtr != nullptr;
 
     stk::mesh::Selector selAllNodes =
         metaData.universal_part() &
@@ -60,6 +77,13 @@ void SmagorinskyLESModel::updateTurbulentDynamicViscosity(
             stk::mesh::field_data(*dualNodalVolumeSTKFieldPtr, b);
         scalar* mut = stk::mesh::field_data(*mutSTKFieldPtr, b);
 
+        const scalar* mu =
+            applyWallDamping ? stk::mesh::field_data(*muSTKFieldPtr, b)
+                             : nullptr;
+        const scalar* yMin =
+            applyWallDamping ? stk::mesh::field_data(*yMinSTKFieldPtr, b)
+                             : nullptr;
+
         for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
         {
             const scalar* dudx = stk::mesh::field_data(gradUSTKFieldRef, b[k]);
@@ -78,7 +102,36 @@ void SmagorinskyLESModel::updateTurbulentDynamicViscosity(
             sijMag = std::sqrt(2.0 * sijMag);
 
             const scalar delta = std::cbrt(dualVol[k]);
-            const scalar mut_val = rho[k] * (Cs * delta) * (Cs * delta) * sijMag;
+
+            // Van Driest damping of the SGS mixing length:
+            //   nu          = mu / rho
+            //   uTauLocal   = sqrt(nu * |S|)
+            //   yPlus       = y * uTauLocal / nu = y * sqrt(|S| / nu)
+            //   fD          = 1 - exp(-yPlus / A+)
+            //   l           = Cs * delta * fD
+            //
+            // uTauLocal is exact at the wall once the damping is effective,
+            // since the near-wall stress is then carried entirely by the
+            // molecular viscosity (tau_w = mu * |S|). The residual coupling is
+            // self-correcting: over-predicting yPlus raises mut, which lowers
+            // the resolved |S|, which lowers yPlus again.
+            //
+            // Degenerate inputs (non-positive rho, mu or |S|) carry no wall
+            // information, so damping is skipped and the undamped Smagorinsky
+            // value is retained rather than silently zeroing the model.
+            scalar fD = 1.0;
+            if (applyWallDamping && rho[k] > SMALL && mu[k] > SMALL &&
+                sijMag > SMALL)
+            {
+                const scalar nu = mu[k] / rho[k];
+                const scalar y = std::max(yMin[k], scalar(0));
+                const scalar yPlus = y * std::sqrt(sijMag / nu);
+
+                fD = 1.0 - std::exp(-yPlus / APlus);
+            }
+
+            const scalar lMix = Cs * delta * fD;
+            const scalar mut_val = rho[k] * lMix * lMix * sijMag;
 
             mut[k] = urf * mut_val + (1.0 - urf) * mut[k];
         }

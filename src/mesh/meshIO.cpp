@@ -98,6 +98,16 @@ void mesh::read(const YAML::Node& inputNode)
             }
         }
 
+        // Restart databases store the dt history as globals dt_0 .. dt_3.
+        // IOSS field recognition would merge dt_1, dt_2, dt_3 into a single
+        // 3-component field "dt", so that controls::deserializeRestartParam
+        // cannot find "dt_1". Keep numbered globals as separate scalars.
+        if (restart_ctrl.isRestart_)
+        {
+            ioBrokerPtr_->property_add(
+                Ioss::Property("IGNORE_REALN_FIELDS", "TRUE"));
+        }
+
         // Initialize meta data (from exodus file)
         ioBrokerPtr_->add_mesh_database(meshFilePath,
                                         restart_ctrl.isRestart_

@@ -19,6 +19,11 @@
 #include "scatterToSurface.h"
 #include "sideField.h"
 
+// Ioss/STK io (restart state detection)
+#include <Ioss_NodeBlock.h>
+#include <Ioss_Region.h>
+#include <stk_io/IossBridge.hpp>
+
 // external
 #include "exprtk.hpp"
 
@@ -129,6 +134,10 @@ protected:
         boundaryConditionsDictionaryArray_;
 
     std::vector<initialConditionDictionary> initialConditionsDictionaryArray_;
+
+    // true if the last restart restored both the current and the previous
+    // time state (StateN) of this field from the restart database
+    bool restoredWithPrevTimeState_ = false;
 
     // advection scheme (upwind or high-resolution)
     advectionSchemeType advectionScheme_ = advectionSchemeType::upwind;
@@ -482,6 +491,11 @@ public:
         assert(isInitialized_.size() > iZone);
         assert(this->isZoneSet(iZone));
         return isInitialized_[iZone];
+    }
+
+    bool restoredWithPrevTimeState() const
+    {
+        return restoredWithPrevTimeState_;
     }
 
     void setIsInitialized(label iZone, bool state = true)

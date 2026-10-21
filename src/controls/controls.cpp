@@ -9,6 +9,9 @@
 #include "messager.h"
 #include "version.h"
 
+// Ioss
+#include <Ioss_Region.h>
+
 // std
 #include <algorithm>
 #include <cmath>
@@ -112,6 +115,20 @@ void controls::setRestartParam()
         const std::string dt_id("dt_");
         restartParameter_.set_value(dt_id + std::to_string(i), getTimestep(-i));
     }
+    if (bulkForceParamRegistered_)
+    {
+        restartParameter_.set_value("bulkForceIntegral", bulkForceIntegral_);
+    }
+}
+
+void controls::registerBulkForceRestartParam()
+{
+    if (!bulkForceParamRegistered_)
+    {
+        restartParameter_.set_param(
+            "bulkForceIntegral", bulkForceIntegral_, false, true);
+        bulkForceParamRegistered_ = true;
+    }
 }
 
 void controls::deserializeRestartParam(
@@ -126,6 +143,38 @@ void controls::deserializeRestartParam(
         return;
     }
 
+    // Global variables are stored per database step and are read from the
+    // current state of the input region. No state is active right after
+    // create_input_mesh(), in which case the reads silently return zeros
+    // (timeStepCount = globalIter = 0 and an all-zero dt history, which makes
+    // the BDF2 coefficients divide by zero). Select the restart step
+    // explicitly: the latest time by default, as for the restored fields,
+    // otherwise the step closest to the requested restart time.
+    auto region = io_broker.get_input_ioss_region();
+    const int nStates = region->get_property("state_count").get_int();
+    if (nStates < 1)
+    {
+        errorMsg("restart: database contains no time steps");
+    }
+
+    int step = region->get_max_time().first;
+    const scalar requestedTime = solver_.restartControl_.restartTime_;
+    if (requestedTime != 0.0)
+    {
+        scalar minDiff = VBIG;
+        for (int s = 1; s <= nStates; s++)
+        {
+            const scalar diff =
+                std::abs(region->get_state_time(s) - requestedTime);
+            if (diff < minDiff)
+            {
+                minDiff = diff;
+                step = s;
+            }
+        }
+    }
+
+    const scalar stepTime = region->begin_state(step);
     io_broker.get_global("timeStepCount", analysisType_.timeStepCount_);
     io_broker.get_global("globalIter", globalIter);
     for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
@@ -134,6 +183,30 @@ void controls::deserializeRestartParam(
         const int idx = timestepPosition_(-i);
         io_broker.get_global(dt_id + std::to_string(i),
                              analysisType_.timestep_[idx]);
+    }
+    // optional: absent in databases written without a bulk-velocity
+    // controller (the controller then starts from the input source value)
+    bulkForceIntegralRestored_ =
+        io_broker.get_global("bulkForceIntegral", bulkForceIntegral_, false);
+    region->end_state(step);
+
+    if (messager::master())
+    {
+        std::cout << "Restart parameters restored from database step " << step
+                  << " (time " << std::scientific << stepTime
+                  << "): timeStepCount = " << analysisType_.timeStepCount_
+                  << ", globalIter = " << globalIter << ", dt history = [";
+        for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
+        {
+            std::cout << (i ? ", " : "") << getTimestep(-i);
+        }
+        std::cout << "]";
+        if (bulkForceIntegralRestored_)
+        {
+            std::cout << ", bulkForceIntegral = " << std::setprecision(10)
+                      << bulkForceIntegral_;
+        }
+        std::cout << std::defaultfloat << std::endl;
     }
 }
 
