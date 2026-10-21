@@ -25,9 +25,9 @@ std::string simulation::residualPlotCommand_() const
     std::ostringstream cmd;
     cmd << "plot ";
 
-    for (size_t i = 0; i < plot_items_.size(); ++i)
+    for (size_t i = 0; i < plotItems_.size(); ++i)
     {
-        const auto& item = plot_items_[i];
+        const auto& item = plotItems_[i];
 
         std::string legend = item.legend_name;
         std::replace(legend.begin(), legend.end(), '\'', ' ');
@@ -36,7 +36,7 @@ std::string simulation::residualPlotCommand_() const
             << ":" << (item.ydata_idx + 1) << " with linespoints title '"
             << legend << "'";
 
-        if (i + 1 < plot_items_.size())
+        if (i + 1 < plotItems_.size())
         {
             cmd << ", ";
         }
@@ -621,21 +621,18 @@ void simulation::createOverrides_()
 
 void simulation::initializeOutput_()
 {
-    const bool is_restart =
-        controlsRef().solverRef().restartControl_.isRestart_;
+    auto& io = controlsRef().solverRef().outputControl_;
+    auto& restart = controlsRef().solverRef().restartControl_;
 
     // results
-    resultsPropertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
-    resultsFileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
-        controlsRef().solverRef().outputControl_.filePath_,
-        controlsRef().solverRef().outputControl_.writeMode_,
-        *resultsPropertyManagerPtr_.get());
-    meshRef().ioBrokerPtr()->use_nodeset_for_part_nodes_fields(
-        resultsFileIndex_, false);
+    io.propertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
+    io.fileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
+        io.filePath_, io.writeMode_, *io.propertyManagerPtr_.get());
+    meshRef().ioBrokerPtr()->use_nodeset_for_part_nodes_fields(io.fileIndex_,
+                                                               false);
 
     // Add result fields
-    const std::vector<std::string>& outputFieldNames =
-        controlsRef().solverRef().outputControl_.outputFields_;
+    const std::vector<std::string>& outputFieldNames = io.outputFields_;
     const auto& metaData = meshRef().metaDataRef();
 
     const stk::mesh::FieldVector& fields = metaData.get_fields();
@@ -647,7 +644,7 @@ void simulation::initializeOutput_()
         if (iter != outputFieldNames.end())
         {
             meshRef().ioBrokerPtr()->add_field(
-                resultsFileIndex_, *field, field->name());
+                io.fileIndex_, *field, field->name());
             registeredFieldNames.push_back(field->name());
         }
     }
@@ -672,80 +669,73 @@ void simulation::initializeOutput_()
 #ifndef NDEBUG
     // unconditional write of rank ID cell field
     meshRef().ioBrokerPtr()->add_field(
-        resultsFileIndex_,
+        io.fileIndex_,
         *stk::mesh::get_field_by_name<int>(::accel::mesh::rank_ID, metaData),
         ::accel::mesh::rank_ID);
 #endif /* NDEBUG */
 
     // Write result fields at time = t_0
-    io_write_counter_ = 0;
-    io_last_results_ = -1;
-    io_last_results_time_ = -1.0;
-    io_write_time_ = controlsRef().time;
-    const auto& outputCtrl = controlsRef().solverRef().outputControl_;
-    const auto& outFreq = outputCtrl.outputFrequency_;
+    io.writeTime_ = controlsRef().time;
+    const auto& outFreq = io.outputFrequency_;
     const bool results_freq =
         (outFreq.option_ == outputFrequencyType::timeInterval)
             ? (outFreq.timeInterval_ > 0.0)
             : (outFreq.timestepInterval_ > 0);
-    const bool restart_write_initial =
-        controlsRef().solverRef().restartControl_.writeInitial_;
+
+    const bool is_restart = restart.isRestart_;
+    const bool restart_write_initial = restart.writeInitial_;
     writeResults((results_freq && !is_restart) || restart_write_initial);
 
     // restarts
-    io_last_restart_ = -1;
+    auto restart_path = controlsRef().getRestartDirectory();
+    restart_path /= io.restartFileName_;
 
-    // compose restart path name
-    auto restart_path = this->getSimulationDirectory();
-    std::string restart_dir_name("restart."); // default restart dir name
-    const size_t len = restart_dir_name.size();
-    int nrestart_dirs = 0;
-    for (const auto& entry : fs::directory_iterator{restart_path})
-    {
-        if (restart_dir_name.compare(0, len, entry.path().filename(), 0, len) ==
-            0)
-        {
-            ++nrestart_dirs;
-        }
-    }
-    std::ostringstream oss;
-    oss << restart_dir_name << std::setfill('0') << std::setw(3)
-        << nrestart_dirs;
-    restart_path /= oss.str();
-    restart_path /= controlsRef().solverRef().outputControl_.restartFileName_;
-
-    restartPropertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
-    restartFileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
+    restart.propertyManagerPtr_ = std::make_unique<Ioss::PropertyManager>();
+    restart.fileIndex_ = meshRef().ioBrokerPtr()->create_output_mesh(
         restart_path,
         stk::io::WRITE_RESTART,
-        *restartPropertyManagerPtr_.get());
-    for (const auto& field_name : restartFields_)
+        *restart.propertyManagerPtr_.get());
+    std::set<std::string> sanitized_fields;
+    for (const auto& field_name : restart.fields_)
     {
         stk::mesh::FieldBase* field =
             stk::mesh::get_field_by_name(field_name, metaData);
-        assert(field);
+        if (!field)
+        {
+            // NOTE [faw 2026-09-19]: Different execution paths are implemented
+            // to treat conditional side field allocations required for restarts
+            // depending on a given boundary/interface configuration.  To
+            // simplify the registration process, unconditional registration is
+            // used in constructors and then sanitized here to ensure all fields
+            // registered in the restart list are valid fields only.
+            continue;
+        }
+        sanitized_fields.insert(field_name);
         meshRef().ioBrokerPtr()->add_field(
-            restartFileIndex_, *field, field_name);
+            restart.fileIndex_,
+            *field,
+            std::to_string(std::hash<std::string>{}(field_name)));
     }
+    restart.fields_.swap(sanitized_fields);
 
     for (const auto& param : controlsRef().getRestartParam())
     {
         assert(param.second.toRestartFile);
         meshRef().ioBrokerPtr()->add_global(
-            restartFileIndex_, param.first, param.second);
+            restart.fileIndex_, param.first, param.second);
     }
 
     meshRef()
         .ioBrokerPtr()
-        ->get_output_ioss_region(restartFileIndex_)
+        ->get_output_ioss_region(restart.fileIndex_)
         ->get_database()
-        ->set_cycle_count(
-            controlsRef().solverRef().restartControl_.keepNRestartSnapshots_);
+        ->set_cycle_count(restart.keepNRestartSnapshots_);
 }
 
 void simulation::writeResults(const bool write_condition)
 {
-    if (write_condition && io_write_counter_ != io_last_results_)
+    auto& io = controlsRef().solverRef().outputControl_;
+    if (write_condition && io.writeCounter_ != io.lastResults_)
     {
         // arbitrary field corrections/post-process: done with care
         applyArbitraryFieldCorrections_();
@@ -754,34 +744,49 @@ void simulation::writeResults(const bool write_condition)
         correctBoundaryValues_();
 
         // write solution to database file
-        meshRef().write(resultsFileIndex_, io_write_time_);
+        meshRef().write(io.fileIndex_, io.writeTime_);
 
         // restore conservative boundary node values
         restoreBoundaryValues_();
 
-        //
-        io_last_results_ = io_write_counter_;
-        io_last_results_time_ = io_write_time_;
+        // additional complement results registered externally
+        for (auto f : complementResults_)
+        {
+            f(io.writeCounter_, io.writeTime_);
+        }
+
+        io.lastResults_ = io.writeCounter_;
+        io.lastResultsTime_ = io.writeTime_;
     }
 }
 
 void simulation::writeRestart(const bool write_condition)
 {
-    if (write_condition && io_write_counter_ != io_last_restart_)
+    auto& io = controlsRef().solverRef().outputControl_;
+    const auto& restart = controlsRef().solverRef().restartControl_;
+    if (write_condition && io.writeCounter_ != io.lastRestart_)
     {
         controlsRef().setRestartParam();
 
-        meshRef().ioBrokerPtr()->begin_output_step(restartFileIndex_,
-                                                   io_write_time_);
-        meshRef().ioBrokerPtr()->write_defined_output_fields(restartFileIndex_);
+        meshRef().ioBrokerPtr()->begin_output_step(restart.fileIndex_,
+                                                   io.writeTime_);
+        meshRef().ioBrokerPtr()->write_defined_output_fields(
+            restart.fileIndex_);
         for (const auto& param : controlsRef().getRestartParam())
         {
             assert(param.second.toRestartFile);
             meshRef().ioBrokerPtr()->write_global(
-                restartFileIndex_, param.first, param.second);
+                restart.fileIndex_, param.first, param.second);
         }
-        meshRef().ioBrokerPtr()->end_output_step(restartFileIndex_);
-        io_last_restart_ = io_write_counter_;
+        meshRef().ioBrokerPtr()->end_output_step(restart.fileIndex_);
+
+        // additional complement restart data registered externally
+        for (auto f : complementRestart_)
+        {
+            f(io.writeCounter_, io.writeTime_);
+        }
+
+        io.lastRestart_ = io.writeCounter_;
     }
 }
 
@@ -912,26 +917,26 @@ void simulation::initializeResidualPlot()
 {
     try
     {
-        gp_ptr_ = std::make_unique<Gnuplot>("gnuplot", false);
-        if (!gp_ptr_->ok())
+        gpPtr_ = std::make_unique<Gnuplot>("gnuplot", false);
+        if (!gpPtr_->ok())
         {
             std::cout << "Warning: gnuplot executable not found. "
                          "Please install gnuplot to plot residuals.\n";
-            gp_ptr_.reset();
+            gpPtr_.reset();
             return;
         }
-        gp_ptr_->sendcommand("set title 'Data Monitoring'");
-        gp_ptr_->sendcommand("set xlabel 'Iter'");
-        gp_ptr_->sendcommand("set ylabel 'scaled residuals'");
-        gp_ptr_->sendcommand("set grid");
-        gp_ptr_->sendcommand("set logscale y");
-        gp_ptr_->sendcommand("set format y \"1e{%T}\"");
-        gp_ptr_->sendcommand("set yrange [1e-10:1]");
+        gpPtr_->sendcommand("set title 'Data Monitoring'");
+        gpPtr_->sendcommand("set xlabel 'Iter'");
+        gpPtr_->sendcommand("set ylabel 'scaled residuals'");
+        gpPtr_->sendcommand("set grid");
+        gpPtr_->sendcommand("set logscale y");
+        gpPtr_->sendcommand("set format y \"1e{%T}\"");
+        gpPtr_->sendcommand("set yrange [1e-10:1]");
 
-        if (!plot_items_.empty())
+        if (!plotItems_.empty())
         {
-            gp_ptr_->sendcommand(residualPlotCommand_());
-            gp_ptr_->show();
+            gpPtr_->sendcommand(residualPlotCommand_());
+            gpPtr_->show();
         }
     }
     catch (const std::exception& ex)
@@ -943,10 +948,10 @@ void simulation::initializeResidualPlot()
 
 void simulation::updateResidualPlot()
 {
-    if (gp_ptr_ && !plot_items_.empty())
+    if (gpPtr_ && !plotItems_.empty())
     {
-        gp_ptr_->sendcommand(residualPlotCommand_());
-        gp_ptr_->show();
+        gpPtr_->sendcommand(residualPlotCommand_());
+        gpPtr_->show();
     }
 }
 
@@ -986,7 +991,17 @@ void simulation::plotResiduals()
 
 void simulation::addPlotItem(const residualPlotItem& item)
 {
-    plot_items_.push_back(item);
+    plotItems_.push_back(item);
+}
+
+void simulation::registerComplementResult(complementFunc f)
+{
+    complementResults_.push_back(f);
+}
+
+void simulation::registerComplementRestart(complementFunc f)
+{
+    complementRestart_.push_back(f);
 }
 
 // number of characters for inner width of header/footer boxes

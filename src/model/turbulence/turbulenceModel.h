@@ -50,6 +50,19 @@ public:
     void initializeTurbulentDissipationRate(
         const std::shared_ptr<domain> domain) override;
 
+    void initializeTurbulentDynamicViscosity(
+        const std::shared_ptr<domain> domain) override;
+
+    void initializeTurbulentIntermittency(
+        const std::shared_ptr<domain> domain) override;
+
+protected:
+    // RMS nodal velocity magnitude and eddy length scale over the zone
+    void automaticTurbulenceScales_(const std::shared_ptr<domain> domain,
+                                    scalar& velocityScale,
+                                    scalar& lengthScale);
+
+public:
     // Update
 
     void
@@ -67,6 +80,7 @@ public:
     using fieldBroker::duPlusdyPlusRef;
     using fieldBroker::epsilonRef;
     using fieldBroker::F1Ref;
+    using fieldBroker::frRef;
     using fieldBroker::gammaRef;
     using fieldBroker::kRef;
     using fieldBroker::lambdaEffRef;
@@ -140,6 +154,13 @@ protected:
     void updateTPlus(const std::shared_ptr<domain> domain);
 
     void updateTWallCoeffs(const std::shared_ptr<domain> domain);
+
+    // Convenience wrapper that updates the full wall-function chain. On an
+    // explicit restart these derived wall fields are not persisted and are
+    // normally only populated in preSolve (after the momentum solve), so they
+    // are refreshed here before the first momentum solve to match the
+    // run-through state.
+    void updateWallFunctions(const std::shared_ptr<domain> domain);
 
     // Protected operations
 

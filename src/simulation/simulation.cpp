@@ -13,6 +13,10 @@
 #include "realm.h"
 #include "version.h"
 
+#include <csignal>
+
+extern volatile sig_atomic_t g_signalSent;
+
 namespace accel
 {
 
@@ -67,9 +71,9 @@ simulation::simulation(const int argc, const char* argv[]) : verbose_(0)
 
 simulation::~simulation()
 {
-    if (gp_ptr_)
+    if (gpPtr_)
     {
-        gp_ptr_->sendcommand("quit");
+        gpPtr_->sendcommand("quit");
     }
 }
 
@@ -167,6 +171,9 @@ void simulation::run()
 
 void simulation::runSteadyState()
 {
+    auto& io = controlsRef().solverRef().outputControl_;
+    const auto& restart = controlsRef().solverRef().restartControl_;
+
     label minIterations =
         controlsRef()
             .solverRef()
@@ -179,13 +186,19 @@ void simulation::runSteadyState()
     for (controlsRef().iter = 1; controlsRef().iter <= maxIterations;
          controlsRef().iter++)
     {
-        io_write_counter_ = ++controlsRef().globalIter;
-        io_write_time_ = io_write_counter_;
+        io.writeCounter_ = ++controlsRef().globalIter;
+        io.writeTime_ = io.writeCounter_;
 
         if (messager::master())
-            std::cout << std::endl
-                      << "Iter = " << controlsRef().iter << std::endl
-                      << std::endl;
+        {
+            std::cout << std::endl << "Iter = " << controlsRef().iter;
+            if (restart.isRestart_)
+            {
+                std::cout << " (global iter = " << controlsRef().globalIter
+                          << ")";
+            }
+            std::cout << std::endl << std::endl;
+        }
 
         auto elapsedIterTimeStart = std::chrono::high_resolution_clock::now();
 
@@ -229,18 +242,27 @@ void simulation::runSteadyState()
 
         // post work: post-process and write
         postWork();
+
+        // break iteration loop after signal sent once
+        if (g_signalSent)
+        {
+            MPI_Barrier(messager::comm());
+            break;
+        }
     }
 }
 
 void simulation::runTransient()
 {
+    auto& io = controlsRef().solverRef().outputControl_;
+
     while (controlsRef().getTotalTime() - controlsRef().time >
            50 * ::accel::SMALL)
     {
         controlsRef().advanceAndSetTimestep();
         controlsRef().time += controlsRef().getTimestep();
-        io_write_counter_ = controlsRef().getTimeStepCount();
-        io_write_time_ = controlsRef().time;
+        io.writeCounter_ = controlsRef().getTimeStepCount();
+        io.writeTime_ = controlsRef().time;
 
         label minCoeffIterations = controlsRef()
                                        .solverRef()
@@ -264,9 +286,16 @@ void simulation::runTransient()
              controlsRef().iter++)
         {
             if (messager::master())
+            {
                 std::cout << std::endl
-                          << "Iter = " << controlsRef().iter << std::endl
+                          << "Iter = "
+                          << controlsRef().iter
+                          // show global iterations unconditionally for
+                          // transient runs
+                          << " (global iter = " << controlsRef().globalIter + 1
+                          << ")" << std::endl
                           << std::endl;
+            }
 
             // update mesh in case of deforming/moving mesh
             if (this->meshRef().anyZoneMeshDeforming() ||
@@ -317,10 +346,22 @@ void simulation::runTransient()
 
                 break;
             }
+
+            if (g_signalSent)
+            {
+                break;
+            }
         }
 
         // post work: post-process and write
         postWork();
+
+        // break iteration loop after signal sent once
+        if (g_signalSent)
+        {
+            MPI_Barrier(messager::comm());
+            break;
+        }
     }
 }
 
@@ -346,6 +387,8 @@ void simulation::assembleAndSolveSystems()
 
         for (label subIter = 1; subIter <= equation->subIters(); subIter++)
         {
+            equation->setCurrentSubIter(subIter);
+
             // only print sub-iter if it is active (> 1)
             if (messager::master() && equation->subIters() > 1)
             {

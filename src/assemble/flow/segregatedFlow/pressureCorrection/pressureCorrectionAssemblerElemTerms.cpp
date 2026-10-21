@@ -23,6 +23,14 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
 
     const bool compressible = domain->isMaterialCompressible();
     const scalar comp = compressible ? 1.0 : 0.0;
+    // harmonic blend limits the Rhie-Chow term at shocks; see cvpg_type
+    const scalar cvpgHarm =
+        (comp > 0.0 && model_->controlsRef()
+                               .solverRef()
+                               .solverControl_.expertParameters_.cvpgType_ ==
+                           gradientAveragingType::harmAver)
+            ? 1.0
+            : 0.0;
 
     stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     stk::mesh::MetaData& metaData = mesh.metaDataRef();
@@ -446,7 +454,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                     const scalar gHarm =
                         (std::abs(gA) * gB + gA * std::abs(gB)) /
                         (std::abs(gA) + std::abs(gB) + SMALL);
-                    p_GpdxIp[j] = (1.0 - comp) * gArith + comp * gHarm;
+                    p_GpdxIp[j] = (1.0 - cvpgHarm) * gArith + cvpgHarm * gHarm;
 
                     const scalar fA = p_F[SPATIAL_DIM * il + j];
                     const scalar fB = p_F[SPATIAL_DIM * ir + j];
@@ -454,7 +462,7 @@ void pressureCorrectionAssembler::assembleElemTermsInterior_(
                     const scalar fHarm =
                         (std::abs(fA) * fB + fA * std::abs(fB)) /
                         (std::abs(fA) + std::abs(fB) + SMALL);
-                    p_FIp[j] = (1.0 - comp) * fArith + comp * fHarm;
+                    p_FIp[j] = (1.0 - cvpgHarm) * fArith + cvpgHarm * fHarm;
                 }
 
                 // assemble UDot

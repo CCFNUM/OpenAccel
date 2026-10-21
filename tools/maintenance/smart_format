@@ -13,6 +13,10 @@ Workflow:
 2. Add temporary clang-format off/on guards around headers
 3. Run clang-format — guards protect the headers
 4. Strip the temporary guards
+5. Fix what clang-format gets wrong:
+   - comment-only #if blocks are indented like the code that follows them
+   - macro backslashes on lines with multi-byte characters are realigned by
+     display width (clang-format counts bytes there)
 
 By default, only files changed according to git are processed.
 
@@ -30,6 +34,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 
 MAX_LINE = 80
 EXTENSIONS = {'.c', '.cpp', '.C', '.h', '.hpp', '.H'}
@@ -285,6 +290,80 @@ def strip_guards_content(content):
     return new_content
 
 
+# ---------------------------------------------------------------------------
+# Post clang-format fixes
+# ---------------------------------------------------------------------------
+
+def _display_width(text):
+    """Terminal column width of text (combining chars 0, wide chars 2)."""
+    width = 0
+    for ch in text:
+        if unicodedata.combining(ch):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+    return width
+
+
+def _indent_of(line):
+    return line[:len(line) - len(line.lstrip())]
+
+
+def fix_comment_only_pp_blocks(content):
+    """Indent comments inside comment-only #if blocks like the next code.
+
+    clang-format indents them like the previous statement, which is wrong
+    after an unbraced ``if (...) stmt;``.
+    """
+    lines = content.split('\n')
+    n = len(lines)
+    i = 0
+    while i < n:
+        if not lines[i].lstrip().startswith('#'):
+            i += 1
+            continue
+        # collect the lines up to the next preprocessor directive
+        j = i + 1
+        while j < n and not lines[j].lstrip().startswith('#'):
+            s = lines[j].strip()
+            if s and not s.startswith('//'):
+                break
+            j += 1
+        if j >= n or not lines[j].lstrip().startswith('#') or j == i + 1:
+            i += 1
+            continue
+        if not any(lines[k].strip() for k in range(i + 1, j)):
+            i = j
+            continue
+        # first code line after the closing directive(s)
+        k = j
+        while k < n and (not lines[k].strip() or
+                         lines[k].lstrip().startswith('#') or
+                         lines[k].lstrip().startswith('//')):
+            k += 1
+        if k < n:
+            indent = _indent_of(lines[k])
+            if lines[k].lstrip().startswith('}'):
+                indent += ' ' * 4
+            for m in range(i + 1, j):
+                if lines[m].strip():
+                    lines[m] = indent + lines[m].strip()
+        i = j
+    return '\n'.join(lines)
+
+
+def fix_escaped_newlines(content):
+    """Right-align macro backslashes by display width on non-ASCII lines."""
+    lines = content.split('\n')
+    for idx, line in enumerate(lines):
+        if not line.endswith('\\') or line.isascii():
+            continue
+        body = line[:-1].rstrip()
+        width = _display_width(body)
+        pad = MAX_LINE - 1 - width
+        lines[idx] = body + ' ' * max(pad, 1) + '\\'
+    return '\n'.join(lines)
+
+
 def find_source_files(src_dir):
     """Return sorted list of all source files under src_dir, excluding EXCLUDE_DIRS."""
     result = []
@@ -437,6 +516,10 @@ def main():
 
         # Step 3: strip temporary guards (in memory)
         final = strip_guards_content(result.stdout)
+
+        # Step 4: fix what clang-format gets wrong
+        final = fix_comment_only_pp_blocks(final)
+        final = fix_escaped_newlines(final)
 
         # Only write if something actually changed
         if final != original:

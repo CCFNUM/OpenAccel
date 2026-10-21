@@ -18,6 +18,7 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
                            bool correctedBoundaryNodeValues)
     : field<scalar, N>(meshPtr, stk::topology::NODE_RANK, name, numberOfStates),
       isInitialized_(this->meshPtr()->nZones(), false),
+      isImportedFromDataBase_(this->meshPtr()->nZones(), false),
       correctedBoundaryNodeValues_(correctedBoundaryNodeValues)
 {
     // Put the stk field on interior mesh parts
@@ -89,6 +90,14 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
                 .solverRef()
                 .solverControl_.expertParameters_.incrementalGradientChange_;
 
+        // use the prescribed side field value at boundary ips? enable boolean
+        // if yes
+        usePrescribedValueForGrad_ =
+            this->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.usePrescribedValueForGrad_;
+
         // relax the gradient across outer iterations? if disabled, force the
         // gradient under-relaxation factor to 1 (full, un-relaxed gradient)
         const bool relaxGradients =
@@ -111,6 +120,13 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
         // Turn HR flag ON
         advectionScheme_ = advectionSchemeType::highResolution;
 
+        // Cap the blend factor; volumeFraction overrides it with its own bound
+        blendingFactorMax_ =
+            this->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.blendFactorMax_;
+
         // Update high-resolution blending coefficient field
         this->setupBlendingFactorField();
     }
@@ -130,7 +146,8 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
 template <size_t N, size_t M>
 nodeField<N, M>::nodeField(mesh* meshPtr, STKScalarField* stkFieldPtr)
     : field<scalar, N>(meshPtr, stkFieldPtr),
-      isInitialized_(this->meshPtr()->nZones(), false)
+      isInitialized_(this->meshPtr()->nZones(), false),
+      isImportedFromDataBase_(this->meshPtr()->nZones(), false)
 {
     if (stkFieldPtr->number_of_states() - int(stkFieldPtr->state()) > 1)
     {
@@ -748,6 +765,25 @@ void nodeField<N, M>::setupBlendingFactorField(bool dummy)
         this->meshPtr(), this->name() + "_blending_factor", 1, true);
     this->blendingFactorRef().setToValue(std::vector<scalar>(N, 0));
 
+    // The generic (phi) assembler may create the blending factor after the
+    // parent field has already been set up on its zones (e.g. the scalar
+    // turbulence equations).  In that case the parent's setZone() never ran
+    // while the blending factor existed, so propagate the enabled zones here so
+    // the blending factor can be restored/initialised on a restart.
+    for (label iZone = 0; iZone < this->meshPtr()->nZones(); iZone++)
+    {
+        if (this->isZoneSet(iZone))
+        {
+            this->blendingFactorRef().setZone(iZone);
+        }
+    }
+
+    // The high-resolution blending factor carries iteration history through its
+    // one-sided relaxation; persist it so a restart resumes with a consistent
+    // limiter state instead of re-deriving it from scratch.
+    this->meshRef().controlsRef().solverRef().restartControl_.fields_.insert(
+        this->name() + "_blending_factor");
+
     if (!dummy)
     {
         assert(gradFieldPtr_ != nullptr);
@@ -774,9 +810,29 @@ void nodeField<N, M>::initialize(label iZone, bool force)
 
     this->initializeField(iZone);
 
+    // Restart input restores owned/shared nodal data, while derived-field
+    // initialization below may immediately traverse aura elements. Populate
+    // ghost values before side fields, EOS updates, or gradients can consume
+    // them.
+    this->synchronizeGhostedEntities(iZone);
+
     this->initializeSideFields(iZone);
 
+    // NOTE [faw 2026-08-13]: Only true for some fields.  Other fields perform
+    // more initialization in the model that called this function afterwards or
+    // possibly in a postInitialize() method call.
     this->setIsInitialized(iZone);
+
+    const auto& restart_ctrl =
+        this->meshRef().controlsRef().solverRef().restartControl_;
+
+    // The high-resolution blending factor carries iteration history (one-sided
+    // relaxation); restore it together with its parent field so a restart does
+    // not re-derive a stale limiter state.
+    if (restart_ctrl.isRestart_ && blendingFactorFieldPtr_)
+    {
+        this->blendingFactorRef().initialize(iZone);
+    }
 
     // supplementary tasks for transient simulations, primarily for second order
     // transient schemes.
@@ -809,7 +865,6 @@ void nodeField<N, M>::initializeField(label iZone)
     // ensure field is enabled on the zone
     assert(this->isZoneSet(iZone));
 
-    bool initialize_field = true;
     const auto& restart_ctrl =
         this->meshRef().controlsRef().solverRef().restartControl_;
 
@@ -819,7 +874,9 @@ void nodeField<N, M>::initializeField(label iZone)
         stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
             this->name(), this->meshRef().metaDataRef());
         stk::io::MeshField mf(
-            theField, theField->name(), restart_ctrl.timeMatchOption_);
+            theField,
+            std::to_string(std::hash<std::string>{}(theField->name())),
+            restart_ctrl.timeMatchOption_);
 
         scalar restart_time = restart_ctrl.restartTime_;
         if (restart_time == 0.0)
@@ -846,91 +903,81 @@ void nodeField<N, M>::initializeField(label iZone)
         // restore
         this->meshRef().ioBrokerRef().read_input_field(mf);
 
-        if (mf.field_restored())
+        assert(mf.field_restored());
+
+        // Propagate every restored time state to aura and interface ghosts.
+        std::vector<const stk::mesh::FieldBase*> stateFields;
+        for (unsigned s = 0; s < theField->number_of_states(); ++s)
         {
-            initialize_field = false;
-            if (messager::master())
+            stateFields.push_back(theField->field_state(
+                static_cast<stk::mesh::FieldState>(s)));
+        }
+        if (messager::parallel())
+        {
+            stk::mesh::communicate_field_data(this->bulkDataRef(),
+                                              stateFields);
+            for (label iInterface = 0;
+                 iInterface < this->meshPtr()->nInterfaces(); ++iInterface)
             {
-                std::cout << "Field " + this->name() +
-                                 " has been restored at time "
-                          << std::scientific << mf.time_restored() << std::endl;
-            }
-
-            // all restored states of the field
-            std::vector<const stk::mesh::FieldBase*> stateFields;
-            for (unsigned s = 0; s < theField->number_of_states(); s++)
-            {
-                stateFields.push_back(theField->field_state(
-                    static_cast<stk::mesh::FieldState>(s)));
-            }
-
-            // The restart database holds the owned and shared nodes of each
-            // rank only: propagate the restored data to the ghosted copies
-            // (aura and interface ghosting), which would otherwise keep unset
-            // values (NaN in the first pressure-correction system of a
-            // parallel restart).
-            if (messager::parallel())
-            {
-                stk::mesh::communicate_field_data(this->bulkDataRef(),
-                                                  stateFields);
-                for (label iInterface = 0;
-                     iInterface < this->meshPtr()->nInterfaces();
-                     iInterface++)
+                const auto& interf = this->meshRef().interfaceRef(iInterface);
+                if (interf.interfaceGhosting_)
                 {
-                    const auto& interf =
-                        this->meshRef().interfaceRef(iInterface);
-                    if (interf.interfaceGhosting_)
-                    {
-                        stk::mesh::communicate_field_data(
-                            *interf.interfaceGhosting_, stateFields);
-                    }
+                    stk::mesh::communicate_field_data(
+                        *interf.interfaceGhosting_, stateFields);
                 }
             }
+        }
 
-            // was the previous time state (StateN) in the database as well?
-            if (theField->number_of_states() > 1)
-            {
-                auto region = this->meshRef().ioBrokerRef().get_input_ioss_region();
-                restoredWithPrevTimeState_ =
-                    stk::io::field_state_exists_on_io_entity(
-                        theField->name(),
-                        theField,
-                        stk::mesh::StateN,
-                        region->get_node_blocks()[0]);
-            }
+        // A saved StateN must not be overwritten by initialize() before the
+        // first BDF2 step. Legacy files without it initialize from current.
+        if (theField->number_of_states() > 1)
+        {
+            auto region = this->meshRef().ioBrokerRef().get_input_ioss_region();
+            restoredWithPrevTimeState_ =
+                stk::io::field_state_exists_on_io_entity(
+                    theField->name(), theField, stk::mesh::StateN,
+                    region->get_node_blocks()[0]);
+        }
 
-            // FIXME: Since we operate on fields individually
-            // rather than calling bulk field restore method from STK API, it is
-            // possible that individual fields may have inconsistent restored
-            // time (typically this should not happen based on tests I did, but
-            // it is a possibility and it will happen here).
-            //
-            // WARNING: The assignments to the global
-            // controlsRef().time/globalIter variables below will be executed
-            // for EVERY restored field, it is assumed these calls will be
-            // directed to the correct internal STK database and hence they all
-            // produce the same value for mf.time_restored() and global
-            // parameter fetch.
-            if (this->meshRef().controlsRef().isTransient())
-            {
-                this->meshRef().controlsRef().time = mf.time_restored();
-            }
-            else
-            {
-                assert(mf.time_restored() -
-                           static_cast<label>(mf.time_restored()) ==
-                       0.0);
-                assert(this->meshRef().controlsRef().globalIter == 0 ||
-                       this->meshRef().controlsRef().globalIter ==
-                           static_cast<label>(mf.time_restored()));
-                this->meshRef().controlsRef().globalIter =
-                    static_cast<label>(mf.time_restored());
-            }
+        if (messager::master())
+        {
+            std::cout << "Field " + this->name() + " has been restored at time "
+                      << std::scientific << mf.time_restored() << std::endl;
+        }
+
+        // FIXME: Since we operate on fields individually
+        // rather than calling bulk field restore method from STK API, it is
+        // possible that individual fields may have inconsistent restored
+        // time (typically this should not happen based on tests I did, but
+        // it is a possibility and it will happen here).
+        //
+        // WARNING: The assignments to the global
+        // controlsRef().time/globalIter variables below will be executed
+        // for EVERY restored field, it is assumed these calls will be
+        // directed to the correct internal STK database and hence they all
+        // produce the same value for mf.time_restored() and global
+        // parameter fetch.
+        this->meshRef().controlsRef().deserializeRestartParam(
+            this->meshRef().ioBrokerRef());
+        if (this->meshRef().controlsRef().isTransient())
+        {
+            this->meshRef().controlsRef().time = mf.time_restored();
+        }
+        else
+        {
+            assert(mf.time_restored() -
+                       static_cast<label>(mf.time_restored()) ==
+                   0.0);
+            assert(this->meshRef().controlsRef().globalIter == 0 ||
+                   this->meshRef().controlsRef().globalIter ==
+                       static_cast<label>(mf.time_restored()));
+            this->meshRef().controlsRef().globalIter =
+                static_cast<label>(mf.time_restored());
         }
     }
 
     // apply zone loop
-    if (initialize_field)
+    if (!restart_ctrl.isRestart_) // value initialization from yaml
     {
         const auto& initCond = this->initialConditionRef(iZone);
         if (initCond.type() == initialConditionOption::value)
@@ -1072,24 +1119,35 @@ void nodeField<N, M>::initializeField(label iZone)
         }
         else if (initCond.type() == initialConditionOption::automatic)
         {
-            stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
-                this->name(), this->meshRef().metaDataRef());
-            stk::io::MeshField mf(theField, theField->name());
-            mf.set_read_time(this->meshRef().ioBrokerRef().get_max_time());
+            auto& ioBroker = this->meshRef().ioBrokerRef();
+            const auto timeSteps = ioBroker.get_time_steps();
+            bool fieldRestored = false;
 
-            // limit initialized parts to current zone's
-            for (const stk::mesh::Part* part :
-                 this->meshPtr()->zonePtr(iZone)->interiorParts())
+            // STK throws when read_input_field() is called on a mesh database
+            // with no transient states.  "automatic" is also used for
+            // geometry-only meshes, so only attempt an import when a state is
+            // actually available.
+            if (!timeSteps.empty())
             {
-                mf.add_subset(*part);
-            }
+                stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
+                    this->name(), this->meshRef().metaDataRef());
+                stk::io::MeshField mf(theField, theField->name());
+                mf.set_read_time(ioBroker.get_max_time());
 
-            // restore
-            this->meshRef().ioBrokerRef().read_input_field(mf);
+                // limit initialized parts to current zone's
+                for (const stk::mesh::Part* part :
+                     this->meshPtr()->zonePtr(iZone)->interiorParts())
+                {
+                    mf.add_subset(*part);
+                }
 
-            if (mf.field_restored())
-            {
-                if (messager::master())
+                ioBroker.read_input_field(mf);
+                fieldRestored = mf.field_restored();
+
+                // let models tell an imported field from a zero fallback
+                isImportedFromDataBase_[iZone] = fieldRestored;
+
+                if (fieldRestored && messager::master())
                 {
                     std::cout << "Field " + this->name() +
                                      " is imported from the data base at time "
@@ -1097,13 +1155,21 @@ void nodeField<N, M>::initializeField(label iZone)
                               << std::endl;
                 }
             }
-            else
+
+            if (!fieldRestored)
             {
+                this->setToValue(
+                    std::vector<scalar>(N, 0.0),
+                    this->meshPtr()->zonePtr(iZone)->interiorParts());
+
                 if (messager::master())
                 {
-                    warningMsg("Field " + this->name() +
-                               " is not found in the data base. "
-                               "Initializing from Zero");
+                    const std::string reason =
+                        timeSteps.empty()
+                            ? "the data base has no transient states"
+                            : "the field is not found in the data base";
+                    warningMsg("Field " + this->name() + " is not imported: " +
+                               reason + ". Initializing from zero");
                 }
             }
         }
@@ -3475,8 +3541,27 @@ void nodeField<N, M>::updateGradientField(label iZone)
     const auto& bulkData = this->meshRef().bulkDataRef();
     const auto& metaData = this->meshRef().metaDataRef();
 
-    // relax the existing gradient
-    this->gradRef().relax(iZone, 1.0 - gradURF_);
+    // A gradient is a derived field and is not restored from a restart.
+    // Explicitly initialize its first reconstruction instead of relaxing
+    // storage that may not yet contain valid values (notably aura/shared
+    // entities created while reading a decomposed restart).
+    const bool firstGradientReconstruction =
+        !this->gradRef().isInitialized(iZone);
+    const scalar gradientAssemblyFactor =
+        firstGradientReconstruction ? 1.0 : gradURF_;
+
+    if (firstGradientReconstruction)
+    {
+        this->gradRef().setToValue(
+            std::vector<scalar>(M, 0.0),
+            this->meshPtr()->zonePtr(iZone)->interiorParts());
+        this->gradRef().setIsInitialized(iZone);
+    }
+    else
+    {
+        // retain the previous gradient for normal outer-iteration relaxation
+        this->gradRef().relax(iZone, 1.0 - gradURF_);
+    }
 
     // use incremental gradient change?
     scalar incMult = incrementalGradientChange_ ? 1.0 : 0.0;
@@ -3639,12 +3724,12 @@ void nodeField<N, M>::updateGradientField(label iZone)
                     {
                         for (label j = 0; j < SPATIAL_DIM; ++j)
                         {
-                            gradPhiL[i * N + j] +=
-                                gradURF_ *
+                            gradPhiL[i * SPATIAL_DIM + j] +=
+                                gradientAssemblyFactor *
                                 (p_phiIp[i] - incMult * p_phi[il * N + i]) *
                                 p_scs_areav[ip * SPATIAL_DIM + j] * inv_volL;
-                            gradPhiR[i * N + j] -=
-                                gradURF_ *
+                            gradPhiR[i * SPATIAL_DIM + j] -=
+                                gradientAssemblyFactor *
                                 (p_phiIp[i] - incMult * p_phi[ir * N + i]) *
                                 p_scs_areav[ip * SPATIAL_DIM + j] * inv_volR;
                         }
@@ -3803,8 +3888,9 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                    gradPhi[i * SPATIAL_DIM + j] +=
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -3935,8 +4021,9 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                    gradPhi[i * SPATIAL_DIM + j] +=
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4052,8 +4139,9 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                    gradPhi[i * SPATIAL_DIM + j] +=
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4184,8 +4272,9 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                    gradPhi[i * SPATIAL_DIM + j] +=
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4338,8 +4427,9 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                    gradPhi[i * SPATIAL_DIM + j] +=
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4472,8 +4562,9 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                                  c_areaVec[currentGaussPointId *
                                                                SPATIAL_DIM +
                                                            j];
-                                    gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_volNN;
+                                    gradPhi[i * SPATIAL_DIM + j] +=
+                                        gradientAssemblyFactor * fac *
+                                        inv_volNN;
                                 }
                             }
                         }
@@ -4637,8 +4728,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                 {
                                     scalar fac = (phiip - incMult * phic) *
                                                  areaVec[ip * SPATIAL_DIM + j];
-                                    gradPhi[i * N + j] +=
-                                        gradURF_ * fac * inv_vol;
+                                    gradPhi[i * SPATIAL_DIM + j] +=
+                                        gradientAssemblyFactor * fac * inv_vol;
                                 }
                             }
                         }
@@ -4698,6 +4789,18 @@ void nodeField<N, M>::updateGradientField(label iZone)
                             metaData.universal_part() &
                             stk::mesh::selectUnion(partVec);
 
+                        // prescribed side field values at the boundary ips,
+                        // if requested and available on this boundary
+                        const STKScalarField* sidePhiSTKFieldPtr = nullptr;
+                        if (usePrescribedValueForGrad_ &&
+                            sideFieldPtr_ != nullptr &&
+                            this->sideFieldRef().definedOnBoundary(iZone,
+                                                                   iBoundary))
+                        {
+                            sidePhiSTKFieldPtr =
+                                this->sideFieldRef().stkFieldPtr();
+                        }
+
                         stk::mesh::BucketVector const& sideBuckets =
                             bulkData.get_buckets(metaData.side_rank(),
                                                  selAllSides);
@@ -4748,6 +4851,13 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                     exposedAreaVecSTKFieldRef,
                                     sideBucket,
                                     iSide);
+                                const scalar* sidePhi =
+                                    sidePhiSTKFieldPtr
+                                        ? stk::mesh::field_data(
+                                              *sidePhiSTKFieldPtr,
+                                              sideBucket,
+                                              iSide)
+                                        : nullptr;
 
                                 //===============================================
                                 // gather nodal data; this is how we do it now..
@@ -4798,14 +4908,26 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                         p_phiIp[j] = 0.0;
                                     }
 
-                                    const label offset = ip * nodesPerSide;
-                                    for (label ic = 0; ic < nodesPerSide; ++ic)
+                                    if (sidePhi)
                                     {
-                                        const scalar r =
-                                            p_shape_function[offset + ic];
                                         for (label j = 0; j < N; ++j)
                                         {
-                                            p_phiIp[j] += r * p_phi[ic * N + j];
+                                            p_phiIp[j] = sidePhi[ip * N + j];
+                                        }
+                                    }
+                                    else
+                                    {
+                                        const label offset = ip * nodesPerSide;
+                                        for (label ic = 0; ic < nodesPerSide;
+                                             ++ic)
+                                        {
+                                            const scalar r =
+                                                p_shape_function[offset + ic];
+                                            for (label j = 0; j < N; ++j)
+                                            {
+                                                p_phiIp[j] +=
+                                                    r * p_phi[ic * N + j];
+                                            }
                                         }
                                     }
 
@@ -4817,8 +4939,8 @@ void nodeField<N, M>::updateGradientField(label iZone)
                                     {
                                         for (label j = 0; j < SPATIAL_DIM; ++j)
                                         {
-                                            gradPhi[i * N + j] +=
-                                                gradURF_ *
+                                            gradPhi[i * SPATIAL_DIM + j] +=
+                                                gradientAssemblyFactor *
                                                 (p_phiIp[i] -
                                                  incMult * p_phi[nn * N + i]) *
                                                 areaVec[ip * SPATIAL_DIM + j] *
@@ -5885,7 +6007,7 @@ void nodeField<N, M>::limitGradientField_(label iZone)
             {
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
-                    gradPhi[i * N + j] *= limiterb[N * iNode + i];
+                    gradPhi[i * SPATIAL_DIM + j] *= limiterb[N * iNode + i];
                 }
             }
         }
@@ -6031,8 +6153,7 @@ void nodeField<N, M>::transfer(label iInterface,
         dataTransferVector_[iInterface]->update();
 
         // sync in case of parallel over the interface
-        if (messager::parallel() &&
-            this->meshRef().interfaceRef(iInterface).interfaceGhosting_)
+        if (messager::parallel())
         {
             stk::mesh::communicate_field_data(
                 *(this->meshRef().interfaceRef(iInterface).interfaceGhosting_),

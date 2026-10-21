@@ -316,7 +316,7 @@ void controls::read(YAML::Node inputNode)
 
                         assert(solver_.solverControl_.basicSettings_
                                    .convergenceControl_.relaxationParameters_
-                                   .wallScaleRelaxationFactor_ <= 1.0);
+                                   .energyRelaxationFactor_ <= 1.0);
                     }
                     if (rlxPars["velocity_relaxation_factor"])
                     {
@@ -441,7 +441,7 @@ void controls::read(YAML::Node inputNode)
             }
             else
             {
-                errorMsg("convergence_controls block is not provided in the "
+                errorMsg("convergence_criteria block is not provided in the "
                          "yaml input file");
             }
 
@@ -770,6 +770,18 @@ void controls::read(YAML::Node inputNode)
                 }
             }
 
+            if (advancedOptions["solid_mechanics"])
+            {
+                const auto& solidMechanics = advancedOptions["solid_mechanics"];
+
+                if (solidMechanics["verbose"])
+                {
+                    solver_.solverControl_.advancedOptions_.solidMechanics_
+                        .verbose_ =
+                        solidMechanics["verbose"].template as<label>();
+                }
+            }
+
             if (advancedOptions["equation_controls"])
             {
                 if (advancedOptions["equation_controls"]["sub_iterations"])
@@ -955,12 +967,156 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["relax_gradients"].template as<bool>();
             }
 
+            if (expertParameters["use_prescribed_value_for_grad"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .usePrescribedValueForGrad_ =
+                    expertParameters["use_prescribed_value_for_grad"]
+                        .template as<bool>();
+            }
+
             if (expertParameters["high_speed_blend_damping"])
             {
                 solver_.solverControl_.expertParameters_
                     .highSpeedBlendDamping_ =
                     expertParameters["high_speed_blend_damping"]
                         .template as<bool>();
+            }
+
+            if (expertParameters["mass_flux_refresh"])
+            {
+                solver_.solverControl_.expertParameters_.massFluxRefresh_ =
+                    expertParameters["mass_flux_refresh"].template as<bool>();
+            }
+
+            if (expertParameters["blend_factor_max"])
+            {
+                const scalar blendMax =
+                    expertParameters["blend_factor_max"].template as<scalar>();
+                if (blendMax < 0.0 || blendMax > 2.0)
+                {
+                    errorMsg("blend_factor_max must lie in [0, 2]: 0 is pure "
+                             "upwind, 1 the full linear reconstruction");
+                }
+                solver_.solverControl_.expertParameters_.blendFactorMax_ =
+                    blendMax;
+            }
+
+            if (expertParameters["cvpg_type"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .cvpgType_ = convertGradientAveragingTypeFromString(
+                    expertParameters["cvpg_type"].template as<std::string>());
+            }
+
+            if (expertParameters["mesh_deformation_backend"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .meshDeformationBackend_ =
+                    convertMeshDeformationBackendFromString(
+                        expertParameters["mesh_deformation_backend"]
+                            .template as<std::string>());
+#ifndef HAS_LITHE
+                if (solver_.solverControl_.expertParameters_
+                        .meshDeformationBackend_ ==
+                    meshDeformationBackend::lithe)
+                {
+                    errorMsg("mesh_deformation_backend lithe requires a build "
+                             "with WITH_LITHE=ON");
+                }
+#endif /* HAS_LITHE */
+            }
+
+            if (expertParameters["lithe"])
+            {
+                const auto& litheNode = expertParameters["lithe"];
+                auto& lithe = solver_.solverControl_.expertParameters_.lithe_;
+
+                if (litheNode["a_exp"])
+                {
+                    lithe.aExp_ = litheNode["a_exp"].template as<scalar>();
+                }
+                if (litheNode["b_exp"])
+                {
+                    lithe.bExp_ = litheNode["b_exp"].template as<scalar>();
+                }
+                if (litheNode["alpha"])
+                {
+                    lithe.alpha_ = litheNode["alpha"].template as<scalar>();
+                }
+                if (litheNode["ldef_factor"])
+                {
+                    lithe.LdefFact_ =
+                        litheNode["ldef_factor"].template as<scalar>();
+                }
+                if (litheNode["error_tolerance"])
+                {
+                    lithe.errTol_ =
+                        litheNode["error_tolerance"].template as<scalar>();
+                }
+                if (litheNode["exact"])
+                {
+                    lithe.exact_ = litheNode["exact"].template as<bool>();
+                }
+                if (litheNode["use_rotations"])
+                {
+                    lithe.useRotations_ =
+                        litheNode["use_rotations"].template as<bool>();
+                }
+                if (litheNode["zero_corner_rotations"])
+                {
+                    lithe.zeroCornerRotations_ =
+                        litheNode["zero_corner_rotations"].template as<bool>();
+                }
+                if (litheNode["corner_angle"])
+                {
+                    lithe.cornerAngle_ =
+                        litheNode["corner_angle"].template as<scalar>();
+                }
+                if (litheNode["bucket_size"])
+                {
+                    lithe.bucketSize_ =
+                        litheNode["bucket_size"].template as<label>();
+                }
+                if (litheNode["symmetry_planes"])
+                {
+                    lithe.symmetryPlanes_ =
+                        litheNode["symmetry_planes"].template as<bool>();
+                }
+                if (litheNode["reanchor_interval"])
+                {
+                    lithe.reanchorInterval_ =
+                        litheNode["reanchor_interval"].template as<label>();
+                    if (lithe.reanchorInterval_ < 0)
+                    {
+                        errorMsg("lithe: reanchor_interval must be >= 0");
+                    }
+                }
+            }
+
+            if (expertParameters["viscous_work_type"])
+            {
+                solver_.solverControl_.expertParameters_.viscousWorkType_ =
+                    convertViscousWorkTypeFromString(
+                        expertParameters["viscous_work_type"]
+                            .template as<std::string>());
+            }
+
+            if (expertParameters["viscous_work_stress_type"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .viscousWorkStressType_ =
+                    convertViscousWorkStressTypeFromString(
+                        expertParameters["viscous_work_stress_type"]
+                            .template as<std::string>());
+            }
+
+            if (expertParameters["viscous_work_wall_model"])
+            {
+                solver_.solverControl_.expertParameters_.viscousWorkWallModel_ =
+                    convertViscousWorkWallModelFromString(
+                        expertParameters["viscous_work_wall_model"]
+                            .template as<std::string>());
             }
 
             if (expertParameters["false_mass_accumulation"])
@@ -1016,6 +1172,22 @@ void controls::read(YAML::Node inputNode)
                             .template as<std::string>());
             }
 
+            if (expertParameters["solid_assembler_type"])
+            {
+                solver_.solverControl_.expertParameters_.solidAssemblerType_ =
+                    convertSolidAssemblerTypeFromString(
+                        expertParameters["solid_assembler_type"]
+                            .template as<std::string>());
+#ifndef HAS_SFEM
+                if (solver_.solverControl_.expertParameters_
+                        .solidAssemblerType_ == solidAssemblerType::sfem)
+                {
+                    errorMsg("solid_assembler_type sfem is not supported in "
+                             "this release: rebuild with WITH_SFEM=ON");
+                }
+#endif /* HAS_SFEM */
+            }
+
             if (expertParameters["strong_dirichlet_wall_scale"])
             {
                 solver_.solverControl_.expertParameters_
@@ -1038,6 +1210,12 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["bandwidth_reduction"].template as<bool>();
             }
 
+            if (expertParameters["node_reordering"])
+            {
+                solver_.solverControl_.expertParameters_.nodeReordering_ =
+                    expertParameters["node_reordering"].template as<bool>();
+            }
+
             if (expertParameters["force_wall_distance_calculation"])
             {
                 solver_.solverControl_.expertParameters_
@@ -1052,6 +1230,14 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["disable_physics"].template as<bool>();
             }
 
+            if (expertParameters["bypass_volume_fraction_convergence"])
+            {
+                solver_.solverControl_.expertParameters_
+                    .bypassVolumeFractionConvergence_ =
+                    expertParameters["bypass_volume_fraction_convergence"]
+                        .template as<bool>();
+            }
+
             if (expertParameters["freeze_flow"])
             {
                 solver_.solverControl_.expertParameters_.freezeFlow_ =
@@ -1062,6 +1248,12 @@ void controls::read(YAML::Node inputNode)
             {
                 solver_.solverControl_.expertParameters_.freezePressure_ =
                     expertParameters["freeze_pressure"].template as<bool>();
+            }
+
+            if (expertParameters["freeze_energy"])
+            {
+                solver_.solverControl_.expertParameters_.freezeEnergy_ =
+                    expertParameters["freeze_energy"].template as<bool>();
             }
 
             if (expertParameters["force_full_node_graph"])

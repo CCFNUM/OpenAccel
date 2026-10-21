@@ -592,8 +592,11 @@ void shearStressTransportModel::updateTurbulentProduction(
         }
     }
 
-    // Apply production limiter
+    // Apply curvature correction before limiting turbulent production.
     {
+        const STKScalarField* frSTKFieldPtr =
+            domain->turbulence_.curvatureCorrection_ ? frRef().stkFieldPtr()
+                                                     : nullptr;
         const STKScalarField* kSTKFieldPtr = kRef().stkFieldPtr();
         const STKScalarField* omegaSTKFieldPtr = omegaRef().stkFieldPtr();
 
@@ -608,6 +611,11 @@ void shearStressTransportModel::updateTurbulentProduction(
 
         stk::mesh::BucketVector const& nodeBuckets =
             bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+        const scalar* kb = nullptr;
+        const scalar* omegab = nullptr;
+        const scalar* rhob = nullptr;
+        const scalar* frb = nullptr;
+        scalar* Pkb = nullptr;
         for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
              ib != nodeBuckets.end();
              ++ib)
@@ -617,17 +625,22 @@ void shearStressTransportModel::updateTurbulentProduction(
                 nodeBucket.size();
 
             // get field chunks
-            const scalar* kb = stk::mesh::field_data(*kSTKFieldPtr, nodeBucket);
-            const scalar* omegab =
-                stk::mesh::field_data(*omegaSTKFieldPtr, nodeBucket);
-            const scalar* rhob =
-                stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
-            scalar* Pkb = stk::mesh::field_data(*PkSTKFieldPtr, nodeBucket);
+            kb = stk::mesh::field_data(*kSTKFieldPtr, nodeBucket);
+            omegab = stk::mesh::field_data(*omegaSTKFieldPtr, nodeBucket);
+            rhob = stk::mesh::field_data(*rhoSTKFieldPtr, nodeBucket);
+            Pkb = stk::mesh::field_data(*PkSTKFieldPtr, nodeBucket);
+            frb = frSTKFieldPtr
+                      ? stk::mesh::field_data(*frSTKFieldPtr, nodeBucket)
+                      : nullptr;
 
             for (stk::mesh::Bucket::size_type iNode = 0;
                  iNode < nNodesPerBucket;
                  ++iNode)
             {
+                if (frb)
+                {
+                    Pkb[iNode] *= frb[iNode];
+                }
                 Pkb[iNode] =
                     std::min(Pkb[iNode],
                              tkeProdLimitRatio * betaStar * rhob[iNode] *

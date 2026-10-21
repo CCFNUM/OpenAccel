@@ -137,6 +137,10 @@ protected:
 
     LinearSolver* lsolver_;
 
+    // true: keep original rows where interpolation constraints would
+    // replace them (per-grid equations like mesh deformation)
+    bool interpolationFreeGraph_ = false;
+
     virtual void setResidualScales_() = 0;
     virtual void convergenceReport_();
 
@@ -150,7 +154,6 @@ protected:
     void recoverLambda_();
 
     // residual I/O
-    static constexpr char COMMENT[] = "# ";
     std::shared_ptr<std::ostream> residual_stream_;
     std::string residual_file_name_;
     void initializeHistory_();
@@ -183,6 +186,7 @@ private:
     stk::mesh::Field<scalar>* stkResidualFieldPtr_{nullptr};
     mesh* mesh_{nullptr};
 
+    void createSTKEquationResidualField_(mesh& mesh);
     void writeSTKInitialResiduals_();
 };
 
@@ -437,32 +441,19 @@ linearSystem<N>::setupSolver(const std::string system_name,
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local:
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local |
             ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(this->system_name_,
-                                          mesh.getLocalOrderGraphPtr());
+            ctx = lsolver_->createContext(
+                this->system_name_,
+                mesh.getLocalOrderGraphPtr(!interpolationFreeGraph_));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(this->system_name_,
-                                          mesh.getGlobalOrderGraphPtr());
+            ctx = lsolver_->createContext(
+                this->system_name_,
+                mesh.getGlobalOrderGraphPtr(!interpolationFreeGraph_));
             break;
     }
 
-    // create STK residual field
-    stkResidualFieldPtr_ = &(mesh.metaDataPtr()->template declare_field<scalar>(
-        stk::topology::NODE_RANK, canonicalSystemName_() + "_residual", 1));
-    mesh_ = &mesh;
-    assert(mesh_);
-    for (auto zone : mesh_->zoneVector())
-    {
-        stk::mesh::put_field_on_mesh(
-            *stkResidualFieldPtr_,
-            stk::mesh::selectUnion(zone->interiorParts()),
-            N,
-            nullptr);
-    }
-    stk::io::create_named_suffix_field_output_type("solverResiduals",
-                                                   equation_name_);
-    stk::io::set_named_suffix_field_output_type(*stkResidualFieldPtr_,
-                                                "solverResiduals");
+    this->createSTKEquationResidualField_(mesh);
+
     return ctx;
 }
 
@@ -481,32 +472,19 @@ linearSystem<N>::setupSolver(const std::string system_name,
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local:
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local |
             ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(
-                this->system_name_, mesh.getCustomLocalOrderGraphPtr(zones));
+            ctx = lsolver_->createContext(this->system_name_,
+                                          mesh.getCustomLocalOrderGraphPtr(
+                                              zones, !interpolationFreeGraph_));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(
-                this->system_name_, mesh.getCustomGlobalOrderGraphPtr(zones));
+            ctx = lsolver_->createContext(this->system_name_,
+                                          mesh.getCustomGlobalOrderGraphPtr(
+                                              zones, !interpolationFreeGraph_));
             break;
     }
 
-    // create STK residual field (same as the full-graph overload)
-    stkResidualFieldPtr_ = &(mesh.metaDataPtr()->template declare_field<scalar>(
-        stk::topology::NODE_RANK, canonicalSystemName_() + "_residual", 1));
-    mesh_ = &mesh;
-    assert(mesh_);
-    for (auto zone : mesh_->zoneVector())
-    {
-        stk::mesh::put_field_on_mesh(
-            *stkResidualFieldPtr_,
-            stk::mesh::selectUnion(zone->interiorParts()),
-            N,
-            nullptr);
-    }
-    stk::io::create_named_suffix_field_output_type("solverResiduals",
-                                                   equation_name_);
-    stk::io::set_named_suffix_field_output_type(*stkResidualFieldPtr_,
-                                                "solverResiduals");
+    this->createSTKEquationResidualField_(mesh);
+
     return ctx;
 }
 
@@ -688,7 +666,7 @@ void linearSystem<N>::convergenceReport_()
         const double overall_rate = rms_rate[i];
 
         std::string hint = "ok";
-        if (this->is_converged_)
+        if (sim_.getIterationCount() != 1 && this->is_converged_)
         {
             hint = "CONV";
         }
@@ -942,6 +920,27 @@ void linearSystem<N>::writeVector_(const std::string fname,
                   global_v.size() * sizeof(DataType));
         out.close();
     }
+}
+
+template <size_t N>
+void linearSystem<N>::createSTKEquationResidualField_(mesh& mesh)
+{
+    stkResidualFieldPtr_ = &(mesh.metaDataPtr()->template declare_field<scalar>(
+        stk::topology::NODE_RANK, canonicalSystemName_() + "_residual", 1));
+    mesh_ = &mesh;
+    assert(mesh_);
+    for (auto zone : mesh_->zoneVector())
+    {
+        stk::mesh::put_field_on_mesh(
+            *stkResidualFieldPtr_,
+            stk::mesh::selectUnion(zone->interiorParts()),
+            N,
+            nullptr);
+    }
+    stk::io::create_named_suffix_field_output_type("solverResiduals",
+                                                   equation_name_);
+    stk::io::set_named_suffix_field_output_type(*stkResidualFieldPtr_,
+                                                "solverResiduals");
 }
 
 template <size_t N>

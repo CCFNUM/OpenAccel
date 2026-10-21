@@ -92,6 +92,8 @@
 
 namespace fs = std::filesystem;
 
+constexpr char COMMENT[] = "# "; // comment char used in ASCII output files
+
 namespace accel
 {
 
@@ -282,7 +284,8 @@ enum class solidMechanicsOption
 {
     none,
     linearElastic,
-    simplifiedNeoHookean
+    neoHookean,
+    modifiedMooneyRivlin
 };
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s);
@@ -316,6 +319,23 @@ enum class surfaceTensionModelOption
 
 surfaceTensionModelOption
 convertSurfaceTensionModelOptionFromString(std::string s);
+
+// Mass transfer model option (interphase mass transfer of a fluid pair)
+enum class massTransferModelOption
+{
+    none,
+    cavitation
+};
+
+massTransferModelOption convertMassTransferModelOptionFromString(std::string s);
+
+// Cavitation model option
+enum class cavitationModelOption
+{
+    rayleighPlesset
+};
+
+cavitationModelOption convertCavitationModelOptionFromString(std::string s);
 
 // Source option
 enum class sourceOption
@@ -589,6 +609,44 @@ enum class nonconformalMethod
 
 nonconformalMethod convertNonconformalMethodFromString(std::string s);
 
+// Averaging used to interpolate the pressure gradient and body force to an
+// integration point for the Rhie-Chow correction
+enum class gradientAveragingType
+{
+    arithAver,
+    harmAver
+};
+
+gradientAveragingType convertGradientAveragingTypeFromString(std::string s);
+
+// Where the viscous-work flux tau.U of the total-enthalpy equation is formed
+enum class viscousWorkType
+{
+    ip,           // tau.U rebuilt at every integration point
+    elementCentre // one element/face-average tau.U dotted with each area vector
+};
+
+viscousWorkType convertViscousWorkTypeFromString(std::string s);
+
+// Stress carried by the total-enthalpy viscous work flux tau.U
+enum class viscousWorkStressType
+{
+    fullStress, // mu(grad U + grad U^T), less the bulk term when compressible
+    laplacian   // mu grad U only; contracted with U this is mu grad(U.U/2)
+};
+
+viscousWorkStressType convertViscousWorkStressTypeFromString(std::string s);
+
+// Viscous work carried by a no-slip wall
+enum class viscousWorkWallModel
+{
+    elementStress, // tau.U from the element (or nodal) velocity gradient
+    faceVelocity,  // wall shear force against the prescribed wall velocity
+    vertexVelocity // wall shear force against the near-wall nodal velocity
+};
+
+viscousWorkWallModel convertViscousWorkWallModelFromString(std::string s);
+
 // Wall-function type
 enum class wallFunctionType
 {
@@ -685,6 +743,20 @@ enum class meshMotionType
 
 meshMotionType convertMeshMotionTypeFromString(std::string s);
 
+// Mesh motion of an interface side in a deforming mesh
+enum class interfaceMeshMotionOption
+{
+    unspecified, // free to deform with the mesh motion solve
+    stationary,
+    specifiedDisplacement,
+    periodicDisplacement
+};
+
+interfaceMeshMotionOption
+convertInterfaceMeshMotionOptionFromString(std::string s);
+
+std::string toString(interfaceMeshMotionOption option);
+
 // Mesh deformation option
 enum class meshDeformationSpecificationType
 {
@@ -703,6 +775,15 @@ enum class meshDeformationModel
 };
 
 meshDeformationModel convertMeshDeformationModelTypeFromString(std::string s);
+
+// Mesh deformation backend (expert parameter)
+enum class meshDeformationBackend
+{
+    displacementDiffusion,
+    lithe
+};
+
+meshDeformationBackend convertMeshDeformationBackendFromString(std::string s);
 
 // Mesh stiffness specification
 enum class meshStiffnessSpecificationType
@@ -736,6 +817,15 @@ enum class kinematicFormulationType
 kinematicFormulationType
 convertKinematicFormulationTypeFromString(std::string s);
 
+// Solid mechanics assembler technology
+enum class solidAssemblerType
+{
+    sfem,
+    cvfem
+};
+
+solidAssemblerType convertSolidAssemblerTypeFromString(std::string s);
+
 // Post process type
 enum class postProcessType
 {
@@ -751,7 +841,8 @@ enum class reductionType
 {
     sum,
     average,
-    areaAverage
+    areaAverage,
+    massAverage
 };
 
 reductionType convertStatisticsTypeFromString(std::string s);

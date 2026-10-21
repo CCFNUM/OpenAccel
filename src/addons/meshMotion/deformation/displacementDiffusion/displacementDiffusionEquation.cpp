@@ -7,6 +7,7 @@
 #include "displacementDiffusionEquation.h"
 #include "initialConditions.h"
 #include "meshMotion.h"
+#include "scaling.h"
 
 namespace accel
 {
@@ -268,12 +269,20 @@ void displacementDiffusionEquation::setup()
             // V_ref = mean control volume in domain
             volRef = volTotal / static_cast<scalar>(volCount);
 
-            // L_ref = 0.5 * (volume of domain)^(1/3)
+            // L_ref = 0.5 * (volume of domain)^(1/dim)
             const scalar domainVolume = domain->zonePtr()->stats().volume_;
+#if SPATIAL_DIM == 3
             const scalar L_ref = 0.5 * std::cbrt(domainVolume);
+#else
+            const scalar L_ref = 0.5 * std::sqrt(domainVolume);
+#endif
 
-            // d_wall = 10.0 * (minimum control volume in domain)^(1/3)
+            // d_wall = 10.0 * (minimum control volume in domain)^(1/dim)
+#if SPATIAL_DIM == 3
             const scalar d_wall = 10.0 * std::cbrt(volMin);
+#else
+            const scalar d_wall = 10.0 * std::sqrt(volMin);
+#endif
 
             for (size_t ib = 0; ib < nodeBuckets.size(); ib++)
             {
@@ -304,6 +313,9 @@ void displacementDiffusionEquation::setup()
             }
         }
     });
+
+    // mesh deformation is solved per grid on its own stencils
+    linearSystem::interpolationFreeGraph_ = true;
 
     // setup linear solver
     // FIXME: Consider passing mesh argument or
@@ -401,46 +413,10 @@ displacementDiffusionEquation::collectDirichletBoundaryParts_()
     stk::mesh::PartVector incPartVec;
     for (const auto& domain : domainVector_)
     {
-        for (const interface* interf : domain->interfacesRef())
-        {
-            if (interf->isFluidSolidType())
-            {
-                for (auto part : interf->interfaceSideInfoPtr(domain->index())
-                                     ->currentPartVec_)
-                {
-                    incPartVec.push_back(part);
-                }
-            }
-        }
-
-        for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
-             iBoundary++)
-        {
-            boundaryConditionType bcType =
-                this->DRef()
-                    .boundaryConditionRef(domain->index(), iBoundary)
-                    .type();
-
-            switch (bcType)
-            {
-                case boundaryConditionType::specifiedValue:
-                case boundaryConditionType::periodicDisplacement:
-                case boundaryConditionType::rigidBodySolution:
-                    {
-                        const auto& boundaryRef =
-                            domain->zonePtr()->boundaryRef(iBoundary);
-
-                        for (auto part : boundaryRef.parts())
-                        {
-                            incPartVec.push_back(part);
-                        }
-                    }
-                    break;
-
-                default:
-                    break;
-            }
-        }
+        const auto parts =
+            displacementDiffusionModel::collectDirichletBoundaryParts_(
+                domain.get());
+        incPartVec.insert(incPartVec.end(), parts.begin(), parts.end());
     }
 
     return incPartVec;

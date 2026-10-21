@@ -386,6 +386,235 @@ void reductionObject::update()
             }
             break;
 
+        case reductionType::massAverage:
+            {
+                const std::string massFlowRateSideFieldName =
+                    "mass_flow_rate_side";
+                const STKScalarField* massFlowRateSideSTKFieldPtr =
+                    metaData.get_field<scalar>(metaData.side_rank(),
+                                               massFlowRateSideFieldName);
+
+                bool massFlowRateAvailable =
+                    massFlowRateSideSTKFieldPtr != nullptr;
+                stk::mesh::PartVector partVec;
+
+                if (massFlowRateAvailable)
+                {
+                    for (const auto& locationName : location_)
+                    {
+                        stk::mesh::Part* part = metaData.get_part(locationName);
+                        const stk::mesh::PartVector& subParts = part->subsets();
+
+                        if (subParts.empty())
+                        {
+                            if (!massFlowRateSideSTKFieldPtr->defined_on(*part))
+                            {
+                                massFlowRateAvailable = false;
+                            }
+                            else
+                            {
+                                partVec.push_back(part);
+                            }
+                        }
+                        else
+                        {
+                            for (stk::mesh::Part* subPart : subParts)
+                            {
+                                if (!massFlowRateSideSTKFieldPtr->defined_on(
+                                        *subPart))
+                                {
+                                    massFlowRateAvailable = false;
+                                }
+                                else
+                                {
+                                    partVec.push_back(subPart);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!massFlowRateAvailable)
+                {
+                    if (messager::master())
+                    {
+                        warningMsg(
+                            "Post-process object `" + name_ +
+                            "` requested mass_average, but STK side field `" +
+                            massFlowRateSideFieldName +
+                            "` is unavailable on one or more selected "
+                            "locations. Falling back to area_average.");
+                    }
+
+                    reductionType_ = reductionType::areaAverage;
+                    update();
+                    return;
+                }
+
+                const STKScalarField* STKFieldPtr = metaData.get_field<scalar>(
+                    stk::topology::NODE_RANK, field_);
+
+                if (!STKFieldPtr)
+                {
+                    errorMsg("mass_average requires a nodal field. Field " +
+                             field_ + " is not a nodal field.");
+                }
+
+                const label fieldDim = STKFieldPtr->max_size();
+                std::vector<scalar> average(fieldDim, 0.0);
+                std::vector<scalar> phiBip(fieldDim);
+                std::vector<scalar> ws_phi;
+                std::vector<scalar> ws_shape_function;
+
+                const stk::mesh::Selector selOwnedSides =
+                    metaData.locally_owned_part() &
+                    stk::mesh::selectUnion(partVec);
+                const stk::mesh::BucketVector& sideBuckets =
+                    bulkData.get_buckets(metaData.side_rank(), selOwnedSides);
+
+                scalar totalMassFlowRate = 0.0;
+                scalar totalAbsoluteMassFlowRate = 0.0;
+
+                for (stk::mesh::Bucket::size_type ib = 0;
+                     ib < sideBuckets.size();
+                     ++ib)
+                {
+                    const stk::mesh::Bucket& bucket = *sideBuckets[ib];
+                    MasterElement* meFC =
+                        MasterElementRepo::get_surface_master_element(
+                            bucket.topology());
+                    const label nodesPerSide = bucket.topology().num_nodes();
+                    const label numScsBip = meFC->numIntPoints_;
+
+                    ws_phi.resize(nodesPerSide * fieldDim);
+                    ws_shape_function.resize(numScsBip * nodesPerSide);
+
+                    scalar* p_phi = &ws_phi[0];
+                    scalar* p_face_shape_function = &ws_shape_function[0];
+                    meFC->shape_fcn(p_face_shape_function);
+
+                    const stk::mesh::Bucket::size_type nSidesPerBucket =
+                        bucket.size();
+
+                    for (stk::mesh::Bucket::size_type iSide = 0;
+                         iSide < nSidesPerBucket;
+                         ++iSide)
+                    {
+                        const stk::mesh::Entity side = bucket[iSide];
+                        const stk::mesh::Entity* sideNodeRels =
+                            bulkData.begin_nodes(side);
+                        const label numSideNodes = bulkData.num_nodes(side);
+
+                        STK_ThrowAssert(numSideNodes == nodesPerSide);
+                        for (label ni = 0; ni < numSideNodes; ++ni)
+                        {
+                            const stk::mesh::Entity node = sideNodeRels[ni];
+                            const scalar* phi =
+                                stk::mesh::field_data(*STKFieldPtr, node);
+                            const label offset = ni * fieldDim;
+
+                            for (label j = 0; j < fieldDim; ++j)
+                            {
+                                p_phi[offset + j] = phi[j];
+                            }
+                        }
+
+                        const scalar* massFlowRate = stk::mesh::field_data(
+                            *massFlowRateSideSTKFieldPtr, side);
+
+                        for (label ip = 0; ip < numScsBip; ++ip)
+                        {
+                            for (label j = 0; j < fieldDim; ++j)
+                            {
+                                phiBip[j] = 0.0;
+                            }
+
+                            const label offsetShapeFunction = ip * nodesPerSide;
+                            for (label ic = 0; ic < nodesPerSide; ++ic)
+                            {
+                                const scalar shapeFunction =
+                                    p_face_shape_function[offsetShapeFunction +
+                                                          ic];
+                                const label offsetField = ic * fieldDim;
+
+                                for (label j = 0; j < fieldDim; ++j)
+                                {
+                                    phiBip[j] +=
+                                        shapeFunction * p_phi[offsetField + j];
+                                }
+                            }
+
+                            for (label j = 0; j < fieldDim; ++j)
+                            {
+                                average[j] += massFlowRate[ip] * phiBip[j];
+                            }
+
+                            totalMassFlowRate += massFlowRate[ip];
+                            totalAbsoluteMassFlowRate +=
+                                std::abs(massFlowRate[ip]);
+                        }
+                    }
+                }
+
+                if (messager::parallel())
+                {
+                    messager::sumReduce(totalMassFlowRate);
+                    messager::sumReduce(totalAbsoluteMassFlowRate);
+                    messager::sumReduce(average);
+                }
+
+                const scalar massFlowRateTolerance =
+                    SMALL * std::max(static_cast<scalar>(1.0),
+                                     totalAbsoluteMassFlowRate);
+                if (std::abs(totalMassFlowRate) <= massFlowRateTolerance)
+                {
+                    if (messager::master())
+                    {
+                        warningMsg(
+                            "Post-process object `" + name_ +
+                            "` requested mass_average, but the selected\n "
+                            "locations have zero net mass flow. Falling back "
+                            "to area_average.");
+                    }
+
+                    reductionType_ = reductionType::areaAverage;
+                    update();
+                    reductionType_ = reductionType::massAverage;
+                    return;
+                }
+
+                for (label j = 0; j < fieldDim; ++j)
+                {
+                    average[j] /= totalMassFlowRate;
+                }
+
+                if (messager::master())
+                {
+                    std::cout << "Object name: " << name_ << ", value: (";
+                    std::cout << average[0];
+                    for (label j = 1; j < fieldDim; ++j)
+                    {
+                        std::cout << "\t" << average[j];
+                    }
+                    std::cout << ")" << std::endl;
+
+                    if (writeToFile_)
+                    {
+                        std::string fileName(postProcessPtr_->directory() /
+                                             name_);
+                        std::ofstream file(fileName, std::ios_base::app);
+                        file << postProcessPtr_->instance() << "\t";
+                        for (label j = 0; j < fieldDim; ++j)
+                        {
+                            file << average[j] << "\t";
+                        }
+                        file << "\n";
+                        file.close();
+                    }
+                }
+            }
+            break;
+
         case reductionType::areaAverage:
             {
                 // Check if a node field

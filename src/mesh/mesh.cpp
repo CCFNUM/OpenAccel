@@ -30,9 +30,17 @@ void ElementValidatorDeleter::operator()(elementValidator* ptr)
 
 mesh::mesh(controls* controlsPtr) : controlsPtr_(controlsPtr)
 {
-    stencil_ = controlsPtr->isReducedStencil()
-                   ? ::linearSolver::GraphLayout::Stencil__Reduced
-                   : ::linearSolver::GraphLayout::Stencil__Full;
+    if (controlsPtr->isCvfemSolidMechanics())
+    {
+        stencil_ = controlsPtr->isReducedStencil()
+                       ? ::linearSolver::GraphLayout::Stencil__Reduced
+                       : ::linearSolver::GraphLayout::Stencil__Full;
+    }
+    else
+    {
+        // FEM couples all element nodes: use the full stencil
+        stencil_ = ::linearSolver::GraphLayout::Stencil__Full;
+    }
 }
 
 mesh::~mesh()
@@ -157,6 +165,9 @@ void mesh::initialize()
     // Calculate geometric quantities (volume, exposed area, etc.)
     initializeGeometricFields_();
 
+    // Needs the exposed area vector, so not from initializeInterfaces_
+    harmonizeGgiInterfaceAreas_();
+
     // Build crs node graph
     lazyInitializeNodeGraph_();
 
@@ -175,7 +186,12 @@ void mesh::update()
     updateZones_();
     updateInterfaces_();
     updateGeometricFields_();
+    harmonizeGgiInterfaceAreas_();
     updateNodeGraph_();
+}
+
+void mesh::harmonizeGgiInterfaceAreas_()
+{
 }
 
 // Access

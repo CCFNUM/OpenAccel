@@ -40,6 +40,10 @@ void segregatedShearStressTransportEquations::setup()
     tke_eq_->setup();
     tef_eq_->setup();
 
+    // curvature-correction fields must exist before output is set up
+    FOREACH_DOMAIN_IF(setupCurvatureCorrection,
+                      domain->turbulence_.curvatureCorrection_);
+
     equation::isCreated_ = tke_eq_->isCreated() && tef_eq_->isCreated();
 }
 
@@ -47,6 +51,9 @@ void segregatedShearStressTransportEquations::initialize()
 {
     tke_eq_->initialize();
     tef_eq_->initialize();
+
+    // restore the under-relaxed turbulent eddy viscosity on explicit restarts
+    FOREACH_DOMAIN(initializeTurbulentDynamicViscosity);
 
     FOREACH_DOMAIN(clipValues);
     FOREACH_DOMAIN(clipMinDistToWall);
@@ -57,6 +64,15 @@ void segregatedShearStressTransportEquations::initialize()
 
 void segregatedShearStressTransportEquations::postInitialize()
 {
+    // On an explicit restart, refresh the derived turbulence fields that are
+    // not persisted (effective viscosity and the wall-function chain) once all
+    // restored quantities (mu, rho, mut) are available, so the first momentum
+    // solve matches the run-through state.
+    if (controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(updateEffectiveDynamicViscosity);
+        FOREACH_DOMAIN(updateWallFunctions);
+    }
 }
 
 void segregatedShearStressTransportEquations::preSolve()
@@ -88,6 +104,8 @@ void segregatedShearStressTransportEquations::solve()
 {
     // compute blending for SST model
     FOREACH_DOMAIN(updateFOneBlending);
+    FOREACH_DOMAIN_IF(updateCurvatureCorrection,
+                      domain->turbulence_.curvatureCorrection_);
     FOREACH_DOMAIN(updateTurbulentProduction);
 
     tke_eq_->solve();

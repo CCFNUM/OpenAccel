@@ -219,6 +219,9 @@ public:
     virtual void
     initializeTurbulentDissipationRate(const std::shared_ptr<domain> domain);
 
+    virtual void
+    initializeTurbulentDynamicViscosity(const std::shared_ptr<domain> domain);
+
     virtual void initializeTransitionOnsetReynoldsNumber(
         const std::shared_ptr<domain> domain);
 
@@ -1002,6 +1005,10 @@ protected:
     simpleScalarField& PkRef();
 
     const simpleScalarField& PkRef() const;
+
+    simpleScalarField& frRef();
+
+    const simpleScalarField& frRef() const;
 
     simpleScalarField& yPlusRef();
 

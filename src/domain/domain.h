@@ -56,6 +56,18 @@ struct turbulence
     // l = Cs * delta * (1 - exp(-yPlus / A+)) (Van Driest 1956).
     scalar smagorinskyConstant_ = 0.17;
     scalar vanDriestAPlus_ = 25.0;
+
+    // prescribed eddy length scale; zero selects the default
+    scalar eddyLengthScale_ = 0.0;
+
+    // upper bound on the turbulent length scale; zero selects the default
+    scalar maxTurbulentLengthScale_ = 0.0;
+
+    // Smirnov-Menter (2009) curvature/rotation correction for SST
+    bool curvatureCorrection_ = false;
+
+    // C_scale; 0 gives f_r = 1 everywhere (plain SST)
+    scalar curvatureCorrectionCoeff_ = 1.0;
 };
 
 struct multiphase
@@ -80,6 +92,9 @@ struct solidMechanics
     bool planeStress_ = false;
     bool lumpedMass_ =
         true; // true = lumped (diagonal), false = consistent (full mass matrix)
+
+    // mass-proportional Rayleigh damping coefficient [1/s]; 0 = undamped
+    scalar dampingCoeff_ = 0.0;
 };
 
 struct buoyancy
@@ -106,6 +121,33 @@ struct fluidPairModel
     };
 
     surfaceTension surfaceTension_;
+
+    // Interphase mass transfer (e.g. cavitation). Sign convention: mdot_lv > 0
+    // is liquid -> vapor [kg/(m^3 s)]
+    struct massTransfer
+    {
+        massTransferModelOption option_ = massTransferModelOption::none;
+        cavitationModelOption cavitationModel_ =
+            cavitationModelOption::rayleighPlesset;
+
+        // roles of the pair members: names and global material indices
+        std::string liquidPhase_;
+        std::string vaporPhase_;
+        label liquidIndex_ = -1;
+        label vaporIndex_ = -1;
+
+        // cavitation parameters (CFX defaults)
+        scalar saturationPressure_ = -1.0; // [Pa] absolute, required
+        scalar nucleationSiteVolumeFraction_ = 5.0e-4;
+        scalar nucleationSiteRadius_ = 1.0e-6; // [m]
+        scalar vaporizationCoefficient_ = 50.0;
+        scalar condensationCoefficient_ = 0.01;
+        scalar underRelaxation_ = 0.25; // (0, 1]
+        bool pressureClippingForRate_ = false;
+        bool includeContinuitySource_ = true;
+    };
+
+    massTransfer massTransfer_;
 };
 
 struct material
@@ -179,6 +221,11 @@ struct material
 
         youngModulus youngModulus_;
         poissonRatio poissonRatio_;
+
+        // Mooney-Rivlin (Flory split); derived from E/nu when unset
+        scalar c1_ = 0.0;    // C10
+        scalar c2_ = 0.0;    // C01
+        scalar kappa_ = 0.0; // bulk modulus
     };
 
     struct buoyancyProperties

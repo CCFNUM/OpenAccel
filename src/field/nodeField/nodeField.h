@@ -167,12 +167,21 @@ protected:
     // flag to correct gradient at symmetry planes
     bool correctGradient_ = false;
 
+    // flag to take the gradient at overset receptors from their donors
+    bool interpolateOversetReceptorGradient_ = false;
+
     // flag to calculate gradient in terms of the incremental change relative to
     // the node: more accurate gradient
     bool incrementalGradientChange_ = false;
 
+    // flag to use the prescribed side field value at boundary ips in gradient
+    bool usePrescribedValueForGrad_ = false;
+
     // flag to mark initialzed field at a zone
     std::vector<bool> isInitialized_;
+
+    // flag to mark a field whose content was imported from the mesh data base
+    std::vector<bool> isImportedFromDataBase_;
 
     void putFieldOnRegisteredParts_();
 
@@ -503,6 +512,13 @@ public:
         assert(isInitialized_.size() > iZone);
         assert(this->isZoneSet(iZone));
         isInitialized_[iZone] = state;
+    }
+
+    // true when an automatic initialization restored it from the data base
+    bool isImportedFromDataBase(label iZone) const
+    {
+        assert(isImportedFromDataBase_.size() > iZone);
+        return isImportedFromDataBase_[iZone];
     }
 
     label interfaceTwoSided(label iZone) const

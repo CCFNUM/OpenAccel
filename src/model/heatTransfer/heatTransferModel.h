@@ -16,6 +16,10 @@ namespace accel
 class heatTransferModel : public model
 {
 protected:
+    // mean prescribed boundary temperature, 288.15 K when there is none
+    scalar automaticTemperatureLevel_(const std::shared_ptr<domain> domain,
+                                      bool& prescribed);
+
     void updateTotalTemperatureField_(const std::shared_ptr<domain> domain);
 
     void reportHeatData_();
@@ -43,6 +47,7 @@ public:
     using fieldBroker::T0Ref;
     using fieldBroker::TRef;
     using fieldBroker::TWallCoeffsRef;
+    using fieldBroker::uWallCoeffsRef;
 
     // TODO: Implement utility methods for use in
     // equations that inherit from this model, e.g., computation of enthalpy
@@ -57,6 +62,9 @@ public:
     setupThermalConductivity(const std::shared_ptr<domain> domain) override;
 
     // initialize
+
+    virtual void
+    initializeTemperature(const std::shared_ptr<domain> domain) override;
 
     virtual void
     initializeSpecificEnthalpy(const std::shared_ptr<domain> domain) override;
@@ -84,6 +92,12 @@ public:
     virtual void
     updateSpecificTotalEnthalpy(const std::shared_ptr<domain> domain) override;
 
+    void transformSpecificTotalEnthalpyToRothalpy(
+        const std::shared_ptr<domain> domain);
+
+    void transformRothalpyToSpecificTotalEnthalpy(
+        const std::shared_ptr<domain> domain);
+
     virtual void
     updateSpecificHeatCapacity(const std::shared_ptr<domain> domain) override;
 
@@ -100,6 +114,10 @@ public:
         const std::shared_ptr<domain> domain) override;
 
 private:
+    void transformSpecificTotalEnthalpyFrameWork_(
+        const std::shared_ptr<domain> domain,
+        scalar sign);
+
     void updateTemperatureSideFields_(const std::shared_ptr<domain> domain);
 
     void

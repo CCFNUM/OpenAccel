@@ -21,8 +21,10 @@ public:
         scalar aitkenInitialOmega = 1.0;
         scalar aitkenOmegaMin = 0.1;
         scalar aitkenOmegaMax = 1.0;
-        label iqnIlsWindow = 5;
+        label iqnIlsWindow = 40;
         scalar iqnIlsRegularization = 1e-8;
+        scalar iqnIlsFilter = 1e-2;
+        label iqnIlsWindowsReused = 8;
     };
 
     explicit convergenceAcceleration(const Config& cfg);
@@ -30,6 +32,11 @@ public:
     bool enabled() const
     {
         return type_ != accelerationType::none;
+    }
+
+    accelerationType type() const
+    {
+        return type_;
     }
 
     void resetForTimeStep();
@@ -50,11 +57,17 @@ private:
     label aitkenIter_ = 0;
     Vector aitkenResidualPrev_;
 
-    // IQN-ILS state
-    label iqnIlsWindow_ = 5;
-    scalar iqnIlsRegularization_ = 1e-8;
-    std::deque<Vector> iqnIlsResidualHistory_;
-    std::deque<Vector> iqnIlsUpdateHistory_;
+    // IQN-ILS state: secant columns newest-first, tagged by birth window
+    label iqnIlsWindow_ = 40;
+    scalar iqnIlsFilter_ = 1e-2;
+    label iqnIlsWindowsReused_ = 8;
+    label iqnWindow_ = 0;
+    bool iqnHavePrev_ = false;
+    Vector iqnPrevR_;
+    Vector iqnPrevUpdate_;
+    std::deque<Vector> iqnV_;
+    std::deque<Vector> iqnW_;
+    std::deque<label> iqnColWindow_;
 
     scalar computeAitkenOmega_(const Vector& correction);
 

@@ -69,13 +69,17 @@ void bulkNavierStokesEquation::postInitialize()
         FOREACH_DOMAIN(model_->transformMassFlowRateToRelative, phaseIndex);
 
         // in case of transient, old density must be updated before div update
-        if (model_->controlsRef().isTransient())
+        if (!model_->controlsRef().solverRef().restartControl_.isRestart_ &&
+            model_->controlsRef().isTransient())
         {
             FOREACH_DOMAIN(model_->updateDensityPrevTimeField, phaseIndex);
         }
 
         // update div for mass of the current phase
-        FOREACH_DOMAIN(model_->updateMassDivergenceField, phaseIndex);
+        if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+        {
+            FOREACH_DOMAIN(model_->updateMassDivergenceField, phaseIndex);
+        }
     }
 
     // initialize bulk density and viscosity
@@ -91,13 +95,17 @@ void bulkNavierStokesEquation::postInitialize()
     FOREACH_DOMAIN(model_->updateMassFlowRate);
 
     // in case of transient, old density must be updated before div update
-    if (model_->controlsRef().isTransient())
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_ &&
+        model_->controlsRef().isTransient())
     {
         FOREACH_DOMAIN(model_->updateDensityPrevTimeField);
     }
 
     // update div for the bulk mass flux
-    FOREACH_DOMAIN(model_->flowModel::updateMassDivergenceField);
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->flowModel::updateMassDivergenceField);
+    }
 }
 
 void bulkNavierStokesEquation::preSolve()

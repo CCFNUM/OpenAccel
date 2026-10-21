@@ -60,12 +60,17 @@ void segregatedFreeSurfaceFlowEquations::addDomain(
 bool segregatedFreeSurfaceFlowEquations::isConverged() const
 {
     bool converged = U_eq_->isConverged() && pCorr_eq_->isConverged();
-    for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+
+    // alpha residual (normalized by max-min = 1) may never reach the target
+    if (!this->controlsRef().bypassVolumeFractionConvergence())
     {
-        if (!this->phaseRef(iPhase).primaryPhase_)
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
         {
-            assert(alpha_eq_[iPhase]);
-            converged = converged && alpha_eq_[iPhase]->isConverged();
+            if (!this->phaseRef(iPhase).primaryPhase_)
+            {
+                assert(alpha_eq_[iPhase]);
+                converged = converged && alpha_eq_[iPhase]->isConverged();
+            }
         }
     }
 
@@ -103,8 +108,11 @@ void segregatedFreeSurfaceFlowEquations::setup()
 void segregatedFreeSurfaceFlowEquations::initialize()
 {
     // initialize velocity and pressure
-    U_eq_->initialize();
-    pCorr_eq_->initialize();
+    U_eq_->initialize();     // 1. must be first
+    pCorr_eq_->initialize(); // 2.
+
+    // mass transfer rate (restored on restart)
+    FOREACH_DOMAIN(initializeMassTransferRate);
 
     // initialize volume fractions
     for (label iPhase = 0; iPhase < nPhases(); iPhase++)
@@ -133,8 +141,8 @@ void segregatedFreeSurfaceFlowEquations::initialize()
 void segregatedFreeSurfaceFlowEquations::postInitialize()
 {
     // initialize phase and bulk properties, and initialize phase mass flux
-    U_eq_->postInitialize();
-    pCorr_eq_->postInitialize();
+    U_eq_->postInitialize();     // 1. must be first
+    pCorr_eq_->postInitialize(); // 2.
 
     equation::isInitialized_ =
         U_eq_->isInitialized() && pCorr_eq_->isInitialized();
@@ -246,9 +254,20 @@ void segregatedFreeSurfaceFlowEquations::solve()
                 std::cout << std::endl << " sub-iter: " << subIter << "\n";
             }
 
+            // cavitation rate: implicit in p here, alpha source next iteration
+            if (this->hasMassTransfer())
+            {
+                FOREACH_DOMAIN(updateMassTransferRate);
+            }
+
             pCorr_eq_->preSolve();
             pCorr_eq_->solve();
             pCorr_eq_->postSolve();
+
+            if (this->hasMassTransfer())
+            {
+                FOREACH_DOMAIN(correctMassTransferRate);
+            }
 
             // correct phase density (only if compressible)
             for (label iPhase = 0; iPhase < nPhases(); iPhase++)

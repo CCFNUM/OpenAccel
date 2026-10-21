@@ -40,6 +40,9 @@ simulation:
           - name: obstacle
             type: wall
             location: [obstacle]
+            boundary_details:
+                mass_and_momentum:
+                    option: free_slip_wall
           - name: symmetry
             type: symmetry
             location: [bottom, top]
@@ -88,16 +91,10 @@ simulation:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-                                coarsen_type: 10 # HMIS (Excellent parallel scaling)
-                                interp_type: 6 # Extended+i (Robust for stretched grids)
-                                relax_type: 18 # L1-Gauss-Seidel (Stable/Smooth)
-                                strong_threshold: 0.25
-                                num_sweeps: 1
-                                max_levels: 20
-                                aggressive_levels: 1 # Reduces memory overhead
-                                trunc_factor: 0.3 # Keeps the solver lean
             expert_parameters:
                 consistent: true
+                high_speed_blend_damping: true # limiter limit-cycles at the bow shock without it
+                relax_gradients: false
         output_control:
             file_path: results.e
             output_frequency: 10

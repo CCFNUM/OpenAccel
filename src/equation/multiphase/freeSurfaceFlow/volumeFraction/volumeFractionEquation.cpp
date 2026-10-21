@@ -82,9 +82,13 @@ void volumeFractionEquation::initialize()
     // 1) update gradient
     FOREACH_DOMAIN(model_->updateVolumeFractionGradientField, phaseIndex_);
 
-    // 2) update high-res fields
-    FOREACH_DOMAIN(model_->updateVolumeFractionBlendingFactorField,
-                   phaseIndex_);
+    // 2) update high-res fields (already restored from the restart database on
+    // a continuation; re-deriving them here would advance the relaxed limiter)
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->updateVolumeFractionBlendingFactorField,
+                       phaseIndex_);
+    }
 
     // 3) update scale
     model_->alphaRef(phaseIndex_).updateScale();

@@ -456,6 +456,30 @@ void kEpsilonModel::updateTurbulentProduction(
             }
         }
     }
+    // Apply correction to the normalized production.
+    if (domain->turbulence_.curvatureCorrection_)
+    {
+        const STKScalarField* frSTKFieldPtr = frRef().stkFieldPtr();
+        const stk::mesh::Selector selAllNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+        const stk::mesh::BucketVector& nodeBuckets =
+            bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+        const scalar* frb = nullptr;
+        scalar* Pkb = nullptr;
+        for (const stk::mesh::Bucket* nodeBucket : nodeBuckets)
+        {
+            frb = stk::mesh::field_data(*frSTKFieldPtr, *nodeBucket);
+            Pkb = stk::mesh::field_data(PkSTKFieldRef, *nodeBucket);
+
+            for (stk::mesh::Bucket::size_type iNode = 0;
+                 iNode < nodeBucket->size();
+                 ++iNode)
+            {
+                Pkb[iNode] *= frb[iNode];
+            }
+        }
+    }
 }
 
 void kEpsilonModel::updateTurbulentDynamicViscosity(
@@ -468,11 +492,15 @@ void kEpsilonModel::updateTurbulentDynamicViscosity(
     // get fields
     STKScalarField* mutSTKFieldPtr = this->mutRef().stkFieldPtr();
     const STKScalarField* rhoSTKFieldPtr = this->rhoRef().stkFieldPtr();
+    const STKScalarField* muSTKFieldPtr = this->muRef().stkFieldPtr();
     const STKScalarField& kSTKFieldRef = this->kRef().stkFieldRef();
     const STKScalarField& epsilonSTKFieldRef = this->epsilonRef().stkFieldRef();
 
     // other
     scalar Cmu = this->Cmu();
+
+    // eddy-viscosity ratio limit: contains mut blow-up when eps undershoots
+    constexpr scalar maxViscosityRatio = 1.0e5;
 
     // define some common selectors
     stk::mesh::Selector selAllNodes =
@@ -489,6 +517,7 @@ void kEpsilonModel::updateTurbulentDynamicViscosity(
         const stk::mesh::Bucket::size_type length = b.size();
 
         const scalar* rho = stk::mesh::field_data(*rhoSTKFieldPtr, b);
+        const scalar* mu = stk::mesh::field_data(*muSTKFieldPtr, b);
         const scalar* tke = stk::mesh::field_data(kSTKFieldRef, b);
         const scalar* tdr = stk::mesh::field_data(epsilonSTKFieldRef, b);
         scalar* mut = stk::mesh::field_data(*mutSTKFieldPtr, b);
@@ -496,10 +525,61 @@ void kEpsilonModel::updateTurbulentDynamicViscosity(
         for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
         {
             scalar mut_val = Cmu * rho[k] * tke[k] * tke[k] / (tdr[k] + SMALL);
+            mut_val = std::min(mut_val, maxViscosityRatio * mu[k]);
 
             mut[k] = 0.75 * mut_val + 0.25 * mut[k];
         }
     }
+}
+
+void kEpsilonModel::limitTurbulentLengthScale(
+    const std::shared_ptr<domain> domain)
+{
+    stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+    stk::mesh::MetaData& metaData = this->meshRef().metaDataRef();
+
+    const STKScalarField& kSTKFieldRef = this->kRef().stkFieldRef();
+    STKScalarField& epsilonSTKFieldRef = this->epsilonRef().stkFieldRef();
+    const STKScalarField* yMinSTKFieldPtr = yMinRef().stkFieldPtr();
+
+    stk::mesh::Selector selAllNodes =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+
+    // no eddy can be larger than the farthest point from a wall
+    scalar lMax = domain->turbulence_.maxTurbulentLengthScale_;
+    if (lMax <= 0.0)
+    {
+        for (const stk::mesh::Bucket* b : nodeBuckets)
+        {
+            const scalar* yMin = stk::mesh::field_data(*yMinSTKFieldPtr, *b);
+            for (stk::mesh::Bucket::size_type k = 0; k < b->size(); ++k)
+            {
+                lMax = std::max(lMax, yMin[k]);
+            }
+        }
+        messager::maxReduce(lMax);
+    }
+    if (lMax <= 0.0)
+    {
+        return;
+    }
+
+    // eps floor: an eps stuck at the clip value would otherwise never recover
+    const scalar coeff = std::pow(this->Cmu(), 0.75) / lMax;
+    for (const stk::mesh::Bucket* b : nodeBuckets)
+    {
+        const scalar* tke = stk::mesh::field_data(kSTKFieldRef, *b);
+        scalar* tdr = stk::mesh::field_data(epsilonSTKFieldRef, *b);
+        for (stk::mesh::Bucket::size_type k = 0; k < b->size(); ++k)
+        {
+            const scalar kPos = std::max(tke[k], 0.0);
+            tdr[k] = std::max(tdr[k], coeff * kPos * std::sqrt(kPos));
+        }
+    }
+    this->epsilonRef().synchronizeGhostedEntities(domain->index());
 }
 
 } /* namespace accel */

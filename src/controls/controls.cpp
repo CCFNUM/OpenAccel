@@ -27,16 +27,7 @@ namespace accel
 controls::controls(fs::path cwd)
     : workingDirectory_(cwd), profiler_(messager::comm())
 {
-    // required states for correct restart
-    restartParameter_.set_param(
-        "timeStepCount", analysisType_.timeStepCount_, false, true);
-    restartParameter_.set_param("globalIter", globalIter, false, true);
-    for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
-    {
-        const std::string dt_id("dt_");
-        restartParameter_.set_param(
-            dt_id + std::to_string(i), getTimestep(-i), false, true);
-    }
+    defineRestartParam_();
 }
 
 // Destructor
@@ -52,7 +43,13 @@ bool controls::isReducedStencil() const
 
 bool controls::isRenumbered() const
 {
-    return solver_.solverControl_.expertParameters_.bandwidthReduction_;
+    return solver_.solverControl_.expertParameters_.nodeReordering_;
+}
+
+bool controls::isCvfemSolidMechanics() const
+{
+    return solver_.solverControl_.expertParameters_.solidAssemblerType_ ==
+           solidAssemblerType::cvfem;
 }
 
 bool controls::isTransient() const
@@ -77,6 +74,18 @@ bool controls::isNSO() const
     return solver_.solverControl_.expertParameters_.nso_;
 }
 
+bool controls::bypassVolumeFractionConvergence() const
+{
+    return solver_.solverControl_.expertParameters_
+        .bypassVolumeFractionConvergence_;
+}
+
+bool controls::useAutomaticDomainDecomposition() const
+{
+    return !solver_.solverControl_.advancedOptions_.domainDecomposition_.method_
+                .empty();
+}
+
 label controls::getNumberOfStates() const
 {
     label numberOfStates = 1; // 1 for steady-state, 2 for first order accurate,
@@ -86,11 +95,11 @@ label controls::getNumberOfStates() const
         switch (solver_.solverControl_.basicSettings_.transientScheme_)
         {
             case transientSchemeType::firstOrderBackwardEuler:
-                numberOfStates = 2;
+                numberOfStates = 3; // +1 state because STK restart drops last
                 break;
 
             case transientSchemeType::secondOrderBackwardEuler:
-                numberOfStates = 3;
+                numberOfStates = 4; // +1 state because STK restart drops last
                 break;
 
             default:
@@ -106,15 +115,46 @@ stk::util::ParameterList& controls::getRestartParam()
     return restartParameter_;
 }
 
+void controls::defineRestartParam_()
+{
+    // required global states for restart
+    constexpr bool to_output = false;
+    constexpr bool to_restart = true;
+    restartParameter_.set_param(
+        "timeStepCount", analysisType_.timeStepCount_, to_output, to_restart);
+    restartParameter_.set_param(
+        "globalIter", globalIter, to_output, to_restart);
+    std::vector<scalar> dt_history(analysisType_.timestep_.begin(),
+                                   analysisType_.timestep_.end());
+    restartParameter_.set_param(
+        "dt_history", dt_history, to_output, to_restart);
+
+    const auto& io = solver_.outputControl_;
+    restartParameter_.set_param(
+        "io_lastResults", io.lastResults_, to_output, to_restart);
+    restartParameter_.set_param(
+        "io_lastResultsTime", io.lastResultsTime_, to_output, to_restart);
+    restartParameter_.set_param(
+        "io_lastRestart", io.lastRestart_, to_output, to_restart);
+
+    restartParameter_.set_param(
+        "maxCourant", maxCourant_, to_output, to_restart);
+}
+
 void controls::setRestartParam()
 {
     restartParameter_.set_value("timeStepCount", analysisType_.timeStepCount_);
     restartParameter_.set_value("globalIter", globalIter);
-    for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
-    {
-        const std::string dt_id("dt_");
-        restartParameter_.set_value(dt_id + std::to_string(i), getTimestep(-i));
-    }
+    std::vector<scalar> dt_history(analysisType_.timestep_.begin(),
+                                   analysisType_.timestep_.end());
+    restartParameter_.set_value("dt_history", dt_history);
+
+    const auto& io = solver_.outputControl_;
+    restartParameter_.set_value("io_lastResults", io.lastResults_);
+    restartParameter_.set_value("io_lastResultsTime", io.lastResultsTime_);
+    restartParameter_.set_value("io_lastRestart", io.lastRestart_);
+
+    restartParameter_.set_value("maxCourant", maxCourant_);
     if (bulkForceParamRegistered_)
     {
         restartParameter_.set_value("bulkForceIntegral", bulkForceIntegral_);
@@ -134,12 +174,19 @@ void controls::registerBulkForceRestartParam()
 void controls::deserializeRestartParam(
     const stk::io::StkMeshIoBroker& io_broker)
 {
+    // nodeField calls this for each restored field, but all fields share one
+    // restart database state and the globals must be restored only once.
+    if (restartParamsDeserialized_)
+    {
+        return;
+    }
     if (!isTransient())
     {
         // For steady-state, globalIter is recovered from the field
         // time_restored() in nodeField::initialize(). The dt_* and
         // timeStepCount parameters are only relevant to transient runs.
-        io_broker.get_global("globalIter", globalIter, false);
+        io_broker.get_global("globalIter", globalIter);
+        restartParamsDeserialized_ = true;
         return;
     }
 
@@ -177,18 +224,45 @@ void controls::deserializeRestartParam(
     const scalar stepTime = region->begin_state(step);
     io_broker.get_global("timeStepCount", analysisType_.timeStepCount_);
     io_broker.get_global("globalIter", globalIter);
-    for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
+    std::vector<scalar> dt_history;
+    if (io_broker.get_global("dt_history", dt_history, false))
     {
-        const std::string dt_id("dt_");
-        const int idx = timestepPosition_(-i);
-        io_broker.get_global(dt_id + std::to_string(i),
-                             analysisType_.timestep_[idx]);
+        if (dt_history.size() != analysisTypeDictionary::DT_ENTRIES)
+        {
+            errorMsg("restart: invalid dt_history length");
+        }
+        std::copy(dt_history.begin(), dt_history.end(),
+                  analysisType_.timestep_.begin());
     }
-    // optional: absent in databases written without a bulk-velocity
-    // controller (the controller then starts from the input source value)
+    else
+    {
+        // Checkpoints from before the dt_history change store newest-first
+        // scalar globals dt_0 through dt_3. Preserve their ring positions.
+        for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; ++i)
+        {
+            scalar dt = 0.0;
+            const std::string name = "dt_" + std::to_string(i);
+            if (!io_broker.get_global(name, dt, false) ||
+                !(dt > 0.0) || !std::isfinite(dt))
+            {
+                errorMsg("restart: missing or invalid " + name);
+            }
+            analysisType_.timestep_[timestepPosition_(-i)] = dt;
+        }
+    }
+
+    auto& io = solver_.outputControl_;
+    // These I/O counters were added after the legacy checkpoints.
+    io_broker.get_global("io_lastResults", io.lastResults_, false);
+    io_broker.get_global("io_lastResultsTime", io.lastResultsTime_, false);
+    io_broker.get_global("io_lastRestart", io.lastRestart_, false);
+
+    io_broker.get_global("maxCourant", maxCourant_, false);
+    // Optional: a restart without a controller starts from the input force.
     bulkForceIntegralRestored_ =
         io_broker.get_global("bulkForceIntegral", bulkForceIntegral_, false);
     region->end_state(step);
+    restartParamsDeserialized_ = true;
 
     if (messager::master())
     {
@@ -196,7 +270,7 @@ void controls::deserializeRestartParam(
                   << " (time " << std::scientific << stepTime
                   << "): timeStepCount = " << analysisType_.timeStepCount_
                   << ", globalIter = " << globalIter << ", dt history = [";
-        for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; i++)
+        for (int i = 0; i < analysisTypeDictionary::DT_ENTRIES; ++i)
         {
             std::cout << (i ? ", " : "") << getTimestep(-i);
         }
@@ -208,6 +282,12 @@ void controls::deserializeRestartParam(
         }
         std::cout << std::defaultfloat << std::endl;
     }
+}
+
+void controls::registerRestartField(const std::string& fieldName)
+{
+    auto& restart = solver_.restartControl_;
+    restart.fields_.insert(fieldName);
 }
 
 scalar controls::getTotalTime() const
@@ -615,6 +695,56 @@ fs::path controls::getPostProcessingDirectory() const
 fs::path controls::getResidualDirectory() const
 {
     fs::path dir = getPostProcessingDirectory() / "0" / "residuals";
+    fs::create_directories(dir);
+    return dir;
+}
+
+fs::path controls::getRestartDirectory() const
+{
+    static int call_count = 0; // correction for multiple calls
+
+    int nrestart_dirs = 0;
+    fs::path dir = getWorkingDirectory();
+    std::string restart_dir_name("restart."); // default restart dir name
+    if (messager::master())
+    {
+        const size_t len = restart_dir_name.size();
+        for (const auto& entry : fs::directory_iterator{dir})
+        {
+            if (restart_dir_name.compare(
+                    0, len, entry.path().filename(), 0, len) == 0)
+            {
+                ++nrestart_dirs;
+            }
+        }
+        if (call_count > 0)
+        {
+            --nrestart_dirs;
+        }
+    }
+    ++call_count;
+
+    MPI_Bcast(&nrestart_dirs, 1, MPI_INT, 0, messager::comm());
+
+    std::ostringstream oss;
+    oss << restart_dir_name << std::setfill('0') << std::setw(3)
+        << nrestart_dirs;
+
+    dir /= oss.str();
+    if (call_count == 1 && messager::master())
+    {
+        fs::create_directories(dir);
+    }
+    MPI_Barrier(messager::comm());
+
+    return dir;
+}
+
+fs::path controls::getResultsDirectory() const
+{
+    fs::path res_file = solver_.outputControl_.filePath_;
+    assert(!res_file.empty());
+    fs::path dir = res_file.parent_path();
     fs::create_directories(dir);
     return dir;
 }

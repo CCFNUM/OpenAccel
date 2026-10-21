@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # File       : exodus_to_cgns.py
-# Description: Convert a multi-block HEX8 Exodus mesh (.e / .exo) into a
+# Description: Convert a multi-block Exodus mesh (.e / .exo) into a
 #              CFX-/ParaView-importable unstructured CGNS file.
 #
 #   * one CGNS Unstructured Zone_t per Exodus element block, with local node
 #     renumbering (blocks may have disjoint nodes, e.g. DG/non-conformal),
-#   * one HEXA_8 volume section per zone,
-#   * one QUAD_4 surface section per sideset, named after the sideset, attached
-#     to the zone of the block it bounds. CFX-Pre reads each surface section as
-#     a 2D region for boundary-condition assignment.
+#   * one volume section per zone (TRI_3/QUAD_4 in 2D, HEXA_8 in 3D),
+#   * one boundary section per sideset (BAR_2 in 2D, QUAD_4 in 3D), named
+#     after the sideset, attached to the zone of the block it bounds. CFX-Pre
+#     reads each boundary section as a region for BC assignment.
 #
 # The file is written by calling the system CGNS Mid-Level Library (libcgns)
 # directly through ctypes, so the output is SIDS-compliant (passes cgnscheck).
@@ -64,12 +64,22 @@ import netCDF4
 CG_MODE_WRITE = 1
 Unstructured  = 3
 RealDouble    = 4
+BAR_2         = 3
+TRI_3         = 5
 QUAD_4        = 7
 HEXA_8        = 17
 
-# HEX8 face -> local node map (Exodus and CGNS share HEX8 vertex ordering)
-FMAP = {1: [0, 1, 5, 4], 2: [1, 2, 6, 5], 3: [2, 3, 7, 6],
-        4: [0, 4, 7, 3], 5: [0, 3, 2, 1], 6: [4, 5, 6, 7]}
+# (mesh dim, nodes/elem) -> CGNS element type of the volume section
+ETYPE = {(2, 3): TRI_3, (2, 4): QUAD_4, (3, 8): HEXA_8}
+
+# Exodus local side id -> 0-based node indices (Exodus and CGNS share the
+# element vertex ordering)
+FMAP = {
+    TRI_3:  {1: [0, 1], 2: [1, 2], 3: [2, 0]},
+    QUAD_4: {1: [0, 1], 2: [1, 2], 3: [2, 3], 4: [3, 0]},
+    HEXA_8: {1: [0, 1, 5, 4], 2: [1, 2, 6, 5], 3: [2, 3, 7, 6],
+             4: [0, 4, 7, 3], 5: [0, 3, 2, 1], 6: [4, 5, 6, 7]},
+}
 
 
 def load_cgns():
@@ -129,17 +139,19 @@ def main():
 
     X = np.asarray(d.variables["coordx"][:], float)
     Y = np.asarray(d.variables["coordy"][:], float)
-    Z = np.asarray(d.variables["coordz"][:], float)
+    dim = len(d.dimensions["num_dim"])
+    Z = np.asarray(d.variables["coordz"][:], float) if dim == 3 else None
 
     # element blocks
-    blocks = []
+    blocks = []                                               # (etype, conn)
     i = 1
     while f"connect{i}" in d.variables:
         conn = np.asarray(d.variables[f"connect{i}"][:], np.int64) - 1
-        if conn.shape[1] != 8:
-            sys.exit(f"ERROR: block {i} is not HEX8 (got {conn.shape[1]} "
-                     "nodes/elem); only HEX8 is supported.")
-        blocks.append(conn)
+        etype = ETYPE.get((dim, conn.shape[1]))
+        if etype is None:
+            sys.exit(f"ERROR: block {i}: unsupported element type "
+                     f"({conn.shape[1]} nodes/elem in {dim}D).")
+        blocks.append((etype, conn))
         i += 1
     if not blocks:
         sys.exit("ERROR: no element blocks (connect*) found.")
@@ -147,10 +159,11 @@ def main():
     blk_names = decode_names(d.variables["eb_names"]) \
         if "eb_names" in d.variables else [f"block{j+1}"
                                            for j in range(len(blocks))]
-    blk_off = np.cumsum([0] + [b.shape[0] for b in blocks])   # global offsets
-    allconn = np.vstack(blocks)
+    blk_off = np.cumsum([0] + [c.shape[0] for _, c in blocks])  # global offsets
+    allconn = np.vstack([c for _, c in blocks])
+    etypes = [t for t, _ in blocks]
 
-    # sidesets: faces (global node ids) + the block they bound
+    # sidesets: boundary elements (global node ids) + the block they bound
     ss_names = decode_names(d.variables["ss_names"]) \
         if "ss_names" in d.variables else []
     sidesets = {j: [] for j in range(len(blocks))}            # block -> [(name, faces)]
@@ -159,9 +172,9 @@ def main():
             continue
         elems = np.asarray(d.variables[f"elem_ss{k}"][:], np.int64) - 1
         sides = np.asarray(d.variables[f"side_ss{k}"][:], np.int64)
-        faces = np.array([allconn[e][FMAP[int(s)]]
-                          for e, s in zip(elems, sides)])
         blk = int(np.searchsorted(blk_off, elems[0], side="right") - 1)
+        faces = np.array([allconn[e][FMAP[etypes[blk]][int(s)]]
+                          for e, s in zip(elems, sides)])
         if not np.all((elems >= blk_off[blk]) & (elems < blk_off[blk + 1])):
             sys.stderr.write(f"  warning: sideset '{name}' spans >1 block; "
                              f"attaching to block '{blk_names[blk]}'\n")
@@ -171,9 +184,13 @@ def main():
     fn = C.c_int()
     chk(lib.cg_open(out.encode(), CG_MODE_WRITE, C.byref(fn)), "cg_open")
     Bidx = C.c_int()
-    chk(lib.cg_base_write(fn, b"Base", 3, 3, C.byref(Bidx)), "cg_base_write")
+    chk(lib.cg_base_write(fn, b"Base", dim, dim, C.byref(Bidx)),
+        "cg_base_write")
 
-    for zi, blk in enumerate(blocks):
+    # boundary section element type (edges in 2D, faces in 3D)
+    btype = BAR_2 if dim == 2 else QUAD_4
+
+    for zi, (etype, blk) in enumerate(blocks):
         ncell = blk.shape[0]
         local = np.unique(blk)
         g2l = -np.ones(X.shape[0], np.int64)
@@ -186,34 +203,36 @@ def main():
                               size.ctypes.data, Unstructured, C.byref(Zidx)),
             "cg_zone_write")
 
-        for cname, comp in [(b"CoordinateX", X), (b"CoordinateY", Y),
-                            (b"CoordinateZ", Z)]:
+        coords = [(b"CoordinateX", X), (b"CoordinateY", Y)]
+        if dim == 3:
+            coords.append((b"CoordinateZ", Z))
+        for cname, comp in coords:
             arr = np.ascontiguousarray(comp[local], np.float64)
             Cidx = C.c_int()
             chk(lib.cg_coord_write(fn, Bidx, Zidx, RealDouble, cname,
                                    arr.ctypes.data, C.byref(Cidx)),
                 "cg_coord_write")
 
-        hexc = np.ascontiguousarray((g2l[blk] + 1).astype(np.int32).ravel())
+        cells = np.ascontiguousarray((g2l[blk] + 1).astype(np.int32).ravel())
         Sidx = C.c_int()
         chk(lib.cg_section_write(fn, Bidx, Zidx,
                                  cgns_name(blk_names[zi] + "_cells").encode(),
-                                 HEXA_8, 1, ncell, 0, hexc.ctypes.data,
-                                 C.byref(Sidx)), "cg_section_write(hex)")
+                                 etype, 1, ncell, 0, cells.ctypes.data,
+                                 C.byref(Sidx)), "cg_section_write(cells)")
 
         start = ncell + 1
         written = []
         for name, faces in sidesets[zi]:
             nf = faces.shape[0]
-            quad = np.ascontiguousarray((g2l[faces] + 1).astype(np.int32).ravel())
+            bnd = np.ascontiguousarray((g2l[faces] + 1).astype(np.int32).ravel())
             end = start + nf - 1
             Sidx = C.c_int()
             chk(lib.cg_section_write(fn, Bidx, Zidx, cgns_name(name).encode(),
-                                     QUAD_4, start, end, 0, quad.ctypes.data,
+                                     btype, start, end, 0, bnd.ctypes.data,
                                      C.byref(Sidx)), f"cg_section_write({name})")
             start = end + 1
             written.append(name)
-        print(f"zone '{blk_names[zi]}': {nnode} nodes, {ncell} hex, "
+        print(f"zone '{blk_names[zi]}': {nnode} nodes, {ncell} cells, "
               f"regions: {written}")
 
     chk(lib.cg_close(fn), "cg_close")

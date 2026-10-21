@@ -1,7 +1,7 @@
 // File       : deformation.h
 // Created    : Fri Feb 14 2025 12:55:24 (+0100)
 // Author     : Mhamad Mahdi Alloush
-// Description: Mesh deformation via displacement diffusion equation
+// Description: Mesh deformation via displacement diffusion or IDW morphing
 // Copyright 2025 CCFNUM HSLU T&A. All Rights Reserved.
 
 #ifndef DEFORMATION_H
@@ -21,6 +21,7 @@ class deformation
 private:
     meshMotion* meshMotionPtr_;
 
+    // built-in backend: displacement diffusion equation
     std::unique_ptr<equation> displacementDiffusionEquation_ = nullptr;
 
 public:

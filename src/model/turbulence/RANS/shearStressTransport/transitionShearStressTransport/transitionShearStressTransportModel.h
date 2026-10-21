@@ -36,6 +36,9 @@ private:
 
     scalar sigmaThetat_ = 2.0;
 
+    // Langtry-Menter zero-pressure-gradient onset correlation; Tu in percent
+    static scalar onsetReynoldsNumberFromIntensity_(scalar Tu);
+
 public:
     transitionShearStressTransportModel(realm* realm);
 

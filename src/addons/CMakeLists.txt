@@ -9,6 +9,7 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 # project sources
 target_sources(main_obj PRIVATE
     ${DIR}/meshMotion/deformation/deformation.cpp
+    ${DIR}/meshMotion/deformation/meshDisplacementModel.cpp
     ${DIR}/meshMotion/deformation/displacementDiffusion/displacementDiffusionAssembler.cpp
     ${DIR}/meshMotion/deformation/displacementDiffusion/displacementDiffusionAssemblerElemBoundaryConditions.cpp
     ${DIR}/meshMotion/deformation/displacementDiffusion/displacementDiffusionAssemblerElemInterfaceConditions.cpp

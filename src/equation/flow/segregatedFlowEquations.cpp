@@ -62,14 +62,14 @@ void segregatedFlowEquations::setup()
 
 void segregatedFlowEquations::initialize()
 {
-    U_eq_->initialize();
-    pCorr_eq_->initialize();
+    U_eq_->initialize();     // 1. must be first
+    pCorr_eq_->initialize(); // 2.
 }
 
 void segregatedFlowEquations::postInitialize()
 {
-    U_eq_->postInitialize();
-    pCorr_eq_->postInitialize();
+    U_eq_->postInitialize();     // 1. must be first
+    pCorr_eq_->postInitialize(); // 2.
 
     equation::isInitialized_ =
         U_eq_->isInitialized() && pCorr_eq_->isInitialized();
@@ -101,7 +101,7 @@ void segregatedFlowEquations::solve()
         return;
     }
 
-    // corrrector step: solve pressure correction
+    // corrector step: solve pressure correction
     {
         if (messager::master() && pCorr_eq_->subIters() > 1)
         {
@@ -200,6 +200,7 @@ void segregatedFlowEquations::solve()
                          iNode < nNodesPerBucket;
                          ++iNode)
                     {
+
                         for (label i = 0; i < SPATIAL_DIM; i++)
                         {
                             Ub[SPATIAL_DIM * iNode + i] -=

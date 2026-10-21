@@ -222,8 +222,6 @@ void turbulentIntermittencyCorrelationTransitionSSTAssembler::
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
-
     // space for LHS/RHS
     const label lhsSize = 1;
     const label rhsSize = 1;
@@ -265,9 +263,6 @@ void turbulentIntermittencyCorrelationTransitionSSTAssembler::
     const scalar CPG3 = model_->CPG3();
     const scalar CPG1_lim = model_->CPG1_lim();
     const scalar CPG2_lim = model_->CPG2_lim();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -418,13 +413,6 @@ void turbulentIntermittencyCorrelationTransitionSSTAssembler::
             rhs[0] += (Pgamma - Dgamma) * vol;
             lhs[0] += (gamma_pos1 + gamma_pos2 * gamma) * vol;
 
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * gamma * divUm * vol;
-            }
-
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
         }
@@ -443,8 +431,6 @@ void turbulentIntermittencyCorrelationTransitionSSTAssembler::
 
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
 
     // space for LHS/RHS
     const label lhsSize = 1;
@@ -491,9 +477,6 @@ void turbulentIntermittencyCorrelationTransitionSSTAssembler::
     const scalar CPG3 = model_->CPG3();
     const scalar CPG1_lim = model_->CPG1_lim();
     const scalar CPG2_lim = model_->CPG2_lim();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -652,13 +635,6 @@ void turbulentIntermittencyCorrelationTransitionSSTAssembler::
 
             rhs[0] += (Pgamma - Dgamma) * vol;
             lhs[0] += (gamma_pos1 + gamma_pos2 * gamma) * vol;
-
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * gamma * divUm * vol;
-            }
 
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);

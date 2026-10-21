@@ -36,6 +36,21 @@ massFlowRate::massFlowRate(realm* realmPtr,
     divFieldPtr_ = std::make_unique<nodeField<1>>(
         this->meshPtr(), divergenceFieldName, 1, false);
 
+    // The mass flux and its divergence carry iteration history through the
+    // Rhie-Chow interpolation; persist them so a restart resumes with the
+    // correct (consistently assembled) state instead of a raw reconstruction.
+    realmPtr->registerRestartField(name);
+    realmPtr->registerRestartField(divergenceFieldName);
+
+    // The boundary side mass flux carries the Rhie-Chow history as well.
+    // Registered here unconditionally (not at side field instantiation) so the
+    // restart set does not depend on registration order: the interface path
+    // instantiates the side field without restart registration, which would
+    // otherwise shadow the registration in elementField::registerSideField.
+    // Interface-side values are not yet restored on a restart, only boundary
+    // ones (elementField::restoreSideField); they will be eventually.
+    realmPtr->registerRestartField(name + "_side");
+
     // set size of massFlowRateFraction
     sideMassFlowRateFraction_.resize(this->meshPtr()->nZones());
     for (label iZone = 0; iZone < this->meshPtr()->nZones(); iZone++)

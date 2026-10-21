@@ -187,6 +187,11 @@ struct solverDictionary
                 label verbose_ = 0;
             };
 
+            struct solidMechanicsDictionary
+            {
+                label verbose_ = 0;
+            };
+
             struct equationControlsDictionary
             {
                 struct subIterationsDictionary
@@ -220,9 +225,17 @@ struct solverDictionary
                 meshMotionDictionary meshMotion_;
             };
 
+            struct domainDecompositionDictionary
+            {
+                std::string method_{""};
+                std::map<std::string, std::string> properties_;
+            };
+
             pressureLevelInformationDictionary pressureLevelInformation_;
             interfaceTransferDictionary interfaceTransfer_;
+            solidMechanicsDictionary solidMechanics_;
             equationControlsDictionary equationControls_;
+            domainDecompositionDictionary domainDecomposition_;
         };
 
         struct expertParametersDictionary
@@ -234,6 +247,7 @@ struct solverDictionary
             bool correctGradients_ = false;
             bool incrementalGradientChange_ = true;
             bool relaxGradients_ = true;
+            bool usePrescribedValueForGrad_ = false;
             bool falseMassAccumulation_ = true;
             bool fractionalStepMethod_ = false;
             bool coriolisProductionTurbulence_ = false;
@@ -243,17 +257,63 @@ struct solverDictionary
             bool strongDirichletWallScale_ = false;
             scalar volumeFractionBlendingFactorMax_ = 2.0;
             bool bandwidthReduction_ = true;
+            bool nodeReordering_ = false;
             bool forceWallDistanceCalculation_ = false;
             bool disablePhysics_ = false;
+            // exclude alpha residual from free-surface convergence checks
+            bool bypassVolumeFractionConvergence_ = false;
             bool freezeFlow_ = false;
             bool freezePressure_ = false;
+            bool freezeEnergy_ = false;
             // disable subset node graphs (default): subsets are opt-in
             bool forceFullNodeGraph_ = true;
             bool nso_ = false;
             scalar nsoFourthOrderFac_ = 1.0;
             bool highSpeedBlendDamping_ = false;
+            // pre-solve mass-flux refresh (compressible);
+            bool massFluxRefresh_ = true;
+            // Cap on the high-resolution blend beta in
+            // phi_ip = phi_upwind + beta * (grad phi . dx): 0 upwind, 1 linear
+            scalar blendFactorMax_ = 1.0;
             nonconformalMethod nonconformalMethod_ =
                 nonconformalMethod::discontinuousGalerkin;
+            gradientAveragingType cvpgType_ = gradientAveragingType::arithAver;
+
+            // mesh deformation backend: displacement diffusion or lithe (IDW)
+            meshDeformationBackend meshDeformationBackend_ =
+                meshDeformationBackend::displacementDiffusion;
+
+            struct litheDictionary
+            {
+                scalar aExp_ = 3.0;
+                scalar bExp_ = 5.0;
+                scalar alpha_ = 0.25;
+                scalar LdefFact_ = 1.0;
+                scalar errTol_ = 5.0e-4;
+                bool exact_ = false;
+                bool useRotations_ = true;
+                bool zeroCornerRotations_ = true;
+                scalar cornerAngle_ = 30.0;
+                label bucketSize_ = 18;
+                // mirror the surface across planar symmetry boundaries
+                bool symmetryPlanes_ = true;
+                // rebuild the IDW reference from the current mesh every N
+                // timesteps (0 = always morph from the initial mesh)
+                label reanchorInterval_ = 0;
+            };
+
+            litheDictionary lithe_;
+
+            // Discretisation of the total-enthalpy viscous work flux tau.U
+            viscousWorkType viscousWorkType_ = viscousWorkType::elementCentre;
+            // Stress carried by the total-enthalpy viscous work flux
+            viscousWorkStressType viscousWorkStressType_ =
+                viscousWorkStressType::fullStress;
+            // Viscous work carried by a no-slip wall
+            viscousWorkWallModel viscousWorkWallModel_ =
+                viscousWorkWallModel::faceVelocity;
+
+            solidAssemblerType solidAssemblerType_ = solidAssemblerType::cvfem;
         };
 
         basicSettingsDictionary basicSettings_;
@@ -281,6 +341,15 @@ struct solverDictionary
 
         // STK specific (if restart this becomes stk::io::APPEND_RESULTS)
         stk::io::DatabasePurpose writeMode_{stk::io::WRITE_RESULTS};
+        std::unique_ptr<Ioss::PropertyManager> propertyManagerPtr_{nullptr};
+
+        // I/O control
+        size_t fileIndex_{0};
+        label lastRestart_{-1};
+        label lastResults_{-1};
+        label writeCounter_{0};
+        scalar writeTime_{0.0};
+        scalar lastResultsTime_{-1.0};
     };
 
     struct restartControlDictionary
@@ -294,6 +363,11 @@ struct solverDictionary
         // STK specific (see controlsIO.cpp)
         stk::io::MeshField::TimeMatchOption timeMatchOption_{
             stk::io::MeshField::CLOSEST};
+        std::unique_ptr<Ioss::PropertyManager> propertyManagerPtr_{nullptr};
+
+        // state
+        size_t fileIndex_{0};
+        std::set<std::string> fields_; // registered restart fields
     };
 
     solverControlDictionary solverControl_;
@@ -323,11 +397,17 @@ public:
         return solver_;
     };
 
-    // bandwidth_reduction drives two branches: a reduced matrix stencil, and a
-    // node renumbering that pulls neighbouring nodes close in the row order
+    solverDictionary& solverRef()
+    {
+        return solver_;
+    };
+
+    // Matrix-stencil reduction and node renumbering are independent controls.
     bool isReducedStencil() const;
 
     bool isRenumbered() const;
+
+    bool isCvfemSolidMechanics() const;
 
     bool isTransient() const;
 
@@ -336,6 +416,10 @@ public:
     bool isHighResolutionTurbulenceNumerics() const;
 
     bool isNSO() const;
+
+    bool bypassVolumeFractionConvergence() const;
+
+    bool useAutomaticDomainDecomposition() const;
 
     label getNumberOfStates() const;
 
@@ -369,6 +453,8 @@ public:
         bulkForceIntegral_ = value;
     }
 
+    void registerRestartField(const std::string& fieldName);
+
     scalar getTotalTime() const;
 
     void setTimestep(const scalar dt);
@@ -393,6 +479,10 @@ public:
     fs::path getPostProcessingDirectory() const;
 
     fs::path getResidualDirectory() const;
+
+    fs::path getRestartDirectory() const;
+
+    fs::path getResultsDirectory() const;
 
     fs::path getAdaptiveTimesteppingDirectory() const;
 
@@ -421,6 +511,8 @@ private:
 
     scalar bulkForceIntegral_{0};
 
+    bool restartParamsDeserialized_{false};
+
     scalar maxCourant_{-1};
 
     std::unique_ptr<std::ofstream> dtLogFile_;
@@ -438,6 +530,8 @@ private:
         scalar dt, maxCourant, intervalStart, intervalLength;
         std::string action{"unchanged"};
     };
+
+    void defineRestartParam_();
 
     int timestepPosition_(const int i) const;
 

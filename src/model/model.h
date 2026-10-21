@@ -51,6 +51,13 @@ protected:
     {
         return mesh::exposed_area_vector_ID;
     }
+
+    // area-weighted average of a scalar boundary input over a patch
+    bool boundaryInputAreaAverage_(const std::shared_ptr<domain> domain,
+                                   label iBoundary,
+                                   inputData<1>& data,
+                                   scalar& average,
+                                   scalar& area);
 };
 
 } /* namespace accel */

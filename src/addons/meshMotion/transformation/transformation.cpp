@@ -46,31 +46,28 @@ void transformation::update()
             stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
             // current time
-            scalar t = meshMotionPtr_->meshRef().controlsRef().time;
+            const scalar t = meshMotionPtr_->meshRef().controlsRef().time;
 
-            // rotation details: extract pointers if required
-            const auto& omega = zonePtr->transformationRef().rotation().omega_;
-            const auto& axis = zonePtr->transformationRef().rotation().axis_;
-            const auto& origin =
+            // rotation and translation details
+            const scalar& omega =
+                zonePtr->transformationRef().rotation().omega_;
+            const rvectorD& origin =
                 zonePtr->transformationRef().rotation().origin_;
+// axis is not used in a 2D case
+#if SPATIAL_DIM == 3
+            const rvectorD& axis =
+                zonePtr->transformationRef().rotation().axis_;
+#else
+            const rvectorD& axis = rvectorD::Zero();
+#endif
+            const rvectorD& v = zonePtr->transformationRef().translation().v_;
 
-            const scalar* p_axis = axis.data();
-            const scalar* p_ori = origin.data();
+            // --- build the rigid-body transformation once per zone ---
+            const rtensorD R = utils::getRotationMatrix(omega * t, axis);
+            // translation displacement: v * t
+            const rvectorD tra = v * t;
 
-            // translation details
-            const auto& v = zonePtr->transformationRef().translation().v_;
-
-            const scalar* p_v = v.data();
-
-            // local space; current coords and rotated coords; generalized for
-            // 2D and 3D. Do also for translation.
-            scalar mcX[3] = {0.0, 0.0, 0.0};
-            scalar rcX[3] = {0.0, 0.0, 0.0};
-            scalar tra[3] = {0.0, 0.0, 0.0};
-
-            // Get coords field
-            const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
-                stk::topology::NODE_RANK, mesh::coordinates_ID);
+            // Get original/model coords field
             const auto& orgCoordsSTKFieldRef = *metaData.get_field<scalar>(
                 stk::topology::NODE_RANK, mesh::original_coordinates_ID);
 
@@ -91,6 +88,7 @@ void transformation::update()
 
             stk::mesh::BucketVector const& nodeBuckets = bulkData.get_buckets(
                 stk::topology::NODE_RANK, selUniversalNodes);
+
             for (stk::mesh::BucketVector::const_iterator ib =
                      nodeBuckets.begin();
                  ib != nodeBuckets.end();
@@ -110,46 +108,15 @@ void transformation::update()
                      iNode < nNodesPerBucket;
                      ++iNode)
                 {
-                    // load the current and model coords
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        mcX[i] = orgCoordsb[iNode * SPATIAL_DIM + i];
-                    }
+                    // map flat coordinate arrays into Eigen vectors
+                    // (zero-copy views over the STK field data)
+                    const rvectorDViewC mcX(orgCoordsb + iNode * SPATIAL_DIM);
+                    rvectorDView dt(Dtb + iNode * SPATIAL_DIM);
 
-                    const scalar cX = mcX[0] - p_ori[0];
-                    const scalar cY = mcX[1] - p_ori[1];
-                    const scalar cZ = mcX[2] - p_ori[2];
-
-                    const scalar sinOTby2 = sin(omega * t * 0.5);
-                    const scalar cosOTby2 = cos(omega * t * 0.5);
-
-                    const scalar q0 = cosOTby2;
-                    const scalar q1 = sinOTby2 * p_axis[0];
-                    const scalar q2 = sinOTby2 * p_axis[1];
-                    const scalar q3 = sinOTby2 * p_axis[2];
-
-                    // rotated model coordinates; converted to displacement; add
-                    // back in centroid
-                    rcX[0] = (q0 * q0 + q1 * q1 - q2 * q2 - q3 * q3) * cX +
-                             2.0 * (q1 * q2 - q0 * q3) * cY +
-                             2.0 * (q0 * q2 + q1 * q3) * cZ - mcX[0] + p_ori[0];
-                    rcX[1] = 2.0 * (q1 * q2 + q0 * q3) * cX +
-                             (q0 * q0 - q1 * q1 + q2 * q2 - q3 * q3) * cY +
-                             2.0 * (q2 * q3 - q0 * q1) * cZ - mcX[1] + p_ori[1];
-                    rcX[2] = 2.0 * (q1 * q3 - q0 * q2) * cX +
-                             2.0 * (q0 * q1 + q2 * q3) * cY +
-                             (q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3) * cZ -
-                             mcX[2] + p_ori[2];
-
-                    tra[0] = p_v[0] * t;
-                    tra[1] = p_v[1] * t;
-                    tra[2] = p_v[2] * t;
-
-                    // set displacement
-                    for (label i = 0; i < SPATIAL_DIM; ++i)
-                    {
-                        Dtb[SPATIAL_DIM * iNode + i] += rcX[i] + tra[i];
-                    }
+                    // total displacement:
+                    //   rot_disp = R * (mcX - origin) + origin - mcX
+                    //   tra      = v * t
+                    dt += R * (mcX - origin) + origin - mcX + tra;
                 }
             }
         }

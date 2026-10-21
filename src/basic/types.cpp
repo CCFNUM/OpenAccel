@@ -126,7 +126,9 @@ heatTransferOption convertHeatTransferOptionFromString(std::string s)
 std::unordered_map<std::string, solidMechanicsOption> solidMechanicsOptionMap{
     {"none", solidMechanicsOption::none},
     {"linear_elastic", solidMechanicsOption::linearElastic},
-    {"simplified_new_hookean", solidMechanicsOption::simplifiedNeoHookean}};
+    {"neo_hookean", solidMechanicsOption::neoHookean},
+    {"mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin},
+    {"modified_mooney_rivlin", solidMechanicsOption::modifiedMooneyRivlin}};
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s)
 {
@@ -197,6 +199,40 @@ convertSurfaceTensionModelOptionFromString(std::string s)
         errorMsg("No surface tension model option found for `" + s + "`");
     }
     return surfaceTensionModelOptionMap[s];
+}
+
+// Mass transfer model option
+std::unordered_map<std::string, massTransferModelOption>
+    massTransferModelOptionMap{
+        {"none", massTransferModelOption::none},
+        {"cavitation", massTransferModelOption::cavitation}};
+
+massTransferModelOption convertMassTransferModelOptionFromString(std::string s)
+{
+    ::accel::tolower(s);
+    const auto it = massTransferModelOptionMap.find(s);
+    if (it == massTransferModelOptionMap.end())
+    {
+        errorMsg("No mass transfer model option found for `" + s +
+                 "` (valid: none, cavitation)");
+    }
+    return it->second;
+}
+
+// Cavitation model option
+std::unordered_map<std::string, cavitationModelOption> cavitationModelOptionMap{
+    {"rayleigh_plesset", cavitationModelOption::rayleighPlesset}};
+
+cavitationModelOption convertCavitationModelOptionFromString(std::string s)
+{
+    ::accel::tolower(s);
+    const auto it = cavitationModelOptionMap.find(s);
+    if (it == cavitationModelOptionMap.end())
+    {
+        errorMsg("No cavitation model option found for `" + s +
+                 "` (valid: rayleigh_plesset)");
+    }
+    return it->second;
 }
 
 // Source option
@@ -771,6 +807,77 @@ nonconformalMethod convertNonconformalMethodFromString(std::string s)
     return it->second;
 }
 
+// Gradient averaging type
+
+std::unordered_map<std::string, gradientAveragingType> gradientAveragingTypeMap{
+    {"arith_aver", gradientAveragingType::arithAver},
+    {"harm_aver", gradientAveragingType::harmAver},
+};
+
+gradientAveragingType convertGradientAveragingTypeFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = gradientAveragingTypeMap.find(s);
+    if (it == gradientAveragingTypeMap.end())
+        errorMsg("gradient averaging type '" + s + "' not available");
+    return it->second;
+}
+
+// Viscous work type
+
+std::unordered_map<std::string, viscousWorkType> viscousWorkTypeMap{
+    {"ip", viscousWorkType::ip},
+    {"integration_point", viscousWorkType::ip},
+    {"element_centre", viscousWorkType::elementCentre},
+    {"element_center", viscousWorkType::elementCentre},
+    {"centre", viscousWorkType::elementCentre},
+    {"center", viscousWorkType::elementCentre},
+};
+
+viscousWorkType convertViscousWorkTypeFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = viscousWorkTypeMap.find(s);
+    if (it == viscousWorkTypeMap.end())
+        errorMsg("viscous work type '" + s + "' not available");
+    return it->second;
+}
+
+// Viscous work stress type
+
+std::unordered_map<std::string, viscousWorkStressType> viscousWorkStressTypeMap{
+    {"full_stress", viscousWorkStressType::fullStress},
+    {"full", viscousWorkStressType::fullStress},
+    {"laplacian", viscousWorkStressType::laplacian},
+    {"laplacian_stresses", viscousWorkStressType::laplacian},
+};
+
+viscousWorkStressType convertViscousWorkStressTypeFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = viscousWorkStressTypeMap.find(s);
+    if (it == viscousWorkStressTypeMap.end())
+        errorMsg("viscous work stress type '" + s + "' not available");
+    return it->second;
+}
+
+// Viscous work wall model
+
+std::unordered_map<std::string, viscousWorkWallModel> viscousWorkWallModelMap{
+    {"element_stress", viscousWorkWallModel::elementStress},
+    {"face_velocity", viscousWorkWallModel::faceVelocity},
+    {"vertex_velocity", viscousWorkWallModel::vertexVelocity},
+};
+
+viscousWorkWallModel convertViscousWorkWallModelFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = viscousWorkWallModelMap.find(s);
+    if (it == viscousWorkWallModelMap.end())
+        errorMsg("viscous work wall model '" + s + "' not available");
+    return it->second;
+}
+
 // Wall-function type
 
 std::unordered_map<std::string, wallFunctionType> wallFunctionTypeMap{
@@ -991,6 +1098,46 @@ meshMotionType convertMeshMotionTypeFromString(std::string s)
     return meshMotionType::stationary; // useless
 }
 
+// Interface mesh motion option
+
+std::unordered_map<std::string, interfaceMeshMotionOption>
+    interfaceMeshMotionOptionMap{
+        {"unspecified", interfaceMeshMotionOption::unspecified},
+        {"stationary", interfaceMeshMotionOption::stationary},
+        {"specified_displacement",
+         interfaceMeshMotionOption::specifiedDisplacement},
+        {"periodic_displacement",
+         interfaceMeshMotionOption::periodicDisplacement}};
+
+interfaceMeshMotionOption
+convertInterfaceMeshMotionOptionFromString(std::string s)
+{
+    auto it = interfaceMeshMotionOptionMap.find(s);
+    if (it != interfaceMeshMotionOptionMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid interface mesh_motion option: " + s);
+    }
+
+    return interfaceMeshMotionOption::unspecified; // useless
+}
+
+std::string toString(interfaceMeshMotionOption option)
+{
+    for (const auto& pair : interfaceMeshMotionOptionMap)
+    {
+        if (pair.second == option)
+        {
+            return pair.first;
+        }
+    }
+    errorMsg("interface mesh_motion option not available");
+    return "";
+}
+
 // Mesh deformation option
 
 std::unordered_map<std::string, meshDeformationSpecificationType>
@@ -1035,6 +1182,30 @@ meshDeformationModel convertMeshDeformationModelTypeFromString(std::string s)
     }
 
     return meshDeformationModel::displacementDiffusion; // useless
+}
+
+// Mesh deformation backend
+
+std::unordered_map<std::string, meshDeformationBackend>
+    meshDeformationBackendMap{{"displacement_diffusion",
+                               meshDeformationBackend::displacementDiffusion},
+                              {"lithe", meshDeformationBackend::lithe},
+                              {"idw", meshDeformationBackend::lithe}};
+
+meshDeformationBackend convertMeshDeformationBackendFromString(std::string s)
+{
+    auto it = meshDeformationBackendMap.find(s);
+    if (it != meshDeformationBackendMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid mesh deformation backend: " + s +
+                 " (displacement_diffusion or lithe)");
+    }
+
+    return meshDeformationBackend::displacementDiffusion; // useless
 }
 
 // Mesh stiffness specification
@@ -1111,6 +1282,27 @@ convertKinematicFormulationTypeFromString(std::string s)
     return kinematicFormulationType::totalLagrangian; // useless
 }
 
+// Solid mechanics assembler technology
+
+std::unordered_map<std::string, solidAssemblerType> solidAssemblerTypeMap{
+    {"sfem", solidAssemblerType::sfem},
+    {"cvfem", solidAssemblerType::cvfem}};
+
+solidAssemblerType convertSolidAssemblerTypeFromString(std::string s)
+{
+    auto it = solidAssemblerTypeMap.find(s);
+    if (it != solidAssemblerTypeMap.end())
+    {
+        return it->second;
+    }
+    else
+    {
+        errorMsg("Invalid solid assembler type: " + s);
+    }
+
+    return solidAssemblerType::cvfem; // useless
+}
+
 // Post process type
 
 std::unordered_map<std::string, postProcessType> postProcessTypeMap{
@@ -1138,7 +1330,8 @@ postProcessType convertPostProcessTypeFromString(std::string s)
 std::unordered_map<std::string, reductionType> statisticsTypeMap{
     {"sum", reductionType::sum},
     {"average", reductionType::average},
-    {"area_average", reductionType::areaAverage}};
+    {"area_average", reductionType::areaAverage},
+    {"mass_average", reductionType::massAverage}};
 
 reductionType convertStatisticsTypeFromString(std::string s)
 {

@@ -8,6 +8,7 @@
 #define RANSMODEL_H
 
 // code
+#include "nodeTensorField.h"
 #include "turbulenceModel.h"
 
 namespace accel
@@ -20,8 +21,22 @@ private:
 
     scalar tkeProdLimitRatio_ = 10.0;
 
+    // Spalart-Shur / Smirnov-Menter production correction.
+    scalar cR1_ = 1.0;
+
+    scalar cR2_ = 2.0;
+
+    scalar cR3_ = 1.0;
+
+    std::unique_ptr<nodeTensorField> SijPtr_ = nullptr;
+
 public:
     RANSModel(realm* realm);
+
+    // Shared two-equation production correction (SST and k-epsilon).
+    void setupCurvatureCorrection(const std::shared_ptr<domain> domain);
+
+    void updateCurvatureCorrection(const std::shared_ptr<domain> domain);
 
     // Access
 

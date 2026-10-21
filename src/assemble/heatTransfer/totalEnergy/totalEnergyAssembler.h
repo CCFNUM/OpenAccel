@@ -81,6 +81,46 @@ public:
     }
 
 protected:
+    bool usesSteadyRotatingEnergyForm_(const domain* domain,
+                                       const bool includeAdv) const
+    {
+        return includeAdv && domain->zonePtr()->frameRotating() &&
+               !model_->controlsRef().isTransient();
+    }
+
+    bool includesRotatingPressureWork_(const domain* domain,
+                                       const bool includeAdv) const
+    {
+        return includeAdv && domain->zonePtr()->frameRotating() &&
+               !usesSteadyRotatingEnergyForm_(domain, includeAdv);
+    }
+
+    // tau.U as one element/face-average flux instead of a per-ip flux
+    bool usesElementViscousWork_() const
+    {
+        return model_->controlsRef()
+                   .solverRef()
+                   .solverControl_.expertParameters_.viscousWorkType_ ==
+               viscousWorkType::elementCentre;
+    }
+
+    // Laplacian stress in tau.U instead of the full stress
+    bool usesLaplacianViscousWork_() const
+    {
+        return model_->controlsRef()
+                   .solverRef()
+                   .solverControl_.expertParameters_.viscousWorkStressType_ ==
+               viscousWorkStressType::laplacian;
+    }
+
+    // Viscous work carried by a no-slip wall
+    viscousWorkWallModel wallViscousWorkModel_() const
+    {
+        return model_->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.viscousWorkWallModel_;
+    }
+
     void assembleNodeTermsFusedSteady_(const domain* domain,
                                        Context* ctx) override;
 

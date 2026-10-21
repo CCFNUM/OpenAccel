@@ -133,7 +133,6 @@ void phiAssembler<N>::assembleElemTermsInterfaceSide_(
 
         for (auto& faceIpInfoVec : interfaceSideInfoPtr->ipInfoVec())
         {
-
             for (size_t k = 0; k < faceIpInfoVec.size(); ++k)
             {
                 ipInfo* ip = faceIpInfoVec[k];

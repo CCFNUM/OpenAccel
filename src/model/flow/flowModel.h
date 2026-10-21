@@ -102,7 +102,6 @@ protected:
     STKScalarField* FSTKFieldPtr_;
     STKScalarField* FOriginalSTKFieldPtr_; // workspace for balanced force
 
-    static constexpr char COMMENT[] = "# ";
     std::unique_ptr<std::ostream> mDot_stream_; // file stream for mass flux
 
     void reportFlowData_();
@@ -259,6 +258,9 @@ protected:
     updateInterfaceMomentumImbalance_(const std::shared_ptr<domain> domain);
 
 private:
+    // temperature level for the ideal-gas density estimate of the velocity seed
+    scalar initialTemperatureLevel_(const std::shared_ptr<domain> domain);
+
     // flow data for reporting
     struct FlowData
     {
@@ -398,11 +400,19 @@ private:
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 
-    void updatePressureBoundarySideFieldAverageStaticPressure_(
+    void updatePressureBoundarySideFieldInletStaticPressure_(
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 
     void updatePressureBoundarySideFieldInletTotalPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary);
+
+    void updatePressureBoundarySideFieldOutletStaticPressure_(
+        const std::shared_ptr<domain> domain,
+        const boundary* boundary);
+
+    void updatePressureBoundarySideFieldOutletAverageStaticPressure_(
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 

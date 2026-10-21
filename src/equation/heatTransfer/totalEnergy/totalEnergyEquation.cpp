@@ -31,6 +31,12 @@ void totalEnergyEquation::checkDomain(const std::shared_ptr<domain> domain)
 
 bool totalEnergyEquation::isConverged() const
 {
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezeEnergy_)
+    {
+        return true;
+    }
     return linearSystem::isConverged();
 }
 
@@ -155,6 +161,16 @@ void totalEnergyEquation::postInitialize()
 
 void totalEnergyEquation::preSolve()
 {
+    // A frozen energy equation preserves the imported temperature and total
+    // enthalpy fields exactly.  In particular, do not transform h0 to
+    // rothalpy: postSolve is also skipped in this mode.
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezeEnergy_)
+    {
+        return;
+    }
+
     // update density only for solid domains: for fluid domains, it will have
     // already been updated by the flow model
     FOREACH_DOMAIN_IF(updateDensity, domain->type() == domainType::solid);
@@ -166,10 +182,31 @@ void totalEnergyEquation::preSolve()
     FOREACH_DOMAIN(updateThermalExpansivity);
     FOREACH_DOMAIN(updateSpecificEnthalpyPrevIterField);
     FOREACH_DOMAIN(updateSpecificTotalEnthalpyPrevIterField);
+    FOREACH_DOMAIN(transformSpecificTotalEnthalpyToRothalpy);
+
+    // High-resolution reconstruction must use the gradient and limiter of the
+    // transported variable.  In a steady rotating zone h0 has just become
+    // rothalpy, while initialization/restart data may still describe absolute
+    // total enthalpy.
+    FOREACH_DOMAIN_IF(updateSpecificTotalEnthalpyGradientField,
+                      domain->type() == domainType::fluid &&
+                          domain->zonePtr()->frameRotating() &&
+                          !controlsRef().isTransient());
+    FOREACH_DOMAIN_IF(updateSpecificTotalEnthalpyBlendingFactorField,
+                      domain->type() == domainType::fluid &&
+                          domain->zonePtr()->frameRotating() &&
+                          !controlsRef().isTransient());
 }
 
 void totalEnergyEquation::solve()
 {
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezeEnergy_)
+    {
+        return;
+    }
+
     auto ctx = linearSystem::getContext();
     ctx->zeroSystemStorage();
 
@@ -203,7 +240,9 @@ void totalEnergyEquation::solve()
         if (domain->type() == domainType::fluid &&
             domain->isMaterialCompressible())
         {
-            scalar iter = controlsRef().iter;
+            const scalar iter = controlsRef().isTransient()
+                                    ? controlsRef().iter
+                                    : controlsRef().globalIter;
             label rampIter = 20;
             if (iter <= rampIter)
             {
@@ -245,6 +284,16 @@ void totalEnergyEquation::solve()
 
 void totalEnergyEquation::postSolve()
 {
+    if (controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.freezeEnergy_)
+    {
+        return;
+    }
+
+    FOREACH_DOMAIN(transformRothalpyToSpecificTotalEnthalpy);
+    h0Ref().updateScale();
+
     this->reportHeatData_();
 
     FOREACH_DOMAIN(updateSpecificEnthalpy);

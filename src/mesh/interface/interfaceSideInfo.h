@@ -35,6 +35,7 @@ public:
                       stk::mesh::PartVector currentPartVec,
                       stk::mesh::PartVector opposingPartVec,
                       interfaceModelOption option,
+                      interfaceMeshMotionOption meshMotionOption,
                       std::string name);
 
     virtual ~interfaceSideInfo();
@@ -101,11 +102,29 @@ public:
         return opposingPartVec_;
     }
 
+    // Mesh motion of this side in a deforming mesh
+
+    interfaceMeshMotionOption meshMotionOption() const
+    {
+        return meshMotionOption_;
+    }
+
+    // stationary, specified or periodic: the side displacement is imposed
+    bool isMeshMotionPrescribed() const
+    {
+        return meshMotionOption_ != interfaceMeshMotionOption::unspecified;
+    }
+
     // Unified per-IP info storage (concrete ipInfo subtypes).  Outer
     // index = current face index; inner = IP / connection index.  Owned by
     // this base class — populated by derived classes during initialize() /
     // update() and freed by the base destructor (via clearIpInfo_()).
     const std::vector<std::vector<ipInfo*>>& ipInfoVec() const
+    {
+        return ipInfoVec_;
+    }
+
+    std::vector<std::vector<ipInfo*>>& ipInfoVecRef()
     {
         return ipInfoVec_;
     }
@@ -180,6 +199,7 @@ protected:
     bool hasNonoverlap_ = false;
     domainType parentDomainType_ = domainType::fluid;
     interfaceModelOption interfaceModelOption_;
+    interfaceMeshMotionOption meshMotionOption_;
 
     std::unique_ptr<dataHandler> dataHandler_;
     std::vector<boundingSphere> boundingSphereVec_;

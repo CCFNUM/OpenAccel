@@ -19,11 +19,13 @@ interfaceSideInfo::interfaceSideInfo(interface* interfPtr,
                                      stk::mesh::PartVector currentPartVec,
                                      stk::mesh::PartVector opposingPartVec,
                                      interfaceModelOption option,
+                                     interfaceMeshMotionOption meshMotionOption,
                                      std::string name)
     : currentPartVec_(std::move(currentPartVec)),
       opposingPartVec_(std::move(opposingPartVec)), interfPtr_(interfPtr),
       name_(std::move(name)), isMasterSide_(isMasterSide),
-      interfaceModelOption_(option), dataHandler_(new dataHandler)
+      interfaceModelOption_(option), meshMotionOption_(meshMotionOption),
+      dataHandler_(new dataHandler)
 {
 }
 

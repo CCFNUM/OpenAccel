@@ -93,6 +93,7 @@ SELECTED_CASES = [
     {"name": "plateHole",     "dir": "examples/plateHole"},
     {"name": "TaylorCouettePoiseuille", "dir": "examples/TaylorCouettePoiseuille"},
     {"name": "cavity",        "dir": "examples/cavity"},
+    {"name": "damBreak",      "dir": "examples/damBreak"},
 ]
 
 EXAMPLES_DIR = "examples"

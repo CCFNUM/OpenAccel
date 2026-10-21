@@ -55,7 +55,8 @@ void navierStokesEquation::checkDomain(const std::shared_ptr<domain> domain)
 
 bool navierStokesEquation::isConverged() const
 {
-    return linearSystem::isConverged();
+    bool converged = linearSystem::isConverged();
+    return converged;
 }
 
 void navierStokesEquation::setup()
@@ -106,9 +107,6 @@ void navierStokesEquation::initialize()
 
     // update high-res fields
     FOREACH_DOMAIN(model_->updateVelocityBlendingFactorField);
-
-    // update velocity scale
-    model_->URef().updateScale();
 }
 
 void navierStokesEquation::postInitialize()
@@ -124,6 +122,7 @@ void navierStokesEquation::postInitialize()
     // post initialization
     model_->rhoRef().updateScale();
     model_->muRef().updateScale();
+    model_->URef().updateScale();
 
     // raw initialization of mass flux: can be safely done now after
     // initialization of velocity and density at all active domains
@@ -143,7 +142,10 @@ void navierStokesEquation::postInitialize()
     }
 
     // now update div field
-    FOREACH_DOMAIN(model_->updateMassDivergenceField);
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->updateMassDivergenceField);
+    }
 
     equation::isInitialized_ = true;
 }
@@ -187,6 +189,7 @@ void navierStokesEquation::solve()
              .solverRef()
              .solverControl_.expertParameters_.disableMomentumPredictor_)
     {
+
         // solve linear system
         if (ctx->getGraph()->isGraphMember())
         {

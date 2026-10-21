@@ -6,6 +6,7 @@
 
 #include "convergenceAcceleration.h"
 #include "messager.h"
+#include <iostream>
 
 #include <algorithm>
 #include <cmath>
@@ -13,79 +14,12 @@
 namespace accel
 {
 
-namespace
-{
-bool solveDenseSystem_(std::vector<scalar>& A,
-                       std::vector<scalar>& b,
-                       std::vector<scalar>& x,
-                       size_t n)
-{
-    x.assign(n, 0.0);
-    for (size_t k = 0; k < n; ++k)
-    {
-        size_t pivot = k;
-        scalar maxVal = std::abs(A[k * n + k]);
-        for (size_t i = k + 1; i < n; ++i)
-        {
-            const scalar val = std::abs(A[i * n + k]);
-            if (val > maxVal)
-            {
-                maxVal = val;
-                pivot = i;
-            }
-        }
-
-        if (maxVal < SMALL)
-        {
-            return false;
-        }
-
-        if (pivot != k)
-        {
-            for (size_t j = k; j < n; ++j)
-            {
-                std::swap(A[k * n + j], A[pivot * n + j]);
-            }
-            std::swap(b[k], b[pivot]);
-        }
-
-        const scalar diag = A[k * n + k];
-        for (size_t i = k + 1; i < n; ++i)
-        {
-            const scalar factor = A[i * n + k] / diag;
-            A[i * n + k] = 0.0;
-            for (size_t j = k + 1; j < n; ++j)
-            {
-                A[i * n + j] -= factor * A[k * n + j];
-            }
-            b[i] -= factor * b[k];
-        }
-    }
-
-    for (size_t i = n; i-- > 0;)
-    {
-        scalar sum = b[i];
-        for (size_t j = i + 1; j < n; ++j)
-        {
-            sum -= A[i * n + j] * x[j];
-        }
-        if (std::abs(A[i * n + i]) < SMALL)
-        {
-            return false;
-        }
-        x[i] = sum / A[i * n + i];
-    }
-
-    return true;
-}
-} // namespace
-
 convergenceAcceleration::convergenceAcceleration(const Config& cfg)
     : type_(cfg.type), aitkenOmega_(cfg.aitkenInitialOmega),
       aitkenOmegaInit_(cfg.aitkenInitialOmega),
       aitkenOmegaMin_(cfg.aitkenOmegaMin), aitkenOmegaMax_(cfg.aitkenOmegaMax),
-      iqnIlsWindow_(cfg.iqnIlsWindow),
-      iqnIlsRegularization_(cfg.iqnIlsRegularization)
+      iqnIlsWindow_(cfg.iqnIlsWindow), iqnIlsFilter_(cfg.iqnIlsFilter),
+      iqnIlsWindowsReused_(cfg.iqnIlsWindowsReused)
 {
 }
 
@@ -99,8 +33,16 @@ void convergenceAcceleration::resetForTimeStep()
     }
     if (type_ == accelerationType::iqn_ils)
     {
-        iqnIlsResidualHistory_.clear();
-        iqnIlsUpdateHistory_.clear();
+        // keep secant columns from recent windows, drop the stale ones
+        iqnWindow_++;
+        iqnHavePrev_ = false;
+        while (!iqnColWindow_.empty() &&
+               iqnColWindow_.back() < iqnWindow_ - iqnIlsWindowsReused_)
+        {
+            iqnV_.pop_back();
+            iqnW_.pop_back();
+            iqnColWindow_.pop_back();
+        }
     }
 }
 
@@ -147,6 +89,17 @@ scalar convergenceAcceleration::computeAitkenOmega_(const Vector& correction)
         return aitkenOmegaInit_;
     }
 
+    // a ghosting update can resize the local system: restart the history,
+    // decided collectively since the resize is rank-local
+    scalar restartFlag = (aitkenResidualPrev_.size() != n) ? 1.0 : 0.0;
+    messager::sumReduce(restartFlag);
+    if (restartFlag > 0.0)
+    {
+        aitkenResidualPrev_ = correction;
+        aitkenIter_++;
+        return aitkenOmega_;
+    }
+
     scalar normPrevSq = 0.0;
     scalar normCurrSq = 0.0;
     scalar dotPrevCurr = 0.0;
@@ -168,7 +121,18 @@ scalar convergenceAcceleration::computeAitkenOmega_(const Vector& correction)
     if (normDrSq > SMALL)
     {
         const scalar omegaNew = aitkenOmega_ * (numerator / normDrSq);
-        aitkenOmega_ = std::clamp(omegaNew, aitkenOmegaMin_, aitkenOmegaMax_);
+        if (std::isfinite(omegaNew)) // std::clamp would pass NaN through
+        {
+            aitkenOmega_ =
+                std::clamp(omegaNew, aitkenOmegaMin_, aitkenOmegaMax_);
+        }
+    }
+
+    if (messager::master())
+    {
+        // one line per coupling iteration: a stalled coupling (omega pinned
+        // at its bound) can then be told apart from a diverging one
+        std::cout << "Aitken omega: " << aitkenOmega_ << std::endl;
     }
 
     aitkenResidualPrev_ = correction;
@@ -182,116 +146,161 @@ void convergenceAcceleration::computeIqnIlsUpdate_(const Vector& correction,
                                                    Vector& update)
 {
     const size_t n = correction.size();
+
+    // a resize means the dof layout changed: restart collectively
+    scalar restart = (iqnHavePrev_ && iqnPrevR_.size() != n) ? 1.0 : 0.0;
+    messager::sumReduce(restart);
+    if (restart > 0.0)
+    {
+        iqnV_.clear();
+        iqnW_.clear();
+        iqnColWindow_.clear();
+        iqnHavePrev_ = false;
+    }
+    // an empty rank must still join every collective below
     update.assign(n, 0.0);
-    if (n == 0)
-    {
-        return;
-    }
 
-    if (iqnIlsWindow_ < 1 || iqnIlsResidualHistory_.size() < 2)
+    auto gdot = [](const Vector& a, const Vector& b)
     {
-        for (size_t i = 0; i < n; ++i)
+        scalar d = 0.0;
+        for (size_t k = 0; k < a.size(); ++k)
         {
-            update[i] = baseRelax * correction[i];
+            d += a[k] * b[k];
         }
-        iqnIlsResidualHistory_.push_back(correction);
-        iqnIlsUpdateHistory_.push_back(update);
-        if (iqnIlsResidualHistory_.size() >
-            static_cast<size_t>(iqnIlsWindow_ + 1))
-        {
-            iqnIlsResidualHistory_.pop_front();
-            iqnIlsUpdateHistory_.pop_front();
-        }
-        return;
-    }
+        messager::sumReduce(d);
+        return d;
+    };
 
-    const size_t available = iqnIlsResidualHistory_.size() - 1;
-    const size_t m = std::min(static_cast<size_t>(iqnIlsWindow_), available);
-    if (m == 0)
+    // grow the secant history: V = dr, W = dx~ = du_prev + dr
+    if (iqnHavePrev_)
     {
-        for (size_t i = 0; i < n; ++i)
-        {
-            update[i] = baseRelax * correction[i];
-        }
-        iqnIlsResidualHistory_.push_back(correction);
-        iqnIlsUpdateHistory_.push_back(update);
-        return;
-    }
-
-    std::vector<size_t> indices(m);
-    const size_t start = iqnIlsResidualHistory_.size() - m;
-    for (size_t j = 0; j < m; ++j)
-    {
-        indices[j] = start + j;
-    }
-
-    std::vector<scalar> A(m * m, 0.0);
-    std::vector<scalar> b(m, 0.0);
-
-    std::vector<scalar> dr(m, 0.0);
-    for (size_t k = 0; k < n; ++k)
-    {
-        for (size_t i = 0; i < m; ++i)
-        {
-            const size_t idx = indices[i];
-            dr[i] = iqnIlsResidualHistory_[idx][k] -
-                    iqnIlsResidualHistory_[idx - 1][k];
-            b[i] += dr[i] * correction[k];
-        }
-        for (size_t i = 0; i < m; ++i)
-        {
-            for (size_t j = 0; j < m; ++j)
-            {
-                A[i * m + j] += dr[i] * dr[j];
-            }
-        }
-    }
-
-    messager::sumReduce(b);
-    messager::sumReduce(A);
-
-    for (size_t i = 0; i < m; ++i)
-    {
-        A[i * m + i] += iqnIlsRegularization_;
-    }
-
-    std::vector<scalar> coeffs;
-    if (!solveDenseSystem_(A, b, coeffs, m))
-    {
-        for (size_t i = 0; i < n; ++i)
-        {
-            update[i] = baseRelax * correction[i];
-        }
-        iqnIlsResidualHistory_.push_back(correction);
-        iqnIlsUpdateHistory_.push_back(update);
-        if (iqnIlsResidualHistory_.size() >
-            static_cast<size_t>(iqnIlsWindow_ + 1))
-        {
-            iqnIlsResidualHistory_.pop_front();
-            iqnIlsUpdateHistory_.pop_front();
-        }
-        return;
-    }
-
-    update = correction;
-    for (size_t i = 0; i < m; ++i)
-    {
-        const size_t idx = indices[i];
-        const Vector& dx = iqnIlsUpdateHistory_[idx];
-        const scalar ci = coeffs[i];
+        Vector v(n), w(n);
         for (size_t k = 0; k < n; ++k)
         {
-            update[k] -= ci * dx[k];
+            v[k] = correction[k] - iqnPrevR_[k];
+            w[k] = iqnPrevUpdate_[k] + v[k];
+        }
+        iqnV_.push_front(std::move(v));
+        iqnW_.push_front(std::move(w));
+        iqnColWindow_.push_front(iqnWindow_);
+        while (iqnV_.size() > static_cast<size_t>(iqnIlsWindow_))
+        {
+            iqnV_.pop_back();
+            iqnW_.pop_back();
+            iqnColWindow_.pop_back();
         }
     }
 
-    iqnIlsResidualHistory_.push_back(correction);
-    iqnIlsUpdateHistory_.push_back(update);
-    if (iqnIlsResidualHistory_.size() > static_cast<size_t>(iqnIlsWindow_ + 1))
+    const size_t m = iqnV_.size();
+    if (m == 0)
     {
-        iqnIlsResidualHistory_.pop_front();
-        iqnIlsUpdateHistory_.pop_front();
+        const scalar w0 =
+            (aitkenOmegaInit_ > 0.0) ? aitkenOmegaInit_ : baseRelax;
+        for (size_t k = 0; k < n; ++k)
+        {
+            update[k] = w0 * correction[k];
+        }
+        iqnPrevR_ = correction;
+        iqnPrevUpdate_ = update;
+        iqnHavePrev_ = true;
+        return;
     }
+
+    // modified Gram-Schmidt on the V columns, newest first; a column whose
+    // orthogonal remainder falls under the filter is dropped for good
+    std::vector<Vector> Q;
+    std::vector<std::vector<scalar>> R;
+    std::vector<size_t> kept;
+    size_t filtered = 0;
+    for (size_t j = 0; j < iqnV_.size();)
+    {
+        Vector v = iqnV_[j];
+        const scalar orig = std::sqrt(gdot(v, v));
+        std::vector<scalar> rj(Q.size(), 0.0);
+        for (size_t i = 0; i < Q.size(); ++i)
+        {
+            const scalar h = gdot(Q[i], v);
+            rj[i] = h;
+            for (size_t k = 0; k < n; ++k)
+            {
+                v[k] -= h * Q[i][k];
+            }
+        }
+        const scalar nrm = std::sqrt(gdot(v, v));
+        if (!(nrm > iqnIlsFilter_ * orig) || !(orig > 0.0))
+        {
+            iqnV_.erase(iqnV_.begin() + j);
+            iqnW_.erase(iqnW_.begin() + j);
+            iqnColWindow_.erase(iqnColWindow_.begin() + j);
+            filtered++;
+            continue;
+        }
+        for (size_t k = 0; k < n; ++k)
+        {
+            v[k] /= nrm;
+        }
+        rj.push_back(nrm);
+        Q.push_back(std::move(v));
+        R.push_back(std::move(rj));
+        kept.push_back(j);
+        ++j;
+    }
+
+    const size_t mk = Q.size();
+    if (mk == 0)
+    {
+        const scalar w0 =
+            (aitkenOmegaInit_ > 0.0) ? aitkenOmegaInit_ : baseRelax;
+        for (size_t k = 0; k < n; ++k)
+        {
+            update[k] = w0 * correction[k];
+        }
+        iqnPrevR_ = correction;
+        iqnPrevUpdate_ = update;
+        iqnHavePrev_ = true;
+        return;
+    }
+
+    // solve R alpha = -Q^T r by back substitution
+    std::vector<scalar> beta(mk, 0.0);
+    for (size_t i = 0; i < mk; ++i)
+    {
+        beta[i] = -gdot(Q[i], correction);
+    }
+    std::vector<scalar> alpha(mk, 0.0);
+    for (size_t i = mk; i-- > 0;)
+    {
+        scalar sum = beta[i];
+        for (size_t j2 = i + 1; j2 < mk; ++j2)
+        {
+            sum -= R[j2][i] * alpha[j2];
+        }
+        alpha[i] = sum / R[i][i];
+    }
+
+    // x_{k+1} = x~_k + W alpha  ->  update = r + W alpha
+    update = correction;
+    scalar amax = 0.0;
+    for (size_t i = 0; i < mk; ++i)
+    {
+        const Vector& w = iqnW_[kept[i]];
+        const scalar ai = alpha[i];
+        amax = std::max(amax, std::abs(ai));
+        for (size_t k = 0; k < n; ++k)
+        {
+            update[k] += ai * w[k];
+        }
+    }
+
+    if (messager::master())
+    {
+        std::cout << "IQN-ILS: cols " << m << " kept " << mk << " filtered "
+                  << filtered << " |alpha|max " << amax << std::endl;
+    }
+
+    iqnPrevR_ = correction;
+    iqnPrevUpdate_ = update;
+    iqnHavePrev_ = true;
 }
 
 } // namespace accel

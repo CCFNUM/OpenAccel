@@ -1,4 +1,4 @@
-// File       : domain.cpp
+// File       : domainIO.cpp
 // Created    : Wed Jan 03 2024 13:38:51 (+0100)
 // Author     : Mhamad Mahdi Alloush
 // Description:
@@ -340,15 +340,40 @@ void domain::read_()
                     materialBlockVector_[localMaterialIndex]
                                         ["mechanical_properties"];
 
-                mat.mechanicalProperties_.youngModulus_.option_ =
-                    convertYoungModulusOptionFromString(
-                        mechanicalPropertiesBlock["young_modulus"]["option"]
-                            .template as<std::string>());
+                // optional: mooney_rivlin may give c1/c2/kappa instead
+                if (mechanicalPropertiesBlock["young_modulus"])
+                {
+                    mat.mechanicalProperties_.youngModulus_.option_ =
+                        convertYoungModulusOptionFromString(
+                            mechanicalPropertiesBlock["young_modulus"]["option"]
+                                .template as<std::string>());
+                }
 
-                mat.mechanicalProperties_.poissonRatio_.option_ =
-                    convertPoissonRatioOptionFromString(
-                        mechanicalPropertiesBlock["poisson_ratio"]["option"]
-                            .template as<std::string>());
+                if (mechanicalPropertiesBlock["poisson_ratio"])
+                {
+                    mat.mechanicalProperties_.poissonRatio_.option_ =
+                        convertPoissonRatioOptionFromString(
+                            mechanicalPropertiesBlock["poisson_ratio"]["option"]
+                                .template as<std::string>());
+                }
+
+                // Mooney-Rivlin parameters (optional; else derived from E/nu)
+                if (mechanicalPropertiesBlock["c1"])
+                {
+                    mat.mechanicalProperties_.c1_ =
+                        mechanicalPropertiesBlock["c1"].template as<scalar>();
+                }
+                if (mechanicalPropertiesBlock["c2"])
+                {
+                    mat.mechanicalProperties_.c2_ =
+                        mechanicalPropertiesBlock["c2"].template as<scalar>();
+                }
+                if (mechanicalPropertiesBlock["kappa"])
+                {
+                    mat.mechanicalProperties_.kappa_ =
+                        mechanicalPropertiesBlock["kappa"]
+                            .template as<scalar>();
+                }
             }
 
             // move ownership to material vector
@@ -779,6 +804,85 @@ void domain::read_()
                     break;
             }
 
+            // Production correction uses a single value under its option.
+            if (turbulenceBlock["production_correction_coefficient"] ||
+                turbulenceBlock["curvature_correction_coefficient"])
+            {
+                errorMsg("Use curvature_correction with option: "
+                         "production_correction and value instead of "
+                         "separate coefficient settings");
+            }
+
+            const YAML::Node curvature =
+                turbulenceBlock["curvature_correction"];
+            if (curvature)
+            {
+                if (turbulence_.option_ == turbulenceOption::laminar)
+                {
+                    errorMsg("curvature_correction requires a two-equation "
+                             "turbulence model");
+                }
+                if (!curvature.IsMap() || !curvature["option"] ||
+                    curvature["option"].template as<std::string>() !=
+                        "production_correction")
+                {
+                    errorMsg("curvature_correction must be a block with "
+                             "option: production_correction");
+                }
+                if (curvature["coefficient"])
+                {
+                    errorMsg("Use value instead of coefficient under "
+                             "curvature_correction");
+                }
+
+                turbulence_.curvatureCorrection_ = true;
+                if (curvature["value"])
+                {
+                    turbulence_.curvatureCorrectionCoeff_ =
+                        curvature["value"].template as<scalar>();
+                }
+
+                if (!std::isfinite(turbulence_.curvatureCorrectionCoeff_) ||
+                    turbulence_.curvatureCorrectionCoeff_ < 0.0)
+                {
+                    errorMsg("curvature_correction value must be finite "
+                             "and nonnegative");
+                }
+            }
+
+            if (turbulence_.curvatureCorrection_ && turbulence_.transitional_)
+            {
+                errorMsg("production correction is not supported by the "
+                         "current transition-SST implementation");
+            }
+
+            // optional override of the default eddy length scale
+            if (turbulence_.option_ != turbulenceOption::laminar &&
+                turbulenceBlock["turbulent_eddy_length_scale"])
+            {
+                turbulence_.eddyLengthScale_ =
+                    turbulenceBlock["turbulent_eddy_length_scale"]
+                        .template as<scalar>();
+
+                if (turbulence_.eddyLengthScale_ <= 0.0)
+                {
+                    errorMsg("turbulent_eddy_length_scale must be positive");
+                }
+            }
+
+            if (turbulence_.option_ != turbulenceOption::laminar &&
+                turbulenceBlock["max_turbulent_length_scale"])
+            {
+                turbulence_.maxTurbulentLengthScale_ =
+                    turbulenceBlock["max_turbulent_length_scale"]
+                        .template as<scalar>();
+
+                if (turbulence_.maxTurbulentLengthScale_ <= 0.0)
+                {
+                    errorMsg("max_turbulent_length_scale must be positive");
+                }
+            }
+
             // if heat transfer model enabled, a turbulent flux closure for heat
             // transfer is required
             if (turbulence_.option_ != turbulenceOption::laminar &&
@@ -892,6 +996,154 @@ void domain::read_()
                     }
                 }
 
+                // read interphase mass transfer model (e.g. cavitation)
+                if (pairBlock["mass_transfer"])
+                {
+                    const auto& mtBlock = pairBlock["mass_transfer"];
+                    auto& mt = fpm.massTransfer_;
+                    const std::string path = "fluid_pair_models: mass_transfer";
+
+                    if (!mtBlock["option"])
+                    {
+                        errorMsg(path + " `option` key is required");
+                    }
+                    mt.option_ = convertMassTransferModelOptionFromString(
+                        mtBlock["option"].template as<std::string>());
+
+                    if (mt.option_ == massTransferModelOption::cavitation)
+                    {
+                        if (mtBlock["cavitation_model"])
+                        {
+                            mt.cavitationModel_ =
+                                convertCavitationModelOptionFromString(
+                                    mtBlock["cavitation_model"]
+                                        .template as<std::string>());
+                        }
+
+                        if (fpm.globalIndexA_ == fpm.globalIndexB_)
+                        {
+                            errorMsg(path + ": the pair members must differ");
+                        }
+
+                        // Phase roles follow the domain material order:
+                        // the first material is the liquid.
+                        if (globalToLocalMaterialIndex(fpm.globalIndexA_) <
+                            globalToLocalMaterialIndex(fpm.globalIndexB_))
+                        {
+                            mt.liquidPhase_ = fpm.materialA_;
+                            mt.vaporPhase_ = fpm.materialB_;
+                            mt.liquidIndex_ = fpm.globalIndexA_;
+                            mt.vaporIndex_ = fpm.globalIndexB_;
+                        }
+                        else
+                        {
+                            mt.liquidPhase_ = fpm.materialB_;
+                            mt.vaporPhase_ = fpm.materialA_;
+                            mt.liquidIndex_ = fpm.globalIndexB_;
+                            mt.vaporIndex_ = fpm.globalIndexA_;
+                        }
+
+                        // parameters
+                        if (!mtBlock["saturation_pressure"])
+                        {
+                            errorMsg(path + " `saturation_pressure` key is "
+                                            "required (absolute pressure)");
+                        }
+                        mt.saturationPressure_ = mtBlock["saturation_pressure"]
+                                                     .template as<scalar>();
+                        if (!(mt.saturationPressure_ > 0.0) ||
+                            !std::isfinite(mt.saturationPressure_))
+                        {
+                            errorMsg(path + ".saturation_pressure: must be a "
+                                            "positive absolute pressure [Pa]");
+                        }
+
+                        if (mtBlock["nucleation_site_volume_fraction"])
+                        {
+                            mt.nucleationSiteVolumeFraction_ =
+                                mtBlock["nucleation_site_volume_fraction"]
+                                    .template as<scalar>();
+                        }
+                        if (!(mt.nucleationSiteVolumeFraction_ >= 0.0 &&
+                              mt.nucleationSiteVolumeFraction_ <= 1.0))
+                        {
+                            errorMsg(path + ".nucleation_site_volume_fraction:"
+                                            " must be in [0, 1]");
+                        }
+
+                        if (mtBlock["nucleation_site_radius"])
+                        {
+                            mt.nucleationSiteRadius_ =
+                                mtBlock["nucleation_site_radius"]
+                                    .template as<scalar>();
+                        }
+                        if (!(mt.nucleationSiteRadius_ > 0.0) ||
+                            !std::isfinite(mt.nucleationSiteRadius_))
+                        {
+                            errorMsg(path + ".nucleation_site_radius: must be "
+                                            "positive [m]");
+                        }
+
+                        if (mtBlock["vaporization_coefficient"])
+                        {
+                            mt.vaporizationCoefficient_ =
+                                mtBlock["vaporization_coefficient"]
+                                    .template as<scalar>();
+                        }
+                        if (!(mt.vaporizationCoefficient_ >= 0.0) ||
+                            !std::isfinite(mt.vaporizationCoefficient_))
+                        {
+                            errorMsg(path + ".vaporization_coefficient: must "
+                                            "be non-negative");
+                        }
+
+                        if (mtBlock["condensation_coefficient"])
+                        {
+                            mt.condensationCoefficient_ =
+                                mtBlock["condensation_coefficient"]
+                                    .template as<scalar>();
+                        }
+                        if (!(mt.condensationCoefficient_ >= 0.0) ||
+                            !std::isfinite(mt.condensationCoefficient_))
+                        {
+                            errorMsg(path + ".condensation_coefficient: must "
+                                            "be non-negative");
+                        }
+
+                        if (mtBlock["under_relaxation"])
+                        {
+                            mt.underRelaxation_ = mtBlock["under_relaxation"]
+                                                      .template as<scalar>();
+                        }
+                        if (!(mt.underRelaxation_ > 0.0 &&
+                              mt.underRelaxation_ <= 1.0))
+                        {
+                            errorMsg(path +
+                                     ".under_relaxation: must be in (0, 1]");
+                        }
+
+                        if (mtBlock["pressure_clipping_for_rate"])
+                        {
+                            mt.pressureClippingForRate_ =
+                                mtBlock["pressure_clipping_for_rate"]
+                                    .template as<bool>();
+                        }
+                        if (mtBlock["include_continuity_source"])
+                        {
+                            mt.includeContinuitySource_ =
+                                mtBlock["include_continuity_source"]
+                                    .template as<bool>();
+                        }
+
+                        if (multiphase_.freeSurfaceModel_.option_ !=
+                            freeSurfaceModelOption::standard)
+                        {
+                            errorMsg(path + " requires a free_surface_model in "
+                                            "fluid_models.multiphase");
+                        }
+                    }
+                }
+
                 fluidPairModels_.push_back(std::move(fpm));
             }
         }
@@ -975,6 +1227,9 @@ void domain::read_()
                 {
                     case kinematicFormulationType::totalLagrangian:
                         {
+                            equations_[static_cast<int>(
+                                equationID::solidDisplacement)] = true;
+
                             if (this->zonePtr()
                                     ->meshPtr()
                                     ->controlsRef()
@@ -998,9 +1253,6 @@ void domain::read_()
                                 deformation
                                     .setDisplacementRelativeToPreviousMesh(
                                         false);
-
-                                equations_[static_cast<int>(
-                                    equationID::solidDisplacement)] = true;
                             }
                         }
                         break;
@@ -1058,6 +1310,109 @@ void domain::read_()
                 {
                     errorMsg("false lumped mass -> consistent mass appraoch is "
                              "not implemented");
+                }
+            }
+
+            // mass-proportional Rayleigh damping coefficient [1/s]
+            if (solidMechanicsBlock["damping_coeff"])
+            {
+                solidMechanics_.dampingCoeff_ =
+                    solidMechanicsBlock["damping_coeff"].template as<scalar>();
+
+                if (solidMechanics_.dampingCoeff_ < 0.0)
+                {
+                    errorMsg("damping_coeff must be non-negative");
+                }
+            }
+
+            // Mooney-Rivlin: derive c1/c2/kappa from E/nu if not given
+            if (solidMechanics_.option_ ==
+                solidMechanicsOption::modifiedMooneyRivlin)
+            {
+                for (label iMat = 0;
+                     iMat < static_cast<label>(materialVector_.size());
+                     ++iMat)
+                {
+                    const auto& materialBlock = materialBlockVector_[iMat];
+                    if (!materialBlock["mechanical_properties"])
+                    {
+                        continue;
+                    }
+
+                    const auto& mechanicalPropertiesBlock =
+                        materialBlock["mechanical_properties"];
+
+                    const bool hasC1C2Kappa =
+                        mechanicalPropertiesBlock["c1"] ||
+                        mechanicalPropertiesBlock["c2"] ||
+                        mechanicalPropertiesBlock["kappa"];
+
+                    if (hasC1C2Kappa)
+                    {
+                        continue;
+                    }
+
+                    const bool hasYoungPoisson =
+                        mechanicalPropertiesBlock["young_modulus"] &&
+                        mechanicalPropertiesBlock["young_modulus"]
+                                                 ["young_modulus"] &&
+                        mechanicalPropertiesBlock["poisson_ratio"] &&
+                        mechanicalPropertiesBlock["poisson_ratio"]
+                                                 ["poisson_ratio"];
+
+                    auto& mechProps =
+                        materialVector_[iMat].mechanicalProperties_;
+
+                    if (hasYoungPoisson)
+                    {
+                        const scalar E =
+                            mechanicalPropertiesBlock["young_modulus"]
+                                                     ["young_modulus"]
+                                                         .template as<scalar>();
+                        const scalar nu =
+                            mechanicalPropertiesBlock["poisson_ratio"]
+                                                     ["poisson_ratio"]
+                                                         .template as<scalar>();
+
+                        // (E, nu) -> (c1, c2, kappa) with C01 = 0
+                        const scalar muEff = E / (2.0 * (1.0 + nu));
+                        mechProps.c1_ = muEff / 2.0;
+                        mechProps.c2_ = 0.0;
+                        mechProps.kappa_ = E / (3.0 * (1.0 - 2.0 * nu));
+                    }
+
+                    // mooney_rivlin needs c1/c2/kappa or E/nu
+                    if (mechProps.c1_ == 0.0 && !hasYoungPoisson)
+                    {
+                        errorMsg("mooney_rivlin requires either c1/c2/kappa or "
+                                 "young_modulus/poisson_ratio");
+                    }
+                }
+            }
+
+            // linear_elastic and neo_hookean need E and nu
+            if (solidMechanics_.option_ ==
+                    solidMechanicsOption::linearElastic ||
+                solidMechanics_.option_ == solidMechanicsOption::neoHookean)
+            {
+                for (label iMat = 0;
+                     iMat < static_cast<label>(materialVector_.size());
+                     ++iMat)
+                {
+                    const auto& materialBlock = materialBlockVector_[iMat];
+                    const bool hasE =
+                        materialBlock["mechanical_properties"] &&
+                        materialBlock["mechanical_properties"]["young_modulus"];
+                    const bool hasNu =
+                        materialBlock["mechanical_properties"] &&
+                        materialBlock["mechanical_properties"]["poisson_ratio"];
+
+                    if (!hasE || !hasNu)
+                    {
+                        errorMsg("linear_elastic/neo_hookean requires "
+                                 "young_modulus and poisson_ratio in "
+                                 "mechanical_properties");
+                    }
                 }
             }
         }

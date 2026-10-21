@@ -16,6 +16,32 @@
 namespace accel
 {
 
+namespace
+{
+// Ioss per-processor database naming: <base>.<nProcs>.<rank> with the rank
+// zero-padded to the width of the processor count, e.g. restart.bin.16.07.
+// A serial run (nProcs == 1) writes the plain base name.
+bool isDecomposedDatabase(const fs::path& base)
+{
+    const int nProcs = messager::nProcs();
+
+    if (nProcs == 1)
+    {
+        return false;
+    }
+
+    std::string rank = std::to_string(messager::myProcNo());
+    const size_t width = std::to_string(nProcs).size();
+    if (rank.size() < width)
+    {
+        rank.insert(0, width - rank.size(), '0');
+    }
+
+    return fs::exists(base.string() + "." + std::to_string(nProcs) + "." +
+                      rank);
+}
+} // namespace
+
 // Operations
 
 void mesh::read(const YAML::Node& inputNode)
@@ -32,23 +58,37 @@ void mesh::read(const YAML::Node& inputNode)
         fs::path meshFilePath =
             mesh_node["file_path"].template as<std::string>();
 
-        // check for restart
+        // automatic domain decomposition and restarts
+        auto& decomposition_ctrl =
+            this->controlsRef()
+                .solverRef()
+                .solverControl_.advancedOptions_.domainDecomposition_;
+        if (mesh_node["automatic_decomposition_type"])
+        {
+            decomposition_ctrl.method_ =
+                mesh_node["automatic_decomposition_type"]
+                    .template as<std::string>();
+        }
+
         const auto& restart_ctrl =
             this->controlsRef().solverRef().restartControl_;
         if (restart_ctrl.isRestart_)
         {
             meshFilePath = restart_ctrl.inputFilePath_;
+
+            // A restart database written by a parallel run is decomposed (one
+            // file per rank) and its rank layout is fixed: it must be read
+            // as-is, so automatic decomposition is disabled. A serial restart
+            // database (e.g. written by a serial run) is decomposed on the fly
+            // like a mesh database.
+            if (isDecomposedDatabase(meshFilePath))
+            {
+                decomposition_ctrl.method_ = "";
+            }
         }
 
-        // automatic domain decomposition
-        std::string auto_decomp("None");
-        if (mesh_node["automatic_decomposition_type"])
-        {
-            auto_decomp = mesh_node["automatic_decomposition_type"]
-                              .template as<std::string>();
-        }
         if (messager::master() && messager::nProcs() > 1 &&
-            "None" != auto_decomp)
+            this->controlsRef().useAutomaticDomainDecomposition())
         {
             std::cout << "Automatic domain decomposition: input Exodus file "
                          "must be a serial file\n";
@@ -75,10 +115,10 @@ void mesh::read(const YAML::Node& inputNode)
         ioBrokerPtr_ = new stk::io::StkMeshIoBroker(pm);
         ioBrokerPtr_->set_bulk_data(bulkDataPtr_);
 
-        if ("None" != auto_decomp)
+        if (this->controlsRef().useAutomaticDomainDecomposition())
         {
-            ioBrokerPtr_->property_add(
-                Ioss::Property("DECOMPOSITION_METHOD", auto_decomp));
+            ioBrokerPtr_->property_add(Ioss::Property(
+                "DECOMPOSITION_METHOD", decomposition_ctrl.method_));
         }
 
         // extra Ioss properties (e.g. DECOMP_OMITTED_BLOCK_NAMES to balance
@@ -89,6 +129,7 @@ void mesh::read(const YAML::Node& inputNode)
             {
                 const auto name = prop["name"].template as<std::string>();
                 const auto value = prop["value"].template as<std::string>();
+                decomposition_ctrl.properties_[name] = value;
                 ioBrokerPtr_->property_add(Ioss::Property(name, value));
                 if (messager::master())
                 {
@@ -98,10 +139,9 @@ void mesh::read(const YAML::Node& inputNode)
             }
         }
 
-        // Restart databases store the dt history as globals dt_0 .. dt_3.
-        // IOSS field recognition would merge dt_1, dt_2, dt_3 into a single
-        // 3-component field "dt", so that controls::deserializeRestartParam
-        // cannot find "dt_1". Keep numbered globals as separate scalars.
+        // Legacy restart databases store dt_0 .. dt_3 as separate globals.
+        // IOSS would otherwise combine dt_1 .. dt_3 into one vector, making
+        // old checkpoints unreadable. New checkpoints store dt_history.
         if (restart_ctrl.isRestart_)
         {
             ioBrokerPtr_->property_add(
@@ -114,11 +154,6 @@ void mesh::read(const YAML::Node& inputNode)
                                             ? stk::io::READ_RESTART
                                             : stk::io::READ_MESH);
         ioBrokerPtr_->create_input_mesh();
-
-        if (restart_ctrl.isRestart_)
-        {
-            this->controlsRef().deserializeRestartParam(*ioBrokerPtr_);
-        }
 
         // Cache the mesh dimension
         const auto dim =
@@ -1268,10 +1303,11 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
             }
         }
 
-        // helper: is a sideset referenced anywhere (boundary or interface)?
-        auto isReferencedAnywhere =
-            [&domainBoundarySidesets,
-             &interfaceSidesets](const std::string& sidesetName) -> bool
+        // helper: is a sideset referenced anywhere in the YAML input?
+        // (a domain boundary or an interface region)
+        auto isReferencedAnywhere = [&domainBoundarySidesets,
+                                     &interfaceSidesets
+        ](const std::string& sidesetName) -> bool
         {
             if (interfaceSidesets.count(sidesetName) > 0)
             {
@@ -1364,18 +1400,23 @@ void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
             else
             {
                 // exterior boundary of a single domain (any neighbour is
-                // ignored): must be declared as a boundary or interface
-                if (!referenced)
+                // ignored): must be consumed by that domain or an interface
+                const std::string owningDomain = *touchedDomains.begin();
+                bool isDeclared = domainBoundarySidesets[owningDomain].count(
+                                      sidesetName) > 0 ||
+                                  interfaceSidesets.count(sidesetName) > 0;
+                const std::string declarableAs =
+                    "a boundary of that domain nor as an interface";
+
+                if (!isDeclared)
                 {
-                    const std::string owningDomain = *touchedDomains.begin();
                     errorMsg(
                         "Sideset '" + sidesetName +
                         "' touches active element block(s) [" +
                         joinNames(activeBlocks) + "] of domain '" +
-                        owningDomain +
-                        "' but is not declared as a boundary of that domain "
-                        "nor "
-                        "as an interface. The YAML input must be "
+                        owningDomain + "' but is not declared as " +
+                        declarableAs +
+                        ". The YAML input must be "
                         "self-contained: declare this sideset, or it is an "
                         "unintended omission.");
                 }

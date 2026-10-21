@@ -136,6 +136,9 @@ private:
 
     void initializeGeometricFields_();
 
+    // One area per GGI contact surface, agreed by both sides (needs geometry)
+    void harmonizeGgiInterfaceAreas_();
+
     void lazyInitializeNodeGraph_();
 
     void updateZones_(bool force = false);
@@ -307,6 +310,12 @@ public:
     {
         return coordinates_ID;
     }
+
+    // exposed area vectors on the deformed configuration (follower loads)
+    void
+    computeDeformedExposedAreaVector(const stk::mesh::PartVector& parts,
+                                     const STKScalarField& displacementField,
+                                     std::vector<scalar>& deformedAreaVec);
 
     controls& controlsRef();
 
@@ -514,37 +523,42 @@ public:
 
     // CRS node graph
 
-    nodeGraph* getGlobalOrderGraphPtr()
+    nodeGraph* getGlobalOrderGraphPtr(const bool oversetBlanking = true)
     {
+        auto& slot = globalOrderGraphPtr_;
+
         // build graph on demand (lazy)
-        if (!globalOrderGraphPtr_)
+        if (!slot)
         {
-            globalOrderGraphPtr_ = createNodeGraph_(
+            slot = createNodeGraph_(
                 ::linearSolver::GraphLayout::ColumnIndexOrder__Global);
 
-            assert(globalOrderGraphPtr_);
-            globalOrderGraphPtr_->buildGraph();
+            assert(slot);
+            slot->buildGraph();
         }
-        return globalOrderGraphPtr_.get();
+        return slot.get();
     }
 
-    nodeGraph* getLocalOrderGraphPtr()
+    nodeGraph* getLocalOrderGraphPtr(const bool oversetBlanking = true)
     {
+        auto& slot = localOrderGraphPtr_;
+
         // build graph on demand (lazy)
-        if (!localOrderGraphPtr_)
+        if (!slot)
         {
-            localOrderGraphPtr_ = createNodeGraph_(
+            slot = createNodeGraph_(
                 ::linearSolver::GraphLayout::ColumnIndexOrder__Local);
 
-            assert(localOrderGraphPtr_);
-            localOrderGraphPtr_->buildGraph();
+            assert(slot);
+            slot->buildGraph();
         }
-        return localOrderGraphPtr_.get();
+        return slot.get();
     }
 
     // local-order subset graph, shared across equations over the same zones
     nodeGraph*
-    getCustomLocalOrderGraphPtr(const std::vector<const zone*>& zones)
+    getCustomLocalOrderGraphPtr(const std::vector<const zone*>& zones,
+                                const bool oversetBlanking = true)
     {
         if (useFullGraphForZones_(zones))
             return getLocalOrderGraphPtr();
@@ -562,7 +576,8 @@ public:
 
     // global-order (PETSc/HYPRE) counterpart of getCustomLocalOrderGraphPtr
     nodeGraph*
-    getCustomGlobalOrderGraphPtr(const std::vector<const zone*>& zones)
+    getCustomGlobalOrderGraphPtr(const std::vector<const zone*>& zones,
+                                 const bool oversetBlanking = true)
     {
         if (useFullGraphForZones_(zones))
             return getGlobalOrderGraphPtr();

@@ -293,8 +293,6 @@ void transitionOnsetReynoldsNumberTransitionSSTAssembler::
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
-
     // space for LHS/RHS
     const label lhsSize = 1;
     const label rhsSize = 1;
@@ -329,9 +327,6 @@ void transitionOnsetReynoldsNumberTransitionSSTAssembler::
 
     scalar ce2 = model_->ce2();
     scalar cThetat = model_->cThetat();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -559,13 +554,6 @@ void transitionOnsetReynoldsNumberTransitionSSTAssembler::
             rhs[0] += (Ptheta)*vol;
             lhs[0] += std::max(0.0, linearizedProductionFlux * vol);
 
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * ReTheta * divUm * vol;
-            }
-
             // global matrix
             Base::applyCoeff_(
                 A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
@@ -585,8 +573,6 @@ void transitionOnsetReynoldsNumberTransitionSSTAssembler::
 
     const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     const stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    const bool meshDeforming = domain->zonePtr()->meshDeforming();
 
     // space for LHS/RHS
     const label lhsSize = 1;
@@ -626,9 +612,6 @@ void transitionOnsetReynoldsNumberTransitionSSTAssembler::
 
     scalar ce2 = model_->ce2();
     scalar cThetat = model_->cThetat();
-
-    const STKScalarField* divUmSTKFieldPtr =
-        meshDeforming ? model_->divUmRef().stkFieldPtr() : nullptr;
 
     // Geometric fields
     const auto* volSTKFieldPtr = metaData.get_field<scalar>(
@@ -861,13 +844,6 @@ void transitionOnsetReynoldsNumberTransitionSSTAssembler::
             // Adding RHS - LHS
             rhs[0] += (Ptheta)*vol;
             lhs[0] += std::max(0.0, linearizedProductionFlux * vol);
-
-            // geometric conservative law
-            if (meshDeforming)
-            {
-                scalar divUm = *stk::mesh::field_data(*divUmSTKFieldPtr, node);
-                rhs[0] -= rho * ReTheta * divUm * vol;
-            }
 
             // global matrix
             Base::applyCoeff_(

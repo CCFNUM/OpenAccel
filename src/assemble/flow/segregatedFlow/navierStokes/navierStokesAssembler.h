@@ -55,6 +55,10 @@ protected:
 
     void applySymmetryConditions_(const domain* domain, Context* ctx) override;
 
+    void assembleNormalRelaxation_(const domain* domain,
+                                   Context* ctx,
+                                   const scalar urf);
+
 private:
     flowModel* model_;
 
