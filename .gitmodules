@@ -18,3 +18,7 @@
 	path = external/opt/sfem
 	url = https://github.com/zulianp/sfem.git
 	branch = main
+
+[submodule "external/ssdf"]
+	path = external/ssdf
+	url = https://github.com/zulianp/ssdf
