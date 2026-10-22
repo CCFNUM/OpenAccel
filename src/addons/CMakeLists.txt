@@ -21,6 +21,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/wallDistance/wallDistance.cpp
     ${DIR}/wallDistance/meshWave/meshWave.cpp
     ${DIR}/wallDistance/signedDistanceFunction/signedDistanceFunction.cpp
+    ${DIR}/wallDistance/signedDistanceFunction/immersedDistance.cpp
     ${DIR}/wallDistance/wallScale/wallScale.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionModel.cpp
     ${DIR}/wallDistance/wallScale/wallScaleDiffusion/wallScaleDiffusionEquation.cpp

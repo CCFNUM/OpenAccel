@@ -11,6 +11,7 @@
 #include "types.h"
 
 #include <algorithm>
+#include <array>
 #include <map>
 #include <stdexcept>
 #include <vector>
@@ -72,8 +73,13 @@ private:
     label forcedLayers_ = 1;
     label referenceLayer_ = 2;
 
-    // Requested ring number -> locally owned node handles.
-    std::map<label, std::vector<stk::mesh::Entity>> retainedRings_;
+    // Two rings retained for access by other code.
+    std::array<label, 2> retainedRingNumbers_{{1, 2}};
+
+    std::map<label, std::vector<stk::mesh::Entity>> retainedRings_{
+        {1, {}},
+        {2, {}}
+    };
 
     maskWallTreatment wallTreatment_ = maskWallTreatment::wallFunction;
 
@@ -173,23 +179,6 @@ public:
         return referenceLayer_;
     }
 
-    const std::vector<stk::mesh::Entity>& nodesInRing(label ring) const
-    {
-        return retainedRings_.at(ring);
-    }
-
-    label layerSearchDepth() const
-    {
-        label depth = std::max(forcedLayers_, referenceLayer_);
-
-        if (!retainedRings_.empty())
-        {
-            depth = std::max(depth, retainedRings_.rbegin()->first);
-        }
-
-        return depth;
-    }
-
     // closest point on the body surface: distance and unit normal into the
     // fluid
     void
@@ -231,6 +220,23 @@ public:
     void resetForce();
 
     void reduceForce();
+
+    const std::array<label, 2>& retainedRingNumbers() const
+    {
+        return retainedRingNumbers_;
+    }
+
+    const std::vector<stk::mesh::Entity>& nodesInRing(label ring) const
+    {
+        return retainedRings_.at(ring);
+    }
+
+    label layerSearchDepth() const
+    {
+        return std::max(
+            std::max(forcedLayers_, referenceLayer_),
+            std::max(retainedRingNumbers_[0], retainedRingNumbers_[1]));
+    }
 
     // access
 
@@ -312,6 +318,16 @@ public:
     scalar ringDistance(size_t i) const
     {
         return ringDistances_[i];
+    }
+
+    stk::mesh::Entity ringReferenceNode(size_t i) const
+    {
+        return ringReferenceNodes_.at(i);
+    }
+
+    scalar ringReferenceDistance(size_t i) const
+    {
+        return ringReferenceDistances_.at(i);
     }
 
     const scalar* force() const

@@ -11,6 +11,11 @@
 #include "messager.h"
 #include "realm.h"
 #include "simulation.h"
+#include "immersedDistance.h"
+
+#include <mpi.h>
+#include <iomanip>
+#include <iostream>
 
 namespace accel
 {
@@ -44,6 +49,7 @@ void overrides::read(const YAML::Node& inputNode)
 
         // the fields have to exist before the mesh is populated
         maskingPtr_->setup();
+        declareImmersedDistance(*realmPtr_);
     }
 }
 
@@ -51,7 +57,36 @@ void overrides::initialize()
 {
     if (maskingPtr_)
     {
+
+        // Time our immersed signed-distance calculation.
+        const auto comm = messager::comm();
+
+        MPI_Barrier(comm);
+        const double start = MPI_Wtime();
+
         maskingPtr_->initialize();
+
+        computeImmersedDistance(*realmPtr_, *maskingPtr_);
+
+        const double localSeconds = MPI_Wtime() - start;
+
+        double elapsedSeconds = 0.0;
+        MPI_Reduce(
+            &localSeconds,
+            &elapsedSeconds,
+            1,
+            MPI_DOUBLE,
+            MPI_MAX,
+            0,
+            comm);
+
+        if (messager::master())
+        {
+            std::cout << "SSDF_TOTAL_SECONDS="
+                      << std::setprecision(12)
+                      << elapsedSeconds
+                      << std::endl;
+        }
     }
 }
 

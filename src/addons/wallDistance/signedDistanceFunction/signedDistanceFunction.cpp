@@ -3,7 +3,6 @@
 
 // code
 #include "signedDistanceFunction.h"
-#include "immersedGeometry.h"
 
 #include "messager.h"
 #include "realm.h"
@@ -32,47 +31,23 @@ namespace accel
 {
 
 signedDistanceFunction::signedDistanceFunction(wallDistance* wallDistancePtr)
-    : wallDistancePtr_(wallDistancePtr)
+                    : wallDistancePtr_(wallDistancePtr)
 {
-    declareImmersedDistanceField_();
-}
-
-void signedDistanceFunction::declareImmersedDistanceField_()
-{
-    const auto analysis = wallDistancePtr_->realmRef().simulationRef()
-                              .getYAMLPhysicalAnalysisNode();
-    const auto overrides = analysis["overrides"];
-    if (!overrides || !overrides["masking"]) return;
-
-    auto& mesh = wallDistancePtr_->meshRef();
-    auto& meta = mesh.metaDataRef();
-    auto& field = meta.declare_field<scalar>(
-        stk::topology::NODE_RANK, immersedDistanceFieldName_);
-    const scalar initial = std::numeric_limits<scalar>::quiet_NaN();
-    stk::mesh::put_field_on_mesh(
-        field, stk::mesh::selectUnion(mesh.interiorActiveParts()), 1, &initial);
-    stk::io::set_field_output_type(field, stk::io::FieldOutputType::SCALAR);
 }
 
 void signedDistanceFunction::setup()
 {
-#if SPATIAL_DIM == 3 && !defined(SSDF_ENABLE_CUBIQL)
-    const auto* overrides =
-        wallDistancePtr_->realmRef().simulationRef().overridesPtr();
-    if (overrides && overrides->maskingPtr())
-        errorMsg("3D masked signed distance requires SSDF_ENABLE_CUBIQL=ON");
-#endif
+    // No auxiliary equation is required for geometric wall distance.
 }
 
 void signedDistanceFunction::initialize()
 {
     computeWallDistance_();
-    computeMaskedImmersedDistance_();
 }
 
 void signedDistanceFunction::update()
 {
-    // Recompute only when a contributing mesh zone is deforming.
+    // Recompute when a contributing domain has a deforming mesh.
     for (auto domain :
          wallDistancePtr_->realmRef().simulationRef().domainVector())
     {
@@ -81,7 +56,6 @@ void signedDistanceFunction::update()
                 meshDeformationSpecificationType::none)
         {
             computeWallDistance_();
-            computeMaskedImmersedDistance_();
             return;
         }
     }
@@ -231,35 +205,6 @@ void signedDistanceFunction::computeWallDistance_()
         }
     }
 
-    // an maskedRegion is a wall the mesh does not carry: only one rank adds
-    // its facets, since all ranks hold the same copy of them
-    const auto* overridesPtr =
-        wallDistancePtr_->realmRef().simulationRef().overridesPtr();
-    const masking* solidsPtr =
-        overridesPtr ? overridesPtr->maskingPtr() : nullptr;
-
-    if (solidsPtr && messager::master())
-    {
-        const label offset = static_cast<label>(sx.size());
-
-        sx.insert(sx.end(),
-                  solidsPtr->surfaceX().begin(),
-                  solidsPtr->surfaceX().end());
-        sy.insert(sy.end(),
-                  solidsPtr->surfaceY().begin(),
-                  solidsPtr->surfaceY().end());
-        sz.insert(sz.end(),
-                  solidsPtr->surfaceZ().begin(),
-                  solidsPtr->surfaceZ().end());
-
-        for (label f = 0; f < solidsPtr->facetCount(); ++f)
-        {
-            s0.push_back(offset + solidsPtr->facetNode0()[f]);
-            s1.push_back(offset + solidsPtr->facetNode1()[f]);
-            s2.push_back(offset + solidsPtr->facetNode2()[f]);
-        }
-    }
-
     long long globalTriangleCount = static_cast<long long>(s0.size());
     MPI_Allreduce(MPI_IN_PLACE,
                   &globalTriangleCount,
@@ -332,123 +277,6 @@ void signedDistanceFunction::computeWallDistance_()
         stk::mesh::communicate_field_data(bulkData, {yMinField});
     }
 
-}
-
-void signedDistanceFunction::computeMaskedImmersedDistance_()
-{
-    const auto* overrides =
-        wallDistancePtr_->realmRef().simulationRef().overridesPtr();
-    const auto* masks = overrides ? overrides->maskingPtr() : nullptr;
-    if (!masks) return;
-
-    namespace geometry = immersedGeometry;
-    auto& mesh = wallDistancePtr_->meshRef();
-    auto& bulk = mesh.bulkDataRef();
-    auto& meta = mesh.metaDataRef();
-    const auto comm = messager::comm();
-    auto* coordinates = meta.get_field<scalar>(
-        stk::topology::NODE_RANK, mesh::coordinates_ID);
-    auto* output = meta.get_field<scalar>(
-        stk::topology::NODE_RANK, immersedDistanceFieldName_);
-    auto* maskDistance = meta.get_field<scalar>(
-        stk::topology::NODE_RANK, masking::distance_ID);
-
-    try
-    {
-        geometry::collectiveCheck(coordinates && output && maskDistance, comm,
-                                  "Missing masked distance fields");
-        stk::mesh::PartVector parts;
-        for (label r = 0; r < masks->regionCount(); ++r)
-        {
-            const auto regionParts = masks->regionRef(r).domainParts();
-            parts.insert(parts.end(), regionParts.begin(), regionParts.end());
-        }
-
-        std::vector<stk::mesh::Entity> nodes;
-        std::vector<geometry::Point> points;
-        const auto selector =
-            meta.locally_owned_part() & stk::mesh::selectUnion(parts);
-        for (const auto* bucket :
-             bulk.get_buckets(stk::topology::NODE_RANK, selector))
-            for (auto node : *bucket)
-            {
-                const auto* xyz = stk::mesh::field_data(*coordinates, node);
-                nodes.push_back(node);
-#if SPATIAL_DIM == 3
-                points.push_back({xyz[0], xyz[1], xyz[2]});
-#else
-                points.push_back({xyz[0], xyz[1], 0.0});
-#endif
-            }
-
-        geometry::Combined combined(nodes.size());
-        for (label r = 0; r < masks->regionCount(); ++r)
-        {
-            const auto& region = masks->regionRef(r);
-            const auto regionSelector =
-                stk::mesh::selectUnion(region.domainParts());
-            bool okay = true;
-            std::string detail;
-            try
-            {
-                // Masking already holds the complete surface on every rank.
-                geometry::Surface surface;
-                surface.dimension = SPATIAL_DIM;
-                for (label v = 0; v < region.surfaceNodeCount(); ++v)
-                    surface.points.push_back({region.surfaceX()[v],
-                                              region.surfaceY()[v],
-                                              region.surfaceZ()[v]});
-                for (label f = 0; f < region.facetCount(); ++f)
-                    surface.faces.push_back({region.facetNode0()[f],
-                                             region.facetNode1()[f],
-                                             region.facetNode2()[f]});
-
-                std::vector<std::size_t> indices;
-                std::vector<geometry::Point> queries;
-                for (std::size_t i = 0; i < nodes.size(); ++i)
-                    if (regionSelector(bulk.bucket(nodes[i])))
-                    {
-                        indices.push_back(i);
-                        queries.push_back(points[i]);
-                    }
-                const auto result = geometry::evaluate(surface, queries);
-                for (std::size_t j = 0; j < indices.size(); ++j)
-                {
-                    const auto i = indices[j];
-                    if (!std::isfinite(result.distance[j]) ||
-                        result.distance[j] < 0 ||
-                        result.distance[j] == std::numeric_limits<double>::max())
-                        throw std::runtime_error("Invalid immersed distance");
-                    combined.distance[i] =
-                        std::min(combined.distance[i], result.distance[j]);
-                    combined.inside[i] |= result.inside[j];
-                }
-            }
-            catch (const std::exception& e)
-            {
-                okay = false;
-                detail = e.what();
-            }
-            geometry::collectiveCheck(
-                okay, comm, "Masked distance failed for " + region.name() +
-                            (detail.empty() ? "" : ": " + detail));
-        }
-
-        // Keep masking's internal unsigned distance, and expose the signed field.
-        for (std::size_t i = 0; i < nodes.size(); ++i)
-        {
-            *stk::mesh::field_data(*output, nodes[i]) =
-                combined.signedValue(i, true);
-            *stk::mesh::field_data(*maskDistance, nodes[i]) =
-                combined.distance[i];
-        }
-        stk::mesh::copy_owned_to_shared(bulk, {output, maskDistance});
-        stk::mesh::communicate_field_data(bulk, {output, maskDistance});
-    }
-    catch (const std::exception& e)
-    {
-        errorMsg(std::string("Masked immersed distance: ") + e.what());
-    }
 }
 
 } // namespace accel
