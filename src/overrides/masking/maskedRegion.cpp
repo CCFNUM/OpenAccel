@@ -173,9 +173,9 @@ void maskedRegion::read(const YAML::Node& regionNode)
         }
     }
 
-    if (regionNode["forced_layers"])
+    if (regionNode["forced_layer"])
     {
-        forcedLayers_ = regionNode["forced_layers"].template as<label>();
+        forcedLayers_ = regionNode["forced_layer"].template as<label>();
         referenceLayer_ = forcedLayers_ + 1;
     }
 
@@ -184,29 +184,43 @@ void maskedRegion::read(const YAML::Node& regionNode)
         referenceLayer_ = regionNode["reference_layer"].template as<label>();
     }
 
-    retainedRings_.clear();
+    retainedRingNumbers_ = {{1, 2}};
 
     if (regionNode["retain_rings"])
     {
         const auto requested = regionNode["retain_rings"];
 
-        if (!requested.IsSequence())
+        if (!requested.IsSequence() || requested.size() != 2)
         {
-            throw std::runtime_error("retain_rings must be a list");
+            throw std::runtime_error(
+                "retain_rings must contain exactly two ring numbers");
         }
 
-        for (const auto& entry : requested)
+        retainedRingNumbers_[0] = requested[0].as<label>();
+        retainedRingNumbers_[1] = requested[1].as<label>();
+    }
+
+    for (const label ring : retainedRingNumbers_)
+    {
+        // Existing layer storage uses 255 as the unreached sentinel.
+        if (ring < 1 || ring > 254)
         {
-            const label ring = entry.as<label>();
-
-            if (ring < 1 || ring > 254)
-            {
-                throw std::runtime_error(
-                    "retain_rings entries must be between 1 and 254");
-            }
-
-            retainedRings_.try_emplace(ring);
+            throw std::runtime_error(
+                "retain_rings entries must be between 1 and 254");
         }
+    }
+
+    if (retainedRingNumbers_[0] == retainedRingNumbers_[1])
+    {
+        throw std::runtime_error(
+            "retain_rings must contain two distinct ring numbers");
+    }
+
+    retainedRings_.clear();
+
+    for (const label ring : retainedRingNumbers_)
+    {
+        retainedRings_.try_emplace(ring);
     }
 
     if (regionNode["wall_treatment"])
@@ -936,7 +950,7 @@ void maskedRegion::takeLayers_(const std::vector<uint8_t>& layers)
         entry.second.clear();
     }
 
-    const auto domainSelector = selectDomains_();
+const auto domainSelector = selectDomains_();
 
     const bool owned = true;
 
