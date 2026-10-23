@@ -13,9 +13,6 @@ void volumeFractionAssembler::assembleNodeTermsFusedSteady_(
     const domain* domain,
     Context* ctx)
 {
-    const bool includeAdv =
-        (transportMode_ != diffusion) && (domain->type() == domainType::fluid);
-
     const auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
@@ -89,22 +86,10 @@ void volumeFractionAssembler::assembleNodeTermsFusedSteady_(
             scalar rho = rhob[iNode];
             scalar vol = volb[iNode];
 
-            scalar div = includeAdv ? *stk::mesh::field_data(
-                                          *divUSTKFieldPtr_, nodeBucket, iNode)
-                                    : 0.0;
-
             // false transient: added later
             scalar lhsfac = rho * vol / dt;
 
-            // divergence correction
-            if (div < 0)
-            {
-                lhs[0] += -div;
-            }
-
-            // divergence correction
             scalar phii = phib[iNode];
-            rhs[0] -= -div * phii;
 
             // false transient
             lhs[0] += lhsfac;
@@ -158,9 +143,6 @@ void volumeFractionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
     const domain* domain,
     Context* ctx)
 {
-    const bool includeAdv =
-        (transportMode_ != diffusion) && (domain->type() == domainType::fluid);
-
     const auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
@@ -242,25 +224,12 @@ void volumeFractionAssembler::assembleNodeTermsFusedFirstOrderUnsteady_(
             scalar rhoOld = rhobOld[iNode];
             scalar vol = volb[iNode];
 
-            scalar div = includeAdv ? *stk::mesh::field_data(
-                                          *divUSTKFieldPtr_, nodeBucket, iNode)
-                                    : 0.0;
-
             // transient: added later
             scalar lhsfac = c[0] * rho * vol / dt;
             scalar lhsfacOld = c[1] * rhoOld * vol / dt;
 
-            // divergence correction
-            if (div < 0)
-            {
-                lhs[0] += -div;
-            }
-
             scalar phii = phib[iNode];
             scalar phiOldi = phibOld[iNode];
-
-            // divergence correction
-            rhs[0] -= -div * phii;
 
             // transient
             lhs[0] += lhsfac;
@@ -315,9 +284,6 @@ void volumeFractionAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
     const domain* domain,
     Context* ctx)
 {
-    const bool includeAdv =
-        (transportMode_ != diffusion) && (domain->type() == domainType::fluid);
-
     const auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
     Vector& b = ctx->getBVector();
@@ -408,27 +374,14 @@ void volumeFractionAssembler::assembleNodeTermsFusedSecondOrderUnsteady_(
             scalar rhoOldOld = rhobOldOld[iNode];
             scalar vol = volb[iNode];
 
-            scalar div = includeAdv ? *stk::mesh::field_data(
-                                          *divUSTKFieldPtr_, nodeBucket, iNode)
-                                    : 0.0;
-
             // transient: added later
             scalar lhsfac = c[0] * rho * vol / dt;
             scalar lhsfacOld = c[1] * rhoOld * vol / dt;
             scalar lhsfacOldOld = c[2] * rhoOldOld * vol / dt;
 
-            // divergence correction
-            if (div < 0)
-            {
-                lhs[0] += -div;
-            }
-
             scalar phii = phib[iNode];
             scalar phiOldi = phibOld[iNode];
             scalar phiOldOldi = phibOldOld[iNode];
-
-            // divergence correction
-            rhs[0] -= -div * phii;
 
             // transient
             lhs[0] += lhsfac;
