@@ -89,7 +89,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
     std::vector<scalar> B_el(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to everyone...
     scalar* p_coordIp = &coordIp[0];
@@ -101,7 +100,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     scalar* p_duRhsIp = &duRhsIp[0];
     scalar* p_FIp = &FIp[0];
     scalar* p_FOrigIp = &FOrigIp[0];
-    scalar* p_uhat = &uhat[0];
 
     // Get transport fields/side fields
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
@@ -143,6 +141,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    const bodyForceAveragingType bodyForceAveragingMethod =
+        model_->bodyForceAveraging();
 
     // Balanced-force ST: FOrigIp = B_el(FOrig) + sigma*kappa_ip*compact
     // grad(alpha) (same dndx as grad p). capillary_potential holds alpha,
@@ -400,57 +401,13 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
 
             // projection-based harmonic mean of the non-ST body force
             // (buoyancy); the CSF part is added below as grad(psi)
-            {
-                // Step 1: arithmetic mean direction
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] = 0.0;
-                for (label ni = 0; ni < nodesPerElement; ++ni)
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] += p_FOrig[ni * SPATIAL_DIM + d];
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] *= invN;
-
-                // Step 2: unit direction
-                scalar mag = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    mag += B_el[d] * B_el[d];
-                mag = std::sqrt(mag);
-
-                if (mag < SMALL)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = 0.0;
-                }
-                else
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        p_uhat[d] = B_el[d] / mag;
-
-                    // Step 3: recursive harmonic of scalar projections
-                    scalar h = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += p_uhat[d] * p_FOrig[d];
-                    h = std::max(h, 0.0);
-
-                    for (label ni = 1; ni < nodesPerElement; ++ni)
-                    {
-                        scalar dk = 0.0;
-                        for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk += p_uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
-                        dk = std::max(dk, 0.0);
-                        if (h > 0.0)
-                            h = static_cast<scalar>(ni + 1) * dk * h /
-                                (static_cast<scalar>(ni) * dk + h);
-                        else
-                            h = 0.0;
-                    }
-
-                    // Step 4: result vector
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * p_uhat[d];
-                }
-            }
+            model_->elementBodyForce(bodyForceAveragingMethod,
+                                     nodesPerElement,
+                                     p_FOrig,
+                                     numScvIp,
+                                     scvIpNodeMap,
+                                     &ws_scv_volume[0],
+                                     &B_el[0]);
 
             // compute dndx for residual
             if (isPGradientShifted)

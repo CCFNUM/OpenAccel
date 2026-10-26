@@ -1186,6 +1186,14 @@ void controls::read(YAML::Node inputNode)
                         .template as<bool>();
             }
 
+            if (expertParameters["body_force_averaging"])
+            {
+                solver_.solverControl_.expertParameters_.bodyForceAveraging_ =
+                    convertBodyForceAveragingTypeFromString(
+                        expertParameters["body_force_averaging"]
+                            .template as<std::string>());
+            }
+
             if (expertParameters["wall_distance_method"])
             {
                 solver_.solverControl_.expertParameters_.wallDistanceMethod_ =

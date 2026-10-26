@@ -636,6 +636,15 @@ enum class gradientAveragingType
 
 gradientAveragingType convertGradientAveragingTypeFromString(std::string s);
 
+// Body force averaging type
+enum class bodyForceAveragingType
+{
+    harmonic,
+    volumeWeighted
+};
+
+bodyForceAveragingType convertBodyForceAveragingTypeFromString(std::string s);
+
 // Where the viscous-work flux tau.U of the total-enthalpy equation is formed
 enum class viscousWorkType
 {

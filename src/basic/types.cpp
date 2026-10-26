@@ -868,6 +868,23 @@ gradientAveragingType convertGradientAveragingTypeFromString(std::string s)
     return it->second;
 }
 
+// Body force averaging type
+
+std::unordered_map<std::string, bodyForceAveragingType>
+    bodyForceAveragingTypeMap{
+        {"harmonic", bodyForceAveragingType::harmonic},
+        {"volume_weighted", bodyForceAveragingType::volumeWeighted},
+    };
+
+bodyForceAveragingType convertBodyForceAveragingTypeFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = bodyForceAveragingTypeMap.find(s);
+    if (it == bodyForceAveragingTypeMap.end())
+        errorMsg("body force averaging type '" + s + "' not available");
+    return it->second;
+}
+
 // Viscous work type
 
 std::unordered_map<std::string, viscousWorkType> viscousWorkTypeMap{

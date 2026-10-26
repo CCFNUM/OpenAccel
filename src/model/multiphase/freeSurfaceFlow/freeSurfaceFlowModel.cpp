@@ -904,11 +904,12 @@ void freeSurfaceFlowModel::redistributeBodyForces(
 
         // Fixed-size workspace arrays (reused in inner loop)
         std::vector<scalar> F_el(SPATIAL_DIM);
-        std::vector<scalar> uhat(SPATIAL_DIM);
 
         // pointers to fixed-size arrays
         scalar* p_F_el = &F_el[0];
-        scalar* p_uhat = &uhat[0];
+
+        const bodyForceAveragingType bodyForceAveragingMethod =
+            this->bodyForceAveraging();
 
         // Define selectors
         stk::mesh::Selector selAllElements =
@@ -962,78 +963,13 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                 meSCV->determinant(
                     1, &ws_coordinates[0], &ws_scv_volume[0], &scv_error);
 
-                // projection-based harmonic mean
-                // Step 1: arithmetic mean direction
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_F_el[d] = 0.0;
-                }
-                for (label ni = 0; ni < numNodes; ++ni)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        p_F_el[d] += ws_F[ni * SPATIAL_DIM + d];
-                    }
-                }
-                const scalar invN = 1.0 / static_cast<scalar>(numNodes);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_F_el[d] *= invN;
-                }
-
-                // Step 2: unit direction
-                scalar mag = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    mag += p_F_el[d] * p_F_el[d];
-                }
-                mag = std::sqrt(mag);
-
-                if (mag < SMALL)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        p_F_el[d] = 0.0;
-                }
-                else
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        p_uhat[d] = p_F_el[d] / mag;
-                    }
-
-                    // Step 3: recursive harmonic of scalar projections
-                    scalar h = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        h += p_uhat[d] * ws_F[d];
-                    }
-                    h = std::max(h, 0.0);
-
-                    for (label ni = 1; ni < numNodes; ++ni)
-                    {
-                        scalar dk = 0.0;
-                        for (label d = 0; d < SPATIAL_DIM; ++d)
-                        {
-                            dk += p_uhat[d] * ws_F[ni * SPATIAL_DIM + d];
-                        }
-                        dk = std::max(dk, 0.0);
-                        if (h > 0.0)
-                        {
-                            h = static_cast<scalar>(ni + 1) * dk * h /
-                                (static_cast<scalar>(ni) * dk + h);
-                        }
-                        else
-                        {
-                            h = 0.0;
-                        }
-                    }
-
-                    // Step 4: result vector
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        p_F_el[d] = h * p_uhat[d];
-                    }
-                }
+                elementBodyForce(bodyForceAveragingMethod,
+                                 numNodes,
+                                 &ws_F[0],
+                                 numScvIp,
+                                 ipNodeMap,
+                                 &ws_scv_volume[0],
+                                 p_F_el);
 
                 // Scatter element-centre value back to nodes weighted by
                 // SCV volumes: F_node += B_el * V_scv
@@ -1117,6 +1053,120 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                     Fb[SPATIAL_DIM * in + d] +=
                         skb[in] * gradAlphab[SPATIAL_DIM * in + d];
         }
+    }
+}
+
+void freeSurfaceFlowModel::elementBodyForce(const bodyForceAveragingType method,
+                                            const label numNodes,
+                                            const scalar* FOrig,
+                                            const label numScvIp,
+                                            const label* scvIpNodeMap,
+                                            const scalar* scvVolume,
+                                            scalar* B)
+{
+    if (method == bodyForceAveragingType::volumeWeighted)
+    {
+        scalar V_el = 0.0;
+        for (label ip = 0; ip < numScvIp; ++ip)
+        {
+            V_el += scvVolume[ip];
+        }
+
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            B[d] = 0.0;
+        }
+
+        for (label ip = 0; ip < numScvIp; ++ip)
+        {
+            const label nn = scvIpNodeMap[ip];
+            const scalar scV = scvVolume[ip];
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                B[d] += FOrig[nn * SPATIAL_DIM + d] * scV;
+            }
+        }
+
+        const scalar invV_el = 1.0 / V_el;
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            B[d] *= invV_el;
+        }
+        return;
+    }
+
+    // Step 1: arithmetic mean direction
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        B[d] = 0.0;
+    }
+    for (label ni = 0; ni < numNodes; ++ni)
+    {
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            B[d] += FOrig[ni * SPATIAL_DIM + d];
+        }
+    }
+    const scalar invN = 1.0 / static_cast<scalar>(numNodes);
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        B[d] *= invN;
+    }
+
+    // Step 2: unit direction
+    scalar mag = 0.0;
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        mag += B[d] * B[d];
+    }
+    mag = std::sqrt(mag);
+
+    if (mag < SMALL)
+    {
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            B[d] = 0.0;
+        }
+        return;
+    }
+
+    scalar uhat[SPATIAL_DIM];
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        uhat[d] = B[d] / mag;
+    }
+
+    // Step 3: recursive harmonic of scalar projections
+    scalar h = 0.0;
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        h += uhat[d] * FOrig[d];
+    }
+    h = std::max(h, 0.0);
+
+    for (label ni = 1; ni < numNodes; ++ni)
+    {
+        scalar dk = 0.0;
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            dk += uhat[d] * FOrig[ni * SPATIAL_DIM + d];
+        }
+        dk = std::max(dk, 0.0);
+        if (h > 0.0)
+        {
+            h = static_cast<scalar>(ni + 1) * dk * h /
+                (static_cast<scalar>(ni) * dk + h);
+        }
+        else
+        {
+            h = 0.0;
+        }
+    }
+
+    // Step 4: result vector
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        B[d] = h * uhat[d];
     }
 }
 
@@ -6947,6 +6997,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     std::vector<scalar> ws_Gpdx;
     std::vector<scalar> ws_du;
     std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_scv_volume;
     std::vector<scalar> ws_p;
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_betaRho;
@@ -6973,7 +7024,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
     std::vector<scalar> B_el(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to everyone...
     scalar* p_uIp = &uIp[0];
@@ -6983,7 +7033,6 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     scalar* p_coordIp = &coordIp[0];
     scalar* p_FIp = &FIp[0];
     scalar* p_FOrigIp = &FOrigIp[0];
-    scalar* p_uhat = &uhat[0];
 
     // Get pressure diffusivity coefficient field and others
     const auto& USTKFieldRef = this->URef().stkFieldRef();
@@ -7004,6 +7053,9 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    const bodyForceAveragingType bodyForceAveragingMethod =
+        this->bodyForceAveraging();
 
     // balanced-force ST: FOrigIp = B_el(FOrig) + compact grad(psi), as in the
     // pressure assembler, so the advecting flux carries the same CSF balance
@@ -7051,6 +7103,11 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
         const label numScsIp = meSCS->numIntPoints_;
         const label* lrscv = meSCS->adjacentNodes();
 
+        MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
+            elementBucket.topology());
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
+
         // algorithm related
         ws_U.resize(nodesPerElement * SPATIAL_DIM);
         ws_Gpdx.resize(nodesPerElement * SPATIAL_DIM);
@@ -7062,6 +7119,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
         ws_gradRho.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
         ws_capPot.resize(nodesPerElement);
         ws_sk.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
@@ -7192,74 +7250,20 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                                &scs_error);
             }
 
-            // projection-based harmonic mean of FOrig
-            for (label d = 0; d < SPATIAL_DIM; ++d)
+            if (bodyForceAveragingMethod ==
+                bodyForceAveragingType::volumeWeighted)
             {
-                B_el[d] = 0.0;
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
             }
-            for (label ni = 0; ni < nodesPerElement; ++ni)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] += p_FOrig[ni * SPATIAL_DIM + d];
-                }
-            }
-
-            {
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] *= invN;
-                }
-            }
-            scalar mag = 0.0;
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                mag += B_el[d] * B_el[d];
-            }
-            mag = std::sqrt(mag);
-            if (mag < SMALL)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = 0.0;
-                }
-            }
-            else
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_uhat[d] = B_el[d] / mag;
-                }
-                scalar h = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    h += p_uhat[d] * p_FOrig[d];
-                }
-                h = std::max(h, 0.0);
-                for (label ni = 1; ni < nodesPerElement; ++ni)
-                {
-                    scalar dk = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        dk += p_uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
-                    }
-                    dk = std::max(dk, 0.0);
-                    if (h > 0.0)
-                    {
-                        h = static_cast<scalar>(ni + 1) * dk * h /
-                            (static_cast<scalar>(ni) * dk + h);
-                    }
-                    else
-                    {
-                        h = 0.0;
-                    }
-                }
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = h * p_uhat[d];
-                }
-            }
+            elementBodyForce(bodyForceAveragingMethod,
+                             nodesPerElement,
+                             p_FOrig,
+                             numScvIp,
+                             scvIpNodeMap,
+                             &ws_scv_volume[0],
+                             &B_el[0]);
 
             for (label ip = 0; ip < numScsIp; ++ip)
             {
@@ -8023,7 +8027,6 @@ void freeSurfaceFlowModel::
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -8033,10 +8036,10 @@ void freeSurfaceFlowModel::
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_scv_volume;
     std::vector<scalar> ws_p;
     std::vector<scalar> ws_U;
     std::vector<scalar> ws_Gpdx;
@@ -8076,6 +8079,9 @@ void freeSurfaceFlowModel::
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    const bodyForceAveragingType bodyForceAveragingMethod =
+        this->bodyForceAveraging();
 
     const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, "capillary_potential");
@@ -8125,6 +8131,11 @@ void freeSurfaceFlowModel::
             MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
+
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
@@ -8151,6 +8162,7 @@ void freeSurfaceFlowModel::
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
 
         // pointers
         scalar* p_coordinates = &ws_coordinates[0];
@@ -8248,73 +8260,20 @@ void freeSurfaceFlowModel::
                 }
             }
 
-            // projection-based harmonic mean of FOrig
-            for (label d = 0; d < SPATIAL_DIM; ++d)
+            if (bodyForceAveragingMethod ==
+                bodyForceAveragingType::volumeWeighted)
             {
-                B_el[d] = 0.0;
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
             }
-            for (label ni = 0; ni < nodesPerElement; ++ni)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                }
-            }
-            {
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] *= invN;
-                }
-            }
-            scalar mag = 0.0;
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                mag += B_el[d] * B_el[d];
-            }
-            mag = std::sqrt(mag);
-            if (mag < SMALL)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = 0.0;
-                }
-            }
-            else
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_uhat[d] = B_el[d] / mag;
-                }
-                scalar h = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    h += p_uhat[d] * p_FOrig_elem[d];
-                }
-                h = std::max(h, 0.0);
-                for (label ni = 1; ni < nodesPerElement; ++ni)
-                {
-                    scalar dk = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                    }
-                    dk = std::max(dk, 0.0);
-                    if (h > 0.0)
-                    {
-                        h = static_cast<scalar>(ni + 1) * dk * h /
-                            (static_cast<scalar>(ni) * dk + h);
-                    }
-                    else
-                    {
-                        h = 0.0;
-                    }
-                }
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = h * p_uhat[d];
-                }
-            }
+            elementBodyForce(bodyForceAveragingMethod,
+                             nodesPerElement,
+                             p_FOrig_elem,
+                             numScvIp,
+                             scvIpNodeMap,
+                             &ws_scv_volume[0],
+                             &B_el[0]);
 
             //======================================
             // gather nodal data off of face
@@ -8506,7 +8465,6 @@ void freeSurfaceFlowModel::
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -8516,10 +8474,10 @@ void freeSurfaceFlowModel::
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_scv_volume;
     std::vector<scalar> ws_p;
     std::vector<scalar> ws_U;
     std::vector<scalar> ws_Gpdx;
@@ -8561,6 +8519,9 @@ void freeSurfaceFlowModel::
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    const bodyForceAveragingType bodyForceAveragingMethod =
+        this->bodyForceAveraging();
 
     const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, "capillary_potential");
@@ -8610,6 +8571,11 @@ void freeSurfaceFlowModel::
             MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
+
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
@@ -8631,6 +8597,7 @@ void freeSurfaceFlowModel::
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
         ws_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -8736,73 +8703,20 @@ void freeSurfaceFlowModel::
                 }
             }
 
-            // projection-based harmonic mean of FOrig
-            for (label d = 0; d < SPATIAL_DIM; ++d)
+            if (bodyForceAveragingMethod ==
+                bodyForceAveragingType::volumeWeighted)
             {
-                B_el[d] = 0.0;
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
             }
-            for (label ni = 0; ni < nodesPerElement; ++ni)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                }
-            }
-            {
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] *= invN;
-                }
-            }
-            scalar mag = 0.0;
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                mag += B_el[d] * B_el[d];
-            }
-            mag = std::sqrt(mag);
-            if (mag < SMALL)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = 0.0;
-                }
-            }
-            else
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_uhat[d] = B_el[d] / mag;
-                }
-                scalar h = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    h += p_uhat[d] * p_FOrig_elem[d];
-                }
-                h = std::max(h, 0.0);
-                for (label ni = 1; ni < nodesPerElement; ++ni)
-                {
-                    scalar dk = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                    }
-                    dk = std::max(dk, 0.0);
-                    if (h > 0.0)
-                    {
-                        h = static_cast<scalar>(ni + 1) * dk * h /
-                            (static_cast<scalar>(ni) * dk + h);
-                    }
-                    else
-                    {
-                        h = 0.0;
-                    }
-                }
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = h * p_uhat[d];
-                }
-            }
+            elementBodyForce(bodyForceAveragingMethod,
+                             nodesPerElement,
+                             p_FOrig_elem,
+                             numScvIp,
+                             scvIpNodeMap,
+                             &ws_scv_volume[0],
+                             &B_el[0]);
 
             //======================================
             // gather nodal data off of face
@@ -8996,7 +8910,6 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -9006,10 +8919,10 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
+    std::vector<scalar> ws_scv_volume;
     std::vector<scalar> ws_p;
     std::vector<scalar> ws_U;
     std::vector<scalar> ws_Gpdx;
@@ -9049,6 +8962,9 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         metaData.get_field<scalar>(stk::topology::NODE_RANK, flowModel::F_ID);
     const auto* FOrigSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, flowModel::FOriginal_ID);
+
+    const bodyForceAveragingType bodyForceAveragingMethod =
+        this->bodyForceAveraging();
 
     const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, "capillary_potential");
@@ -9098,6 +9014,11 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
             MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
+        MasterElement* meSCV =
+            MasterElementRepo::get_volume_master_element(theElemTopo);
+        const label numScvIp = meSCV->numIntPoints_;
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
+
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
@@ -9119,6 +9040,7 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_scv_volume.resize(numScvIp);
         ws_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -9222,73 +9144,20 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                 }
             }
 
-            // projection-based harmonic mean of FOrig
-            for (label d = 0; d < SPATIAL_DIM; ++d)
+            if (bodyForceAveragingMethod ==
+                bodyForceAveragingType::volumeWeighted)
             {
-                B_el[d] = 0.0;
+                scalar scv_error = 0.0;
+                meSCV->determinant(
+                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
             }
-            for (label ni = 0; ni < nodesPerElement; ++ni)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                }
-            }
-            {
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] *= invN;
-                }
-            }
-            scalar mag = 0.0;
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                mag += B_el[d] * B_el[d];
-            }
-            mag = std::sqrt(mag);
-            if (mag < SMALL)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = 0.0;
-                }
-            }
-            else
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_uhat[d] = B_el[d] / mag;
-                }
-                scalar h = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    h += p_uhat[d] * p_FOrig_elem[d];
-                }
-                h = std::max(h, 0.0);
-                for (label ni = 1; ni < nodesPerElement; ++ni)
-                {
-                    scalar dk = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                    }
-                    dk = std::max(dk, 0.0);
-                    if (h > 0.0)
-                    {
-                        h = static_cast<scalar>(ni + 1) * dk * h /
-                            (static_cast<scalar>(ni) * dk + h);
-                    }
-                    else
-                    {
-                        h = 0.0;
-                    }
-                }
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = h * p_uhat[d];
-                }
-            }
+            elementBodyForce(bodyForceAveragingMethod,
+                             nodesPerElement,
+                             p_FOrig_elem,
+                             numScvIp,
+                             scvIpNodeMap,
+                             &ws_scv_volume[0],
+                             &B_el[0]);
 
             //======================================
             // gather nodal data off of face

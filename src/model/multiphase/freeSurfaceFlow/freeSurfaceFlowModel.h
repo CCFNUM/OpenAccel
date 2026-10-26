@@ -78,6 +78,23 @@ public:
     // body force redistribution with harmonic density-weighted interpolation
     void redistributeBodyForces(const std::shared_ptr<domain> domain) override;
 
+    bodyForceAveragingType bodyForceAveraging() const
+    {
+        const auto& expert =
+            this->controlsRef().solverRef().solverControl_.expertParameters_;
+        return expert.bodyForceRedistribution_
+                   ? expert.bodyForceAveraging_
+                   : bodyForceAveragingType::harmonic;
+    }
+
+    static void elementBodyForce(const bodyForceAveragingType method,
+                                 const label numNodes,
+                                 const scalar* FOrig,
+                                 const label numScvIp,
+                                 const label* scvIpNodeMap,
+                                 const scalar* scvVolume,
+                                 scalar* B);
+
     // methods (iPhase is global to the simulation)
 
     void transformMassFlowRateToRelative(const std::shared_ptr<domain> domain,

@@ -254,6 +254,8 @@ struct solverDictionary
             bool fractionalStepMethod_ = false;
             bool coriolisProductionTurbulence_ = false;
             bool bodyForceRedistribution_ = true;
+            bodyForceAveragingType bodyForceAveraging_ =
+                bodyForceAveragingType::harmonic;
             wallDistanceMethod wallDistanceMethod_ =
                 wallDistanceMethod::poisson;
             bool strongDirichletWallScale_ = false;
