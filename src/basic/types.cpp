@@ -598,12 +598,7 @@ advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s)
 std::unordered_map<std::string, vofAdvectionSchemeType>
     vofAdvectionSchemeTypeMap{
         {"BarthJespersen", vofAdvectionSchemeType::barthJespersen},
-        {"VanLeer", vofAdvectionSchemeType::vanLeer},
-        {"MSTOIC", vofAdvectionSchemeType::mstoic},
-        {"MSUPERBEE", vofAdvectionSchemeType::msuperbee},
-        {"HYPERC", vofAdvectionSchemeType::hyperC},
-        {"STACS", vofAdvectionSchemeType::stacs},
-        {"CICSAM", vofAdvectionSchemeType::cicsam}};
+        {"HYPERC", vofAdvectionSchemeType::hyperC}};
 
 vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s)
 {
@@ -632,18 +627,8 @@ std::string toString(vofAdvectionSchemeType type)
     {
         case vofAdvectionSchemeType::barthJespersen:
             return "BarthJespersen";
-        case vofAdvectionSchemeType::vanLeer:
-            return "VanLeer";
-        case vofAdvectionSchemeType::mstoic:
-            return "MSTOIC";
-        case vofAdvectionSchemeType::msuperbee:
-            return "MSUPERBEE";
         case vofAdvectionSchemeType::hyperC:
             return "HYPERC";
-        case vofAdvectionSchemeType::stacs:
-            return "STACS";
-        case vofAdvectionSchemeType::cicsam:
-            return "CICSAM";
     }
 
     return ""; // useless
@@ -700,7 +685,6 @@ std::unordered_map<std::string, boundaryConditionType> boundaryConditionTypeMap{
     {"mass_flow_rate", boundaryConditionType::massFlowRate},
     {"static_pressure", boundaryConditionType::staticPressure},
     {"average_static_pressure", boundaryConditionType::averageStaticPressure},
-    {"windkessel_pressure", boundaryConditionType::windkesselPressure},
     {"total_pressure", boundaryConditionType::totalPressure},
     {"static_temperature", boundaryConditionType::staticTemperature},
     {"total_temperature", boundaryConditionType::totalTemperature},
@@ -1096,25 +1080,27 @@ accelerationType convertAccelerationTypeFromString(std::string s)
     return accelerationType::none; // useless
 }
 
-// FSI convergence type
+// Physics convergence type
 
-std::unordered_map<std::string, fsiConvergenceType> fsiConvergenceTypeMap{
-    {"fsi_interface_residual", fsiConvergenceType::fsiInterfaceResidual},
-    {"fsi_force_residual", fsiConvergenceType::fsiForceResidual}};
+std::unordered_map<std::string, physicsConvergenceType>
+    physicsConvergenceTypeMap{
+        {"fsi_interface_residual",
+         physicsConvergenceType::fsiInterfaceResidual},
+        {"fsi_force_residual", physicsConvergenceType::fsiForceResidual}};
 
-fsiConvergenceType convertFsiConvergenceTypeFromString(std::string s)
+physicsConvergenceType convertPhysicsConvergenceTypeFromString(std::string s)
 {
-    auto it = fsiConvergenceTypeMap.find(s);
-    if (it != fsiConvergenceTypeMap.end())
+    auto it = physicsConvergenceTypeMap.find(s);
+    if (it != physicsConvergenceTypeMap.end())
     {
         return it->second;
     }
     else
     {
-        errorMsg("Invalid FSI convergence type: " + s);
+        errorMsg("Invalid physics convergence type: " + s);
     }
 
-    return fsiConvergenceType::fsiInterfaceResidual; // useless
+    return physicsConvergenceType::fsiInterfaceResidual; // useless
 }
 
 // Pressure level information specification

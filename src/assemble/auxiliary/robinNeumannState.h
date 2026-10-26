@@ -21,11 +21,44 @@
 namespace accel
 {
 
+class domain;
+class interfaceSideInfo;
+
+// phase of the wall kernel; the defaults give the single-phase kernel
+struct wallPhase
+{
+    const STKScalarField* rho = nullptr;    // phase density
+    const STKScalarField* alpha = nullptr;  // phase volume fraction (VOF)
+    const STKScalarField* rhoMix = nullptr; // mixture density in c1 (VOF)
+    scalar densityScale = 1.0;
+};
+
+// wall kernels of the pressure-correction assemblers (robinNeumannWall.h)
+template <class Assembler>
+void assembleWallInterfaceSide(Assembler& self,
+                               const domain* domain,
+                               const interfaceSideInfo* interfaceSideInfoPtr,
+                               typename Assembler::Context* ctx,
+                               const wallPhase& phase,
+                               const bool robin);
+
+template <class Assembler>
+void accumulateRnWallFluxSide(Assembler& self,
+                              const domain* domain,
+                              const interfaceSideInfo* interfaceSideInfoPtr);
+
+template <class Assembler>
+void accumulateRnWallFluxSides(Assembler& self, const domain* domain);
+
 class robinNeumannState
 {
 public:
-    // Called unconditionally in preTimeStep() before setRobinParams().
-    // Clears stale parameters and the per-timestep warning state.
+    virtual ~robinNeumannState() = default;
+
+    // Tukovic Eq. 30: accumulate Q_vol after every corrector (postSolve)
+    virtual void accumulateRnWallFlux(const domain* domain) = 0;
+
+    // clear the parameters and warnings of the last step (preTimeStep)
     void invalidateRobinParams()
     {
         robinHs_ = 0.0;
@@ -35,8 +68,7 @@ public:
         robinAccelTerm_.clear();
     }
 
-    // h_s = a_p*dt and rho_s, set once per timestep (Badia et al. 2008; Tukovic
-    // et al. 2014)
+    // h_s = a_p*dt and rho_s, set once per timestep (Tukovic et al. 2014)
     void setRobinParams(scalar hs, scalar rhoSolid)
     {
         robinHs_ = hs;
@@ -75,8 +107,7 @@ public:
         return freezeE_;
     }
 
-    // true the first time per interface since invalidateRobinParams() (once per
-    // step)
+    // true at the first call per interface and timestep
     bool shouldWarnRn(label interfaceIndex)
     {
         return rnWarned_.insert(interfaceIndex).second;
@@ -88,8 +119,7 @@ public:
         return robinAccelTerm_;
     }
 
-    // c1 statistics per timestep (pass-count weighted); reset in preTimeStep,
-    // reduced in postTimeStep
+    // c1 statistics of a timestep, area weighted over all assembly passes
     void resetC1Stats()
     {
         robinC1Min_ = std::numeric_limits<scalar>::max();

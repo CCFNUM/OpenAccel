@@ -7,36 +7,31 @@
 #ifndef FSICONVERGENCE_H
 #define FSICONVERGENCE_H
 
-#include "types.h"
+#include "physicsConvergence.h"
 
 namespace accel
 {
 
-class simulation;
+class solidDisplacementEquation;
 
-class fsiConvergence
+class fsiConvergence : public physicsConvergence
 {
 public:
     explicit fsiConvergence(simulation& sim);
 
-    bool enabled() const;
+    // a solid predictor of this step enters the dual-norm maxima (iteration 0)
+    void resetForTimeStep() override;
 
-    void resetForTimeStep();
+    // true once all interfaces reached coupling_start_time
+    bool active() const override;
 
-    void update();
+    void update() override;
 
-    // FSI interface residual of the solid predictor (iteration 0): enters the
-    // timestep maxima of the dual norm (solids4foam updateResidual)
-    void updatePredictor();
+    bool hasCriteria() const override;
 
-    // false: convergence falls back to the equation residuals
-    bool hasCriteria() const;
-
-    bool isConverged() const;
+    bool isConverged() const override;
 
 private:
-    simulation& sim_;
-
     std::map<label, scalar> fsiInterfaceResidualNormMax_;
     // running max of ||D|| (second norm of the dual residual)
     std::map<label, scalar> fsiInterfaceMaxTotalDisplNorm_;
@@ -77,6 +72,8 @@ private:
 
     // fsi_force_balance.out writer
     std::shared_ptr<std::ofstream> forceBalanceStream_;
+
+    solidDisplacementEquation* solidEquation_() const;
 
     void updateFsiInterfaceResidual_(bool writeResiduals);
 

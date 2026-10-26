@@ -56,6 +56,17 @@ public:
         return ID;
     }
 
+    // true if this timestep started with a solid predictor
+    bool predicted() const
+    {
+        return predicted_;
+    }
+
+    bool movedMeshBoundary() const override
+    {
+        return predicted_;
+    }
+
 protected:
     void setResidualScales_() override;
 
@@ -63,6 +74,14 @@ protected:
 
 private:
     std::unique_ptr<Assembler> assembler_;
+
+    // solid solve with the previous-timestep fluid load, as iteration 0
+    void predict_();
+
+    // not solved until all interfaces reached coupling_start_time
+    bool frozen_ = false;
+
+    bool predicted_ = false;
 };
 
 } /* namespace accel */

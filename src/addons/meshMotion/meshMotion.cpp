@@ -121,8 +121,7 @@ void meshMotion::initialize()
     // set total displacement and mesh velocity to zero
     reset();
 
-    // aWallBc holds no valid previous RN wall acceleration yet (start-up or
-    // restart): the first a_n is written unrelaxed
+    // no previous a_n after start-up or restart: the first one is unrelaxed
     hasAWallBc_ = false;
 
     // initialize deformation
@@ -136,6 +135,18 @@ void meshMotion::initialize()
     {
         transformationPtr_->initialize();
     }
+}
+
+bool meshMotion::followsSolution() const
+{
+    for (const interface* interf : this->meshRef().interfaceVector())
+    {
+        if (interf->isFluidSolidType())
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void meshMotion::update()
@@ -169,12 +180,10 @@ void meshMotion::update()
         updateMeshVelocityDivergenceField_();
     }
 
-    // wall velocity from Dt at all fluid-solid interfaces (U side field:
-    // no-slip wall of the momentum and pressure equations)
+    // wall velocity from Dt on the fluid-solid sides (no-slip wall velocity)
     this->updateFsiWallVelocity_();
 
-    // Populate aWallBc sideField with the scheme-consistent wall normal
-    // acceleration at Robin-Neumann FSI interfaces (RN only).
+    // Robin-Neumann wall normal acceleration from Dt
     this->updateFsiWallAcceleration_();
 
     if (messager::master())
@@ -1114,8 +1123,7 @@ void meshMotion::updateMeshVelocityDivergenceField_()
 
 void meshMotion::updateFsiWallVelocity_()
 {
-    // wall velocity from Dt at all fluid-solid BIPs (BDF2 if solid scheme
-    // backward)
+    // wall velocity from Dt at the fluid-solid BIPs (BDF2 for backward)
 
     // only fluid-solid interfaces carry a wall velocity
     bool anyFsi = false;
@@ -1168,8 +1176,7 @@ void meshMotion::updateFsiWallVelocity_()
         useVelocityBdf2 ? &DtRef().prevTimeRef().prevTimeRef().stkFieldRef()
                         : nullptr;
 
-    // for each fluid zone, write UbcVec on the fluid-side face buckets of
-    // its fluid-solid interfaces
+    // write UbcVec on the fluid-side faces of each fluid-solid interface
     for (auto& zonePtr : realmPtr_->simulationRef().domainVector())
     {
         if (zonePtr->type() != domainType::fluid)
@@ -1271,8 +1278,7 @@ void meshMotion::updateFsiWallVelocity_()
 
 void meshMotion::updateFsiWallAcceleration_()
 {
-    // RN wall normal acceleration from Dt (solid d2dt2 operator), projected on
-    // the normal
+    // RN wall normal acceleration from Dt (solid d2dt2 operator)
 
     // the aWallBc side field exists on Robin-Neumann interfaces only
     bool anyRnFsi = false;
@@ -1339,12 +1345,11 @@ void meshMotion::updateFsiWallAcceleration_()
         coefft0 = coefft + coefft00;
     }
 
-    // current exposed interface area vector: same field and normalisation
-    // as the RN pressure kernel
+    // exposed area vector: same field and normalisation as the RN kernel
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), mesh::exposed_area_vector_ID);
 
-    auto& aWallBcSideSTKFieldRef = aWallBcRef().sideFieldRef().stkFieldRef();
+    auto& aWallBcSideSTKFieldRef = aWallBcRef().stkFieldRef();
 
     std::vector<scalar> aBip(SPATIAL_DIM);
     scalar* p_aBip = &aBip[0];
@@ -1451,8 +1456,7 @@ void meshMotion::updateFsiWallAcceleration_()
                         }
                     }
 
-                    // interpolate to the BIPs and project on the exposed normal
-                    // (as the RN kernel)
+                    // BIP value projected on the exposed normal
                     for (label ip = 0; ip < numScsBip; ++ip)
                     {
                         const label offSF = ip * nodesPerSide;
@@ -1486,7 +1490,6 @@ void meshMotion::updateFsiWallAcceleration_()
                         }
 
                         // a = beta*a_new + (1 - beta)*a_prev
-                        // (rn_accel_relaxation)
                         aWallBcVals[ip] =
                             (hasAWallBc_ && rnAccelRelax < 1.0)
                                 ? rnAccelRelax * an +

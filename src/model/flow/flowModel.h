@@ -317,22 +317,6 @@ private:
     std::vector<MassBoundaryData> flowBoundaryDataVector_;
     std::vector<MassBoundaryData> flowInterfaceDataVector_;
 
-    // three-element Windkessel outlet history (solids4foam
-    // windkesselPressure): previous pressures [Pa] and volumetric flow rates
-    // [m^3/s], keyed by (domain index, boundary index)
-    struct WindkesselState
-    {
-        label timeStepCount = -1; // time step of the last update
-        label nTimeSteps = 0;     // time steps run with this state
-        scalar po = 0.0;
-        scalar poo = 0.0;
-        scalar Qo = 0.0;
-        scalar Qoo = 0.0;
-        scalar pn = 0.0; // current boundary pressure
-    };
-
-    std::map<std::pair<label, label>, WindkesselState> windkesselStates_;
-
     // momentum interface imbalance reporting (vector analogue of FlowBoundary-
     // Data; in/out binned per component from the pDot side field)
     MPI_Datatype MPIMomentumBoundaryData;
@@ -420,10 +404,6 @@ private:
         const boundary* boundary);
 
     void updatePressureBoundarySideFieldInletStaticPressure_(
-        const std::shared_ptr<domain> domain,
-        const boundary* boundary);
-
-    void updatePressureBoundarySideFieldWindkessel_(
         const std::shared_ptr<domain> domain,
         const boundary* boundary);
 

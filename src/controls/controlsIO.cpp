@@ -412,77 +412,69 @@ void controls::read(YAML::Node inputNode)
                     .residualTarget_ =
                     convCriteria["residual_target"].template as<scalar>();
 
-                // physics_convergence: deprecated name of fsi_convergence
-                const bool hasFsiConvergence =
-                    static_cast<bool>(convCriteria["fsi_convergence"]);
-                const bool hasPhysicsConvergence =
-                    static_cast<bool>(convCriteria["physics_convergence"]);
-                if (hasPhysicsConvergence && messager::master())
+                if (convCriteria["fsi_convergence"])
                 {
-                    warningMsg(hasFsiConvergence
-                                   ? "physics_convergence is deprecated and "
-                                     "ignored since fsi_convergence is given"
-                                   : "physics_convergence is deprecated: use "
-                                     "fsi_convergence");
+                    errorMsg("fsi_convergence is not a valid key: use "
+                             "physics_convergence");
                 }
 
-                if (hasFsiConvergence || hasPhysicsConvergence)
+                if (convCriteria["physics_convergence"])
                 {
-                    const YAML::Node fsiConv =
-                        hasFsiConvergence ? convCriteria["fsi_convergence"]
-                                          : convCriteria["physics_convergence"];
+                    const YAML::Node physConv =
+                        convCriteria["physics_convergence"];
 
-                    if (fsiConv["enabled"])
+                    if (physConv["enabled"])
                     {
                         solver_.solverControl_.basicSettings_
-                            .convergenceCriteria_.fsiConvergence_.enabled_ =
-                            fsiConv["enabled"].template as<bool>();
+                            .convergenceCriteria_.physicsConvergence_.enabled_ =
+                            physConv["enabled"].template as<bool>();
                     }
 
                     // write_residuals: deprecated name of print_residuals
-                    if (fsiConv["write_residuals"] && messager::master())
+                    if (physConv["write_residuals"] && messager::master())
                     {
                         warningMsg(
-                            fsiConv["print_residuals"]
+                            physConv["print_residuals"]
                                 ? "write_residuals is deprecated and ignored "
                                   "since print_residuals is given"
                                 : "write_residuals is deprecated: use "
                                   "print_residuals");
                     }
 
-                    if (fsiConv["print_residuals"])
+                    if (physConv["print_residuals"])
                     {
                         solver_.solverControl_.basicSettings_
-                            .convergenceCriteria_.fsiConvergence_
+                            .convergenceCriteria_.physicsConvergence_
                             .printResiduals_ =
-                            fsiConv["print_residuals"].template as<bool>();
+                            physConv["print_residuals"].template as<bool>();
                     }
-                    else if (fsiConv["write_residuals"])
+                    else if (physConv["write_residuals"])
                     {
                         solver_.solverControl_.basicSettings_
-                            .convergenceCriteria_.fsiConvergence_
+                            .convergenceCriteria_.physicsConvergence_
                             .printResiduals_ =
-                            fsiConv["write_residuals"].template as<bool>();
+                            physConv["write_residuals"].template as<bool>();
                     }
 
-                    if (fsiConv["criteria"])
+                    if (physConv["criteria"])
                     {
-                        for (const auto& item : fsiConv["criteria"])
+                        for (const auto& item : physConv["criteria"])
                         {
                             solver_.solverControl_.basicSettings_
-                                .convergenceCriteria_.fsiConvergence_.criteria_
-                                .push_back(convertFsiConvergenceTypeFromString(
-                                    item.template as<std::string>()));
+                                .convergenceCriteria_.physicsConvergence_
+                                .criteria_.push_back(
+                                    convertPhysicsConvergenceTypeFromString(
+                                        item.template as<std::string>()));
                         }
                     }
 
-                    if (fsiConv["targets"])
+                    if (physConv["targets"])
                     {
-                        const auto& targets = fsiConv["targets"];
+                        const auto& targets = physConv["targets"];
                         if (targets["fsi_interface_residual"])
                         {
                             solver_.solverControl_.basicSettings_
-                                .convergenceCriteria_.fsiConvergence_
+                                .convergenceCriteria_.physicsConvergence_
                                 .fsiInterfaceResidualTarget_ =
                                 targets["fsi_interface_residual"]
                                     .template as<scalar>();
@@ -490,20 +482,20 @@ void controls::read(YAML::Node inputNode)
                         if (targets["fsi_force_residual"])
                         {
                             solver_.solverControl_.basicSettings_
-                                .convergenceCriteria_.fsiConvergence_
+                                .convergenceCriteria_.physicsConvergence_
                                 .fsiForceResidualTarget_ =
                                 targets["fsi_force_residual"]
                                     .template as<scalar>();
                         }
                     }
 
-                    if (fsiConv["diagnostics"])
+                    if (physConv["diagnostics"])
                     {
-                        const auto& diagNode = fsiConv["diagnostics"];
+                        const auto& diagNode = physConv["diagnostics"];
                         if (diagNode["enabled"])
                         {
                             solver_.solverControl_.basicSettings_
-                                .convergenceCriteria_.fsiConvergence_
+                                .convergenceCriteria_.physicsConvergence_
                                 .diagnosticsEnabled_ =
                                 diagNode["enabled"].template as<bool>();
                         }

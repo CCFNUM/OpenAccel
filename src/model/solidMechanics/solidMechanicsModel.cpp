@@ -23,6 +23,7 @@ solidMechanicsModel::solidMechanicsModel(realm* realm) : model(realm)
 
     // create post-processing field instances
     stressRef();
+    stressVonMisesRef();
     strainRef();
 }
 
@@ -37,8 +38,7 @@ void solidMechanicsModel::setupDisplacement(
         initialCondition::setupFieldInitializationOverDomainFromInput(
             DRef(), realm::D_ID, domain);
 
-        // raw solid correction X^k (un-relaxed FSI residual), written in
-        // solve()
+        // raw solid correction X^k (un-relaxed FSI residual)
         if (solidCorrectionRef().isZoneUnset(domain->index()))
         {
             solidCorrectionRef().setZone(domain->index());
@@ -734,8 +734,7 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
         metaData.universal_part() &
         stk::mesh::selectUnion(interfaceSideInfoPtr->opposingPartVec_);
 
-    // use_deformed_area: follower load p*a/|a0| (default) or dead load
-    // p*a0/|a0| (s4f useUndeformedArea)
+    // follower load p*a/|a0| (default) or dead load p*a0/|a0|
     const bool useDeformedArea =
         interfaceSideInfoPtr->interfPtr()->useDeformedArea();
 
@@ -808,8 +807,7 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
             const scalar* areaVec =
                 stk::mesh::field_data(*exposedAreaVecSTKFieldPtr, side);
 
-            // reference area vector; a fluid zone without mesh motion does
-            // not carry the original field, and there current == reference
+            // reference area vector; the current one for a fixed fluid zone
             const scalar* origAreaVec =
                 origExposedAreaVecSTKFieldPtr
                     ? stk::mesh::field_data(*origExposedAreaVecSTKFieldPtr,
@@ -833,8 +831,7 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
                 // Force on solid = +p * n, where n is the fluid's outward
                 // normal (pointing into solid). Positive pressure causes
                 // compression.
-                // reference area dA0: the solid assembler integrates the
-                // traction over dA0
+                // reference area dA0: the solid integrates the traction over it
                 scalar aMag0 = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
@@ -842,9 +839,7 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
                     aMag0 += axj * axj;
                 }
 
-                // degenerate (zero-area) ip: carries no force. aMag0 is the
-                // squared area: compare with VSMALL, not SMALL, or every ip
-                // below ~1.5e-8 m^2 (sub-mm faces) loses its traction
+                // zero-area ip: no force (aMag0 is squared, hence VSMALL)
                 if (aMag0 < VSMALL)
                 {
                     for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -898,8 +893,7 @@ void solidMechanicsModel::updateDisplacementInterfaceSideFieldTraction_(
                     aMag_current = 1.0 / invAMag0; // dA0: dead load
                 }
 
-                // shear stored as tau*|a|/dA0 (same convention as the pressure
-                // term)
+                // shear stored as tau*|a|/dA0, as the pressure term
                 for (label j = 0; j < SPATIAL_DIM; ++j)
                 {
                     tractionValues[SPATIAL_DIM * ip + j] +=
@@ -1321,8 +1315,7 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 }
                 else
                 {
-                    // Dead load (default): traction = -p * n0 (reference unit
-                    // normal)
+                    // dead load (default): traction = -p * n0
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         tractionValues[SPATIAL_DIM * ip + j] =
@@ -1354,6 +1347,8 @@ void solidMechanicsModel::updateStressAndStrain_(
     // Get field pointers
     STKScalarField* sigmaSTKFieldPtr = stressRef().stkFieldPtr();
     STKScalarField* epsilonSTKFieldPtr = strainRef().stkFieldPtr();
+    STKScalarField* sigmaVonMisesSTKFieldPtr =
+        stressVonMisesRef().stkFieldPtr();
     const STKScalarField* DSTKFieldPtr = DRef().stkFieldPtr();
     const STKScalarField* ESTKFieldPtr = ERef().stkFieldPtr();
     const STKScalarField* nuSTKFieldPtr = nuRef().stkFieldPtr();
@@ -1514,6 +1509,9 @@ void solidMechanicsModel::updateStressAndStrain_(
                     p_stress[i] = 0.0;
                 }
 
+                // plane-strain sigma_zz (F_zz = 1) for von Mises; 0 in 3D
+                scalar sigmaZZ = 0.0;
+
                 for (label ip = 0; ip < numScvIp; ++ip)
                 {
                     // Compute displacement gradient at integration point
@@ -1563,6 +1561,11 @@ void solidMechanicsModel::updateStressAndStrain_(
                                          F[2] * (F[3] * F[7] - F[4] * F[6]);
 #endif
                         const scalar lnJ = std::log(J);
+
+#if SPATIAL_DIM == 2
+                        // plane strain: b_zz = 1
+                        sigmaZZ += (lambda / J) * lnJ / numScvIp;
+#endif
 
                         // Cauchy (mu/J)(b-I)+(lambda/J)ln(J)I; E=0.5(F^T F-I)
                         for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -1663,6 +1666,16 @@ void solidMechanicsModel::updateStressAndStrain_(
 
                         // Flory-split Cauchy stress (physical d = 3)
                         const scalar trX = I1 * I1 - trb2;
+
+#if SPATIAL_DIM == 2
+                        // plane strain: b_zz = (b^2)_zz = 1
+                        sigmaZZ +=
+                            ((2.0 / J) *
+                                 (mooneyC1 * Jm23 * (1.0 - I1 / 3.0) +
+                                  mooneyC2 * Jm43 * ((I1 - 1.0) - trX / 3.0)) +
+                             (mooneyKappa / J) * lnJ) /
+                            numScvIp;
+#endif
                         for (label i = 0; i < SPATIAL_DIM; ++i)
                         {
                             for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -1738,6 +1751,11 @@ void solidMechanicsModel::updateStressAndStrain_(
                             trE += Egl[i * SPATIAL_DIM + i];
                         }
 
+#if SPATIAL_DIM == 2
+                        // plane strain: E_zz = 0, S_zz = lambda tr(E), F_zz = 1
+                        sigmaZZ += lambda * trE / J / numScvIp;
+#endif
+
                         // 2nd PK S = lambda tr(E) I + 2 mu E
                         scalar S[SPATIAL_DIM * SPATIAL_DIM];
                         for (label i = 0; i < SPATIAL_DIM; ++i)
@@ -1812,6 +1830,11 @@ void solidMechanicsModel::updateStressAndStrain_(
                                 2.0 * mu * p_strain[i * SPATIAL_DIM + j];
                         }
                     }
+
+#if SPATIAL_DIM == 2
+                    // plane strain: eps_zz = 0
+                    sigmaZZ = lambda * trace_strain;
+#endif
                 }
 
                 // Store stress and strain
@@ -1825,6 +1848,31 @@ void solidMechanicsModel::updateStressAndStrain_(
                     node_stress[i] = p_stress[i];
                     node_strain[i] = p_strain[i];
                 }
+
+                // von Mises sqrt(3/2 dev:dev) of the 3D stress (s4f sigmaEq)
+                scalar trSigma = sigmaZZ;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    trSigma += p_stress[i * SPATIAL_DIM + i];
+                }
+                const scalar sigmaMean = trSigma / 3.0;
+
+                scalar devSqr = 0.0;
+                for (label i = 0; i < SPATIAL_DIM; ++i)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        const scalar dev_ij = p_stress[i * SPATIAL_DIM + j] -
+                                              ((i == j) ? sigmaMean : 0.0);
+                        devSqr += dev_ij * dev_ij;
+                    }
+                }
+#if SPATIAL_DIM == 2
+                devSqr += (sigmaZZ - sigmaMean) * (sigmaZZ - sigmaMean);
+#endif
+
+                *stk::mesh::field_data(*sigmaVonMisesSTKFieldPtr, node) =
+                    std::sqrt(1.5 * devSqr);
             }
         }
     }

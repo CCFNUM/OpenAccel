@@ -5,12 +5,12 @@
 // Copyright 2023 CCFNUM HSLU T&A. All Rights Reserved.
 
 // code
+#include "controls.h"
 #include "interface.h"
 #include "interfaceSideInfo.h"
 #include "ipInfo.h"
 #include "mesh.h"
 #include "messager.h"
-#include "controls.h"
 #include "zone.h"
 
 namespace accel
@@ -27,18 +27,31 @@ void mesh::lazyInitializeNodeGraph_()
 }
 
 std::unique_ptr<nodeGraph>
-mesh::createNodeGraph_(const ::linearSolver::GraphLayout layout)
+mesh::createNodeGraph_(const ::linearSolver::GraphLayout layout,
+                       const bool fullStencil)
 {
-    // solid mechanics couples all element nodes (x-y terms of diagonal
-    // partners): the reduced stencil would drop them. Decided here, not in
-    // the constructor: solid domains are only known after the mesh is created
-    const bool reduced =
-        controlsPtr_->isReducedStencil() && !controlsPtr_->anySolidMechanics();
     const ::linearSolver::GraphLayout stencil =
-        reduced ? ::linearSolver::GraphLayout::Stencil__Reduced
-                : ::linearSolver::GraphLayout::Stencil__Full;
+        fullStencil ? ::linearSolver::GraphLayout::Stencil__Full : stencil_;
     return std::make_unique<nodeGraph>(
         messager::comm(), this, layout | stencil);
+}
+
+nodeGraph* mesh::lazyGraph_(std::unique_ptr<nodeGraph>& slot,
+                            const ::linearSolver::GraphLayout order,
+                            const bool fullStencil,
+                            const std::vector<const zone*>* zones)
+{
+    if (!slot)
+    {
+        slot = createNodeGraph_(order, fullStencil);
+        assert(slot);
+        if (zones)
+        {
+            slot->setSubsetZones(*zones);
+        }
+        slot->buildGraph();
+    }
+    return slot.get();
 }
 
 std::vector<label> mesh::zoneKey_(const std::vector<const zone*>& zones) const
@@ -119,22 +132,30 @@ void mesh::updateNodeGraph_()
     updateLocalNodeIDs_();
 
     // Rebuild node connectivities graph
-    if (globalOrderGraphPtr_)
+    for (auto* graph : {globalOrderGraphPtr_.get(),
+                        localOrderGraphPtr_.get(),
+                        globalOrderFullGraphPtr_.get(),
+                        localOrderFullGraphPtr_.get()})
     {
-        globalOrderGraphPtr_->rebuildGraph();
-    }
-    if (localOrderGraphPtr_)
-    {
-        localOrderGraphPtr_->rebuildGraph();
+        if (graph)
+        {
+            graph->rebuildGraph();
+        }
     }
 
     // rebuild any cached subset graphs (parallel too: re-numbers ghosts)
     for (auto& e : customGraphCache_)
     {
-        if (e.local)
-            e.local->rebuildGraph();
-        if (e.global)
-            e.global->rebuildGraph();
+        for (auto* graph : {e.local.get(),
+                            e.global.get(),
+                            e.localFull.get(),
+                            e.globalFull.get()})
+        {
+            if (graph)
+            {
+                graph->rebuildGraph();
+            }
+        }
     }
 
     // stencils changed: cached conformal row-merge position maps are stale

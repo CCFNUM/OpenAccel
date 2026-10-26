@@ -28,8 +28,7 @@ public:
         scalar iqnIlsFilter = 1e-2;
         label iqnIlsWindowsReused = 8;
 
-        // Optional simulation ptr for the aitken_omega_<name>.out writer;
-        // null = no-op. name: owning equation, one file per equation.
+        // aitken_omega_<name>.out writer; nullptr: no output
         simulation* sim = nullptr;
         bool writeOmega = false;
         std::string name;
@@ -65,8 +64,7 @@ private:
     label aitkenIter_ = 0;
     Vector aitkenResidualPrev_;
 
-    // Aitken omega diagnostics writer
-    // (postProcessing/aitken_omega_<name>.out).
+    // Aitken omega writer (postProcessing/aitken_omega_<name>.out)
     simulation* sim_ = nullptr;
     bool writeOmega_ = false;
     std::string name_;

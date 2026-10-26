@@ -18,9 +18,9 @@
 namespace accel
 {
 
-fsiConvergence::fsiConvergence(simulation& sim) : sim_(sim)
+fsiConvergence::fsiConvergence(simulation& sim) : physicsConvergence(sim)
 {
-    for (const auto& domainPtr : sim_.domainVector_)
+    for (const auto& domainPtr : sim_.domainVector())
     {
         for (const interface* interf : domainPtr->interfacesRef())
         {
@@ -35,22 +35,35 @@ fsiConvergence::fsiConvergence(simulation& sim) : sim_(sim)
         }
     }
 
-    if (enabled() && !hasCriteria() && messager::master())
+    if (!hasCriteria() && messager::master())
     {
-        warningMsg("fsi_convergence is enabled without criteria: the outer "
+        warningMsg("physics_convergence is enabled without criteria: the outer "
                    "loop convergence uses the equation residuals; FSI "
                    "diagnostics/force balance are still written");
     }
 
-    // RN parameter validity depends on the solid material only, hence is
-    // fixed for the run (collective call: constructed on all ranks)
+    // RN validity depends on the solid material only (collective call)
     if (isRobinNeumann_)
     {
-        rnFallback_ =
-            !computeRobinNeumannParams(
-                 sim_, sim_.domainVector_, sim_.controlsRef().getTimestep())
-                 .valid;
+        const solidDisplacementEquation* solidEq = solidEquation_();
+        rnFallback_ = !solidEq || !computeRobinNeumannParams(
+                                       *solidEq,
+                                       sim_.domainVector(),
+                                       sim_.controlsRef().getTimestep())
+                                       .valid;
     }
+}
+
+solidDisplacementEquation* fsiConvergence::solidEquation_() const
+{
+    for (const auto& equation : equations_())
+    {
+        if (equation->getID() == equationID::solidDisplacement)
+        {
+            return dynamic_cast<solidDisplacementEquation*>(equation.get());
+        }
+    }
+    return nullptr;
 }
 
 bool fsiConvergence::hasCriteria() const
@@ -58,25 +71,16 @@ bool fsiConvergence::hasCriteria() const
     return !sim_.controlsRef()
                 .solverRef()
                 .solverControl_.basicSettings_.convergenceCriteria_
-                .fsiConvergence_.criteria_.empty();
+                .physicsConvergence_.criteria_.empty();
 }
 
-bool fsiConvergence::enabled() const
+bool fsiConvergence::active() const
 {
-    const auto& fsiConv =
-        sim_.controlsRef()
-            .solverRef()
-            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
-    return fsiConv.enabled_;
+    return sim_.meshRef().interfacesCoupled(sim_.controlsRef().time);
 }
 
 void fsiConvergence::resetForTimeStep()
 {
-    if (!enabled())
-    {
-        return;
-    }
-
     fsiInterfaceResidualNormMax_.clear();
     fsiInterfaceMaxTotalDisplNorm_.clear();
     fsiInterfaceResidualNorms_.clear();
@@ -92,19 +96,26 @@ void fsiConvergence::resetForTimeStep()
     interfacePCorrChangeNormRef_ = 1.0;
     robinAccelTermRms_ = 0.0;
     robinPCorrFluxRms_ = 0.0;
+
+    // interface residual of the solid predictor (solids4foam updateResidual)
+    const solidDisplacementEquation* solidEq = solidEquation_();
+    if (solidEq && solidEq->predicted())
+    {
+        fsiInterfaceResidualNorm_ = 0.0;
+        updateFsiInterfaceResidual_(
+            sim_.controlsRef()
+                .solverRef()
+                .solverControl_.basicSettings_.convergenceCriteria_
+                .physicsConvergence_.printResiduals_);
+    }
 }
 
 void fsiConvergence::update()
 {
-    if (!enabled())
-    {
-        return;
-    }
-
-    const auto& fsiConv =
-        sim_.controlsRef()
-            .solverRef()
-            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
+    const auto& fsiConv = sim_.controlsRef()
+                              .solverRef()
+                              .solverControl_.basicSettings_
+                              .convergenceCriteria_.physicsConvergence_;
 
     fsiInterfaceResidualNorm_ = 0.0;
     fsiForceResidualNorm_ = 0.0;
@@ -113,10 +124,10 @@ void fsiConvergence::update()
     {
         switch (criterion)
         {
-            case fsiConvergenceType::fsiInterfaceResidual:
+            case physicsConvergenceType::fsiInterfaceResidual:
                 updateFsiInterfaceResidual_(fsiConv.printResiduals_);
                 break;
-            case fsiConvergenceType::fsiForceResidual:
+            case physicsConvergenceType::fsiForceResidual:
                 updateFsiForceResidual_(fsiConv.printResiduals_);
                 break;
             default:
@@ -135,10 +146,10 @@ void fsiConvergence::update()
     }
 
     // Write combined diagnostics row if enabled
-    const auto& fsiConvCfg =
-        sim_.controlsRef()
-            .solverRef()
-            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
+    const auto& fsiConvCfg = sim_.controlsRef()
+                                 .solverRef()
+                                 .solverControl_.basicSettings_
+                                 .convergenceCriteria_.physicsConvergence_;
     if (fsiConvCfg.diagnosticsEnabled_)
     {
         if (!diagnosticsStream_)
@@ -153,26 +164,10 @@ void fsiConvergence::update()
     }
 }
 
-void fsiConvergence::updatePredictor()
-{
-    if (!enabled())
-    {
-        return;
-    }
-
-    const auto& fsiConv =
-        sim_.controlsRef()
-            .solverRef()
-            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
-
-    fsiInterfaceResidualNorm_ = 0.0;
-    updateFsiInterfaceResidual_(fsiConv.printResiduals_);
-}
-
 void fsiConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
 {
     solidDisplacementEquation* solidEq = nullptr;
-    for (auto& equation : sim_.equationVector_)
+    for (auto& equation : equations_())
     {
         if (equation->getID() == equationID::solidDisplacement)
         {
@@ -191,7 +186,7 @@ void fsiConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
     auto& XField = solidEq->solidCorrectionRef().stkFieldRef();
     std::unordered_set<label> visited;
 
-    for (const auto& domain : sim_.domainVector_)
+    for (const auto& domain : sim_.domainVector())
     {
         for (const interface* interf : domain->interfacesRef())
         {
@@ -214,8 +209,7 @@ void fsiConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
             const interfaceSideInfo* fluidSide =
                 interf->interfaceSideInfoPtr(fluidZoneIndex);
 
-            // locally owned nodes only: shared nodes must enter the global
-            // sums once
+            // owned nodes only: shared nodes enter the global sums once
             stk::mesh::Selector selFluidNodes =
                 DField.mesh_meta_data().locally_owned_part() &
                 stk::mesh::selectUnion(fluidSide->currentPartVec_);
@@ -257,8 +251,7 @@ void fsiConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
 
             const label interfIdx = interf->index();
 
-            // r = X^k (un-relaxed correction); iteration 1 counts but cannot
-            // converge
+            // r = X^k (un-relaxed); iteration 1 counts but cannot converge
             scalar normSq = 0.0;
             scalar totalDisplNormSq = 0.0;
             for (size_t i = 0; i < vecSize; ++i)
@@ -311,7 +304,7 @@ void fsiConvergence::updateFsiInterfaceResidual_(bool writeResiduals)
 void fsiConvergence::updateFsiForceResidual_(bool writeResiduals)
 {
     solidDisplacementEquation* solidEq = nullptr;
-    for (auto& equation : sim_.equationVector_)
+    for (auto& equation : equations_())
     {
         if (equation->getID() == equationID::solidDisplacement)
         {
@@ -329,7 +322,7 @@ void fsiConvergence::updateFsiForceResidual_(bool writeResiduals)
     auto& tractionSTKField = solidEq->DRef().sideFluxFieldRef().stkFieldRef();
     std::unordered_set<label> visited;
 
-    for (const auto& domain : sim_.domainVector_)
+    for (const auto& domain : sim_.domainVector())
     {
         for (const interface* interf : domain->interfacesRef())
         {
@@ -355,8 +348,7 @@ void fsiConvergence::updateFsiForceResidual_(bool writeResiduals)
             stk::mesh::MetaData& metaData = tractionSTKField.mesh_meta_data();
             stk::mesh::BulkData& bulkData = tractionSTKField.get_mesh();
 
-            // side-rank field: locally owned sides of the fluid-side
-            // interface parts (each side counted once in the global sums)
+            // owned fluid-side sides: each side counted once in the global sums
             stk::mesh::Selector selFluidSides =
                 metaData.locally_owned_part() &
                 stk::mesh::selectUnion(fluidSide->currentPartVec_);
@@ -444,12 +436,11 @@ void fsiConvergence::updateFsiForceResidual_(bool writeResiduals)
 
 void fsiConvergence::updateInterfacePCorrChange_()
 {
-    // diagnostics: p' change, Robin a_n term and Q_vol RMS at the RN interface
-    // (the pressure equation is reached through the segregated wrapper)
+    // diagnostics: p' change, Robin a_n and Q_vol RMS at the RN interface
     const stk::mesh::Field<scalar>* pCorrSTKFieldPtr = nullptr;
     const std::unordered_map<uint64_t, scalar>* robinAccelMapPtr = nullptr;
     const stk::mesh::Field<scalar>* rnWallFluxSideSTKFieldPtr = nullptr;
-    for (auto& eq : sim_.equationVector_)
+    for (auto& eq : equations_())
     {
         if (auto* sfe = dynamic_cast<segregatedFlowEquations*>(eq.get()))
         {
@@ -459,10 +450,8 @@ void fsiConvergence::updateInterfacePCorrChange_()
                 pCorrSTKFieldPtr =
                     &pcEq->flowModelPtr()->pCorrRef().stkFieldRef();
                 robinAccelMapPtr = &pcEq->assemblerPtr()->robinAccelTermMap();
-                rnWallFluxSideSTKFieldPtr = &pcEq->flowModelPtr()
-                                                 ->rnWallFluxRef()
-                                                 .sideFieldRef()
-                                                 .stkFieldRef();
+                rnWallFluxSideSTKFieldPtr =
+                    &pcEq->flowModelPtr()->rnWallFluxRef().stkFieldRef();
             }
             break;
         }
@@ -475,7 +464,7 @@ void fsiConvergence::updateInterfacePCorrChange_()
                 pCorrSTKFieldPtr = &sfse->pCorrRef().stkFieldRef();
                 robinAccelMapPtr = &bpcEq->robinAccelTermMap();
                 rnWallFluxSideSTKFieldPtr =
-                    &sfse->rnWallFluxRef().sideFieldRef().stkFieldRef();
+                    &sfse->rnWallFluxRef().stkFieldRef();
             }
             break;
         }
@@ -519,7 +508,7 @@ void fsiConvergence::updateInterfacePCorrChange_()
             pCorrSTKFieldRef.mesh_meta_data().side_rank(),
             mesh::exposed_area_vector_ID);
 
-    for (const auto& domainPtr : sim_.domainVector_)
+    for (const auto& domainPtr : sim_.domainVector())
     {
         for (const interface* interf : domainPtr->interfacesRef())
         {
@@ -545,8 +534,7 @@ void fsiConvergence::updateInterfacePCorrChange_()
             stk::mesh::MetaData& metaData = pCorrSTKFieldRef.mesh_meta_data();
             stk::mesh::BulkData& bulkData = pCorrSTKFieldRef.get_mesh();
 
-            // robin_pCorr_flux_rms: locally owned fluid-side sides carrying
-            // the rnWallFlux side field (per-BIP values)
+            // robin_pCorr_flux_rms over the owned fluid-side RN sides
             if (rnWallFluxSideSTKFieldPtr && exposedAreaVecSTKFieldPtr)
             {
                 stk::mesh::Selector selOwnedFluxSides =
@@ -643,8 +631,7 @@ void fsiConvergence::updateInterfacePCorrChange_()
     interfacePCorrChangeNorm_ =
         (count > 0) ? std::sqrt(sumSq / static_cast<scalar>(count)) : 0.0;
 
-    // Set reference on k=2 (first iteration that produces a nonzero
-    // change; k=1 has no previous snapshot).
+    // reference at k = 2, the first iteration with a previous snapshot
     const label fsiIter = sim_.controlsRef().iter;
     if (fsiIter == 2 && interfacePCorrChangeNorm_ > SMALL)
         interfacePCorrChangeNormRef_ = interfacePCorrChangeNorm_;
@@ -660,7 +647,7 @@ void fsiConvergence::updateForceBalance_()
 
     // the flow equations derive from flowModel (pRef/wallShearStressRef)
     flowModel* flowModelPtr = nullptr;
-    for (auto& eq : sim_.equationVector_)
+    for (auto& eq : equations_())
     {
         flowModelPtr = dynamic_cast<flowModel*>(eq.get());
         if (flowModelPtr)
@@ -674,7 +661,7 @@ void fsiConvergence::updateForceBalance_()
     }
 
     solidDisplacementEquation* solidEq = nullptr;
-    for (auto& equation : sim_.equationVector_)
+    for (auto& equation : equations_())
     {
         if (equation->getID() == equationID::solidDisplacement)
         {
@@ -711,7 +698,7 @@ void fsiConvergence::updateForceBalance_()
     std::vector<scalar> ws_p;
     std::vector<scalar> ws_face_shape_function;
 
-    for (const auto& domain : sim_.domainVector_)
+    for (const auto& domain : sim_.domainVector())
     {
         for (const interface* interf : domain->interfacesRef())
         {
@@ -843,8 +830,7 @@ void fsiConvergence::updateForceBalance_()
 
                         for (label ip = 0; ip < numScsBip; ++ip)
                         {
-                            // traction stored per reference area: force =
-                            // traction * dA0_mag
+                            // traction is per reference area
                             scalar dA0_mag = 0.0;
                             for (label j = 0; j < SPATIAL_DIM; ++j)
                             {
@@ -950,14 +936,10 @@ void fsiConvergence::writeForceBalanceRow_(
 
 bool fsiConvergence::isConverged() const
 {
-    const auto& fsiConv =
-        sim_.controlsRef()
-            .solverRef()
-            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
-    if (!fsiConv.enabled_)
-    {
-        return true;
-    }
+    const auto& fsiConv = sim_.controlsRef()
+                              .solverRef()
+                              .solverControl_.basicSettings_
+                              .convergenceCriteria_.physicsConvergence_;
 
     // defensive: never converged without a criterion
     if (fsiConv.criteria_.empty())
@@ -970,19 +952,18 @@ bool fsiConvergence::isConverged() const
     {
         switch (criterion)
         {
-            case fsiConvergenceType::fsiInterfaceResidual:
+            case physicsConvergenceType::fsiInterfaceResidual:
                 if (fsiInterfaceResidualNorms_.empty())
                 {
                     converged = false;
                     break;
                 }
-                // iteration 1 reports the real ||X^1|| but may not converge:
-                // the fluid has not yet seen the new interface displacement
+                // iteration 1 cannot converge: the fluid has not seen X^1 yet
                 converged = converged && (sim_.getIterationCount() > 1) &&
                             (fsiInterfaceResidualNorm_ <=
                              fsiConv.fsiInterfaceResidualTarget_);
                 break;
-            case fsiConvergenceType::fsiForceResidual:
+            case physicsConvergenceType::fsiForceResidual:
                 if (fsiForceResidualNorms_.empty())
                 {
                     converged = false;

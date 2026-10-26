@@ -22,8 +22,7 @@ private:
 
     std::unique_ptr<transformation> transformationPtr_ = nullptr;
 
-    // aWallBc holds a previous value for rn_accel_relaxation (kept across
-    // steps)
+    // aWallBc holds a previous a_n for rn_accel_relaxation
     bool hasAWallBc_ = false;
 
 public:
@@ -43,6 +42,9 @@ public:
 
     void update();
 
+    // true if fluid-solid interfaces move the mesh: it follows the solution
+    bool followsSolution() const;
+
 protected:
     // protected update methods
     void updateCoordinates_();
@@ -55,12 +57,10 @@ protected:
 
     void updateMeshVelocityDivergenceField_();
 
-    // Write the wall velocity from the Dt history at fluid-solid interface
-    // BIPs into URef().sideFieldRef() (no-slip wall velocity, DN and RN).
+    // no-slip wall velocity from the Dt history at the fluid-solid BIPs
     void updateFsiWallVelocity_();
 
-    // write the RN wall normal acceleration (solid d2dt2 operator on Dt) at the
-    // BIPs
+    // RN wall normal acceleration (solid d2dt2 operator on Dt) at the BIPs
     void updateFsiWallAcceleration_();
 };
 

@@ -79,12 +79,10 @@ protected:
 
     scalar penaltyFactor_ = 1.0;
 
-    // FSI traction on the deformed area (follower load, default) or reference
-    // area
+    // FSI traction on the deformed area (follower, default) or reference
     bool useDeformedArea_ = true;
 
-    // solve the solid once with the previous-timestep fluid load before the
-    // first FSI iteration (solids4foam predictSolid)
+    // solid solve with the previous-step fluid load first (s4f predictSolid)
     bool predictSolidDisplacement_ = false;
 
     // DN (zero-gradient pressure) or RN (mixed BC with solid inertia)
@@ -94,20 +92,16 @@ protected:
     scalar robinReferenceFluidDensity_ = 1000.0;
     bool useReferenceFluidDensity_ = false;
 
-    // Write c1 = rho_s*h_s/rho_f to postProcessing/robin_alpha.out per
-    // timestep.
+    // write c1 = rho_s*h_s/rho_f to postProcessing/robin_alpha.out
     bool writeRobinAlpha_ = false;
 
     // a_n under-relaxation beta in (0, 1] (rn_accel_relaxation)
     scalar rnAccelRelaxation_ = 1.0;
 
-    // Write per-outer-iteration fluid/solid interface force balance to
-    // postProcessing/fsi_force_balance.out.
+    // write the interface force balance to fsi_force_balance.out
     bool writeForceBalance_ = false;
 
-    // Physical solid thickness for thin-shell Robin BC (Tukovic Sec. 2.4).
-    // If usePhysicalSolidThickness_ = true, h_s = solidThickness_ (m).
-    // Default false: h_s = a_p*dt (virtual thickness, Tukovic Eq. 21).
+    // true: h_s = solidThickness_ (Tukovic Sec. 2.4), else a_p*dt (Eq. 21)
     bool usePhysicalSolidThickness_ = false;
     scalar solidThickness_ = 0.0;
 
@@ -289,6 +283,12 @@ public:
     scalar couplingStartTime() const
     {
         return couplingStartTime_;
+    }
+
+    // true once time reached coupling_start_time (always for non-FSI types)
+    bool isCoupled(const scalar time) const
+    {
+        return !(time < couplingStartTime_ - ::accel::SMALL);
     }
 
     bool isSlipNonOverlap() const

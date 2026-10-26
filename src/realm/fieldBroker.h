@@ -170,8 +170,7 @@ public:
 
     virtual void setupRnWallFluxE(const std::shared_ptr<domain> domain);
 
-    // zero the RN frozen explicit Robin term on this domain's RN interface
-    // sides
+    // zero the frozen Robin term E on this domain's RN sides
     void zeroRnWallFluxE(const std::shared_ptr<domain> domain);
 
     virtual void setupMomentumFlowRate(const std::shared_ptr<domain> domain);
@@ -955,17 +954,17 @@ protected:
 
     const heatFlowRate& qDotRef() const;
 
-    interfaceScalarField& aWallBcRef();
+    sideField<scalar, 1>& aWallBcRef();
 
-    const interfaceScalarField& aWallBcRef() const;
+    const sideField<scalar, 1>& aWallBcRef() const;
 
-    interfaceScalarField& rnWallFluxRef();
+    sideField<scalar, 1>& rnWallFluxRef();
 
-    const interfaceScalarField& rnWallFluxRef() const;
+    const sideField<scalar, 1>& rnWallFluxRef() const;
 
-    interfaceScalarField& rnWallFluxERef();
+    sideField<scalar, 1>& rnWallFluxERef();
 
-    const interfaceScalarField& rnWallFluxERef() const;
+    const sideField<scalar, 1>& rnWallFluxERef() const;
 
     momentumFlowRate& pDotRef();
 
@@ -1086,6 +1085,10 @@ protected:
     simpleTensorField& stressRef();
 
     const simpleTensorField& stressRef() const;
+
+    simpleScalarField& stressVonMisesRef();
+
+    const simpleScalarField& stressVonMisesRef() const;
 
     simpleTensorField& strainRef();
 

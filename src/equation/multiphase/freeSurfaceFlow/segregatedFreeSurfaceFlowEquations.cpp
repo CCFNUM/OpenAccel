@@ -246,8 +246,7 @@ void segregatedFreeSurfaceFlowEquations::solve()
                       << "Sub-iterating " + pCorr_eq_->name() << ":\n";
         }
 
-        // RN FSI: reset the inter-corrector wall flux memory and request the
-        // frozen explicit Robin term for this corrector loop
+        // Robin-Neumann: Q_vol and E reset for this corrector loop
         pCorr_eq_->startOfOuterIteration();
 
         for (label subIter = 1; subIter <= pCorr_eq_->subIters(); subIter++)

@@ -29,8 +29,7 @@ void solidDisplacementAssembler::assembleNodeTermsFusedEulerD2dt2_(
     const domain* domain,
     Context* ctx)
 {
-    // Euler d2dt2: rho*V0/dt^2*(D - 2*D_old + D_old2), optional Rayleigh
-    // alpha*rho*dD/dt (BDF1)
+    // Euler d2dt2 rho*V0/dt^2*(D - 2D_old + D_old2), Rayleigh alpha optional
 
     auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();
@@ -139,8 +138,7 @@ void solidDisplacementAssembler::assembleNodeTermsFusedEulerD2dt2_(
                 // RHS: rho*V/dt^2 * (D - 2*D_old + D_old_old)
                 p_rhs[i] -= lhsfac * (Di - 2.0 * DiOld + DiOldOld);
 
-                // damping: alpha*rho*V/dt on the diagonal, alpha*rho*V/dt *
-                // (D - D_old) on the residual
+                // Rayleigh damping alpha*rho*V/dt (BDF1)
                 if (useDamping)
                 {
                     p_lhs[i * SPATIAL_DIM + i] += lhsfacDamp;
@@ -182,9 +180,7 @@ void solidDisplacementAssembler::assembleBackwardD2dt2NodeLoop_(
     const domain* domain,
     Context* ctx)
 {
-    // S4F backward d2dt2 (nested BDF2), constant dt: (2.25 D - 6 D_old + 5.5
-    // D_old2 - 2 D_old3 + 0.25 D_old4)/dt^2; needs 5 states; startup (dt0 = 0)
-    // uses safedt0 = dt
+    // backward d2dt2: (2.25D - 6D1 + 5.5D2 - 2D3 + 0.25D4)/dt^2, 5 states
 
     auto& mesh = field_broker_->meshRef();
     Matrix& A = ctx->getAMatrix();

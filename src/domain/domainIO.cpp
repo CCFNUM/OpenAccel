@@ -17,8 +17,7 @@ namespace accel
 namespace
 {
 
-// (E, nu) -> Mooney-Rivlin (c1, c2 = 0, kappa) for a modified_mooney_rivlin
-// material
+// (E, nu) -> modified Mooney-Rivlin (c1, c2 = 0, kappa)
 void convertYoungPoissonToMooneyRivlin(scalar E,
                                        scalar nu,
                                        scalar& c1,
@@ -1208,8 +1207,7 @@ void domain::read_()
                 const std::string optionName =
                     solidMechanicsBlock["option"].template as<std::string>();
 
-                // deprecated alias of neo_hookean (kept for old input files);
-                // same normalisation as the converter
+                // deprecated alias of neo_hookean, normalised as the converter
                 std::string normalisedName = optionName;
                 ::accel::tolower(normalisedName);
                 std::replace(
@@ -1242,8 +1240,7 @@ void domain::read_()
                         equations_[static_cast<int>(
                             equationID::solidDisplacement)] = true;
 
-                        // the solid transient scheme sets the number of
-                        // field states
+                        // the solid transient scheme sets the field states
                         this->zonePtr()
                             ->meshPtr()
                             ->controlsRef()
@@ -1351,8 +1348,7 @@ void domain::read_()
                     const auto& mechanicalPropertiesBlock =
                         materialBlock["mechanical_properties"];
 
-                    // c1/c2/kappa are all-or-nothing: a partial set would
-                    // leave the missing ones at 0 (e.g. zero bulk modulus)
+                    // c1, c2, kappa all or none: a missing one would stay 0
                     const bool hasC1 =
                         static_cast<bool>(mechanicalPropertiesBlock["c1"]);
                     const bool hasC2 =
@@ -1409,8 +1405,7 @@ void domain::read_()
                 }
             }
 
-            // linear_elastic, neo_hookean and saint_venant_kirchhoff need E
-            // and nu
+            // linear_elastic, neo_hookean, saint_venant_kirchhoff need E and nu
             if (solidMechanics_.option_ ==
                     solidMechanicsOption::linearElastic ||
                 solidMechanics_.option_ == solidMechanicsOption::neoHookean ||

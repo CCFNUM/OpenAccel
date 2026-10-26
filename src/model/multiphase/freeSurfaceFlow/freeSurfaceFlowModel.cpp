@@ -3218,8 +3218,7 @@ void freeSurfaceFlowModel::computeFL_(const std::shared_ptr<domain> domain,
 
                         case boundaryConditionType::zeroGradient:
                             {
-                                // zero-gradient inlet: nodal alpha, as at the
-                                // outlet
+                                // zero-gradient inlet: nodal alpha
                                 const STKScalarField* mDotSideSTKFieldPtr =
                                     this->mDotRef(iPhase)
                                         .sideFieldRef()
@@ -3559,67 +3558,9 @@ void freeSurfaceFlowModel::computeFL_(const std::shared_ptr<domain> domain,
 namespace
 {
 
-inline scalar vofProfileMstoic(const scalar t)
-{
-    if (t <= 0.2)
-    {
-        return 3.0 * t;
-    }
-    else if (t <= 0.5)
-    {
-        return 0.5 * t + 0.5;
-    }
-    else if (t <= 0.7)
-    {
-        return 0.75 * t + 0.375;
-    }
-    return t / 3.0 + 2.0 / 3.0;
-}
-
-inline scalar vofProfileMsuperbee(const scalar t)
-{
-    if (t <= 1.0 / 3.0)
-    {
-        return 2.0 * t;
-    }
-    else if (t <= 0.5)
-    {
-        return 0.5 * t + 0.5;
-    }
-    else if (t <= 2.0 / 3.0)
-    {
-        return 1.5 * t;
-    }
-    return 1.0;
-}
-
 inline scalar vofProfileHyperC(const scalar t, const scalar Co)
 {
     return std::min(t / (Co + 1.0e-16), 1.0);
-}
-
-inline scalar vofProfileUltimateQuickest(const scalar t, const scalar Co)
-{
-    const scalar uq = (8.0 * Co * t + (1.0 - Co) * (6.0 * t + 3.0)) / 8.0;
-    return std::min(uq, vofProfileHyperC(t, Co));
-}
-
-inline scalar vofCosTheta2(const scalar* gradAlpha,
-                           const scalar* coordinates,
-                           const label iu,
-                           const label id)
-{
-    scalar gg = 0.0, dd = 0.0, gd = 0.0;
-    for (label j = 0; j < SPATIAL_DIM; ++j)
-    {
-        const scalar gj = gradAlpha[iu * SPATIAL_DIM + j];
-        const scalar dj = coordinates[id * SPATIAL_DIM + j] -
-                          coordinates[iu * SPATIAL_DIM + j];
-        gg += gj * gj;
-        dd += dj * dj;
-        gd += gj * dj;
-    }
-    return (gd * gd) / (gg * dd + 1.0e-16);
 }
 
 } // namespace
@@ -3662,8 +3603,7 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
 
         const vofAdvectionSchemeType vofScheme =
             domain->multiphase_.freeSurfaceModel_.advectionScheme_;
-        const bool needCo = (vofScheme == vofAdvectionSchemeType::hyperC ||
-                             vofScheme == vofAdvectionSchemeType::cicsam);
+        const bool needCo = (vofScheme == vofAdvectionSchemeType::hyperC);
         const scalar dt = mesh.controlsRef().getTimestep();
 
         // Define Scratch Spaces
@@ -3888,86 +3828,6 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     }
                                     break;
                                 }
-                            case vofAdvectionSchemeType::vanLeer:
-                                {
-                                    // virtual far-upwind: phiU = phiD -
-                                    // 2*grad(alpha)_U . d_UD
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[il * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar phiFTilde =
-                                            phiTilde * (2.0 - phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
-                            case vofAdvectionSchemeType::mstoic:
-                                {
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[il * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar phiFTilde =
-                                            vofProfileMstoic(phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
-                            case vofAdvectionSchemeType::msuperbee:
-                                {
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[il * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar phiFTilde =
-                                            vofProfileMsuperbee(phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
                             case vofAdvectionSchemeType::hyperC:
                                 {
                                     scalar gradCd = 0.0;
@@ -3994,78 +3854,6 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                              1.0e-16);
                                         const scalar phiFTilde =
                                             vofProfileHyperC(phiTilde, Co);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
-                            case vofAdvectionSchemeType::stacs:
-                                {
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[il * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar cos2 = vofCosTheta2(
-                                            p_gradAlpha, p_coordinates, il, ir);
-                                        const scalar gamma = cos2 * cos2;
-                                        const scalar phiFTilde =
-                                            gamma *
-                                                vofProfileMsuperbee(phiTilde) +
-                                            (1.0 - gamma) *
-                                                vofProfileMstoic(phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
-                            case vofAdvectionSchemeType::cicsam:
-                                {
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[ir * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[il * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[il * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[ir] - p_alpha[il]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar Co =
-                                            std::abs(tmDot) * dt /
-                                            (p_rho[il] * p_scv_volume[il] +
-                                             1.0e-16);
-                                        const scalar gamma =
-                                            std::min(vofCosTheta2(p_gradAlpha,
-                                                                  p_coordinates,
-                                                                  il,
-                                                                  ir),
-                                                     1.0);
-                                        const scalar phiFTilde =
-                                            gamma *
-                                                vofProfileHyperC(phiTilde, Co) +
-                                            (1.0 - gamma) *
-                                                vofProfileUltimateQuickest(
-                                                    phiTilde, Co);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
@@ -4092,86 +3880,6 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     }
                                     break;
                                 }
-                            case vofAdvectionSchemeType::vanLeer:
-                                {
-                                    // virtual far-upwind: phiU = phiD -
-                                    // 2*grad(alpha)_U . d_UD
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[ir * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar phiFTilde =
-                                            phiTilde * (2.0 - phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
-                            case vofAdvectionSchemeType::mstoic:
-                                {
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[ir * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar phiFTilde =
-                                            vofProfileMstoic(phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
-                            case vofAdvectionSchemeType::msuperbee:
-                                {
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[ir * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar phiFTilde =
-                                            vofProfileMsuperbee(phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
                             case vofAdvectionSchemeType::hyperC:
                                 {
                                     scalar gradCd = 0.0;
@@ -4198,78 +3906,6 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                              1.0e-16);
                                         const scalar phiFTilde =
                                             vofProfileHyperC(phiTilde, Co);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
-                            case vofAdvectionSchemeType::stacs:
-                                {
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[ir * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar cos2 = vofCosTheta2(
-                                            p_gradAlpha, p_coordinates, ir, il);
-                                        const scalar gamma = cos2 * cos2;
-                                        const scalar phiFTilde =
-                                            gamma *
-                                                vofProfileMsuperbee(phiTilde) +
-                                            (1.0 - gamma) *
-                                                vofProfileMstoic(phiTilde);
-                                        dcorr = (phiFTilde - phiTilde) * dq;
-                                    }
-                                    break;
-                                }
-                            case vofAdvectionSchemeType::cicsam:
-                                {
-                                    scalar gradCd = 0.0;
-                                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                                    {
-                                        const scalar dj =
-                                            p_coordinates[il * SPATIAL_DIM +
-                                                          j] -
-                                            p_coordinates[ir * SPATIAL_DIM + j];
-                                        gradCd +=
-                                            p_gradAlpha[ir * SPATIAL_DIM + j] *
-                                            dj;
-                                    }
-                                    const scalar dq = 2.0 * gradCd;
-                                    const scalar phiTilde =
-                                        1.0 - (p_alpha[il] - p_alpha[ir]) /
-                                                  (dq + 1.0e-16);
-
-                                    if (phiTilde > 0.0 && phiTilde < 1.0)
-                                    {
-                                        const scalar Co =
-                                            std::abs(tmDot) * dt /
-                                            (p_rho[ir] * p_scv_volume[ir] +
-                                             1.0e-16);
-                                        const scalar gamma =
-                                            std::min(vofCosTheta2(p_gradAlpha,
-                                                                  p_coordinates,
-                                                                  ir,
-                                                                  il),
-                                                     1.0);
-                                        const scalar phiFTilde =
-                                            gamma *
-                                                vofProfileHyperC(phiTilde, Co) +
-                                            (1.0 - gamma) *
-                                                vofProfileUltimateQuickest(
-                                                    phiTilde, Co);
                                         dcorr = (phiFTilde - phiTilde) * dq;
                                     }
                                     break;
@@ -4418,8 +4054,7 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
 
                         case boundaryConditionType::zeroGradient:
                             {
-                                // zero-gradient inlet: high-order flux =
-                                // low-order flux, as at the outlet
+                                // zero-gradient inlet: low-order flux
                                 const STKScalarField* mDotSideSTKFieldPtr =
                                     this->mDotRef(iPhase)
                                         .sideFieldRef()
@@ -6215,8 +5850,7 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
 
                         case boundaryConditionType::zeroGradient:
                             {
-                                // zero-gradient inlet: free DOFs, limited
-                                // correction as at the outlet
+                                // zero-gradient inlet: limited free DOFs
                                 STKScalarField* alphaSTKFieldPtr =
                                     this->alphaRef(iPhase).stkFieldPtr();
 

@@ -16,391 +16,6 @@
 namespace accel
 {
 
-#ifdef HAS_SFEM
-#if SPATIAL_DIM == 2
-namespace
-{
-
-void assembleQuad4LinearElasticity(
-    const std::vector<std::vector<geom_t>>& coordinates,
-    const scalar mu,
-    const scalar lambda,
-    std::vector<scalar>& lhs)
-{
-    constexpr scalar invSqrt3 = 0.57735026918962576451;
-    const scalar gaussPoints[2] = {-invSqrt3, invSqrt3};
-    const scalar c11 = lambda + 2.0 * mu;
-    const scalar c12 = lambda;
-    const scalar c33 = mu;
-
-    for (const scalar xi : gaussPoints)
-    {
-        for (const scalar eta : gaussPoints)
-        {
-            scalar dN_dxi[4] = {-0.25 * (1.0 - eta),
-                                0.25 * (1.0 - eta),
-                                0.25 * (1.0 + eta),
-                                -0.25 * (1.0 + eta)};
-            scalar dN_deta[4] = {-0.25 * (1.0 - xi),
-                                 -0.25 * (1.0 + xi),
-                                 0.25 * (1.0 + xi),
-                                 0.25 * (1.0 - xi)};
-
-            scalar j00 = 0.0;
-            scalar j01 = 0.0;
-            scalar j10 = 0.0;
-            scalar j11 = 0.0;
-            for (label node = 0; node < 4; ++node)
-            {
-                const scalar x = coordinates[0][node];
-                const scalar y = coordinates[1][node];
-                j00 += dN_dxi[node] * x;
-                j01 += dN_deta[node] * x;
-                j10 += dN_dxi[node] * y;
-                j11 += dN_deta[node] * y;
-            }
-
-            const scalar detJ = j00 * j11 - j01 * j10;
-            STK_ThrowRequireMsg(
-                detJ > 0.0,
-                "Invalid QUAD4 FEM solid element: non-positive Jacobian");
-
-            const scalar invJ00 = j11 / detJ;
-            const scalar invJ01 = -j01 / detJ;
-            const scalar invJ10 = -j10 / detJ;
-            const scalar invJ11 = j00 / detJ;
-
-            scalar dN_dx[4];
-            scalar dN_dy[4];
-            for (label node = 0; node < 4; ++node)
-            {
-                dN_dx[node] = invJ00 * dN_dxi[node] + invJ10 * dN_deta[node];
-                dN_dy[node] = invJ01 * dN_dxi[node] + invJ11 * dN_deta[node];
-            }
-
-            for (label a = 0; a < 4; ++a)
-            {
-                const scalar Bax[3] = {dN_dx[a], 0.0, dN_dy[a]};
-                const scalar Bay[3] = {0.0, dN_dy[a], dN_dx[a]};
-
-                for (label b = 0; b < 4; ++b)
-                {
-                    const scalar Bbx[3] = {dN_dx[b], 0.0, dN_dy[b]};
-                    const scalar Bby[3] = {0.0, dN_dy[b], dN_dx[b]};
-
-                    const scalar kxx = Bax[0] * (c11 * Bbx[0] + c12 * Bbx[1]) +
-                                       Bax[1] * (c12 * Bbx[0] + c11 * Bbx[1]) +
-                                       Bax[2] * c33 * Bbx[2];
-                    const scalar kxy = Bax[0] * (c11 * Bby[0] + c12 * Bby[1]) +
-                                       Bax[1] * (c12 * Bby[0] + c11 * Bby[1]) +
-                                       Bax[2] * c33 * Bby[2];
-                    const scalar kyx = Bay[0] * (c11 * Bbx[0] + c12 * Bbx[1]) +
-                                       Bay[1] * (c12 * Bbx[0] + c11 * Bbx[1]) +
-                                       Bay[2] * c33 * Bbx[2];
-                    const scalar kyy = Bay[0] * (c11 * Bby[0] + c12 * Bby[1]) +
-                                       Bay[1] * (c12 * Bby[0] + c11 * Bby[1]) +
-                                       Bay[2] * c33 * Bby[2];
-
-                    const label rowX = a * SPATIAL_DIM;
-                    const label rowY = rowX + 1;
-                    const label colX = b * SPATIAL_DIM;
-                    const label colY = colX + 1;
-                    const scalar weight = detJ;
-
-                    lhs[rowX * 8 + colX] += weight * kxx;
-                    lhs[rowX * 8 + colY] += weight * kxy;
-                    lhs[rowY * 8 + colX] += weight * kyx;
-                    lhs[rowY * 8 + colY] += weight * kyy;
-                }
-            }
-        }
-    }
-}
-
-} // namespace
-
-#endif
-
-namespace
-{
-
-void assembleSfemNeoHookeanElement(
-    const smesh::ElemType sfemElementType,
-    const label nodesPerElement,
-    const scalar lambda,
-    const scalar mu,
-    const std::vector<std::vector<scalar>>& coordinates,
-    const std::vector<scalar>& displacement,
-    std::vector<scalar>& rhs,
-    std::vector<scalar>& lhs)
-{
-    const label dofsPerElement = nodesPerElement * SPATIAL_DIM;
-    const label lhsSize = dofsPerElement * dofsPerElement;
-
-    std::vector<scalar> gradient(dofsPerElement, 0.0);
-    std::vector<scalar> hessian(lhsSize, 0.0);
-    std::vector<const scalar*> coordinateStreams(dofsPerElement);
-    std::vector<const scalar*> displacementStreams(dofsPerElement);
-    std::vector<scalar*> gradientStreams(dofsPerElement);
-    std::vector<scalar*> hessianStreams(lhsSize);
-
-    // SFEM kernels take SoA input; pass a single-element batch
-    for (label node = 0; node < nodesPerElement; ++node)
-    {
-        for (label dim = 0; dim < SPATIAL_DIM; ++dim)
-        {
-            const label dof = node * SPATIAL_DIM + dim;
-            coordinateStreams[dof] = &coordinates[dim][node];
-            displacementStreams[dof] = &displacement[dof];
-            gradientStreams[dof] = &gradient[dof];
-        }
-    }
-
-    for (label entry = 0; entry < lhsSize; ++entry)
-        hessianStreams[entry] = &hessian[entry];
-
-#if SPATIAL_DIM == 2
-    const int gradientStatus =
-        sfem::codegen::neohookean_ogden_gradient_2d_esoa<scalar, 1>(
-            sfemElementType,
-            1,
-            coordinateStreams.data(),
-            lambda,
-            mu,
-            displacementStreams.data(),
-            gradientStreams.data());
-    const int hessianStatus =
-        sfem::codegen::neohookean_ogden_hessian_2d_ecoords_soa<scalar, 1>(
-            sfemElementType,
-            1,
-            coordinateStreams.data(),
-            lambda,
-            mu,
-            displacementStreams.data(),
-            hessianStreams.data());
-#else
-    const int gradientStatus =
-        sfem::codegen::neohookean_ogden_gradient_3d_esoa<scalar, 1>(
-            sfemElementType,
-            1,
-            coordinateStreams.data(),
-            lambda,
-            mu,
-            displacementStreams.data(),
-            gradientStreams.data());
-    const int hessianStatus =
-        sfem::codegen::neohookean_ogden_hessian_3d_ecoords_soa<scalar, 1>(
-            sfemElementType,
-            1,
-            coordinateStreams.data(),
-            lambda,
-            mu,
-            displacementStreams.data(),
-            hessianStreams.data());
-#endif
-
-    STK_ThrowRequireMsg(gradientStatus == SFEM_SUCCESS &&
-                            hessianStatus == SFEM_SUCCESS,
-                        "sfem Neo-Hookean elemental kernel failed");
-
-    lhs = std::move(hessian);
-    for (label row = 0; row < dofsPerElement; ++row)
-        rhs[row] = -gradient[row];
-}
-
-// Saint Venant-Kirchhoff: psi = lambda/2 tr(E)^2 + mu E:E, E = (F^T F - I)/2
-void assembleSfemSaintVenantKirchhoffElement(
-    const smesh::ElemType sfemElementType,
-    const label nodesPerElement,
-    const scalar lambda,
-    const scalar mu,
-    const std::vector<std::vector<scalar>>& coordinates,
-    const std::vector<scalar>& displacement,
-    std::vector<scalar>& rhs,
-    std::vector<scalar>& lhs)
-{
-    const label dofsPerElement = nodesPerElement * SPATIAL_DIM;
-    const label lhsSize = dofsPerElement * dofsPerElement;
-
-    std::vector<scalar> gradient(dofsPerElement, 0.0);
-    std::vector<scalar> hessian(lhsSize, 0.0);
-    std::vector<const scalar*> coordinateStreams(dofsPerElement);
-    std::vector<const scalar*> displacementStreams(dofsPerElement);
-    std::vector<scalar*> gradientStreams(dofsPerElement);
-    std::vector<scalar*> hessianStreams(lhsSize);
-
-    // SFEM kernels take SoA input; pass a single-element batch
-    for (label node = 0; node < nodesPerElement; ++node)
-    {
-        for (label dim = 0; dim < SPATIAL_DIM; ++dim)
-        {
-            const label dof = node * SPATIAL_DIM + dim;
-            coordinateStreams[dof] = &coordinates[dim][node];
-            displacementStreams[dof] = &displacement[dof];
-            gradientStreams[dof] = &gradient[dof];
-        }
-    }
-
-    for (label entry = 0; entry < lhsSize; ++entry)
-        hessianStreams[entry] = &hessian[entry];
-
-#if SPATIAL_DIM == 2
-    const int gradientStatus =
-        sfem::codegen::saint_venant_kirchhoff_gradient_2d_esoa<scalar, 1>(
-            sfemElementType,
-            1,
-            coordinateStreams.data(),
-            lambda,
-            mu,
-            displacementStreams.data(),
-            gradientStreams.data());
-    const int hessianStatus =
-        sfem::codegen::saint_venant_kirchhoff_hessian_2d_ecoords_soa<scalar, 1>(
-            sfemElementType,
-            1,
-            coordinateStreams.data(),
-            lambda,
-            mu,
-            displacementStreams.data(),
-            hessianStreams.data());
-#else
-    const int gradientStatus =
-        sfem::codegen::saint_venant_kirchhoff_gradient_3d_esoa<scalar, 1>(
-            sfemElementType,
-            1,
-            coordinateStreams.data(),
-            lambda,
-            mu,
-            displacementStreams.data(),
-            gradientStreams.data());
-    const int hessianStatus =
-        sfem::codegen::saint_venant_kirchhoff_hessian_3d_ecoords_soa<scalar, 1>(
-            sfemElementType,
-            1,
-            coordinateStreams.data(),
-            lambda,
-            mu,
-            displacementStreams.data(),
-            hessianStreams.data());
-#endif
-
-    STK_ThrowRequireMsg(gradientStatus == SFEM_SUCCESS &&
-                            hessianStatus == SFEM_SUCCESS,
-                        "sfem Saint Venant-Kirchhoff elemental kernel failed");
-
-    lhs = std::move(hessian);
-    for (label row = 0; row < dofsPerElement; ++row)
-        rhs[row] = -gradient[row];
-}
-
-#if SPATIAL_DIM == 2
-// SFEM MR has only a mesh-level BSR ABI: wrap one element as a mesh
-void assembleSfemModifiedMooneyRivlinElement(
-    const smesh::ElemType sfemElementType,
-    const label nodesPerElement,
-    const scalar c1,
-    const scalar c2,
-    const scalar kappa,
-    const std::vector<std::vector<geom_t>>& coordinates,
-    std::vector<idx_t*>& elementConnectivity,
-    const std::vector<scalar>& displacement,
-    std::vector<scalar>& rhs,
-    std::vector<scalar>& lhs)
-{
-    const label dofsPerElement = nodesPerElement * SPATIAL_DIM;
-
-    // SoA views into the node-major buffers
-    std::vector<scalar> gradient(dofsPerElement, 0.0);
-    const scalar* ux = displacement.data() + 0;
-    const scalar* uy = displacement.data() + 1;
-    scalar* outx = gradient.data() + 0;
-    scalar* outy = gradient.data() + 1;
-
-    std::vector<const geom_t*> pointStreams(SPATIAL_DIM);
-    for (label dim = 0; dim < SPATIAL_DIM; ++dim)
-        pointStreams[dim] = coordinates[dim].data();
-
-    const int gradientStatus = modified_mooney_rivlin_gradient_2d_i_msoa(
-        sfemElementType,
-        smesh::TypeToEnum<scalar>::value(),
-        1,
-        nodesPerElement,
-        elementConnectivity.data(),
-        pointStreams.data(),
-        c1,
-        c2,
-        kappa,
-        SPATIAL_DIM,
-        ux,
-        uy,
-        SPATIAL_DIM,
-        outx,
-        outy);
-
-    // Dense CSR: every local node coupled to every other.
-    std::vector<count_t> rowptr(nodesPerElement + 1);
-    std::vector<idx_t> colidx(nodesPerElement * nodesPerElement);
-    for (label i = 0; i < nodesPerElement; ++i)
-    {
-        rowptr[i] = i * nodesPerElement;
-        for (label j = 0; j < nodesPerElement; ++j)
-            colidx[i * nodesPerElement + j] = j;
-    }
-    rowptr[nodesPerElement] = nodesPerElement * nodesPerElement;
-
-    std::vector<scalar> values(
-        nodesPerElement * nodesPerElement * SPATIAL_DIM * SPATIAL_DIM, 0.0);
-
-    const int hessianStatus = modified_mooney_rivlin_hessian_bsr_2d_i_msoa(
-        sfemElementType,
-        smesh::TypeToEnum<scalar>::value(),
-        1,
-        nodesPerElement,
-        elementConnectivity.data(),
-        pointStreams.data(),
-        c1,
-        c2,
-        kappa,
-        SPATIAL_DIM,
-        ux,
-        uy,
-        rowptr.data(),
-        colidx.data(),
-        values.data());
-
-    STK_ThrowRequireMsg(gradientStatus == SFEM_SUCCESS &&
-                            hessianStatus == SFEM_SUCCESS,
-                        "sfem modified Mooney-Rivlin elemental kernel failed");
-
-    // Scatter the dense BSR blocks into OpenAccel's dense, node-major lhs.
-    lhs.assign(dofsPerElement * dofsPerElement, 0.0);
-    for (label i = 0; i < nodesPerElement; ++i)
-    {
-        for (label j = 0; j < nodesPerElement; ++j)
-        {
-            const scalar* block =
-                &values[(i * nodesPerElement + j) * SPATIAL_DIM * SPATIAL_DIM];
-            for (label bi = 0; bi < SPATIAL_DIM; ++bi)
-            {
-                const label row = i * SPATIAL_DIM + bi;
-                for (label bj = 0; bj < SPATIAL_DIM; ++bj)
-                {
-                    const label col = j * SPATIAL_DIM + bj;
-                    lhs[row * dofsPerElement + col] =
-                        block[bi * SPATIAL_DIM + bj];
-                }
-            }
-        }
-    }
-
-    for (label row = 0; row < dofsPerElement; ++row)
-        rhs[row] = -gradient[row];
-}
-#endif // SPATIAL_DIM == 2
-
-} // namespace
-#endif /* HAS_SFEM */
-
 void solidDisplacementAssembler::assembleElemTermsInterior_(
     const domain* domain,
     Context* ctx)
@@ -998,6 +613,25 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
             for (label dim = 0; dim < SPATIAL_DIM; ++dim)
                 coordinatePointers[dim] = coordinates[dim].data();
 
+            // NH/SVK kernels take SoA streams; lhs receives the hessian
+            std::vector<scalar> gradient(dofsPerElement, 0.0);
+            std::vector<const scalar*> coordinateStreams(dofsPerElement);
+            std::vector<const scalar*> displacementStreams(dofsPerElement);
+            std::vector<scalar*> gradientStreams(dofsPerElement);
+            std::vector<scalar*> hessianStreams(lhsSize);
+            for (label node = 0; node < nodesPerElement; ++node)
+            {
+                for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                {
+                    const label dof = node * SPATIAL_DIM + dim;
+                    coordinateStreams[dof] = &hyperCoordinates[dim][node];
+                    displacementStreams[dof] = &displacement[dof];
+                    gradientStreams[dof] = &gradient[dof];
+                }
+            }
+            for (label entry = 0; entry < lhsSize; ++entry)
+                hessianStreams[entry] = &lhs[entry];
+
             for (stk::mesh::Entity elem : *bucket)
             {
                 std::fill(lhs.begin(), lhs.end(), 0.0);
@@ -1037,80 +671,388 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                 mu /= nodesPerElement;
                 lambda /= nodesPerElement;
 
-                if (solidMechOption == solidMechanicsOption::neoHookean)
+                // element tangent lhs and residual rhs of the solid model
+                switch (solidMechOption)
                 {
-                    assembleSfemNeoHookeanElement(sfemElementType,
-                                                  nodesPerElement,
-                                                  lambda,
-                                                  mu,
-                                                  hyperCoordinates,
-                                                  displacement,
-                                                  rhs,
-                                                  lhs);
-                }
-                else if (solidMechOption ==
-                         solidMechanicsOption::saintVenantKirchhoff)
-                {
-                    assembleSfemSaintVenantKirchhoffElement(sfemElementType,
-                                                            nodesPerElement,
-                                                            lambda,
-                                                            mu,
-                                                            hyperCoordinates,
-                                                            displacement,
-                                                            rhs,
-                                                            lhs);
-                }
+                    case solidMechanicsOption::neoHookean:
+                    case solidMechanicsOption::saintVenantKirchhoff:
+                        {
+                            std::fill(gradient.begin(), gradient.end(), 0.0);
+                            const bool neoHookean =
+                                solidMechOption ==
+                                solidMechanicsOption::neoHookean;
 #if SPATIAL_DIM == 2
-                else if (solidMechOption ==
-                         solidMechanicsOption::modifiedMooneyRivlin)
-                {
-                    // c1/c2/kappa are per-domain constants
-                    const auto& mechProps =
-                        domain->materialRef().mechanicalProperties_;
-                    assembleSfemModifiedMooneyRivlinElement(sfemElementType,
-                                                            nodesPerElement,
-                                                            mechProps.c1_,
-                                                            mechProps.c2_,
-                                                            mechProps.kappa_,
-                                                            coordinates,
-                                                            elementConnectivity,
-                                                            displacement,
-                                                            rhs,
-                                                            lhs);
-                }
-                else if (useOpenAccelQuad4)
-                {
-                    assembleQuad4LinearElasticity(coordinates, mu, lambda, lhs);
-                }
+                            const int gradientStatus =
+                                neoHookean
+                                    ? sfem::codegen::
+                                          neohookean_ogden_gradient_2d_esoa<
+                                              scalar,
+                                              1>(sfemElementType,
+                                                 1,
+                                                 coordinateStreams.data(),
+                                                 lambda,
+                                                 mu,
+                                                 displacementStreams.data(),
+                                                 gradientStreams.data())
+                                    : sfem::codegen::
+                                          saint_venant_kirchhoff_gradient_2d_esoa<
+                                              scalar,
+                                              1>(sfemElementType,
+                                                 1,
+                                                 coordinateStreams.data(),
+                                                 lambda,
+                                                 mu,
+                                                 displacementStreams.data(),
+                                                 gradientStreams.data());
+                            const int hessianStatus =
+                                neoHookean
+                                    ? sfem::codegen::
+                                          neohookean_ogden_hessian_2d_ecoords_soa<
+                                              scalar,
+                                              1>(sfemElementType,
+                                                 1,
+                                                 coordinateStreams.data(),
+                                                 lambda,
+                                                 mu,
+                                                 displacementStreams.data(),
+                                                 hessianStreams.data())
+                                    : sfem::codegen::
+                                          saint_venant_kirchhoff_hessian_2d_ecoords_soa<
+                                              scalar,
+                                              1>(sfemElementType,
+                                                 1,
+                                                 coordinateStreams.data(),
+                                                 lambda,
+                                                 mu,
+                                                 displacementStreams.data(),
+                                                 hessianStreams.data());
+#else
+                            const int gradientStatus =
+                                neoHookean
+                                    ? sfem::codegen::
+                                          neohookean_ogden_gradient_3d_esoa<
+                                              scalar,
+                                              1>(sfemElementType,
+                                                 1,
+                                                 coordinateStreams.data(),
+                                                 lambda,
+                                                 mu,
+                                                 displacementStreams.data(),
+                                                 gradientStreams.data())
+                                    : sfem::codegen::
+                                          saint_venant_kirchhoff_gradient_3d_esoa<
+                                              scalar,
+                                              1>(sfemElementType,
+                                                 1,
+                                                 coordinateStreams.data(),
+                                                 lambda,
+                                                 mu,
+                                                 displacementStreams.data(),
+                                                 gradientStreams.data());
+                            const int hessianStatus =
+                                neoHookean
+                                    ? sfem::codegen::
+                                          neohookean_ogden_hessian_3d_ecoords_soa<
+                                              scalar,
+                                              1>(sfemElementType,
+                                                 1,
+                                                 coordinateStreams.data(),
+                                                 lambda,
+                                                 mu,
+                                                 displacementStreams.data(),
+                                                 hessianStreams.data())
+                                    : sfem::codegen::
+                                          saint_venant_kirchhoff_hessian_3d_ecoords_soa<
+                                              scalar,
+                                              1>(sfemElementType,
+                                                 1,
+                                                 coordinateStreams.data(),
+                                                 lambda,
+                                                 mu,
+                                                 displacementStreams.data(),
+                                                 hessianStreams.data());
 #endif
-                else
-                {
+                            STK_ThrowRequireMsg(
+                                gradientStatus == SFEM_SUCCESS &&
+                                    hessianStatus == SFEM_SUCCESS,
+                                (neoHookean
+                                     ? "sfem Neo-Hookean elemental kernel "
+                                       "failed"
+                                     : "sfem Saint Venant-Kirchhoff elemental "
+                                       "kernel failed"));
+
+                            for (label row = 0; row < dofsPerElement; ++row)
+                                rhs[row] = -gradient[row];
+                            break;
+                        }
 #if SPATIAL_DIM == 2
-                    // element matrix = sfem operator applied to unit vectors
+                    case solidMechanicsOption::modifiedMooneyRivlin:
+                        {
+                            // SFEM MR: mesh-level BSR ABI, one element
+                            const auto& mechProps =
+                                domain->materialRef().mechanicalProperties_;
+                            const scalar c1 = mechProps.c1_;
+                            const scalar c2 = mechProps.c2_;
+                            const scalar kappa = mechProps.kappa_;
+
+                            // SoA views into the node-major buffers
+                            std::fill(gradient.begin(), gradient.end(), 0.0);
+                            const scalar* ux = displacement.data() + 0;
+                            const scalar* uy = displacement.data() + 1;
+                            scalar* outx = gradient.data() + 0;
+                            scalar* outy = gradient.data() + 1;
+
+                            std::vector<const geom_t*> pointStreams(
+                                SPATIAL_DIM);
+                            for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                                pointStreams[dim] = coordinates[dim].data();
+
+                            const int gradientStatus =
+                                modified_mooney_rivlin_gradient_2d_i_msoa(
+                                    sfemElementType,
+                                    smesh::TypeToEnum<scalar>::value(),
+                                    1,
+                                    nodesPerElement,
+                                    elementConnectivity.data(),
+                                    pointStreams.data(),
+                                    c1,
+                                    c2,
+                                    kappa,
+                                    SPATIAL_DIM,
+                                    ux,
+                                    uy,
+                                    SPATIAL_DIM,
+                                    outx,
+                                    outy);
+
+                            // dense CSR: every node couples to all
+                            std::vector<count_t> rowptr(nodesPerElement + 1);
+                            std::vector<idx_t> colidx(nodesPerElement *
+                                                      nodesPerElement);
+                            for (label i = 0; i < nodesPerElement; ++i)
+                            {
+                                rowptr[i] = i * nodesPerElement;
+                                for (label j = 0; j < nodesPerElement; ++j)
+                                    colidx[i * nodesPerElement + j] = j;
+                            }
+                            rowptr[nodesPerElement] =
+                                nodesPerElement * nodesPerElement;
+
+                            std::vector<scalar> values(
+                                nodesPerElement * nodesPerElement *
+                                    SPATIAL_DIM * SPATIAL_DIM,
+                                0.0);
+
+                            const int hessianStatus =
+                                modified_mooney_rivlin_hessian_bsr_2d_i_msoa(
+                                    sfemElementType,
+                                    smesh::TypeToEnum<scalar>::value(),
+                                    1,
+                                    nodesPerElement,
+                                    elementConnectivity.data(),
+                                    pointStreams.data(),
+                                    c1,
+                                    c2,
+                                    kappa,
+                                    SPATIAL_DIM,
+                                    ux,
+                                    uy,
+                                    rowptr.data(),
+                                    colidx.data(),
+                                    values.data());
+
+                            STK_ThrowRequireMsg(
+                                gradientStatus == SFEM_SUCCESS &&
+                                    hessianStatus == SFEM_SUCCESS,
+                                "sfem modified Mooney-Rivlin elemental kernel "
+                                "failed");
+
+                            // scatter the BSR blocks into the node-major lhs
+                            lhs.assign(dofsPerElement * dofsPerElement, 0.0);
+                            for (label i = 0; i < nodesPerElement; ++i)
+                            {
+                                for (label j = 0; j < nodesPerElement; ++j)
+                                {
+                                    const scalar* block =
+                                        &values[(i * nodesPerElement + j) *
+                                                SPATIAL_DIM * SPATIAL_DIM];
+                                    for (label bi = 0; bi < SPATIAL_DIM; ++bi)
+                                    {
+                                        const label row = i * SPATIAL_DIM + bi;
+                                        for (label bj = 0; bj < SPATIAL_DIM;
+                                             ++bj)
+                                        {
+                                            const label col =
+                                                j * SPATIAL_DIM + bj;
+                                            lhs[row * dofsPerElement + col] =
+                                                block[bi * SPATIAL_DIM + bj];
+                                        }
+                                    }
+                                }
+                            }
+
+                            for (label row = 0; row < dofsPerElement; ++row)
+                                rhs[row] = -gradient[row];
+                            break;
+                        }
 #endif
-                    for (label col = 0; col < dofsPerElement; ++col)
-                    {
-                        std::fill(basis.begin(), basis.end(), 0.0);
-                        std::fill(column.begin(), column.end(), 0.0);
-                        basis[col] = 1.0;
+                    default:
+                        {
+#if SPATIAL_DIM == 2
+                            if (useOpenAccelQuad4)
+                            {
+                                // QUAD4 linear elasticity, 2x2 Gauss
+                                constexpr scalar invSqrt3 =
+                                    0.57735026918962576451;
+                                const scalar gaussPoints[2] = {-invSqrt3,
+                                                               invSqrt3};
+                                const scalar c11 = lambda + 2.0 * mu;
+                                const scalar c12 = lambda;
+                                const scalar c33 = mu;
 
-                        const int status = linear_elasticity_apply_aos(
-                            sfemElementType,
-                            1,
-                            nodesPerElement,
-                            elementConnectivity.data(),
-                            coordinatePointers.data(),
-                            mu,
-                            lambda,
-                            basis.data(),
-                            column.data());
-                        STK_ThrowRequireMsg(
-                            status == SFEM_SUCCESS,
-                            "sfem linear elasticity kernel failed");
+                                for (const scalar xi : gaussPoints)
+                                {
+                                    for (const scalar eta : gaussPoints)
+                                    {
+                                        scalar dN_dxi[4] = {-0.25 * (1.0 - eta),
+                                                            0.25 * (1.0 - eta),
+                                                            0.25 * (1.0 + eta),
+                                                            -0.25 *
+                                                                (1.0 + eta)};
+                                        scalar dN_deta[4] = {-0.25 * (1.0 - xi),
+                                                             -0.25 * (1.0 + xi),
+                                                             0.25 * (1.0 + xi),
+                                                             0.25 * (1.0 - xi)};
 
-                        for (label row = 0; row < dofsPerElement; ++row)
-                            lhs[row * dofsPerElement + col] = column[row];
-                    }
+                                        scalar j00 = 0.0;
+                                        scalar j01 = 0.0;
+                                        scalar j10 = 0.0;
+                                        scalar j11 = 0.0;
+                                        for (label node = 0; node < 4; ++node)
+                                        {
+                                            const scalar x =
+                                                coordinates[0][node];
+                                            const scalar y =
+                                                coordinates[1][node];
+                                            j00 += dN_dxi[node] * x;
+                                            j01 += dN_deta[node] * x;
+                                            j10 += dN_dxi[node] * y;
+                                            j11 += dN_deta[node] * y;
+                                        }
+
+                                        const scalar detJ =
+                                            j00 * j11 - j01 * j10;
+                                        STK_ThrowRequireMsg(
+                                            detJ > 0.0,
+                                            "Invalid QUAD4 FEM solid element: "
+                                            "non-positive Jacobian");
+
+                                        const scalar invJ00 = j11 / detJ;
+                                        const scalar invJ01 = -j01 / detJ;
+                                        const scalar invJ10 = -j10 / detJ;
+                                        const scalar invJ11 = j00 / detJ;
+
+                                        scalar dN_dx[4];
+                                        scalar dN_dy[4];
+                                        for (label node = 0; node < 4; ++node)
+                                        {
+                                            dN_dx[node] =
+                                                invJ00 * dN_dxi[node] +
+                                                invJ10 * dN_deta[node];
+                                            dN_dy[node] =
+                                                invJ01 * dN_dxi[node] +
+                                                invJ11 * dN_deta[node];
+                                        }
+
+                                        for (label a = 0; a < 4; ++a)
+                                        {
+                                            const scalar Bax[3] = {
+                                                dN_dx[a], 0.0, dN_dy[a]};
+                                            const scalar Bay[3] = {
+                                                0.0, dN_dy[a], dN_dx[a]};
+
+                                            for (label b = 0; b < 4; ++b)
+                                            {
+                                                const scalar Bbx[3] = {
+                                                    dN_dx[b], 0.0, dN_dy[b]};
+                                                const scalar Bby[3] = {
+                                                    0.0, dN_dy[b], dN_dx[b]};
+
+                                                const scalar kxx =
+                                                    Bax[0] * (c11 * Bbx[0] +
+                                                              c12 * Bbx[1]) +
+                                                    Bax[1] * (c12 * Bbx[0] +
+                                                              c11 * Bbx[1]) +
+                                                    Bax[2] * c33 * Bbx[2];
+                                                const scalar kxy =
+                                                    Bax[0] * (c11 * Bby[0] +
+                                                              c12 * Bby[1]) +
+                                                    Bax[1] * (c12 * Bby[0] +
+                                                              c11 * Bby[1]) +
+                                                    Bax[2] * c33 * Bby[2];
+                                                const scalar kyx =
+                                                    Bay[0] * (c11 * Bbx[0] +
+                                                              c12 * Bbx[1]) +
+                                                    Bay[1] * (c12 * Bbx[0] +
+                                                              c11 * Bbx[1]) +
+                                                    Bay[2] * c33 * Bbx[2];
+                                                const scalar kyy =
+                                                    Bay[0] * (c11 * Bby[0] +
+                                                              c12 * Bby[1]) +
+                                                    Bay[1] * (c12 * Bby[0] +
+                                                              c11 * Bby[1]) +
+                                                    Bay[2] * c33 * Bby[2];
+
+                                                const label rowX =
+                                                    a * SPATIAL_DIM;
+                                                const label rowY = rowX + 1;
+                                                const label colX =
+                                                    b * SPATIAL_DIM;
+                                                const label colY = colX + 1;
+                                                const scalar weight = detJ;
+
+                                                lhs[rowX * 8 + colX] +=
+                                                    weight * kxx;
+                                                lhs[rowX * 8 + colY] +=
+                                                    weight * kxy;
+                                                lhs[rowY * 8 + colX] +=
+                                                    weight * kyx;
+                                                lhs[rowY * 8 + colY] +=
+                                                    weight * kyy;
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+#endif
+                            // lhs columns: sfem operator on unit vectors
+                            for (label col = 0; col < dofsPerElement; ++col)
+                            {
+                                std::fill(basis.begin(), basis.end(), 0.0);
+                                std::fill(column.begin(), column.end(), 0.0);
+                                basis[col] = 1.0;
+
+                                const int status = linear_elasticity_apply_aos(
+                                    sfemElementType,
+                                    1,
+                                    nodesPerElement,
+                                    elementConnectivity.data(),
+                                    coordinatePointers.data(),
+                                    mu,
+                                    lambda,
+                                    basis.data(),
+                                    column.data());
+                                STK_ThrowRequireMsg(
+                                    status == SFEM_SUCCESS,
+                                    "sfem linear elasticity kernel failed");
+
+                                for (label row = 0; row < dofsPerElement; ++row)
+                                    lhs[row * dofsPerElement + col] =
+                                        column[row];
+                            }
+                            break;
+                        }
                 }
 
                 if (messager::master() &&

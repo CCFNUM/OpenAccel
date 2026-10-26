@@ -59,8 +59,7 @@ void tolower(std::string& s);
 
 void errorMsg(std::string msg);
 
-// NaN/Inf test on the bit pattern: unlike std::isfinite it stays correct
-// under -ffast-math (WITH_FASTMATH), where std::isfinite may fold to true
+// NaN/Inf test on the bits: std::isfinite may fold to true with fast-math
 bool isFiniteValue(double x);
 
 void warningMsg(std::string msg);

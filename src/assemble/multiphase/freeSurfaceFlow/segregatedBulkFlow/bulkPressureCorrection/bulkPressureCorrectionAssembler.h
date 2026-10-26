@@ -51,8 +51,7 @@ public:
 
     void adjustMatrixForPressureReference(const domain* domain, Context* ctx);
 
-    // Tukovic Eq. 30: accumulate Q_vol after every corrector (postSolve)
-    void accumulateRnWallFlux(const domain* domain);
+    void accumulateRnWallFlux(const domain* domain) override;
 
     void setPhaseIndex(label phaseIndex)
     {
@@ -61,6 +60,20 @@ public:
 
 private:
     freeSurfaceFlowModel* model_;
+
+    template <class Assembler>
+    friend void assembleWallInterfaceSide(Assembler&,
+                                          const domain*,
+                                          const interfaceSideInfo*,
+                                          typename Assembler::Context*,
+                                          const wallPhase&,
+                                          const bool);
+    template <class Assembler>
+    friend void accumulateRnWallFluxSide(Assembler&,
+                                         const domain*,
+                                         const interfaceSideInfo*);
+    template <class Assembler>
+    friend void accumulateRnWallFluxSides(Assembler&, const domain*);
 
     // kernel drivers
     void assembleNodeTermsFused_(const domain* domain, Context* ctx) override;
@@ -82,14 +95,8 @@ private:
     void assembleElemTermsInterfaceSideNoSlipWall_(
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
-        Context* ctx);
-    void assembleElemTermsInterfaceSideRobinNeumann_(
-        const domain* domain,
-        const interfaceSideInfo* interfaceSideInfoPtr,
-        Context* ctx);
-    void accumulateRnWallFluxInterfaceSide_(
-        const domain* domain,
-        const interfaceSideInfo* interfaceSideInfoPtr);
+        Context* ctx,
+        const bool robin);
 
     void assembleElemTermsBoundary_(const domain* domain,
                                     Context* ctx) override;

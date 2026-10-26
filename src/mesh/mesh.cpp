@@ -30,6 +30,9 @@ void ElementValidatorDeleter::operator()(elementValidator* ptr)
 
 mesh::mesh(controls* controlsPtr) : controlsPtr_(controlsPtr)
 {
+    stencil_ = controlsPtr->isReducedStencil()
+                   ? ::linearSolver::GraphLayout::Stencil__Reduced
+                   : ::linearSolver::GraphLayout::Stencil__Full;
 }
 
 mesh::~mesh()
@@ -270,6 +273,18 @@ std::vector<interface*> mesh::interfaceVector() const
         interfaceVec[iInterface] = interfaceVector_[iInterface].get();
     }
     return interfaceVec;
+}
+
+bool mesh::interfacesCoupled(const scalar time) const
+{
+    for (const auto& interf : interfaceVector_)
+    {
+        if (!interf->isCoupled(time))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 interface& mesh::interfaceRef(label iInterface)

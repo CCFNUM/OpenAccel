@@ -77,14 +77,17 @@ public:
     ::linearSolver::GraphLayout
     setupSolver(const std::string system_name,
                 const std::string fallback_name = "");
+    // fullStencil: graph with every element partner, whatever the default
     std::shared_ptr<Context> setupSolver(const std::string system_name,
                                          mesh& mesh,
-                                         const std::string fallback_name = "");
+                                         const std::string fallback_name = "",
+                                         const bool fullStencil = false);
     // subset-graph variant
     std::shared_ptr<Context> setupSolver(const std::string system_name,
                                          mesh& mesh,
                                          const std::vector<const zone*>& zones,
-                                         const std::string fallback_name = "");
+                                         const std::string fallback_name = "",
+                                         const bool fullStencil = false);
     void setEquationName(const std::vector<std::string>& name);
 
     simulation& simulationRef()
@@ -428,7 +431,8 @@ template <size_t N>
 std::shared_ptr<typename linearSystem<N>::Context>
 linearSystem<N>::setupSolver(const std::string system_name,
                              mesh& mesh,
-                             const std::string fallback_name)
+                             const std::string fallback_name,
+                             const bool fullStencil)
 {
     // instantiate solver and set system_name
     std::shared_ptr<typename linearSystem<N>::Context> ctx;
@@ -441,12 +445,14 @@ linearSystem<N>::setupSolver(const std::string system_name,
             ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
             ctx = lsolver_->createContext(
                 this->system_name_,
-                mesh.getLocalOrderGraphPtr(!interpolationFreeGraph_));
+                mesh.getLocalOrderGraphPtr(!interpolationFreeGraph_,
+                                           fullStencil));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
             ctx = lsolver_->createContext(
                 this->system_name_,
-                mesh.getGlobalOrderGraphPtr(!interpolationFreeGraph_));
+                mesh.getGlobalOrderGraphPtr(!interpolationFreeGraph_,
+                                            fullStencil));
             break;
     }
 
@@ -460,7 +466,8 @@ std::shared_ptr<typename linearSystem<N>::Context>
 linearSystem<N>::setupSolver(const std::string system_name,
                              mesh& mesh,
                              const std::vector<const zone*>& zones,
-                             const std::string fallback_name)
+                             const std::string fallback_name,
+                             const bool fullStencil)
 {
     std::shared_ptr<typename linearSystem<N>::Context> ctx;
     switch (this->setupSolver(system_name, fallback_name) &
@@ -470,14 +477,16 @@ linearSystem<N>::setupSolver(const std::string system_name,
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local:
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local |
             ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(this->system_name_,
-                                          mesh.getCustomLocalOrderGraphPtr(
-                                              zones, !interpolationFreeGraph_));
+            ctx = lsolver_->createContext(
+                this->system_name_,
+                mesh.getCustomLocalOrderGraphPtr(
+                    zones, !interpolationFreeGraph_, fullStencil));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(this->system_name_,
-                                          mesh.getCustomGlobalOrderGraphPtr(
-                                              zones, !interpolationFreeGraph_));
+            ctx = lsolver_->createContext(
+                this->system_name_,
+                mesh.getCustomGlobalOrderGraphPtr(
+                    zones, !interpolationFreeGraph_, fullStencil));
             break;
     }
 
@@ -500,7 +509,6 @@ void linearSystem<N>::setEquationName(const std::vector<std::string>& name)
 template <size_t N>
 void linearSystem<N>::condense()
 {
-
     // schur complement condensation
     auto& coeffs = lsolver_->getContext()->getCoefficients();
     if (coeffs.numConstraints() > 0)
@@ -725,9 +733,7 @@ void linearSystem<N>::convergenceReport_()
     // additional reporting from linear solver
     lsolver_->report();
 
-    // stop on a non-finite residual (expert_parameters: abort_on_nan).
-    // Only ranks in this system's graph get here, so stop with MPI_Abort (no
-    // collective): the other ranks may already wait in the next collective
+    // abort_on_nan: MPI_Abort, since only this system's ranks get here
     if (sim_.controlsRef()
             .solverRef()
             .solverControl_.expertParameters_.abortOnNan_)

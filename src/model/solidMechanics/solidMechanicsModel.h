@@ -39,6 +39,7 @@ public:
     using fieldBroker::solidCorrectionRef;
     using fieldBroker::strainRef;
     using fieldBroker::stressRef;
+    using fieldBroker::stressVonMisesRef;
     using fieldBroker::wallShearStressRef;
 
     // setup

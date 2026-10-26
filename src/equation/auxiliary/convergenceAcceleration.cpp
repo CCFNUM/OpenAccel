@@ -327,8 +327,7 @@ void convergenceAcceleration::initializeOmegaFile_()
         return;
     }
 
-    // one file per equation: aitken_omega_<equation name>.out, the name
-    // lower-cased with non-alphanumeric characters replaced by '_'
+    // one file per equation: aitken_omega_<sanitised equation name>.out
     std::string tag = name_;
     for (char& c : tag)
     {

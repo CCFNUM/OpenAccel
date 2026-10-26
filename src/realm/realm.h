@@ -16,11 +16,11 @@
 #include "displacement.h"
 #include "dynamicViscosity.h"
 #include "heatFlowRate.h"
-#include "interfaceScalarField.h"
 #include "massFlowRate.h"
 #include "momentumFlowRate.h"
 #include "pressure.h"
 #include "pressureCorrection.h"
+#include "sideField.h"
 #include "smRealm.h"
 #include "specificEnthalpy.h"
 #include "specificHeatCapacity.h"
@@ -121,11 +121,11 @@ private:
 
     std::unique_ptr<heatFlowRate> qDot_;
 
-    std::unique_ptr<interfaceScalarField> aWallBc_;
+    std::unique_ptr<sideField<scalar, 1>> aWallBc_;
 
-    std::unique_ptr<interfaceScalarField> rnWallFlux_;
+    std::unique_ptr<sideField<scalar, 1>> rnWallFlux_;
 
-    std::unique_ptr<interfaceScalarField> rnWallFluxE_;
+    std::unique_ptr<sideField<scalar, 1>> rnWallFluxE_;
 
     std::unique_ptr<momentumFlowRate> pDot_;
 
@@ -143,8 +143,7 @@ private:
     // displacement from the previous coordinates
     std::unique_ptr<displacement> D_ = nullptr;
 
-    // raw (un-relaxed) solid linear-system correction X^k, transferred to the
-    // fluid interface side for the un-relaxed FSI residual (fsiConvergence)
+    // raw solid correction X^k, sent to the fluid side for the FSI residual
     std::unique_ptr<nodeVectorField> solidCorrection_ = nullptr;
 
     // mesh velocity

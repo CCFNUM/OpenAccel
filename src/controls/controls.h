@@ -81,8 +81,7 @@ struct solverDictionary
             {
                 label minIterations_ = 1;
                 label maxIterations_ = 100;
-                // outer-iteration cap until all interfaces are coupled (-1:
-                // unset)
+                // iteration cap until all interfaces are coupled; -1 unset
                 label maxIterationsUncoupled_ = -1;
                 scalar physicalTimescale_ = 1.0;
 
@@ -155,11 +154,11 @@ struct solverDictionary
                 residualType residualType_ = residualType::RMS;
                 scalar residualTarget_ = 1e-4;
 
-                struct fsiConvergenceDictionary
+                struct physicsConvergenceDictionary
                 {
                     bool enabled_ = false;
                     bool printResiduals_ = false;
-                    std::vector<fsiConvergenceType> criteria_;
+                    std::vector<physicsConvergenceType> criteria_;
                     scalar fsiInterfaceResidualTarget_ = 1e-3;
                     scalar fsiForceResidualTarget_ = 1e-3;
 
@@ -167,7 +166,7 @@ struct solverDictionary
                     bool diagnosticsEnabled_ = false;
                 };
 
-                fsiConvergenceDictionary fsiConvergence_;
+                physicsConvergenceDictionary physicsConvergence_;
             };
 
             convergenceControlDictionary convergenceControl_;

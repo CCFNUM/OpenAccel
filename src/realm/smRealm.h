@@ -39,6 +39,9 @@ private:
     // strain tensor
     std::unique_ptr<simpleTensorField> epsilon_ = nullptr;
 
+    // von Mises stress sqrt(3/2 dev(sigma):dev(sigma)), written with stress
+    std::unique_ptr<simpleScalarField> sigmaVonMises_ = nullptr;
+
 public:
     // field identifiers to be used with STK mesh field queries
     static constexpr char E_ID[] = "young_modulus";
@@ -48,6 +51,8 @@ public:
     static constexpr char sigma_ID[] = "stress";
 
     static constexpr char epsilon_ID[] = "strain";
+
+    static constexpr char sigmaVonMises_ID[] = "stress_von_mises";
 
     // Constructors
 

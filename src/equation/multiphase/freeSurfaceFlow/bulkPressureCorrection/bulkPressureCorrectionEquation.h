@@ -46,8 +46,7 @@ public:
 
     void postSolve() override;
 
-    // before each corrector loop: reset Q_vol (Tukovic Eq. 30), freeze E at the
-    // first corrector
+    // before each corrector loop: Robin-Neumann Q_vol and E reset
     void startOfOuterIteration();
 
     void preTimeStep() override;
@@ -63,8 +62,6 @@ public:
     }
 
 protected:
-    bool anyDomainHasRobinNeumannFsi_() const;
-
     void setResidualScales_() override;
 
     // Pressure-correction-specific override of the generic field corrector.
@@ -135,12 +132,7 @@ protected:
 private:
     std::unique_ptr<Assembler> assembler_;
 
-    std::shared_ptr<std::ofstream> robinAlphaStream_;
-
-    // timestep and FSI iteration of the last Robin wall flux reset (once per
-    // FSI iteration, also with segregated_flow sub-iterations)
-    label rnWallFluxResetStep_ = -1;
-    label rnWallFluxResetIter_ = -1;
+    robinNeumannCoupling robinNeumann_;
 };
 
 } /* namespace accel */

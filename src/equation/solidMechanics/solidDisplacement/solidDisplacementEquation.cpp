@@ -63,6 +63,18 @@ void solidDisplacementEquation::setup()
     FOREACH_DOMAIN(setupPoissonRatio);
     FOREACH_DOMAIN(setupDisplacement);
 
+    // the von Mises stress is written with the stress tensor
+    auto& outputFields = controlsRef().solverRef().outputControl_.outputFields_;
+    const auto requested = [&outputFields](const std::string& name)
+    {
+        return std::find(outputFields.begin(), outputFields.end(), name) !=
+               outputFields.end();
+    };
+    if (requested(smRealm::sigma_ID) && !requested(smRealm::sigmaVonMises_ID))
+    {
+        outputFields.push_back(smRealm::sigmaVonMises_ID);
+    }
+
     using Bucket = typename Assembler::Bucket;
     using BucketVector = typename Assembler::BucketVector;
 
@@ -74,22 +86,23 @@ void solidDisplacementEquation::setup()
     // connectivity arrays passed to initialize() directly is more flexible
     // rather than this->meshRef() which is set through simulation object
     // obtained via realm in fieldBroker
+    // the solid couples all element nodes: always the full stencil
     linearSystem::setupSolver(this->name(),
                               fieldBroker::meshRef(),
                               this->domainZones_(),
-                              this->fallbackName());
+                              this->fallbackName(),
+                              true);
 
-    // the un-relaxed FSI residual uses the raw correction X^k of the last
-    // solid solve only: with sub-iterations it is the last Newton increment
-    const auto& fsiConv =
-        controlsRef()
-            .solverRef()
-            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
+    // with sub-iterations X^k is only the last Newton increment
+    const auto& fsiConv = controlsRef()
+                              .solverRef()
+                              .solverControl_.basicSettings_
+                              .convergenceCriteria_.physicsConvergence_;
     const bool usesInterfaceResidual =
         fsiConv.enabled_ &&
         std::find(fsiConv.criteria_.begin(),
                   fsiConv.criteria_.end(),
-                  fsiConvergenceType::fsiInterfaceResidual) !=
+                  physicsConvergenceType::fsiInterfaceResidual) !=
             fsiConv.criteria_.end();
     if (subIters_ > 1 && usesInterfaceResidual && messager::master())
     {
@@ -132,6 +145,19 @@ void solidDisplacementEquation::postInitialize()
 
 void solidDisplacementEquation::preSolve()
 {
+    if (frozen_)
+    {
+        // once per uncoupled step (first outer iteration)
+        if (messager::master() && controlsRef().iter == 1 &&
+            currentSubIter() == 1)
+        {
+            std::cout << "\n[FSI] t = " << controlsRef().time
+                      << " < coupling_start_time: solid frozen, " << "skipping "
+                      << name() << "\n";
+        }
+        return;
+    }
+
     // solid displacement updates
     FOREACH_DOMAIN(updateDisplacementPrevIterField);
     FOREACH_DOMAIN(updateDisplacement);
@@ -144,6 +170,11 @@ void solidDisplacementEquation::preSolve()
 
 void solidDisplacementEquation::solve()
 {
+    if (frozen_)
+    {
+        return;
+    }
+
     auto ctx = linearSystem::getContext();
     ctx->zeroSystemStorage();
 
@@ -215,8 +246,7 @@ void solidDisplacementEquation::solve()
     }
     messager::barrier();
 
-    // raw correction X^k before relaxation (last Newton increment with
-    // sub-iterations)
+    // raw correction X^k before relaxation (FSI residual)
     {
         const Vector& correction = ctx->coeffs()->getXVector();
         auto& xSTKFieldRef = this->solidCorrectionRef().stkFieldRef();
@@ -282,15 +312,52 @@ void solidDisplacementEquation::solve()
 void solidDisplacementEquation::preTimeStep()
 {
     FOREACH_DOMAIN(updateDisplacementPrevTimeField);
+
+    frozen_ = !meshRef().interfacesCoupled(controlsRef().time);
+    predicted_ = false;
+
+    bool predict = false;
+    for (const interface* interf : meshRef().interfaceVector())
+    {
+        if (interf->isFluidSolidType() && interf->predictSolidDisplacement())
+        {
+            predict = true;
+        }
+    }
+
+    if (predict && !frozen_)
+    {
+        predict_();
+    }
+}
+
+void solidDisplacementEquation::predict_()
+{
+    if (messager::master())
+    {
+        std::cout << std::endl
+                  << "Solid displacement predictor (previous-timestep fluid "
+                  << "load)" << std::endl
+                  << std::endl;
+    }
+
+    // iteration 0: the predictor is the first iterate of the FSI sequence
+    controlsRef().iter = 0;
+    solveSubIterations(linearSystem::simulationRef().verbose());
+    predicted_ = true;
 }
 
 void solidDisplacementEquation::postSolve()
 {
+    if (frozen_)
+    {
+        return;
+    }
+
     // calculate post-processed quantities
     FOREACH_DOMAIN(updateStressAndStrain_);
 
-    // once per outer iteration: D (mesh motion BC) and X^k (FSI residual) to
-    // the fluid side
+    // D (mesh motion BC) and X^k (FSI residual) to the fluid side
     for (const auto& domain : domainVector_)
     {
         for (const interface* interf : domain->interfacesRef())

@@ -24,10 +24,7 @@
 namespace accel
 {
 
-class domain;
-class fsiConvergence;
-class simulation;
-struct robinNeumannParams;
+class physicsConvergence;
 
 class simulation
 {
@@ -42,7 +39,7 @@ public:
 
 private:
     friend class domain;
-    friend class fsiConvergence;
+    friend class physicsConvergence;
 
     using complementFunc =
         std::function<void(const label /* step */, const scalar /* time */)>;
@@ -72,11 +69,6 @@ private:
     // domain: contains region specific properties. Each domain has a unique
     // mesh zone. The mesh zone is owned by the mesh.
     std::vector<std::shared_ptr<domain>> domainVector_;
-
-    friend robinNeumannParams computeRobinNeumannParams(
-        simulation& sim,
-        const std::vector<std::shared_ptr<domain>>& domainVector,
-        scalar dt);
 
     // equations that are solved on the realm
     std::vector<std::unique_ptr<equation>> equationVector_;
@@ -118,8 +110,9 @@ private:
 
     std::unordered_map<std::string, scalar> scalarResiduals_;
 
-    // FSI convergence checks
-    std::unique_ptr<fsiConvergence> fsiConvergencePtr_;
+    // Physics-based convergence checks (created on first use)
+    std::vector<std::unique_ptr<physicsConvergence>> physicsConvergences_;
+    bool physicsConvergencesCreated_ = false;
 
     // Private methods
 
@@ -169,14 +162,7 @@ private:
     // Initialize output structure and detect output fields to be written
     void initializeOutput_();
 
-    fsiConvergence* getFsiConvergence_();
-
-    // pre-solve, solve and post-solve of one equation with its sub-iterations
-    void solveEquation_(equation& eq);
-
-    // FSI: solid solve with the previous-timestep fluid load before the first
-    // outer iteration of a timestep (predict_solid_displacement)
-    void predictSolidDisplacement_();
+    std::vector<std::unique_ptr<physicsConvergence>>& getPhysicsConvergences_();
 
 public:
     // Constructors
@@ -229,12 +215,6 @@ public:
 
     bool checkConvergence();
 
-    // True if the simulation has at least one fluid-solid interface.
-    bool hasFsiInterface() const;
-
-    // all fluid-solid interfaces reached coupling_start_time (true without FSI)
-    bool allFsiCoupled() const;
-
     fs::path getSimulationDirectory() const;
 
     fs::path getPostProcessingDirectory() const;
@@ -250,6 +230,11 @@ public:
     void plotResiduals();
 
     void addPlotItem(const residualPlotItem& item);
+
+    int verbose() const
+    {
+        return verbose_;
+    }
 
     Profiler& getProfiler()
     {
@@ -348,9 +333,6 @@ public:
     // Access
 
     label nDomains() const;
-
-    // equation with the given id, nullptr if not solved
-    equation* equationPtr(equationID id);
 
     domain& domainRef(label iZone);
 

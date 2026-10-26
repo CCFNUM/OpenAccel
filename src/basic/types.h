@@ -522,18 +522,11 @@ enum class advectionSchemeType
 
 advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s);
 
-// Advection schemes for the volume fraction equation. Selected per domain via
-// free_surface_model/advection_scheme; only meaningful when the global
-// advection scheme is high_resolution.
+// volume fraction advection scheme (free_surface_model advection_scheme)
 enum class vofAdvectionSchemeType
 {
     barthJespersen,
-    vanLeer,
-    mstoic,
-    msuperbee,
-    hyperC,
-    stacs,
-    cicsam
+    hyperC
 };
 
 vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s);
@@ -569,7 +562,6 @@ enum class boundaryConditionType
     specifiedDirection,            // specific to velocity
     staticPressure,                // specific to pressure
     averageStaticPressure,         // specific to pressure
-    windkesselPressure,            // specific to pressure
     totalPressure,                 // specific to pressure
     staticTemperature,             // specific to temperature
     totalTemperature,              // specific to temperature
@@ -742,14 +734,14 @@ enum class accelerationType
 
 accelerationType convertAccelerationTypeFromString(std::string s);
 
-// FSI convergence type
-enum class fsiConvergenceType
+// Physics convergence type
+enum class physicsConvergenceType
 {
     fsiInterfaceResidual,
     fsiForceResidual
 };
 
-fsiConvergenceType convertFsiConvergenceTypeFromString(std::string s);
+physicsConvergenceType convertPhysicsConvergenceTypeFromString(std::string s);
 
 // Pressure level information specification
 enum class pressureLevelInformationSpecification

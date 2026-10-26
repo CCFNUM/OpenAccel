@@ -8,9 +8,8 @@
 #include "simulation.h"
 #include "domain.h"
 #include "elementField.h"
-#include "fsiConvergence.h"
-#include "interface.h"
 #include "mesh.h"
+#include "physicsConvergence.h"
 #include "realm.h"
 #include "version.h"
 
@@ -100,30 +99,6 @@ void simulation::initialize_()
                              "` on realm `" + realmPtr_->name() + "`\n";
         }
         equation->setup();
-    }
-
-    // FSI outputs are written by fsiConvergence, which only runs with
-    // fsi_convergence enabled: tell the user if they were requested without
-    {
-        const auto& fsiConvCfg = controlsRef()
-                                     .solverRef()
-                                     .solverControl_.basicSettings_
-                                     .convergenceCriteria_.fsiConvergence_;
-        bool forceBalanceRequested = false;
-        for (const interface* interf : meshRef().interfaceVector())
-        {
-            if (interf->isFluidSolidType() && interf->writeForceBalance())
-            {
-                forceBalanceRequested = true;
-            }
-        }
-        if (!fsiConvCfg.enabled_ &&
-            (forceBalanceRequested || fsiConvCfg.diagnosticsEnabled_) &&
-            messager::master())
-        {
-            warningMsg("write_force_balance / fsi_convergence diagnostics "
-                       "have no effect: fsi_convergence is not enabled");
-        }
     }
 
     // setup dynamic mesh components in case of deforming/moving mesh
@@ -299,13 +274,14 @@ void simulation::runTransient()
                                        .convergenceControl_.maxIterations_;
 
         // optional outer-iteration cap until all interfaces are coupled
+        const bool coupled = meshRef().interfacesCoupled(controlsRef().time);
         {
             const label maxUncoupled =
                 controlsRef()
                     .solverRef()
                     .solverControl_.basicSettings_.convergenceControl_
                     .maxIterationsUncoupled_;
-            if (maxUncoupled > 0 && hasFsiInterface() && !allFsiCoupled())
+            if (maxUncoupled > 0 && !coupled)
             {
                 maxCoeffIterations = maxUncoupled;
             }
@@ -320,8 +296,25 @@ void simulation::runTransient()
         // pre work: update time states
         preWork();
 
-        // FSI: solid predictor with the previous-timestep fluid load
-        predictSolidDisplacement_();
+        // per-iteration mesh motion (not frozen per timestep)
+        const bool updateMeshPerIteration =
+            (this->meshRef().anyZoneMeshDeforming() ||
+             this->meshRef().anyZoneMeshTransforming()) &&
+            !controlsRef()
+                 .solverRef()
+                 .solverControl_.advancedOptions_.equationControls_.meshMotion_
+                 .freezePerTimestep_;
+
+        // prescribed motion before the equations, solution-driven after them
+        const bool followsSolution =
+            updateMeshPerIteration && meshMotionPtr_->followsSolution();
+
+        bool movedMeshBoundary = false;
+        for (const auto& equation : equationVector_)
+        {
+            movedMeshBoundary =
+                movedMeshBoundary || equation->movedMeshBoundary();
+        }
 
         for (controlsRef().iter = 1; controlsRef().iter <= maxCoeffIterations;
              controlsRef().iter++)
@@ -338,20 +331,10 @@ void simulation::runTransient()
                           << std::endl;
             }
 
-            // per-iteration mesh motion (not frozen per timestep)
-            const bool updateMeshPerIteration =
-                (this->meshRef().anyZoneMeshDeforming() ||
-                 this->meshRef().anyZoneMeshTransforming()) &&
-                !controlsRef()
-                     .solverRef()
-                     .solverControl_.advancedOptions_.equationControls_
-                     .meshMotion_.freezePerTimestep_;
-
-            const bool isFsiRun = hasFsiInterface();
-
-            // non-FSI run: update mesh in case of deforming/moving mesh,
-            // before assembling the systems
-            if (updateMeshPerIteration && !isFsiRun)
+            // solution-driven mesh: at step start only if preTimeStep moved it
+            if (updateMeshPerIteration &&
+                (!followsSolution ||
+                 (controlsRef().iter == 1 && movedMeshBoundary)))
             {
                 meshMotionPtr_->update();
             }
@@ -364,9 +347,7 @@ void simulation::runTransient()
             // assemble and solve systems now
             assembleAndSolveSystems();
 
-            // FSI: mesh motion after the solid solve (Tukovic Alg. 1 step 7),
-            // once coupled
-            if (updateMeshPerIteration && isFsiRun && allFsiCoupled())
+            if (followsSolution && coupled)
             {
                 meshMotionPtr_->update();
             }
@@ -432,129 +413,7 @@ void simulation::assembleAndSolveSystems()
 
     for (auto& equation : equationVector_)
     {
-        // freeze the solid until all interfaces are coupled (s4f coupled_)
-        if (equation->getID() == equationID::solidDisplacement)
-        {
-            if (!allFsiCoupled())
-            {
-                // once per uncoupled step (first outer iteration)
-                if (messager::master() && controlsRef().iter == 1)
-                {
-                    std::cout << "\n[FSI] t = " << controlsRef().time
-                              << " < coupling_start_time: solid frozen, "
-                              << "skipping " << equation->name() << "\n";
-                }
-                continue;
-            }
-        }
-
-        solveEquation_(*equation);
-    }
-}
-
-void simulation::solveEquation_(equation& eq)
-{
-    if (messager::master() && eq.subIters() > 1)
-    {
-        std::cout << std::endl << "Sub-iterating " + eq.name() << ":\n";
-    }
-
-    for (label subIter = 1; subIter <= eq.subIters(); subIter++)
-    {
-        eq.setCurrentSubIter(subIter);
-
-        // only print sub-iter if it is active (> 1)
-        if (messager::master() && eq.subIters() > 1)
-        {
-            std::cout << std::endl << " sub-iter: " << subIter << "\n";
-        }
-
-        // 1.)
-        if (messager::master() && verbose_ > 1)
-        {
-            std::cout << "\t pre-solve equation: " << eq.name() << "\n";
-        }
-        eq.preSolve();
-
-        // 2.)
-        if (messager::master() && verbose_ > 1)
-        {
-            std::cout << "\t solve equation: " << eq.name() << "\n";
-        }
-        // FIXME: This check may not apply
-        // for segregated equation queues(?):
-        // if (!eq.isConverged()) {
-        // eq.solve();
-        // }
-        eq.solve(); // conservative choice
-
-        // 3.)
-        if (messager::master() && verbose_ > 1)
-        {
-            std::cout << "\t post-solve equation: " << eq.name() << "\n";
-        }
-        eq.postSolve();
-
-        // if converged .. break sub-iter loop
-        if (eq.isConverged())
-        {
-            break;
-        }
-    }
-}
-
-void simulation::predictSolidDisplacement_()
-{
-    bool predict = false;
-    for (const interface* interf : meshRef().interfaceVector())
-    {
-        if (interf->isFluidSolidType() && interf->predictSolidDisplacement())
-        {
-            predict = true;
-        }
-    }
-
-    // the solid is frozen until all interfaces are coupled
-    if (!predict || !allFsiCoupled())
-    {
-        return;
-    }
-
-    if (messager::master())
-    {
-        std::cout << std::endl
-                  << "Solid displacement predictor (previous-timestep fluid "
-                  << "load)" << std::endl
-                  << std::endl;
-    }
-
-    // iteration 0: the predictor is the first iterate of the FSI sequence
-    // (relaxation, convergence acceleration and FSI residual)
-    controlsRef().iter = 0;
-
-    for (auto& equation : equationVector_)
-    {
-        if (equation->getID() == equationID::solidDisplacement)
-        {
-            solveEquation_(*equation);
-        }
-    }
-
-    if (fsiConvergence* fsiConv = getFsiConvergence_())
-    {
-        fsiConv->updatePredictor();
-    }
-
-    // fluid mesh to the predicted interface position (frozen mesh motion is
-    // updated once in preWork())
-    if ((this->meshRef().anyZoneMeshDeforming() ||
-         this->meshRef().anyZoneMeshTransforming()) &&
-        !controlsRef()
-             .solverRef()
-             .solverControl_.advancedOptions_.equationControls_.meshMotion_
-             .freezePerTimestep_)
-    {
-        meshMotionPtr_->update();
+        equation->solveSubIterations(verbose_);
     }
 }
 
@@ -562,16 +421,17 @@ void simulation::preWork()
 {
     if (controlsRef().isTransient())
     {
-        if (fsiConvergence* fsiConv = getFsiConvergence_())
-        {
-            fsiConv->resetForTimeStep();
-        }
-
         // equation dependent pre-timestep tasks for transient simulations
         // (typically updating temporal fields)
         for (auto& equation : equationVector_)
         {
             equation->preTimeStep();
+        }
+
+        // after preTimeStep(), so a check also sees the iterate computed there
+        for (auto& check : getPhysicsConvergences_())
+        {
+            check->resetForTimeStep();
         }
 
         // reset/update mesh motion quantities
@@ -643,43 +503,27 @@ void simulation::postWork()
     }
 }
 
-bool simulation::hasFsiInterface() const
-{
-    for (const interface* interf : meshRef().interfaceVector())
-    {
-        if (interf->isFluidSolidType())
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool simulation::allFsiCoupled() const
-{
-    const scalar tNow = controlsRef().time;
-    for (const interface* interf : meshRef().interfaceVector())
-    {
-        if (interf->isFluidSolidType() &&
-            tNow < (interf->couplingStartTime() - ::accel::SMALL))
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 bool simulation::checkConvergence()
 {
-    fsiConvergence* fsiConv = getFsiConvergence_();
-    // FSI criterion only once all interfaces are coupled
-    if (fsiConv && allFsiCoupled())
+    // active physics criteria replace the equation residuals
+    bool physicsDecides = false;
+    bool physicsConverged = true;
+    for (auto& check : getPhysicsConvergences_())
     {
-        fsiConv->update();
-        if (fsiConv->enabled() && fsiConv->hasCriteria())
+        if (!check->active())
         {
-            return fsiConv->isConverged();
+            continue;
         }
+        check->update();
+        if (check->hasCriteria())
+        {
+            physicsDecides = true;
+            physicsConverged = physicsConverged && check->isConverged();
+        }
+    }
+    if (physicsDecides)
+    {
+        return physicsConverged;
     }
 
     bool convergence = true;
@@ -691,24 +535,15 @@ bool simulation::checkConvergence()
     return convergence;
 }
 
-fsiConvergence* simulation::getFsiConvergence_()
+std::vector<std::unique_ptr<physicsConvergence>>&
+simulation::getPhysicsConvergences_()
 {
-    const auto& fsiConv =
-        controlsRef()
-            .solverRef()
-            .solverControl_.basicSettings_.convergenceCriteria_.fsiConvergence_;
-
-    // created when fsi_convergence is enabled, also without criteria
-    if (!fsiConv.enabled_)
+    if (!physicsConvergencesCreated_)
     {
-        return nullptr;
+        physicsConvergences_ = physicsConvergence::create(*this);
+        physicsConvergencesCreated_ = true;
     }
-
-    if (!fsiConvergencePtr_)
-    {
-        fsiConvergencePtr_ = std::make_unique<fsiConvergence>(*this);
-    }
-    return fsiConvergencePtr_.get();
+    return physicsConvergences_;
 }
 
 // Access
@@ -716,18 +551,6 @@ fsiConvergence* simulation::getFsiConvergence_()
 label simulation::nDomains() const
 {
     return domainVector_.size();
-}
-
-equation* simulation::equationPtr(equationID id)
-{
-    for (const auto& eq : equationVector_)
-    {
-        if (eq->getID() == id)
-        {
-            return eq.get();
-        }
-    }
-    return nullptr;
 }
 
 domain& simulation::domainRef(label iDomain)

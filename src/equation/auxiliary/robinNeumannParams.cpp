@@ -7,11 +7,12 @@
 
 #include "robinNeumannParams.h"
 #include "domain.h"
+#include "fieldBroker.h"
 #include "interface.h"
+#include "mesh.h"
 #include "messager.h"
 #include "robinNeumannState.h"
 #include "simulation.h"
-#include "solidDisplacementEquation.h"
 #include "version.h"
 
 #include <cassert>
@@ -38,7 +39,7 @@ bool anyRobinNeumannFsi(
 }
 
 robinNeumannParams computeRobinNeumannParams(
-    simulation& sim,
+    const fieldBroker& model,
     const std::vector<std::shared_ptr<domain>>& domainVector,
     scalar dt)
 {
@@ -49,30 +50,44 @@ robinNeumannParams computeRobinNeumannParams(
         return result;
     }
 
-    auto* solidEq = dynamic_cast<solidDisplacementEquation*>(
-        sim.equationPtr(equationID::solidDisplacement));
-
     scalar E_val = 0.0;
     scalar nu_val = 0.0;
     scalar rhoS_val = 0.0;
     bool hasLocalValues = false;
 
-    if (solidEq)
-    {
-        const stk::mesh::MetaData& metaData = solidEq->meshRef().metaDataRef();
-        const stk::mesh::BulkData& bulkData = solidEq->meshRef().bulkDataRef();
+    const stk::mesh::MetaData& metaData = model.meshRef().metaDataRef();
+    const stk::mesh::BulkData& bulkData = model.meshRef().bulkDataRef();
 
-        // scope selector to the solid domains' zone parts
-        stk::mesh::PartVector solidParts;
-        for (const auto& domainPtr : sim.domainVector())
+    const STKScalarField* EField =
+        metaData.get_field<scalar>(stk::topology::NODE_RANK, smRealm::E_ID);
+    const STKScalarField* nuField =
+        metaData.get_field<scalar>(stk::topology::NODE_RANK, smRealm::nu_ID);
+
+    // solid zones: the far side of the Robin-Neumann interfaces of the fluid
+    stk::mesh::PartVector solidParts;
+    for (const auto& domainPtr : domainVector)
+    {
+        if (domainPtr->type() != domainType::fluid)
         {
-            if (domainPtr->type() == domainType::solid)
+            continue;
+        }
+        const label fluidZone = domainPtr->zonePtr()->index();
+        for (const interface* interf : domainPtr->interfacesRef())
+        {
+            if (interf->isFluidSolidType() && interf->isRobinNeumann())
             {
-                const auto& parts = domainPtr->zonePtr()->interiorParts();
+                const label solidZone = interf->masterZoneIndex() == fluidZone
+                                            ? interf->slaveZoneIndex()
+                                            : interf->masterZoneIndex();
+                const auto& parts =
+                    model.meshRef().zoneRef(solidZone).interiorParts();
                 solidParts.insert(solidParts.end(), parts.begin(), parts.end());
             }
         }
+    }
 
+    if (EField && nuField)
+    {
         stk::mesh::Selector selSolidOwned =
             metaData.locally_owned_part() & stk::mesh::selectUnion(solidParts);
 
@@ -84,12 +99,10 @@ robinNeumannParams computeRobinNeumannParams(
             if (bucket->size() > 0)
             {
                 stk::mesh::Entity node = (*bucket)[0];
-                const scalar* Eptr =
-                    stk::mesh::field_data(solidEq->ERef().stkFieldRef(), node);
-                const scalar* nuPtr =
-                    stk::mesh::field_data(solidEq->nuRef().stkFieldRef(), node);
-                const scalar* rhoPtr = stk::mesh::field_data(
-                    solidEq->rhoRef().stkFieldRef(), node);
+                const scalar* Eptr = stk::mesh::field_data(*EField, node);
+                const scalar* nuPtr = stk::mesh::field_data(*nuField, node);
+                const scalar* rhoPtr =
+                    stk::mesh::field_data(model.rhoRef().stkFieldRef(), node);
                 if (Eptr && nuPtr && rhoPtr)
                 {
                     E_val = *Eptr;
@@ -102,8 +115,7 @@ robinNeumannParams computeRobinNeumannParams(
         }
     }
 
-    // take the (E, nu, rho_s) triplet of one node, from the lowest rank that
-    // owns a solid node, so the three values always belong together
+    // (E, nu, rho_s) of one node of the lowest rank owning a solid node
     int ownerRank = hasLocalValues ? messager::myProcNo() : messager::nProcs();
     messager::minReduce(ownerRank);
     if (ownerRank < messager::nProcs())
@@ -231,6 +243,108 @@ void writeRobinC1Diagnostics(
     auto& fout = *stream;
     fout << std::setprecision(6) << std::scientific << simTime << '\t' << c1Min
          << '\t' << c1Max << '\t' << c1Mean << std::endl;
+}
+
+robinNeumannCoupling::robinNeumannCoupling(
+    fieldBroker* model,
+    robinNeumannState* state,
+    const std::vector<std::shared_ptr<domain>>& domainVector)
+    : model_(model), state_(state), domainVector_(domainVector)
+{
+}
+
+void robinNeumannCoupling::setup()
+{
+    if (!anyRobinNeumannFsi(domainVector_))
+    {
+        return;
+    }
+
+    for (const auto& domain : domainVector_)
+    {
+        model_->setupRnWallAcceleration(domain);
+    }
+    for (const auto& domain : domainVector_)
+    {
+        model_->setupRnWallFlux(domain);
+    }
+    for (const auto& domain : domainVector_)
+    {
+        model_->setupRnWallFluxE(domain);
+    }
+}
+
+void robinNeumannCoupling::preTimeStep()
+{
+    if (domainVector_.empty())
+    {
+        return;
+    }
+
+    const scalar dt = model_->controlsRef().getTimestep();
+    const auto rnp = computeRobinNeumannParams(*model_, domainVector_, dt);
+    state_->resetC1Stats();
+    state_->invalidateRobinParams();
+
+    if (anyRobinNeumannFsi(domainVector_))
+    {
+        for (const auto& domain : domainVector_)
+        {
+            model_->zeroRnWallFlux(domain);
+        }
+    }
+
+    if (rnp.valid)
+    {
+        state_->setRobinParams(rnp.hs, rnp.rhoSolid);
+    }
+}
+
+void robinNeumannCoupling::startOfOuterIteration()
+{
+    if (!anyRobinNeumannFsi(domainVector_))
+    {
+        return;
+    }
+
+    // Q_vol and E belong to the FSI iterate: keep them across sub-iterations
+    const label step = model_->controlsRef().getTimeStepCount();
+    const label iter = model_->controlsRef().iter;
+    if (step == resetStep_ && iter == resetIter_)
+    {
+        return;
+    }
+    resetStep_ = step;
+    resetIter_ = iter;
+
+    for (const auto& domain : domainVector_)
+    {
+        model_->zeroRnWallFlux(domain);
+    }
+    for (const auto& domain : domainVector_)
+    {
+        model_->zeroRnWallFluxE(domain);
+    }
+    state_->requestFreezeE();
+}
+
+void robinNeumannCoupling::postSolve()
+{
+    if (anyRobinNeumannFsi(domainVector_))
+    {
+        for (const auto& domain : domainVector_)
+        {
+            state_->accumulateRnWallFlux(domain.get());
+        }
+    }
+
+    state_->clearFreezeE();
+}
+
+void robinNeumannCoupling::postTimeStep()
+{
+    writeRobinC1Diagnostics(
+        *state_, domainVector_, robinAlphaStream_, model_->controlsRef().time);
 }
 
 } // namespace accel

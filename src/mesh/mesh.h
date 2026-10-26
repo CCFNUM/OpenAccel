@@ -64,9 +64,17 @@ private:
 
     stk::mesh::ConstPartVector symmetryBoundaryActiveParts_;
 
+    // default node-graph stencil: reduced with bandwidth_reduction, else full
+    ::linearSolver::GraphLayout stencil_;
+
     std::unique_ptr<nodeGraph> globalOrderGraphPtr_ = nullptr;
 
     std::unique_ptr<nodeGraph> localOrderGraphPtr_ = nullptr;
+
+    // full-stencil graphs for equations that request them on a reduced mesh
+    std::unique_ptr<nodeGraph> globalOrderFullGraphPtr_ = nullptr;
+
+    std::unique_ptr<nodeGraph> localOrderFullGraphPtr_ = nullptr;
 
     // cached subset graphs keyed by zone-set; same-zones equations share one
     struct customGraphEntry
@@ -74,6 +82,8 @@ private:
         std::vector<label> zoneKey; // sorted, unique zone indices
         std::unique_ptr<nodeGraph> local = nullptr;
         std::unique_ptr<nodeGraph> global = nullptr;
+        std::unique_ptr<nodeGraph> localFull = nullptr;
+        std::unique_ptr<nodeGraph> globalFull = nullptr;
     };
 
     std::vector<customGraphEntry> customGraphCache_;
@@ -164,7 +174,21 @@ private:
         stk::mesh::ConstPartVector wallParts = {});
 
     std::unique_ptr<nodeGraph>
-    createNodeGraph_(const ::linearSolver::GraphLayout layout);
+    createNodeGraph_(const ::linearSolver::GraphLayout layout,
+                     const bool fullStencil);
+
+    // true if a full-stencil request needs graphs apart from the default
+    bool separateFullGraph_(const bool fullStencil) const
+    {
+        return fullStencil &&
+               stencil_ == ::linearSolver::GraphLayout::Stencil__Reduced;
+    }
+
+    // build the graph in this slot on demand (lazy); zones: subset or nullptr
+    nodeGraph* lazyGraph_(std::unique_ptr<nodeGraph>& slot,
+                          const ::linearSolver::GraphLayout order,
+                          const bool fullStencil,
+                          const std::vector<const zone*>* zones);
 
     // canonical sorted/unique zone-index key for a zone vector
     std::vector<label> zoneKey_(const std::vector<const zone*>& zones) const;
@@ -464,6 +488,9 @@ public:
 
     std::vector<interface*> interfaceVector() const;
 
+    // true once every interface reached its coupling_start_time
+    bool interfacesCoupled(const scalar time) const;
+
     interface& interfaceRef(label iInterface);
 
     const interface& interfaceRef(label iInterface) const;
@@ -521,74 +548,58 @@ public:
 
     // CRS node graph
 
-    nodeGraph* getGlobalOrderGraphPtr(const bool oversetBlanking = true)
+    nodeGraph* getGlobalOrderGraphPtr(const bool oversetBlanking = true,
+                                      const bool fullStencil = false)
     {
-        auto& slot = globalOrderGraphPtr_;
-
-        // build graph on demand (lazy)
-        if (!slot)
-        {
-            slot = createNodeGraph_(
-                ::linearSolver::GraphLayout::ColumnIndexOrder__Global);
-
-            assert(slot);
-            slot->buildGraph();
-        }
-        return slot.get();
+        return lazyGraph_(separateFullGraph_(fullStencil)
+                              ? globalOrderFullGraphPtr_
+                              : globalOrderGraphPtr_,
+                          ::linearSolver::GraphLayout::ColumnIndexOrder__Global,
+                          fullStencil,
+                          nullptr);
     }
 
-    nodeGraph* getLocalOrderGraphPtr(const bool oversetBlanking = true)
+    nodeGraph* getLocalOrderGraphPtr(const bool oversetBlanking = true,
+                                     const bool fullStencil = false)
     {
-        auto& slot = localOrderGraphPtr_;
-
-        // build graph on demand (lazy)
-        if (!slot)
-        {
-            slot = createNodeGraph_(
-                ::linearSolver::GraphLayout::ColumnIndexOrder__Local);
-
-            assert(slot);
-            slot->buildGraph();
-        }
-        return slot.get();
+        return lazyGraph_(separateFullGraph_(fullStencil)
+                              ? localOrderFullGraphPtr_
+                              : localOrderGraphPtr_,
+                          ::linearSolver::GraphLayout::ColumnIndexOrder__Local,
+                          fullStencil,
+                          nullptr);
     }
 
     // local-order subset graph, shared across equations over the same zones
     nodeGraph*
     getCustomLocalOrderGraphPtr(const std::vector<const zone*>& zones,
-                                const bool oversetBlanking = true)
+                                const bool oversetBlanking = true,
+                                const bool fullStencil = false)
     {
         if (useFullGraphForZones_(zones))
-            return getLocalOrderGraphPtr();
+            return getLocalOrderGraphPtr(oversetBlanking, fullStencil);
         customGraphEntry& e = findOrCreateCustomGraphEntry_(zones);
-        if (!e.local)
-        {
-            e.local = createNodeGraph_(
-                ::linearSolver::GraphLayout::ColumnIndexOrder__Local);
-            assert(e.local);
-            e.local->setSubsetZones(zones);
-            e.local->buildGraph();
-        }
-        return e.local.get();
+        return lazyGraph_(separateFullGraph_(fullStencil) ? e.localFull
+                                                          : e.local,
+                          ::linearSolver::GraphLayout::ColumnIndexOrder__Local,
+                          fullStencil,
+                          &zones);
     }
 
     // global-order (PETSc/HYPRE) counterpart of getCustomLocalOrderGraphPtr
     nodeGraph*
     getCustomGlobalOrderGraphPtr(const std::vector<const zone*>& zones,
-                                 const bool oversetBlanking = true)
+                                 const bool oversetBlanking = true,
+                                 const bool fullStencil = false)
     {
         if (useFullGraphForZones_(zones))
-            return getGlobalOrderGraphPtr();
+            return getGlobalOrderGraphPtr(oversetBlanking, fullStencil);
         customGraphEntry& e = findOrCreateCustomGraphEntry_(zones);
-        if (!e.global)
-        {
-            e.global = createNodeGraph_(
-                ::linearSolver::GraphLayout::ColumnIndexOrder__Global);
-            assert(e.global);
-            e.global->setSubsetZones(zones);
-            e.global->buildGraph();
-        }
-        return e.global.get();
+        return lazyGraph_(separateFullGraph_(fullStencil) ? e.globalFull
+                                                          : e.global,
+                          ::linearSolver::GraphLayout::ColumnIndexOrder__Global,
+                          fullStencil,
+                          &zones);
     }
 
     std::vector<stk::mesh::Entity>& localNodeIDToEntity()

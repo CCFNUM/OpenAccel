@@ -154,7 +154,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundary_(
                     {
                         case boundaryConditionType::staticPressure:
                         case boundaryConditionType::averageStaticPressure:
-                        case boundaryConditionType::windkesselPressure:
                             {
                                 switch (UBCType)
                                 {

@@ -1528,8 +1528,7 @@ void mesh::computeDeformedExposedAreaVector(
     stk::mesh::BulkData& bulkData = this->bulkDataRef();
     stk::mesh::MetaData& metaData = this->metaDataRef();
 
-    // reference coordinates: original_coordinates if the zone moves, else
-    // coordinates
+    // reference coordinates: original_coordinates if the zone moves
     STKScalarField* currentCoordinates = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, this->getCoordinateFieldName());
     STKScalarField* originalCoordinates = metaData.get_field<scalar>(
