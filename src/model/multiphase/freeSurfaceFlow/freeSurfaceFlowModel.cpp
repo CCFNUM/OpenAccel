@@ -3045,6 +3045,24 @@ void freeSurfaceFlowModel::setupFCTFields(const std::shared_ptr<domain> domain,
             }
         }
     }
+
+    // # alpha before the FCT correction (FCT residual)
+    if (!alphaLOSTKFieldPtr_)
+    {
+        scalar initialValue = 0.0;
+
+        alphaLOSTKFieldPtr_ = &metaData.declare_field<scalar>(
+            stk::topology::NODE_RANK, "alphaLO" + std::to_string(iPhase));
+
+        for (const stk::mesh::Part* part : partVec)
+        {
+            if (!alphaLOSTKFieldPtr_->defined_on(*part))
+            {
+                stk::mesh::put_field_on_mesh(
+                    *alphaLOSTKFieldPtr_, *part, 1, &initialValue);
+            }
+        }
+    }
 }
 
 void freeSurfaceFlowModel::correctFCT(const std::shared_ptr<domain> domain,
@@ -3054,6 +3072,10 @@ void freeSurfaceFlowModel::correctFCT(const std::shared_ptr<domain> domain,
     auto& mesh = this->meshRef();
     stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
     stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    ops::copy<scalar>(this->alphaRef(iPhase).stkFieldPtr(),
+                      alphaLOSTKFieldPtr_,
+                      domain->zonePtr()->interiorParts());
 
     // Step 1: Compute bounded (upwind) flux - this is our baseline
     computeFL_(domain, iPhase);

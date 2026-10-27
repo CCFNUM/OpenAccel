@@ -328,6 +328,7 @@ protected:
     STKScalarField* cMULESLimiterMinusSTKFieldPtr_ = nullptr;
     STKScalarField* cMULESLimiterPlusPrevSTKFieldPtr_ = nullptr;
     STKScalarField* cMULESLimiterMinusPrevSTKFieldPtr_ = nullptr;
+    STKScalarField* alphaLOSTKFieldPtr_ = nullptr;
 };
 
 } /* namespace accel */
