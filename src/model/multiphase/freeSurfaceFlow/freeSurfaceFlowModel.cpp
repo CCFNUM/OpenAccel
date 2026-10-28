@@ -5343,6 +5343,22 @@ void freeSurfaceFlowModel::updateVofCourantField(
     }
 }
 
+scalar freeSurfaceFlowModel::fctTimestep_() const
+{
+    const auto& controls = this->controlsRef();
+    if (!controls.isTransient())
+    {
+        return controls.getPhysicalTimescale();
+    }
+
+    const scalar dt = controls.getTimestep();
+    return controls.solverRef()
+                       .solverControl_.basicSettings_.transientScheme_ ==
+                   transientSchemeType::secondOrderBackwardEuler
+               ? dt / BDF2::coeff(dt, controls.getTimestep(-1))[0]
+               : dt;
+}
+
 void freeSurfaceFlowModel::computeQ_(const std::shared_ptr<domain> domain,
                                      label iPhase)
 {
@@ -5386,9 +5402,7 @@ void freeSurfaceFlowModel::computeQ_(const std::shared_ptr<domain> domain,
         stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
 
     // Get user defined fields
-    const bool is_transient = this->controlsRef().isTransient();
-    const scalar dt = is_transient ? this->controlsRef().getTimestep()
-                                   : this->controlsRef().getPhysicalTimescale();
+    const scalar dt = fctTimestep_();
 
     // get interior parts the domain is defined on
     const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
@@ -6290,10 +6304,7 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
             stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
 
         // Get user defined fields
-        const bool is_transient = this->controlsRef().isTransient();
-        const scalar dt = is_transient
-                              ? this->controlsRef().getTimestep()
-                              : this->controlsRef().getPhysicalTimescale();
+        const scalar dt = fctTimestep_();
 
         // get interior parts the domain is defined on
         const stk::mesh::PartVector& partVec =
@@ -6434,13 +6445,7 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
                                         mesh::dual_nodal_volume_ID);
 
                                 // Get user defined fields
-                                const bool is_transient =
-                                    this->controlsRef().isTransient();
-                                const scalar dt =
-                                    is_transient
-                                        ? this->controlsRef().getTimestep()
-                                        : this->controlsRef()
-                                              .getPhysicalTimescale();
+                                const scalar dt = fctTimestep_();
 
                                 std::vector<scalar> ws_vol;
                                 std::vector<scalar> ws_rho;
@@ -6582,13 +6587,7 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
                                         mesh::dual_nodal_volume_ID);
 
                                 // Get user defined fields
-                                const bool is_transient =
-                                    this->controlsRef().isTransient();
-                                const scalar dt =
-                                    is_transient
-                                        ? this->controlsRef().getTimestep()
-                                        : this->controlsRef()
-                                              .getPhysicalTimescale();
+                                const scalar dt = fctTimestep_();
 
                                 std::vector<scalar> ws_vol;
                                 std::vector<scalar> ws_rho;
@@ -6727,11 +6726,7 @@ void freeSurfaceFlowModel::updateAlpha_(const std::shared_ptr<domain> domain,
                         stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
 
                     // Get user defined fields
-                    const bool is_transient = this->controlsRef().isTransient();
-                    const scalar dt =
-                        is_transient
-                            ? this->controlsRef().getTimestep()
-                            : this->controlsRef().getPhysicalTimescale();
+                    const scalar dt = fctTimestep_();
 
                     std::vector<scalar> ws_vol;
                     std::vector<scalar> ws_rho;

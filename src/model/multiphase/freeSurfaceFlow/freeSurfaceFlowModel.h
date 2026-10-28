@@ -60,6 +60,8 @@ private:
     void
     updateFL_(const std::shared_ptr<domain> domain, label iPhase, label iter);
 
+    scalar fctTimestep_() const;
+
 public:
     // Constructors
 

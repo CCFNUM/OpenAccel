@@ -149,23 +149,10 @@ void volumeFractionEquation::solve()
     {
         const auto& metaData = model_->meshRef().metaDataRef();
         const auto& bulkData = model_->meshRef().bulkDataRef();
-        const auto& controls = model_->controlsRef();
-        const scalar dt = controls.getTimestep();
-        const scalar c0 =
-            controls.isTransient() &&
-                    controls.solverRef()
-                            .solverControl_.basicSettings_.transientScheme_ ==
-                        transientSchemeType::secondOrderBackwardEuler
-                ? BDF2::coeff(dt, controls.getTimestep(-1))[0]
-                : 1.0;
         const auto* alphaLOSTKFieldPtr = metaData.get_field<scalar>(
             stk::topology::NODE_RANK, "alphaLO" + std::to_string(phaseIndex_));
-        const auto* volSTKFieldPtr = metaData.get_field<scalar>(
-            stk::topology::NODE_RANK, mesh::dual_nodal_volume_ID);
 
         auto& x = ctx->getXVector();
-        auto& R = ctx->getRVector();
-        std::vector<scalar> rTime(R.size(), 0.0);
         for (const auto& domain : domainVector_)
         {
             if (!domain->multiphase_.freeSurfaceModel_
@@ -185,10 +172,6 @@ void volumeFractionEquation::solve()
                     model_->alphaRef(phaseIndex_).stkFieldRef(), *bucket);
                 const scalar* alphaLO =
                     stk::mesh::field_data(*alphaLOSTKFieldPtr, *bucket);
-                const scalar* rho = stk::mesh::field_data(
-                    model_->rhoRef(phaseIndex_).stkFieldRef(), *bucket);
-                const scalar* vol =
-                    stk::mesh::field_data(*volSTKFieldPtr, *bucket);
                 for (size_t i = 0; i < bucket->size(); i++)
                 {
                     const int64_t row = ctx->getGraph()->localToRow(
@@ -196,17 +179,12 @@ void volumeFractionEquation::solve()
                     if (row >= 0)
                     {
                         x[row] = alphaLO[i] - alpha[i];
-                        rTime[row] = (c0 - 1.0) * rho[i] * vol[i] / dt * x[row];
                     }
                 }
             }
         }
 
         ::linearSolver::residual::compute(*ctx->coeffs());
-        for (size_t i = 0; i < R.size(); i++)
-        {
-            R[i] += rTime[i];
-        }
         rFCT = ::linearSolver::residual::RMSErrorDiagNormalized(*ctx->coeffs());
         std::fill(x.begin(), x.end(), 0.0);
     }
