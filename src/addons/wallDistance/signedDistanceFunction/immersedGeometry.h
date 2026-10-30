@@ -30,7 +30,14 @@ inline void collectiveCheck(bool okay, MPI_Comm comm, const std::string& message
     if (bad) throw std::runtime_error(message);
 }
 
-struct Result { std::vector<double> distance; std::vector<uint8_t> inside; };
+struct Result
+{
+    std::vector<double> distance;
+    std::vector<uint8_t> inside;
+    double distanceSeconds = 0.0;
+    double signSeconds = 0.0;
+    double combined2DSeconds = 0.0;
+};
 inline Result evaluate(const Surface& s,const std::vector<Point>& queries)
 {
     if (s.points.empty() || s.faces.empty())
@@ -55,6 +62,7 @@ inline Result evaluate(const Surface& s,const std::vector<Point>& queries)
     if(queries.empty()) return r; // A rank may own no background nodes.
     if(s.dimension==2)
     {
+        const double combinedStart = MPI_Wtime();
         // Exact segment projection and half-open ray crossings in the XY plane.
         // Each iteration writes its own output; MPI and STK are outside this loop.
 #if defined(_OPENMP) && defined(SSDF_ENABLE_OPENMP)
@@ -75,6 +83,7 @@ inline Result evaluate(const Surface& s,const std::vector<Point>& queries)
             }
             r.distance[i]=std::sqrt(best);r.inside[i]=inside;
         }
+        r.combined2DSeconds = MPI_Wtime() - combinedStart;
         return r;
     }
 #ifndef SSDF_ENABLE_CUBIQL
@@ -84,11 +93,15 @@ inline Result evaluate(const Surface& s,const std::vector<Point>& queries)
     for(auto p:queries) { x.push_back(p[0]);y.push_back(p[1]);z.push_back(p[2]); }
     for(auto p:s.points) { sx.push_back(p[0]);sy.push_back(p[1]);sz.push_back(p[2]); }
     for(auto f:s.faces) { a.push_back(f[0]);b.push_back(f[1]);c.push_back(f[2]); }
+    const double distanceStart = MPI_Wtime();
     int rc=ssdf::edf_select<double,double,int>(queries.size(),x.data(),y.data(),z.data(),a.size(),a.data(),b.data(),c.data(),sx.size(),sx.data(),sy.data(),sz.data(),r.distance.data());
+    r.distanceSeconds = MPI_Wtime() - distanceStart;
     if(rc) throw std::runtime_error("SSDF immersed distance failed");
     std::vector<float> qx(x.begin(),x.end()),qy(y.begin(),y.end()),qz(z.begin(),z.end());
     std::vector<float> vx(sx.begin(),sx.end()),vy(sy.begin(),sy.end()),vz(sz.begin(),sz.end());
+    const double signStart = MPI_Wtime();
     rc=ssdf::points_inside_bvh<float,int>(queries.size(),qx.data(),qy.data(),qz.data(),a.size(),a.data(),b.data(),c.data(),sx.size(),vx.data(),vy.data(),vz.data(),r.inside.data());
+    r.signSeconds = MPI_Wtime() - signStart;
     if(rc) throw std::runtime_error("SSDF immersed classification failed");
     return r;
 #endif

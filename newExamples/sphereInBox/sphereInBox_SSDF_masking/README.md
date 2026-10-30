@@ -47,3 +47,43 @@ Timing-only study: no numerical accuracy validation is performed by this runner.
 To reproduce on Tell, pull SSDF and update submodules, then use newExamples paths.
 Existing Tell directories under examples are not moved automatically by git because
 their generated meshes/results are untracked. The v3 runner creates its own meshes.
+
+## Component timers (rebuild both executables after pulling)
+
+The runner requires all component timers. Old binaries fail the first run with a
+clear missing-timer error instead of producing an incomplete benchmark.
+
+| CSV column | Measured work |
+| --- | --- |
+| masking_init_seconds | Entire existing masking initialization (inclusive subtotal) |
+| surface_setup_seconds | Region initialization, including mesh loading, skinning and surface setup |
+| graph_seconds | Background node-to-element graph construction |
+| covered_classification_seconds | Existing markCovered calls, summed across bodies |
+| layer_propagation_seconds | Existing computeLayers calls, including MPI work |
+| reference_pairing_seconds | takeLayers: ring selection, closest-facet searches and reference pairing |
+| masking_other_seconds | Remaining initialization, merging labels, field writes and collect |
+| distance_seconds | Full edf_select calls, including BVH construction, searches, allocation, GPU transfers and cleanup |
+| sign_seconds | Full points_inside_bvh calls, including CPU BVH construction and classification |
+| distance_sign_2d_seconds | Combined 2D segment-distance and crossing loop; zero in 3D |
+| field_seconds | Signed field writes and owned/shared/ghost communication |
+| preparation_other_seconds | Query selection, surface/array packing, validation, merging and remaining immersed-distance work |
+
+For one MPI rank, masking_init_seconds approximately equals its six subcomponents.
+immersed_total_seconds approximately equals masking_init_seconds + distance_seconds
++ sign_seconds + distance_sign_2d_seconds + field_seconds + preparation_other_seconds.
+Do not add the masking subtotal to its subcomponents again. Small clock overhead
+accounts for rounding/reconciliation differences. All reductions and printing occur
+after the total timer stops. Under MPI, each reported timer is the maximum over
+ranks independently, so component maxima need not sum to the maximum total.
+
+The current CUDA distance function synchronizes/copies results back before returning;
+the enclosing distance timer includes completed device work. These are whole-call
+timings, not separate GPU kernel/BVH-build/transfer timings. No additional distance
+calculations or masking algorithm changes are introduced for instrumentation.
+
+On Tell, inside uenv, from the repository root:
+
+    cmake --build build-release-3D-cpu -j4
+    cmake --build build-release-3D -j4
+
+These are incremental builds of the existing configurations.

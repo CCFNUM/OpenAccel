@@ -54,15 +54,20 @@ void masking::setup()
     }
 }
 
-void masking::initialize()
+void masking::initialize(MaskingTimings* timings)
 {
+    if (timings) *timings = {};
+    double start = MPI_Wtime();
     for (auto& regionPtr : regionVector_)
     {
         regionPtr->initialize();
     }
+    if (timings) timings->surfaceSetup = MPI_Wtime() - start;
 
+    start = MPI_Wtime();
     buildGraph_();
-    classify_();
+    if (timings) timings->graph = MPI_Wtime() - start;
+    classify_(timings);
 }
 
 void masking::update()
@@ -71,7 +76,7 @@ void masking::update()
     classify_();
 }
 
-void masking::classify_()
+void masking::classify_(MaskingTimings* timings)
 {
     const label npoints = graphNodeCount();
 
@@ -86,12 +91,18 @@ void masking::classify_()
     {
         maskedRegion& region = regionRef(r);
 
+        double start = MPI_Wtime();
         region.markCovered(seeds);
+        if (timings) timings->coveredClassification += MPI_Wtime() - start;
 
         // Reach both requested rings and the existing wall-treatment layers.
+        start = MPI_Wtime();
         computeLayers_(seeds, layers, region.layerSearchDepth() + 1);
+        if (timings) timings->layers += MPI_Wtime() - start;
 
+        start = MPI_Wtime();
         region.takeLayers(layers);
+        if (timings) timings->referencePairing += MPI_Wtime() - start;
 
         for (label i = 0; i < npoints; ++i)
         {

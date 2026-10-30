@@ -36,8 +36,10 @@ void declareImmersedDistance(realm& realm)
         field, stk::io::FieldOutputType::SCALAR);
 }
 
-void computeImmersedDistance(realm& realm, const masking& maskingRef)
+void computeImmersedDistance(realm& realm, const masking& maskingRef,
+                             ImmersedDistanceTimings* timings)
 {
+    if (timings) *timings = {};
 #if SPATIAL_DIM == 3 && !defined(SSDF_ENABLE_CUBIQL)
     errorMsg(
         "3D immersed signed distance requires SSDF_ENABLE_CUBIQL=ON");
@@ -118,6 +120,12 @@ void computeImmersedDistance(realm& realm, const masking& maskingRef)
                         queries.push_back(points[i]);
                     }
                 const auto result = geometry::evaluate(surface, queries);
+                if (timings)
+                {
+                    timings->distance += result.distanceSeconds;
+                    timings->sign += result.signSeconds;
+                    timings->combined2D += result.combined2DSeconds;
+                }
                 for (std::size_t j = 0; j < indices.size(); ++j)
                 {
                     const auto i = indices[j];
@@ -140,6 +148,7 @@ void computeImmersedDistance(realm& realm, const masking& maskingRef)
                             (detail.empty() ? "" : ": " + detail));
         }
 
+        const double fieldStart = MPI_Wtime();
         // Write signed-distance field without modifying masking's fields.
         for (std::size_t i = 0; i < nodes.size(); ++i)
         {
@@ -149,6 +158,7 @@ void computeImmersedDistance(realm& realm, const masking& maskingRef)
 
         stk::mesh::copy_owned_to_shared(bulk, {output});
         stk::mesh::communicate_field_data(bulk, {output});
+        if (timings) timings->field = MPI_Wtime() - fieldStart;
     }
     catch (const std::exception& e)
     {

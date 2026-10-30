@@ -27,6 +27,33 @@ except ImportError:
     raise SystemExit("PyYAML is required: use a Python environment containing yaml.")
 
 TIMER = re.compile(r"^SSDF_TOTAL_SECONDS=([0-9.eE+\-]+)\s*$", re.MULTILINE)
+COMPONENTS = {
+    'masking_init_seconds': 'SSDF_MASKING_INIT_SECONDS',
+    'surface_setup_seconds': 'SSDF_SURFACE_SETUP_SECONDS',
+    'graph_seconds': 'SSDF_GRAPH_SECONDS',
+    'covered_classification_seconds': 'SSDF_COVERED_CLASSIFICATION_SECONDS',
+    'layer_propagation_seconds': 'SSDF_LAYER_PROPAGATION_SECONDS',
+    'reference_pairing_seconds': 'SSDF_REFERENCE_PAIRING_SECONDS',
+    'masking_other_seconds': 'SSDF_MASKING_OTHER_SECONDS',
+    'distance_seconds': 'SSDF_DISTANCE_SECONDS',
+    'sign_seconds': 'SSDF_SIGN_SECONDS',
+    'distance_sign_2d_seconds': 'SSDF_DISTANCE_SIGN_2D_SECONDS',
+    'field_seconds': 'SSDF_FIELD_SECONDS',
+    'preparation_other_seconds': 'SSDF_PREPARATION_OTHER_SECONDS',
+}
+
+def component_times(log):
+    values = {}
+    for column, label in COMPONENTS.items():
+        matches = re.findall(r'^' + label + r'=([0-9.eE+\-]+)\s*$', log, re.MULTILINE)
+        if len(matches) != 1:
+            raise ValueError(f'Missing/duplicate {label}; rebuild both executables with component timers')
+        value = float(matches[0])
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f'Invalid component timer {label}: {value}')
+        values[column] = value
+    return values
+
 BOX = '''SetFactory("OpenCASCADE");
 Box(1) = {-0.5, -0.5, -0.5, 1, 1, 1};
 Physical Volume("background", 1) = {1};
@@ -264,8 +291,17 @@ def main():
                                     timestamp_utc=datetime.now(timezone.utc).isoformat(),hostname=os.uname().nodename,
                                     load_average_1m=os.getloadavg()[0],box_sha256=br['sha256'],sphere_sha256=sr['sha256'],
                                     executable_sha256=hashes[mode],template_sha256=template_hash)
+                                try:
+                                    row.update(component_times(log))
+                                    row['timing_error'] = ''
+                                except ValueError as error:
+                                    row.update({column: '' for column in COMPONENTS})
+                                    row['timing_error'] = str(error)
+                                    row['status'] = 'failed'
+                                    success = False
                                 append_row(outputs[mode],row)
                                 if not success:
+                                    print(row['timing_error'], file=sys.stderr)
                                     print(log[-12000:],file=sys.stderr)
                                     raise RuntimeError('Solver failed or timer invalid; failure recorded in CSV. Temporary outputs removed.')
     print('Finished. Only runtime_study_cpu_v3/runtime.csv and runtime_study_gpu_v3/runtime.csv retained.')

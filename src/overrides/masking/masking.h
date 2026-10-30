@@ -21,6 +21,15 @@ namespace accel
 // on the fluid state. Equations and models never touch a body directly: they
 // mask through here, so a new explicit field update cannot silently escape the
 // masking.
+struct MaskingTimings
+{
+    double surfaceSetup = 0.0;
+    double graph = 0.0;
+    double coveredClassification = 0.0;
+    double layers = 0.0;
+    double referencePairing = 0.0;
+};
+
 class masking : public fieldBroker
 {
 private:
@@ -63,7 +72,7 @@ private:
 
     void collect_();
 
-    void classify_();
+    void classify_(MaskingTimings* timings = nullptr);
 
 public:
     static constexpr char layer_ID[] = "mask_layer";
@@ -79,7 +88,7 @@ public:
     // declare the fields, must run before the mesh is populated
     void setup();
 
-    void initialize();
+    void initialize(MaskingTimings* timings = nullptr);
 
     // re-classify, for a deforming mesh or a body that moved
     void update();

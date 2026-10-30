@@ -58,34 +58,50 @@ void overrides::initialize()
     if (maskingPtr_)
     {
 
-        // Time our immersed signed-distance calculation.
+        // Instrument existing operations only; no additional geometry calculations.
         const auto comm = messager::comm();
-
+        MaskingTimings maskingTimings;
+        ImmersedDistanceTimings distanceTimings;
         MPI_Barrier(comm);
         const double start = MPI_Wtime();
 
-        maskingPtr_->initialize();
+        maskingPtr_->initialize(&maskingTimings);
+        const double maskingSeconds = MPI_Wtime() - start;
 
-        computeImmersedDistance(*realmPtr_, *maskingPtr_);
+        const double distanceStart = MPI_Wtime();
+        computeImmersedDistance(*realmPtr_, *maskingPtr_, &distanceTimings);
+        const double immersedSeconds = MPI_Wtime() - distanceStart;
+        const double totalSeconds = MPI_Wtime() - start;
 
-        const double localSeconds = MPI_Wtime() - start;
-
-        double elapsedSeconds = 0.0;
-        MPI_Reduce(
-            &localSeconds,
-            &elapsedSeconds,
-            1,
-            MPI_DOUBLE,
-            MPI_MAX,
-            0,
-            comm);
-
+        // Each value is the maximum rank time. Components add approximately to the
+        // total in serial; maxima may come from different ranks under MPI.
+        const char* names[] = {
+            "SSDF_TOTAL_SECONDS", "SSDF_MASKING_INIT_SECONDS",
+            "SSDF_SURFACE_SETUP_SECONDS", "SSDF_GRAPH_SECONDS",
+            "SSDF_COVERED_CLASSIFICATION_SECONDS", "SSDF_LAYER_PROPAGATION_SECONDS",
+            "SSDF_REFERENCE_PAIRING_SECONDS", "SSDF_MASKING_OTHER_SECONDS",
+            "SSDF_DISTANCE_SECONDS", "SSDF_SIGN_SECONDS",
+            "SSDF_DISTANCE_SIGN_2D_SECONDS", "SSDF_FIELD_SECONDS",
+            "SSDF_PREPARATION_OTHER_SECONDS"};
+        const double local[] = {
+            totalSeconds, maskingSeconds, maskingTimings.surfaceSetup,
+            maskingTimings.graph, maskingTimings.coveredClassification,
+            maskingTimings.layers, maskingTimings.referencePairing,
+            maskingSeconds - maskingTimings.surfaceSetup - maskingTimings.graph
+                - maskingTimings.coveredClassification - maskingTimings.layers
+                - maskingTimings.referencePairing,
+            distanceTimings.distance, distanceTimings.sign,
+            distanceTimings.combined2D, distanceTimings.field,
+            immersedSeconds - distanceTimings.distance - distanceTimings.sign
+                - distanceTimings.combined2D - distanceTimings.field};
+        constexpr int count = sizeof(local) / sizeof(local[0]);
+        double maximum[count] = {};
+        MPI_Reduce(local, maximum, count, MPI_DOUBLE, MPI_MAX, 0, comm);
         if (messager::master())
         {
-            std::cout << "SSDF_TOTAL_SECONDS="
-                      << std::setprecision(12)
-                      << elapsedSeconds
-                      << std::endl;
+            for (int i = 0; i < count; ++i)
+                std::cout << names[i] << "=" << std::setprecision(12)
+                          << maximum[i] << std::endl;
         }
     }
 }
