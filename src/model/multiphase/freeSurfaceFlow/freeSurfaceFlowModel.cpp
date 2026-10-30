@@ -2077,6 +2077,67 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
     }
 }
 
+scalar
+freeSurfaceFlowModel::inflowDensityBip_(const std::shared_ptr<domain> domain,
+                                        const boundary* boundary,
+                                        stk::mesh::Entity side,
+                                        label ip,
+                                        const scalar* sfIp,
+                                        scalar rhoBip)
+{
+    boundaryPhysicalType type = boundary->type();
+
+    if (type != boundaryPhysicalType::inlet &&
+        type != boundaryPhysicalType::opening)
+    {
+        return rhoBip;
+    }
+
+    const stk::mesh::BulkData& bulkData = this->meshRef().bulkDataRef();
+
+    stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
+    const label nodesPerSide = bulkData.num_nodes(side);
+
+    bool hasBoundaryAlpha = false;
+    scalar rhoBc = 0.0;
+    for (label iPhase = 0; iPhase < domain->nMaterials(); iPhase++)
+    {
+        label phaseIndex = domain->localToGlobalMaterialIndex(iPhase);
+
+        const bool useBcAlpha =
+            type == boundaryPhysicalType::opening ||
+            this->alphaRef(phaseIndex)
+                    .boundaryConditionRef(domain->index(), boundary->index())
+                    .type() == boundaryConditionType::specifiedValue;
+
+        const auto& alphaSTKFieldRef = this->alphaRef(phaseIndex).stkFieldRef();
+        const auto& rhoSTKFieldRef = this->rhoRef(phaseIndex).stkFieldRef();
+
+        scalar alphaBip = 0.0;
+        scalar pRhoBip = 0.0;
+        for (label ic = 0; ic < nodesPerSide; ++ic)
+        {
+            stk::mesh::Entity node = sideNodeRels[ic];
+
+            pRhoBip += sfIp[ic] * *stk::mesh::field_data(rhoSTKFieldRef, node);
+            alphaBip +=
+                sfIp[ic] * *stk::mesh::field_data(alphaSTKFieldRef, node);
+        }
+
+        if (useBcAlpha)
+        {
+            alphaBip = stk::mesh::field_data(
+                this->alphaRef(phaseIndex).sideFieldRef().stkFieldRef(),
+                side)[ip];
+            hasBoundaryAlpha = true;
+        }
+
+        rhoBc += alphaBip * pRhoBip;
+    }
+
+    return hasBoundaryAlpha ? rhoBc : rhoBip;
+}
+
 void freeSurfaceFlowModel::applyVolumeConservation(
     const std::shared_ptr<domain> domain)
 {

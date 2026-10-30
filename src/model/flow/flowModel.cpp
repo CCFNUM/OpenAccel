@@ -17367,6 +17367,16 @@ void flowModel::updateDensitySideFields_(const std::shared_ptr<domain> domain)
     }
 }
 
+scalar flowModel::inflowDensityBip_(const std::shared_ptr<domain> domain,
+                                    const boundary* boundary,
+                                    stk::mesh::Entity side,
+                                    label ip,
+                                    const scalar* sfIp,
+                                    scalar rhoBip)
+{
+    return rhoBip;
+}
+
 void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
     const std::shared_ptr<domain> domain,
     const boundary* boundary)
@@ -17595,6 +17605,16 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
 
                                                     rhoBip += r * p_rho[ic];
                                                 }
+
+                                                rhoBip =
+                                                    this->inflowDensityBip_(
+                                                        domain,
+                                                        boundary,
+                                                        side,
+                                                        ip,
+                                                        &p_face_shape_function
+                                                            [offSetSF_face],
+                                                        rhoBip);
 
                                                 // calculate normal velocity
                                                 // component
@@ -17927,6 +17947,16 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
 
                                                 scalar massFlowRate =
                                                     expression.value();
+
+                                                rhoBip =
+                                                    this->inflowDensityBip_(
+                                                        domain,
+                                                        boundary,
+                                                        side,
+                                                        ip,
+                                                        &p_face_shape_function
+                                                            [offSetSF_face],
+                                                        rhoBip);
 
                                                 // calculate normal velocity
                                                 // component
@@ -18244,6 +18274,16 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
                                                     }
                                                 }
 
+                                                rhoBip =
+                                                    this->inflowDensityBip_(
+                                                        domain,
+                                                        boundary,
+                                                        side,
+                                                        ip,
+                                                        &p_face_shape_function
+                                                            [offSetSF_face],
+                                                        rhoBip);
+
                                                 // calculate normal velocity
                                                 // component
                                                 scalar rhoUnBip =
@@ -18595,6 +18635,16 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
                                                 scalar massFlowRate =
                                                     expression.value();
 
+                                                rhoBip =
+                                                    this->inflowDensityBip_(
+                                                        domain,
+                                                        boundary,
+                                                        side,
+                                                        ip,
+                                                        &p_face_shape_function
+                                                            [offSetSF_face],
+                                                        rhoBip);
+
                                                 // calculate normal velocity
                                                 // component
                                                 scalar rhoUnBip =
@@ -18872,6 +18922,16 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
 
                                                     rhoBip += r * p_rho[ic];
                                                 }
+
+                                                rhoBip =
+                                                    this->inflowDensityBip_(
+                                                        domain,
+                                                        boundary,
+                                                        side,
+                                                        ip,
+                                                        &p_face_shape_function
+                                                            [offSetSF_face],
+                                                        rhoBip);
 
                                                 // calculate normal velocity
                                                 // component
@@ -19205,6 +19265,16 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
                                                 scalar massFlowRate =
                                                     expression.value();
 
+                                                rhoBip =
+                                                    this->inflowDensityBip_(
+                                                        domain,
+                                                        boundary,
+                                                        side,
+                                                        ip,
+                                                        &p_face_shape_function
+                                                            [offSetSF_face],
+                                                        rhoBip);
+
                                                 // calculate normal velocity
                                                 // component
                                                 scalar rhoUnBip =
@@ -19490,6 +19560,16 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
                                                             p_Um[icNdim + j];
                                                     }
                                                 }
+
+                                                rhoBip =
+                                                    this->inflowDensityBip_(
+                                                        domain,
+                                                        boundary,
+                                                        side,
+                                                        ip,
+                                                        &p_face_shape_function
+                                                            [offSetSF_face],
+                                                        rhoBip);
 
                                                 // calculate normal velocity
                                                 // component
@@ -19847,6 +19927,16 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
                                                 scalar massFlowRate =
                                                     expression.value();
 
+                                                rhoBip =
+                                                    this->inflowDensityBip_(
+                                                        domain,
+                                                        boundary,
+                                                        side,
+                                                        ip,
+                                                        &p_face_shape_function
+                                                            [offSetSF_face],
+                                                        rhoBip);
+
                                                 // calculate normal velocity
                                                 // component
                                                 scalar rhoUnBip =
@@ -20068,6 +20158,14 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
 
                                     rhoBip += r * p_rho[ic];
                                 }
+
+                                rhoBip = this->inflowDensityBip_(
+                                    domain,
+                                    boundary,
+                                    side,
+                                    ip,
+                                    &p_face_shape_function[offSetSF_face],
+                                    rhoBip);
 
                                 // calculate normal velocity
                                 // component
@@ -20327,6 +20425,14 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
 
                                 scalar massFlowRate = expression.value();
 
+                                rhoBip = this->inflowDensityBip_(
+                                    domain,
+                                    boundary,
+                                    side,
+                                    ip,
+                                    &p_face_shape_function[offSetSF_face],
+                                    rhoBip);
+
                                 // calculate normal velocity
                                 // component
                                 scalar rhoUnBip = massFlowRate / patchArea;
@@ -20520,6 +20626,14 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
 
                                     rhoBip += r * p_rho[ic];
                                 }
+
+                                rhoBip = this->inflowDensityBip_(
+                                    domain,
+                                    boundary,
+                                    side,
+                                    ip,
+                                    &p_face_shape_function[offSetSF_face],
+                                    rhoBip);
 
                                 // calculate normal velocity component
                                 scalar rhoUnBip = massFlowRate / patchArea;
@@ -20775,6 +20889,14 @@ void flowModel::updateVelocityBoundarySideFieldMassFlowRate_(
 #endif
 
                                 scalar massFlowRate = expression.value();
+
+                                rhoBip = this->inflowDensityBip_(
+                                    domain,
+                                    boundary,
+                                    side,
+                                    ip,
+                                    &p_face_shape_function[offSetSF_face],
+                                    rhoBip);
 
                                 // calculate normal velocity component
                                 scalar rhoUnBip = massFlowRate / patchArea;

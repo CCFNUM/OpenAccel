@@ -216,6 +216,13 @@ protected:
         sideField<scalar, 1>& mDotSideField,
         const nodeField<1, SPATIAL_DIM>& rhoField);
 
+    virtual scalar inflowDensityBip_(const std::shared_ptr<domain> domain,
+                                     const boundary* boundary,
+                                     stk::mesh::Entity side,
+                                     label ip,
+                                     const scalar* sfIp,
+                                     scalar rhoBip);
+
     void
     transformMassFlowRateToRelative_(const std::shared_ptr<domain> domain,
                                      elementField<scalar, 1>& mDotField,

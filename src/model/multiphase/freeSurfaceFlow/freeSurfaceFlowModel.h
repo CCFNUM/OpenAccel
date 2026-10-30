@@ -297,6 +297,13 @@ protected:
         sideField<scalar, 1>& mDotSideField,
         const nodeField<1, SPATIAL_DIM>& rhoField) override;
 
+    scalar inflowDensityBip_(const std::shared_ptr<domain> domain,
+                             const boundary* boundary,
+                             stk::mesh::Entity side,
+                             label ip,
+                             const scalar* sfIp,
+                             scalar rhoBip) override;
+
     // Protected methods (iPhase is global to the simulation)
 
     // Laplacian diffusion smoother (explicit Fo*dx^2*lap). Generic (field,rhs)
