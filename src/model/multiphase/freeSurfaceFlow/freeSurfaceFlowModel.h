@@ -74,6 +74,9 @@ public:
     void updateVofCourantField(const std::shared_ptr<domain> domain,
                                label iPhase);
 
+    void updateVofInflowField(const std::shared_ptr<domain> domain,
+                              label iPhase);
+
     // Body forces override (adds CSF surface tension after base class forces)
     void computeBodyForces(const std::shared_ptr<domain> domain) override;
 
@@ -319,6 +322,7 @@ protected:
     STKScalarField* sideASTKFieldPtr_ = nullptr;
     STKScalarField* lambdaSTKFieldPtr_ = nullptr;
     STKScalarField* vofCourantSTKFieldPtr_ = nullptr;
+    std::map<label, STKScalarField*> vofInflowSTKFieldPtrs_;
     STKScalarField* sideLambdaSTKFieldPtr_ = nullptr;
     STKScalarField* QplusSTKFieldPtr_ = nullptr;
     STKScalarField* QminusSTKFieldPtr_ = nullptr;

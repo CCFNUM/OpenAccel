@@ -146,6 +146,8 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     std::vector<scalar> ws_nHat;
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_vofCo;
+    std::vector<scalar> ws_inflow;
+    std::vector<scalar> ws_alphaBc;
 
     // geometry related to populate
     std::vector<scalar> ws_scs_areav;
@@ -183,6 +185,8 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     const auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
     const auto* vofCourantSTKFieldPtr = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, "vof_courant");
+    const auto* vofInflowSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "vof_inflow" + std::to_string(phaseIndex_));
     const scalar gamma = model_->gamma(domain);
 
     // Get geometric fields
@@ -250,6 +254,8 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         ws_magU.resize(nodesPerElement);
         ws_rho.resize(nodesPerElement);
         ws_vofCo.resize(nodesPerElement);
+        ws_inflow.resize(nodesPerElement);
+        ws_alphaBc.resize(nodesPerElement);
         ws_scv_volume.resize(numScvIp);
         ws_nHat.resize(nodesPerElement * SPATIAL_DIM);
         ws_dndx_scv.resize(SPATIAL_DIM * numScvIp * nodesPerElement);
@@ -276,6 +282,8 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
         scalar* p_nHat = &ws_nHat[0];
         scalar* p_rho = &ws_rho[0];
         scalar* p_vofCo = &ws_vofCo[0];
+        scalar* p_inflow = &ws_inflow[0];
+        scalar* p_alphaBc = &ws_alphaBc[0];
         scalar* p_gijUp = &ws_gijUpper[0];
         scalar* p_gijLow = &ws_gijLower[0];
 
@@ -354,6 +362,10 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                 p_beta[ni] = beta[0];
                 p_vofCo[ni] = *stk::mesh::field_data(*vofCourantSTKFieldPtr,
                                                      node);
+                const scalar* inflow =
+                    stk::mesh::field_data(*vofInflowSTKFieldPtr, node);
+                p_inflow[ni] = inflow[0];
+                p_alphaBc[ni] = inflow[1];
                 p_rho[ni] = rho[0];
 
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -502,7 +514,15 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                          p_coordinates[il * SPATIAL_DIM + j]) *
                                         gC;
                                 }
-                                const scalar a = 2.0 * gradDotEdge - dphi;
+                                const scalar alphaU =
+                                    p_inflow[il] > 0.0
+                                        ? p_alphaBc[il]
+                                        : std::clamp(p_alpha[ir] -
+                                                         2.0 * gradDotEdge,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[ir] - alphaU;
+                                const scalar a = dq - dphi;
                                 const scalar ab = a * dphi;
                                 const scalar psi =
                                     2.0 * (ab + std::abs(ab)) /
@@ -521,7 +541,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[il] > 0.0
+                                        ? p_alphaBc[il]
+                                        : std::clamp(p_alpha[ir] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[ir] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
                                           (dq + 1.0e-16);
@@ -545,7 +571,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[il] > 0.0
+                                        ? p_alphaBc[il]
+                                        : std::clamp(p_alpha[ir] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[ir] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
                                           (dq + 1.0e-16);
@@ -567,7 +599,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[il] > 0.0
+                                        ? p_alphaBc[il]
+                                        : std::clamp(p_alpha[ir] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[ir] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
                                           (dq + 1.0e-16);
@@ -592,7 +630,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[il] > 0.0
+                                        ? p_alphaBc[il]
+                                        : std::clamp(p_alpha[ir] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[ir] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
                                           (dq + 1.0e-16);
@@ -617,7 +661,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[il] > 0.0
+                                        ? p_alphaBc[il]
+                                        : std::clamp(p_alpha[ir] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[ir] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
                                           (dq + 1.0e-16);
@@ -647,7 +697,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[il] > 0.0
+                                        ? p_alphaBc[il]
+                                        : std::clamp(p_alpha[ir] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[ir] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[ir] - p_alpha[il]) /
                                           (dq + 1.0e-16);
@@ -706,7 +762,15 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                          p_coordinates[ir * SPATIAL_DIM + j]) *
                                         gC;
                                 }
-                                const scalar a = 2.0 * gradDotEdge - dphi;
+                                const scalar alphaU =
+                                    p_inflow[ir] > 0.0
+                                        ? p_alphaBc[ir]
+                                        : std::clamp(p_alpha[il] -
+                                                         2.0 * gradDotEdge,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[il] - alphaU;
+                                const scalar a = dq - dphi;
                                 const scalar ab = a * dphi;
                                 const scalar psi =
                                     2.0 * (ab + std::abs(ab)) /
@@ -725,7 +789,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[ir] > 0.0
+                                        ? p_alphaBc[ir]
+                                        : std::clamp(p_alpha[il] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[il] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
                                           (dq + 1.0e-16);
@@ -749,7 +819,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[ir] > 0.0
+                                        ? p_alphaBc[ir]
+                                        : std::clamp(p_alpha[il] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[il] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
                                           (dq + 1.0e-16);
@@ -771,7 +847,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[ir] > 0.0
+                                        ? p_alphaBc[ir]
+                                        : std::clamp(p_alpha[il] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[il] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
                                           (dq + 1.0e-16);
@@ -796,7 +878,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[ir] > 0.0
+                                        ? p_alphaBc[ir]
+                                        : std::clamp(p_alpha[il] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[il] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
                                           (dq + 1.0e-16);
@@ -821,7 +909,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[ir] > 0.0
+                                        ? p_alphaBc[ir]
+                                        : std::clamp(p_alpha[il] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[il] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
                                           (dq + 1.0e-16);
@@ -851,7 +945,13 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                     gradCd +=
                                         p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                 }
-                                const scalar dq = 2.0 * gradCd;
+                                const scalar alphaU =
+                                    p_inflow[ir] > 0.0
+                                        ? p_alphaBc[ir]
+                                        : std::clamp(p_alpha[il] - 2.0 * gradCd,
+                                                     0.0,
+                                                     1.0);
+                                const scalar dq = p_alpha[il] - alphaU;
                                 const scalar phiTilde =
                                     1.0 - (p_alpha[il] - p_alpha[ir]) /
                                           (dq + 1.0e-16);

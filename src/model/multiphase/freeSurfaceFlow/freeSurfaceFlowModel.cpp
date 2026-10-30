@@ -125,6 +125,17 @@ freeSurfaceFlowModel::freeSurfaceFlowModel(realm* realm)
         vofCourantSTKFieldPtr_ = &metaData.declare_field<scalar>(
             stk::topology::NODE_RANK, "vof_courant");
         stk::io::set_field_output_type(*vofCourantSTKFieldPtr_, fieldType[1]);
+        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+        {
+            if (!this->phaseRef(iPhase).primaryPhase_)
+            {
+                label phaseIndex = phaseRef(iPhase).index_;
+                vofInflowSTKFieldPtrs_[phaseIndex] =
+                    &metaData.declare_field<scalar>(
+                        stk::topology::NODE_RANK,
+                        "vof_inflow" + std::to_string(phaseIndex));
+            }
+        }
         for (const auto& domain : realm->simulationRef().domainVector())
         {
             const stk::mesh::PartVector& partVec =
@@ -135,6 +146,14 @@ freeSurfaceFlowModel::freeSurfaceFlowModel(realm* realm)
                 {
                     stk::mesh::put_field_on_mesh(
                         *vofCourantSTKFieldPtr_, *part, nullptr);
+                }
+                for (auto& vofInflow : vofInflowSTKFieldPtrs_)
+                {
+                    if (!vofInflow.second->defined_on(*part))
+                    {
+                        stk::mesh::put_field_on_mesh(
+                            *vofInflow.second, *part, 3, nullptr);
+                    }
                 }
             }
         }
@@ -3760,6 +3779,8 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             this->alphaRef(iPhase).blendingFactorRef().stkFieldRef();
         const STKScalarField* nHatSTKFieldPtr =
             this->nHatRef(iPhase).stkFieldPtr();
+        const STKScalarField* vofInflowSTKFieldPtr =
+            vofInflowSTKFieldPtrs_.at(iPhase);
 
         // Get geometric fields
         const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
@@ -3781,6 +3802,8 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
         std::vector<scalar> ws_rho;
         std::vector<scalar> ws_beta;
         std::vector<scalar> ws_vofCo;
+        std::vector<scalar> ws_inflow;
+        std::vector<scalar> ws_alphaBc;
         std::vector<scalar> ws_shape_function;
         std::vector<scalar> ws_coordinate_shape_function;
         std::vector<scalar> ws_U;
@@ -3833,6 +3856,8 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             ws_rho.resize(nodesPerElement);
             ws_beta.resize(nodesPerElement);
             ws_vofCo.resize(nodesPerElement);
+            ws_inflow.resize(nodesPerElement);
+            ws_alphaBc.resize(nodesPerElement);
             ws_shape_function.resize(numScsIp * nodesPerElement);
             ws_coordinate_shape_function.resize(numScsIp * nodesPerElement);
             ws_U.resize(nodesPerElement * SPATIAL_DIM);
@@ -3846,6 +3871,8 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
             scalar* p_rho = &ws_rho[0];
             scalar* p_beta = &ws_beta[0];
             scalar* p_vofCo = &ws_vofCo[0];
+            scalar* p_inflow = &ws_inflow[0];
+            scalar* p_alphaBc = &ws_alphaBc[0];
             scalar* p_shape_function = &ws_shape_function[0];
             scalar* p_coordinate_shape_function =
                 &ws_coordinate_shape_function[0];
@@ -3893,6 +3920,10 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                         *stk::mesh::field_data(betaSTKFieldRef, node);
                     p_vofCo[iNode] = *stk::mesh::field_data(
                         *vofCourantSTKFieldPtr, node);
+                    const scalar* inflow =
+                        stk::mesh::field_data(*vofInflowSTKFieldPtr, node);
+                    p_inflow[iNode] = inflow[0];
+                    p_alphaBc[iNode] = inflow[1];
 
                     // gather vectors
                     scalar* coords =
@@ -4009,7 +4040,15 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                              p_coordinates[il * SPATIAL_DIM + j]) *
                                             gC;
                                     }
-                                    const scalar a = 2.0 * gradDotEdge - dphi;
+                                    const scalar alphaU =
+                                        p_inflow[il] > 0.0
+                                            ? p_alphaBc[il]
+                                            : std::clamp(p_alpha[ir] -
+                                                             2.0 * gradDotEdge,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[ir] - alphaU;
+                                    const scalar a = dq - dphi;
                                     const scalar ab = a * dphi;
                                     const scalar psi =
                                         2.0 * (ab + std::abs(ab)) /
@@ -4028,7 +4067,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[il] > 0.0
+                                            ? p_alphaBc[il]
+                                            : std::clamp(p_alpha[ir] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[ir] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
                                               (dq + 1.0e-16);
@@ -4052,7 +4098,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[il] > 0.0
+                                            ? p_alphaBc[il]
+                                            : std::clamp(p_alpha[ir] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[ir] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
                                               (dq + 1.0e-16);
@@ -4074,7 +4127,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[il] > 0.0
+                                            ? p_alphaBc[il]
+                                            : std::clamp(p_alpha[ir] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[ir] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
                                               (dq + 1.0e-16);
@@ -4099,7 +4159,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[il] > 0.0
+                                            ? p_alphaBc[il]
+                                            : std::clamp(p_alpha[ir] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[ir] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
                                               (dq + 1.0e-16);
@@ -4124,7 +4191,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[il] > 0.0
+                                            ? p_alphaBc[il]
+                                            : std::clamp(p_alpha[ir] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[ir] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
                                               (dq + 1.0e-16);
@@ -4154,7 +4228,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[il * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[il] > 0.0
+                                            ? p_alphaBc[il]
+                                            : std::clamp(p_alpha[ir] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[ir] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[ir] - p_alpha[il]) /
                                               (dq + 1.0e-16);
@@ -4214,7 +4295,15 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                              p_coordinates[ir * SPATIAL_DIM + j]) *
                                             gC;
                                     }
-                                    const scalar a = 2.0 * gradDotEdge - dphi;
+                                    const scalar alphaU =
+                                        p_inflow[ir] > 0.0
+                                            ? p_alphaBc[ir]
+                                            : std::clamp(p_alpha[il] -
+                                                             2.0 * gradDotEdge,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[il] - alphaU;
+                                    const scalar a = dq - dphi;
                                     const scalar ab = a * dphi;
                                     const scalar psi =
                                         2.0 * (ab + std::abs(ab)) /
@@ -4233,7 +4322,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[ir] > 0.0
+                                            ? p_alphaBc[ir]
+                                            : std::clamp(p_alpha[il] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[il] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
                                               (dq + 1.0e-16);
@@ -4257,7 +4353,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[ir] > 0.0
+                                            ? p_alphaBc[ir]
+                                            : std::clamp(p_alpha[il] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[il] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
                                               (dq + 1.0e-16);
@@ -4279,7 +4382,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[ir] > 0.0
+                                            ? p_alphaBc[ir]
+                                            : std::clamp(p_alpha[il] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[il] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
                                               (dq + 1.0e-16);
@@ -4304,7 +4414,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[ir] > 0.0
+                                            ? p_alphaBc[ir]
+                                            : std::clamp(p_alpha[il] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[il] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
                                               (dq + 1.0e-16);
@@ -4329,7 +4446,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[ir] > 0.0
+                                            ? p_alphaBc[ir]
+                                            : std::clamp(p_alpha[il] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[il] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
                                               (dq + 1.0e-16);
@@ -4359,7 +4483,14 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                         gradCd +=
                                             p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
                                     }
-                                    const scalar dq = 2.0 * gradCd;
+                                    const scalar alphaU =
+                                        p_inflow[ir] > 0.0
+                                            ? p_alphaBc[ir]
+                                            : std::clamp(p_alpha[il] -
+                                                             2.0 * gradCd,
+                                                         0.0,
+                                                         1.0);
+                                    const scalar dq = p_alpha[il] - alphaU;
                                     const scalar phiTilde =
                                         1.0 - (p_alpha[il] - p_alpha[ir]) /
                                               (dq + 1.0e-16);
@@ -5340,6 +5471,129 @@ void freeSurfaceFlowModel::updateVofCourantField(
     if (messager::parallel())
     {
         stk::mesh::parallel_sum(bulkData, {vofCourantSTKFieldPtr_});
+    }
+}
+
+void freeSurfaceFlowModel::updateVofInflowField(
+    const std::shared_ptr<domain> domain,
+    label iPhase)
+{
+    if (domain->multiphase_.freeSurfaceModel_.advectionScheme_ ==
+        vofAdvectionSchemeType::barthJespersen)
+    {
+        return;
+    }
+
+    auto& mesh = this->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    STKScalarField* vofInflowSTKFieldPtr = vofInflowSTKFieldPtrs_.at(iPhase);
+
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+
+    ops::zero(vofInflowSTKFieldPtr, partVec);
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         iBoundary++)
+    {
+        const auto* boundary = domain->zonePtr()->boundaryPtr(iBoundary);
+        boundaryPhysicalType type = boundary->type();
+        boundaryConditionType bcType =
+            this->alphaRef(iPhase)
+                .boundaryConditionRef(domain->index(), iBoundary)
+                .type();
+
+        if (!((type == boundaryPhysicalType::inlet &&
+               bcType == boundaryConditionType::specifiedValue) ||
+              type == boundaryPhysicalType::opening))
+        {
+            continue;
+        }
+
+        const auto& alphaSideSTKFieldRef =
+            this->alphaRef(iPhase).sideFieldRef().stkFieldRef();
+        const STKScalarField* mDotSideSTKFieldPtr =
+            this->mDotRef(iPhase).sideFieldRef().stkFieldPtr();
+
+        stk::mesh::Selector selOwnedSides =
+            metaData.locally_owned_part() &
+            stk::mesh::selectUnion(boundary->parts());
+
+        stk::mesh::BucketVector const& sideBuckets =
+            bulkData.get_buckets(metaData.side_rank(), selOwnedSides);
+        for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
+             ib != sideBuckets.end();
+             ++ib)
+        {
+            stk::mesh::Bucket& sideBucket = **ib;
+            const stk::mesh::Bucket::size_type nSidesPerBucket =
+                sideBucket.size();
+
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
+            const label numScsBip = meFC->numIntPoints_;
+            const label* ipNodeMap = meFC->ipNodeMap();
+
+            for (stk::mesh::Bucket::size_type iSide = 0;
+                 iSide < nSidesPerBucket;
+                 ++iSide)
+            {
+                stk::mesh::Entity const* sideRels =
+                    sideBucket.begin_nodes(iSide);
+                const scalar* alphaBc = stk::mesh::field_data(
+                    alphaSideSTKFieldRef, sideBucket, iSide);
+                const scalar* mDot = stk::mesh::field_data(
+                    *mDotSideSTKFieldPtr, sideBucket, iSide);
+
+                for (label ip = 0; ip < numScsBip; ++ip)
+                {
+                    const scalar tmDot = mDot[ip];
+                    scalar* inflow = stk::mesh::field_data(
+                        *vofInflowSTKFieldPtr, sideRels[ipNodeMap[ip]]);
+                    inflow[0] += tmDot;
+                    if (tmDot < 0.0)
+                    {
+                        inflow[1] += tmDot;
+                        inflow[2] += tmDot * alphaBc[ip];
+                    }
+                }
+            }
+        }
+    }
+
+    if (messager::parallel())
+    {
+        stk::mesh::parallel_sum(bulkData, {vofInflowSTKFieldPtr});
+        stk::mesh::communicate_field_data(bulkData, {vofInflowSTKFieldPtr});
+    }
+
+    stk::mesh::Selector selNodes =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selNodes);
+    for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+         ib != nodeBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& nodeBucket = **ib;
+        scalar* inflow =
+            stk::mesh::field_data(*vofInflowSTKFieldPtr, nodeBucket);
+        for (stk::mesh::Bucket::size_type iNode = 0; iNode < nodeBucket.size();
+             ++iNode)
+        {
+            scalar* c = &inflow[3 * iNode];
+            if (c[0] < 0.0)
+            {
+                c[0] = 1.0;
+                c[1] = c[2] / c[1];
+            }
+            else
+            {
+                c[0] = 0.0;
+                c[1] = 0.0;
+            }
+        }
     }
 }
 

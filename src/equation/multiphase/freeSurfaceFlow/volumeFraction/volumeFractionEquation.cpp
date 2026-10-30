@@ -119,6 +119,7 @@ void volumeFractionEquation::preSolve()
 {
     FOREACH_DOMAIN(model_->updateVolumeFractionPrevIterField, phaseIndex_);
     FOREACH_DOMAIN(model_->updateVolumeFraction, phaseIndex_);
+    FOREACH_DOMAIN(model_->updateVofInflowField, phaseIndex_);
 
     // Note: smoothing iters for alpha and interface normal
     FOREACH_DOMAIN(model_->applyVOFSmoothing, phaseIndex_);
