@@ -21901,6 +21901,8 @@ void flowModel::updatePressureBoundarySideFieldInletTotalPressure_(
                                     .stkFieldRef();
                             auto& sidePSTKFieldRef =
                                 pRef().sideFieldRef().stkFieldRef();
+                            const auto& mDotSTKFieldRef =
+                                this->mDotRef().sideFieldRef().stkFieldRef();
 
                             // Get geometric fields
                             const auto& exposedAreaVecSTKFieldRef =
@@ -21987,6 +21989,8 @@ void flowModel::updatePressureBoundarySideFieldInletTotalPressure_(
                                             exposedAreaVecSTKFieldRef, side);
                                     const scalar* dir = stk::mesh::field_data(
                                         sideFlowDirectionSTKFieldRef, side);
+                                    const scalar* mDot = stk::mesh::field_data(
+                                        mDotSTKFieldRef, side);
                                     scalar* pbc = stk::mesh::field_data(
                                         sidePSTKFieldRef, side);
 
@@ -22087,6 +22091,18 @@ void flowModel::updatePressureBoundarySideFieldInletTotalPressure_(
                                             num / (den + SMALL);
                                         const scalar Iu_ipI2 = Iu_ipI * Iu_ipI;
 
+                                        if (mDot[ip] < 0.0)
+                                        {
+                                            rhoBip = this->inflowDensityBip_(
+                                                domain,
+                                                boundary,
+                                                side,
+                                                ip,
+                                                &p_face_shape_function
+                                                    [offSetSF_face],
+                                                rhoBip);
+                                        }
+
                                         pbc[ip] =
                                             std::min(p0Value - 0.5 * rhoBip *
                                                                    Iu_ipI2 * d2,
@@ -22175,6 +22191,8 @@ void flowModel::updatePressureBoundarySideFieldInletTotalPressure_(
                                     .stkFieldRef();
                             auto& sidePSTKFieldRef =
                                 pRef().sideFieldRef().stkFieldRef();
+                            const auto& mDotSTKFieldRef =
+                                this->mDotRef().sideFieldRef().stkFieldRef();
 
                             // Get geometric fields
                             const auto& exposedAreaVecSTKFieldRef =
@@ -22272,6 +22290,8 @@ void flowModel::updatePressureBoundarySideFieldInletTotalPressure_(
                                             exposedAreaVecSTKFieldRef, side);
                                     const scalar* dir = stk::mesh::field_data(
                                         sideFlowDirectionSTKFieldRef, side);
+                                    const scalar* mDot = stk::mesh::field_data(
+                                        mDotSTKFieldRef, side);
                                     scalar* pbc = stk::mesh::field_data(
                                         sidePSTKFieldRef, side);
 
@@ -22393,6 +22413,18 @@ void flowModel::updatePressureBoundarySideFieldInletTotalPressure_(
                                         const scalar Iu_ipI =
                                             num / (den + SMALL);
                                         const scalar Iu_ipI2 = Iu_ipI * Iu_ipI;
+
+                                        if (mDot[ip] < 0.0)
+                                        {
+                                            rhoBip = this->inflowDensityBip_(
+                                                domain,
+                                                boundary,
+                                                side,
+                                                ip,
+                                                &p_face_shape_function
+                                                    [offSetSF_face],
+                                                rhoBip);
+                                        }
 
                                         pbc[ip] =
                                             std::min(p0Value - 0.5 * rhoBip *
@@ -25920,6 +25952,15 @@ void flowModel::updatePressureBoundarySideFieldOpening_(
                                             const scalar Iu_ipI2 =
                                                 Iu_ipI * Iu_ipI;
 
+                                            rhoBip = this->inflowDensityBip_(
+                                                domain,
+                                                boundary,
+                                                side,
+                                                ip,
+                                                &p_face_shape_function
+                                                    [offSetSF_face],
+                                                rhoBip);
+
                                             pbc[ip] = openValue - 0.5 * rhoBip *
                                                                       Iu_ipI2 *
                                                                       d2;
@@ -26264,6 +26305,15 @@ void flowModel::updatePressureBoundarySideFieldOpening_(
                                                 num / (den + SMALL);
                                             const scalar Iu_ipI2 =
                                                 Iu_ipI * Iu_ipI;
+
+                                            rhoBip = this->inflowDensityBip_(
+                                                domain,
+                                                boundary,
+                                                side,
+                                                ip,
+                                                &p_face_shape_function
+                                                    [offSetSF_face],
+                                                rhoBip);
 
                                             pbc[ip] = openValue - 0.5 * rhoBip *
                                                                       Iu_ipI2 *
