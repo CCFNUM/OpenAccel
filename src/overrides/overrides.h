@@ -39,7 +39,6 @@ public:
 
     void read(const YAML::Node& inputNode);
 
-
     void initialize();
 
 #ifdef HAS_UTOPIA
