@@ -144,6 +144,9 @@ void volumeFractionEquation::solve()
     linearSystem::simulationRef().getProfiler().pop();
 
     // FCT residual: r = b - A (alpha_LO - alpha) at the previous FCT step
+    const bool firstFCTStep =
+        linearSystem::simulationRef().getIterationCount() == 1 &&
+        this->currentSubIter() == 1;
     auto rFCT = ctx->getControlData().scaled_initial_res;
     if (deferConvergenceReport_ && ctx->getGraph()->isGraphMember())
     {
@@ -157,7 +160,7 @@ void volumeFractionEquation::solve()
         {
             if (!domain->multiphase_.freeSurfaceModel_
                      .fluxCorrectedTransport_ ||
-                linearSystem::simulationRef().getIterationCount() == 1)
+                firstFCTStep)
             {
                 continue;
             }

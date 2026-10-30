@@ -839,11 +839,20 @@ void controls::read(YAML::Node inputNode)
                     if (advancedOptions["equation_controls"]["sub_iterations"]
                                        ["volume_fraction"])
                     {
-                        solver_.solverControl_.advancedOptions_
-                            .equationControls_.subIterations_.volumeFraction_ =
+                        const label nSubIters =
                             advancedOptions["equation_controls"]
                                            ["sub_iterations"]["volume_fraction"]
                                                .template as<label>();
+
+                        if (nSubIters < 1)
+                        {
+                            errorMsg("sub_iterations: volume_fraction must be "
+                                     ">= 1");
+                        }
+
+                        solver_.solverControl_.advancedOptions_
+                            .equationControls_.subIterations_.volumeFraction_ =
+                            nSubIters;
                     }
                 }
 

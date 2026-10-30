@@ -163,54 +163,99 @@ void segregatedFreeSurfaceFlowEquations::solve()
 {
     // solve volume fraction
     {
-        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
-        {
-            if (!this->phaseRef(iPhase).primaryPhase_)
-            {
-                FOREACH_DOMAIN(updateVofCourantField, phaseIndex(iPhase));
-
-                assert(alpha_eq_[iPhase]);
-                alpha_eq_[iPhase]->preSolve();
-            }
-            else
-            {
-                // update primary phase (i.e. boundary conditions)
-                FOREACH_DOMAIN(updateVolumeFraction, phaseIndex(iPhase));
-            }
-        }
-
+        label alphaSubIters = 1;
+        std::string alphaNames;
         for (label iPhase = 0; iPhase < nPhases(); iPhase++)
         {
             if (!this->phaseRef(iPhase).primaryPhase_)
             {
                 assert(alpha_eq_[iPhase]);
-                alpha_eq_[iPhase]->solve();
+                alphaSubIters =
+                    std::max(alphaSubIters, alpha_eq_[iPhase]->subIters());
+                alphaNames += (alphaNames.empty() ? "" : ", ") +
+                              alpha_eq_[iPhase]->name();
             }
         }
 
-        // deduce the volume fraction of the last phase from volume conservation
-        FOREACH_DOMAIN(applyVolumeConservation);
-
-        // update gradient and beta field for primary phases
-        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+        if (messager::master() && alphaSubIters > 1)
         {
-            if (this->phaseRef(iPhase).primaryPhase_)
-            {
-                // 1) update alpha gradient
-                FOREACH_DOMAIN(updateVolumeFractionGradientField,
-                               phaseIndex(iPhase));
-
-                // 2) update alpha scale
-                this->alphaRef(phaseIndex(iPhase)).updateScale();
-            }
+            std::cout << std::endl << "Sub-iterating " + alphaNames << ":\n";
         }
 
-        for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+        for (label subIter = 1; subIter <= alphaSubIters; subIter++)
         {
-            if (!this->phaseRef(iPhase).primaryPhase_)
+            // only print sub-iter if it is active (> 1)
+            if (messager::master() && alphaSubIters > 1)
             {
-                assert(alpha_eq_[iPhase]);
-                alpha_eq_[iPhase]->postSolve();
+                std::cout << std::endl << " sub-iter: " << subIter << "\n";
+            }
+
+            for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+            {
+                if (!this->phaseRef(iPhase).primaryPhase_)
+                {
+                    FOREACH_DOMAIN(updateVofCourantField, phaseIndex(iPhase));
+
+                    assert(alpha_eq_[iPhase]);
+                    alpha_eq_[iPhase]->setCurrentSubIter(subIter);
+                    alpha_eq_[iPhase]->preSolve();
+                }
+                else
+                {
+                    // update primary phase (i.e. boundary conditions)
+                    FOREACH_DOMAIN(updateVolumeFraction, phaseIndex(iPhase));
+                }
+            }
+
+            for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+            {
+                if (!this->phaseRef(iPhase).primaryPhase_)
+                {
+                    assert(alpha_eq_[iPhase]);
+                    alpha_eq_[iPhase]->solve();
+                }
+            }
+
+            // deduce the volume fraction of the last phase from volume
+            // conservation
+            FOREACH_DOMAIN(applyVolumeConservation);
+
+            // update gradient and beta field for primary phases
+            for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+            {
+                if (this->phaseRef(iPhase).primaryPhase_)
+                {
+                    // 1) update alpha gradient
+                    FOREACH_DOMAIN(updateVolumeFractionGradientField,
+                                   phaseIndex(iPhase));
+
+                    // 2) update alpha scale
+                    this->alphaRef(phaseIndex(iPhase)).updateScale();
+                }
+            }
+
+            bool alphaConverged = true;
+            for (label iPhase = 0; iPhase < nPhases(); iPhase++)
+            {
+                if (!this->phaseRef(iPhase).primaryPhase_)
+                {
+                    assert(alpha_eq_[iPhase]);
+                    alpha_eq_[iPhase]->postSolve();
+
+                    alphaConverged =
+                        alphaConverged && alpha_eq_[iPhase]->isConverged();
+                }
+            }
+
+            // if converged .. break sub-iter loop (all ranks together)
+            if (alphaSubIters > 1)
+            {
+                int converged = alphaConverged ? 1 : 0;
+                messager::minReduce(converged);
+                if (converged)
+                {
+                    break;
+                }
             }
         }
 
