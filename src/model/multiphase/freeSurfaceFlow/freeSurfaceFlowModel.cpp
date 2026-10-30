@@ -3349,6 +3349,10 @@ void freeSurfaceFlowModel::computeFL_(const std::shared_ptr<domain> domain,
                                     this->mDotRef(iPhase)
                                         .sideFieldRef()
                                         .stkFieldPtr();
+                                const STKScalarField* alphaSTKFieldPtr =
+                                    this->alphaRef(iPhase).stkFieldPtr();
+
+                                std::vector<scalar> ws_alpha;
 
                                 // define some common selectors
                                 stk::mesh::Selector selAllSides =
@@ -3378,11 +3382,24 @@ void freeSurfaceFlowModel::computeFL_(const std::shared_ptr<domain> domain,
 
                                     const label numScsBip = meFC->numIntPoints_;
 
+                                    const label numNodesPerSide =
+                                        meFC->nodesPerElement_;
+
+                                    ws_alpha.resize(numNodesPerSide);
+
+                                    scalar* p_alpha = &ws_alpha[0];
+
                                     for (stk::mesh::Bucket::size_type iSide = 0;
                                          iSide < nSidesPerBucket;
                                          ++iSide)
                                     {
                                         const auto& side = sideBucket[iSide];
+
+                                        const label* ipNodeMap =
+                                            meFC->ipNodeMap();
+
+                                        stk::mesh::Entity const* sideRels =
+                                            bulkData.begin_nodes(side);
 
                                         const scalar* alphaBc =
                                             stk::mesh::field_data(
@@ -3401,12 +3418,37 @@ void freeSurfaceFlowModel::computeFL_(const std::shared_ptr<domain> domain,
                                             sideBucket,
                                             iSide);
 
+                                        for (label iNode = 0;
+                                             iNode < numNodesPerSide;
+                                             iNode++)
+                                        {
+                                            stk::mesh::Entity node =
+                                                sideRels[iNode];
+
+                                            p_alpha[iNode] =
+                                                *stk::mesh::field_data(
+                                                    *alphaSTKFieldPtr, node);
+                                        }
+
                                         for (label ip = 0; ip < numScsBip; ++ip)
                                         {
+                                            const label nearestNode =
+                                                ipNodeMap[ip];
+
                                             // save off mDot
                                             const scalar tmDot = mDot[ip];
 
-                                            sideFL[ip] = tmDot * alphaBc[ip];
+                                            if (tmDot > 0.0)
+                                            {
+                                                sideFL[ip] =
+                                                    tmDot *
+                                                    p_alpha[nearestNode];
+                                            }
+                                            else
+                                            {
+                                                sideFL[ip] =
+                                                    tmDot * alphaBc[ip];
+                                            }
                                         }
                                     }
                                 }
@@ -4672,6 +4714,10 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                     this->mDotRef(iPhase)
                                         .sideFieldRef()
                                         .stkFieldPtr();
+                                const STKScalarField* alphaSTKFieldPtr =
+                                    this->alphaRef(iPhase).stkFieldPtr();
+
+                                std::vector<scalar> ws_alpha;
 
                                 // define some common selectors
                                 stk::mesh::Selector selAllSides =
@@ -4701,11 +4747,24 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
 
                                     const label numScsBip = meFC->numIntPoints_;
 
+                                    const label numNodesPerSide =
+                                        meFC->nodesPerElement_;
+
+                                    ws_alpha.resize(numNodesPerSide);
+
+                                    scalar* p_alpha = &ws_alpha[0];
+
                                     for (stk::mesh::Bucket::size_type iSide = 0;
                                          iSide < nSidesPerBucket;
                                          ++iSide)
                                     {
                                         const auto& side = sideBucket[iSide];
+
+                                        const label* ipNodeMap =
+                                            meFC->ipNodeMap();
+
+                                        stk::mesh::Entity const* sideRels =
+                                            bulkData.begin_nodes(side);
 
                                         const scalar* alphaBc =
                                             stk::mesh::field_data(
@@ -4724,14 +4783,39 @@ void freeSurfaceFlowModel::computeFH_(const std::shared_ptr<domain> domain,
                                             sideBucket,
                                             iSide);
 
+                                        for (label iNode = 0;
+                                             iNode < numNodesPerSide;
+                                             iNode++)
+                                        {
+                                            stk::mesh::Entity node =
+                                                sideRels[iNode];
+
+                                            p_alpha[iNode] =
+                                                *stk::mesh::field_data(
+                                                    *alphaSTKFieldPtr, node);
+                                        }
+
                                         for (label ip = 0; ip < numScsBip; ++ip)
                                         {
+                                            const label nearestNode =
+                                                ipNodeMap[ip];
+
                                             // save off mDot
                                             const scalar tmDot = mDot[ip];
 
                                             // compression factor not calculated
                                             // at the boundary
-                                            sideFH[ip] = tmDot * alphaBc[ip];
+                                            if (tmDot > 0.0)
+                                            {
+                                                sideFH[ip] =
+                                                    tmDot *
+                                                    p_alpha[nearestNode];
+                                            }
+                                            else
+                                            {
+                                                sideFH[ip] =
+                                                    tmDot * alphaBc[ip];
+                                            }
                                         }
                                     }
                                 }
