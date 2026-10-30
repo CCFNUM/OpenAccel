@@ -1830,6 +1830,20 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
                     const auto& pmDotSideSTKFieldRef =
                         this->mDotRef(phaseIndex).sideFieldRef().stkFieldRef();
 
+                    const bool useBcAlphaOnInflow =
+                        type == boundaryPhysicalType::opening ||
+                        (type == boundaryPhysicalType::inlet &&
+                         this->alphaRef(phaseIndex)
+                                 .boundaryConditionRef(domain->index(),
+                                                       boundary->index())
+                                 .type() ==
+                             boundaryConditionType::specifiedValue);
+                    const STKScalarField* alphaSideSTKFieldPtr =
+                        useBcAlphaOnInflow ? this->alphaRef(phaseIndex)
+                                                 .sideFieldRef()
+                                                 .stkFieldPtr()
+                                           : nullptr;
+
                     // shifted ip's for field?
                     bool isAlphaShifted =
                         this->alphaRef(phaseIndex).isShifted();
@@ -1910,10 +1924,21 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryField_(
                                 mDotSideSTKFieldRef, side);
                             const scalar* pmDot = stk::mesh::field_data(
                                 pmDotSideSTKFieldRef, side);
+                            const scalar* alphaBc =
+                                alphaSideSTKFieldPtr
+                                    ? stk::mesh::field_data(
+                                          *alphaSideSTKFieldPtr, side)
+                                    : nullptr;
 
                             // loop over boundary ips
                             for (label ip = 0; ip < numScsBip; ++ip)
                             {
+                                if (alphaBc && pmDot[ip] < 0.0)
+                                {
+                                    mDot[ip] += alphaBc[ip] * pmDot[ip];
+                                    continue;
+                                }
+
                                 // interpolate to bip
                                 scalar alphaBip = 0;
                                 const label offSetSF_face = ip * nodesPerSide;
