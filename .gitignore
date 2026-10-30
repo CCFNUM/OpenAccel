@@ -63,3 +63,22 @@ test
 
 # Documentation files
 *.md
+
+# Research examples: commit setup files, not meshes or generated study output.
+newExamples/**
+!newExamples/**/
+!newExamples/**/*.i
+!newExamples/**/*.py
+!newExamples/**/*.geo
+!newExamples/**/*.sh
+!newExamples/**/*.yaml
+!newExamples/**/*.yml
+!newExamples/**/README.md
+newExamples/**/before_*/
+newExamples/**/case_*/
+newExamples/**/cases/
+newExamples/**/.runtime_v3_*/
+newExamples/**/runtime_study_cpu_v3/*
+newExamples/**/runtime_study_gpu_v3/*
+!newExamples/**/runtime_study_cpu_v3/.gitkeep
+!newExamples/**/runtime_study_gpu_v3/.gitkeep
