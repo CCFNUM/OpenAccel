@@ -22,8 +22,7 @@ class domain;
 // in some degree of code duplication in this class. If possible, phiAssembler
 // should be generic enough to handle momentum assembly without the need for
 // implementing a new class.
-class bulkPressureCorrectionAssembler : public phiAssembler<1>,
-                                        public robinNeumannState
+class bulkPressureCorrectionAssembler : public phiAssembler<1>
 {
 public:
     using Base = phiAssembler<1>;
@@ -51,7 +50,18 @@ public:
 
     void adjustMatrixForPressureReference(const domain* domain, Context* ctx);
 
-    void accumulateRnWallFlux(const domain* domain) override;
+    // Tukovic Eq. 30: accumulate Q_vol after every corrector (postSolve)
+    void accumulateRnWallFlux(const domain* domain);
+
+    robinNeumannState& robinNeumannStateRef()
+    {
+        return robinNeumann_;
+    }
+
+    const robinNeumannState& robinNeumannStateRef() const
+    {
+        return robinNeumann_;
+    }
 
     void setPhaseIndex(label phaseIndex)
     {
@@ -60,6 +70,9 @@ public:
 
 private:
     freeSurfaceFlowModel* model_;
+
+    // Robin-Neumann FSI pressure BC state of this assembler
+    robinNeumannState robinNeumann_;
 
     template <class Assembler>
     friend void assembleWallInterfaceSide(Assembler&,

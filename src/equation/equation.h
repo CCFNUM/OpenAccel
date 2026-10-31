@@ -152,12 +152,6 @@ public:
     // pre-solve, solve and post-solve with the sub-iterations of the equation
     void solveSubIterations(const int verbose);
 
-    // true if preTimeStep() moved a boundary the mesh motion follows
-    virtual bool movedMeshBoundary() const
-    {
-        return false;
-    }
-
     virtual void addDomain(std::shared_ptr<domain> domain)
     {
         checkDomain(domain);

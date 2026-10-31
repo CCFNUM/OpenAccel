@@ -53,11 +53,6 @@ void accumulateRnWallFluxSides(Assembler& self, const domain* domain);
 class robinNeumannState
 {
 public:
-    virtual ~robinNeumannState() = default;
-
-    // Tukovic Eq. 30: accumulate Q_vol after every corrector (postSolve)
-    virtual void accumulateRnWallFlux(const domain* domain) = 0;
-
     // clear the parameters and warnings of the last step (preTimeStep)
     void invalidateRobinParams()
     {
@@ -119,6 +114,11 @@ public:
         return robinAccelTerm_;
     }
 
+    void setRobinAccelTerm(uint64_t key, scalar accelTerm)
+    {
+        robinAccelTerm_[key] = accelTerm;
+    }
+
     // c1 statistics of a timestep, area weighted over all assembly passes
     void resetC1Stats()
     {
@@ -157,7 +157,7 @@ public:
         return robinAreaSum_;
     }
 
-protected:
+private:
     // Robin-Neumann FSI pressure BC state (see setRobinParams())
     bool robinParamsValid_ = false;
     scalar robinHs_ = 0.0;

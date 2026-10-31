@@ -186,6 +186,8 @@ void meshMotion::update()
     // Robin-Neumann wall normal acceleration from Dt
     this->updateFsiWallAcceleration_();
 
+    boundaryMoved_ = false;
+
     if (messager::master())
     {
         std::cout << "mesh motion: done updating mesh" << std::endl;
@@ -1289,7 +1291,7 @@ void meshMotion::updateFsiWallAcceleration_()
 
         for (const interface* interf : zonePtr->interfacesRef())
         {
-            if (interf->isFluidSolidType() && interf->isRobinNeumann())
+            if (zonePtr->isRobinNeumann(interf))
             {
                 anyRnFsi = true;
                 break;
@@ -1331,7 +1333,7 @@ void meshMotion::updateFsiWallAcceleration_()
                               .stkFieldRef();
     }
 
-    // outer BDF2 coefficients as in assembleBackwardD2dt2NodeLoop_()
+    // outer BDF2 coefficients as in the solid backward d2dt2 node terms
     scalar coefft = 0.0, coefft0 = 0.0, coefft00 = 0.0;
     const scalar inner_c0 = 1.5;
     const scalar inner_c1 = -2.0;
@@ -1363,16 +1365,14 @@ void meshMotion::updateFsiWallAcceleration_()
 
         for (const interface* interf : zonePtr->interfacesRef())
         {
-            if (!interf->isFluidSolidType())
-                continue;
-
-            if (!interf->isRobinNeumann())
+            if (!zonePtr->isRobinNeumann(interf))
                 continue;
 
             const auto* fluidSideInfoPtr = interf->interfaceSideInfoPtr(iZone);
 
             // RN a_n under-relaxation factor of this interface (1 = none)
-            const scalar rnAccelRelax = interf->rnAccelRelaxation();
+            const scalar rnAccelRelax = zonePtr->fluidSolidCouplingRef(interf)
+                                            .robin_.rnAccelRelaxation_;
 
             stk::mesh::Selector selAllSides =
                 metaData.universal_part() &

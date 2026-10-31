@@ -10,6 +10,7 @@
 #define ROBINNEUMANNWALL_H
 
 // code
+#include "domain.h"
 #include "flowModel.h"
 #include "interface.h"
 #include "mesh.h"
@@ -142,10 +143,15 @@ void assembleWallInterfaceSide(Assembler& self,
     const bool isUShifted = model->URef().isShifted();
 
     // h_s and rho_s: set once per timestep in preTimeStep()
-    const scalar robinHs = self.robinHs();
-    const scalar robinRhoSolid = self.robinRhoSolid();
+    const scalar robinHs = self.robinNeumann_.robinHs();
+    const scalar robinRhoSolid = self.robinNeumann_.robinRhoSolid();
     // compute and store E in this pass (first corrector) or reuse it
-    const bool computeE = self.freezeE();
+    const bool computeE = self.robinNeumann_.freezeE();
+    const auto* rnParams =
+        robin
+            ? &domain->fluidSolidCouplingRef(interfaceSideInfoPtr->interfPtr())
+                   .robin_
+            : nullptr;
 
     stk::mesh::BucketVector const& sideBuckets =
         bulkData.get_buckets(metaData.side_rank(), selAllSides);
@@ -520,10 +526,8 @@ void assembleWallInterfaceSide(Assembler& self,
 
                 // Robin row p' + c1*dp'/dn = -rho_s*h_s*a_n (Tukovic Eq. 20)
                 const scalar rhoFluid =
-                    robinFluidDensity(interfaceSideInfoPtr->interfPtr()
-                                          ->useReferenceFluidDensity(),
-                                      interfaceSideInfoPtr->interfPtr()
-                                          ->robinReferenceFluidDensity(),
+                    robinFluidDensity(rnParams->useReferenceFluidDensity_,
+                                      rnParams->referenceFluidDensity_,
                                       phase.rhoMix ? rhoMixBip : rhoBip);
 
                 const robinBipCoefficients rc = computeRobinBipCoefficients(
@@ -547,8 +551,8 @@ void assembleWallInterfaceSide(Assembler& self,
                 const scalar accelTerm =
                     robinRhoSolid * robinHs * aWallBcVals[ip];
 
-                self.robinAccelTerm_[vnKey] = accelTerm;
-                self.recordC1(rc.c1, rc.aMag);
+                self.robinNeumann_.setRobinAccelTerm(vnKey, accelTerm);
+                self.robinNeumann_.recordC1(rc.c1, rc.aMag);
 
                 // phase weight; rho_k is already inside G
                 const scalar w_k = alphaBip / phase.densityScale;
@@ -617,12 +621,12 @@ void accumulateRnWallFluxSide(Assembler& self,
     const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
         metaData.side_rank(), self.getExposedAreaVectorID_(domain));
 
-    const scalar robinHs = self.robinHs();
-    const scalar robinRhoSolid = self.robinRhoSolid();
-    const bool useReferenceFluidDensity =
-        interfaceSideInfoPtr->interfPtr()->useReferenceFluidDensity();
-    const scalar referenceFluidDensity =
-        interfaceSideInfoPtr->interfPtr()->robinReferenceFluidDensity();
+    const scalar robinHs = self.robinNeumann_.robinHs();
+    const scalar robinRhoSolid = self.robinNeumann_.robinRhoSolid();
+    const auto& rnParams =
+        domain->fluidSolidCouplingRef(interfaceSideInfoPtr->interfPtr()).robin_;
+    const bool useReferenceFluidDensity = rnParams.useReferenceFluidDensity_;
+    const scalar referenceFluidDensity = rnParams.referenceFluidDensity_;
 
     // shifted ip's for fields?
     const bool isUShifted = model->URef().isShifted();
@@ -799,8 +803,9 @@ template <class Assembler>
 void accumulateRnWallFluxSides(Assembler& self, const domain* domain)
 {
     // the Robin row is only assembled once all fluid-solid sides are coupled
-    if (!self.robinParamsValid() || !self.model_->meshRef().interfacesCoupled(
-                                        self.model_->controlsRef().time))
+    if (!self.robinNeumann_.robinParamsValid() ||
+        !self.model_->meshRef().interfacesCoupled(
+            self.model_->controlsRef().time))
     {
         return;
     }
@@ -810,7 +815,7 @@ void accumulateRnWallFluxSides(Assembler& self, const domain* domain)
         if (interf->isConformalTreatment() || interf->isInternal())
             continue;
 
-        if (!interf->isFluidSolidType() || !interf->isRobinNeumann())
+        if (!domain->isRobinNeumann(interf))
             continue;
 
         accumulateRnWallFluxSide(

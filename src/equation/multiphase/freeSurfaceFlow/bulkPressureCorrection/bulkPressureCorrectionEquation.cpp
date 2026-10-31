@@ -18,7 +18,7 @@ bulkPressureCorrectionEquation::bulkPressureCorrectionEquation(
     : equation("Pressure Correction", true), model_(model),
       linearSystem(realm->simulationRef()),
       assembler_(std::make_unique<Assembler>(model)),
-      robinNeumann_(model, assembler_.get(), domainVector_)
+      robinNeumann_(model, assembler_->robinNeumannStateRef(), domainVector_)
 {
     this->setEquationName({"P-Mass"});
 
@@ -185,6 +185,11 @@ void bulkPressureCorrectionEquation::postSolve()
     FOREACH_DOMAIN(model_->syncSCLCheckField);
 #endif /* NDEBUG */
 
+    // Tukovic Eq. 30: Q_vol from the p' just solved
+    if (anyRobinNeumannFsi(domainVector_))
+    {
+        FOREACH_DOMAIN_PTR(assembler_->accumulateRnWallFlux);
+    }
     robinNeumann_.postSolve();
 }
 

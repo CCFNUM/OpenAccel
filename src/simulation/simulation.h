@@ -110,9 +110,8 @@ private:
 
     std::unordered_map<std::string, scalar> scalarResiduals_;
 
-    // Physics-based convergence checks (created on first use)
+    // Physics-based convergence checks (physicsConvergence::create)
     std::vector<std::unique_ptr<physicsConvergence>> physicsConvergences_;
-    bool physicsConvergencesCreated_ = false;
 
     // Private methods
 
@@ -161,8 +160,6 @@ private:
 
     // Initialize output structure and detect output fields to be written
     void initializeOutput_();
-
-    std::vector<std::unique_ptr<physicsConvergence>>& getPhysicsConvergences_();
 
 public:
     // Constructors

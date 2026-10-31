@@ -43,13 +43,14 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterfaces_(
             if (interf->isFluidSolidType())
             {
                 // Robin-Neumann row once all fluid-solid interfaces are coupled
-                bool robin = interf->isRobinNeumann() &&
+                bool robin = domain->isRobinNeumann(interf) &&
                              model_->meshRef().interfacesCoupled(
                                  model_->controlsRef().time);
-                if (robin && !robinParamsValid())
+                if (robin && !robinNeumann_.robinParamsValid())
                 {
                     // invalid parameters (c1 = 0): no-slip wall on all ranks
-                    if (messager::master() && shouldWarnRn(interf->index()))
+                    if (messager::master() &&
+                        robinNeumann_.shouldWarnRn(interf->index()))
                     {
                         warningMsg("Robin-Neumann coupling requested on "
                                    "interface " +

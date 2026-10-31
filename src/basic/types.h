@@ -431,7 +431,8 @@ convertThermalExpansivityOptionFromString(std::string s);
 // Young modulus option
 enum class youngModulusOption
 {
-    value
+    value,
+    derived // from the constants of the solid model (set by the parser)
 };
 
 youngModulusOption convertYoungModulusOptionFromString(std::string s);
@@ -439,7 +440,8 @@ youngModulusOption convertYoungModulusOptionFromString(std::string s);
 // Poisson ratio option
 enum class poissonRatioOption
 {
-    value
+    value,
+    derived // from the constants of the solid model (set by the parser)
 };
 
 poissonRatioOption convertPoissonRatioOptionFromString(std::string s);

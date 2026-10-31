@@ -24,11 +24,12 @@ fsiConvergence::fsiConvergence(simulation& sim) : physicsConvergence(sim)
     {
         for (const interface* interf : domainPtr->interfacesRef())
         {
-            if (interf->isFluidSolidType() && interf->isRobinNeumann())
+            if (domainPtr->isRobinNeumann(interf))
             {
                 isRobinNeumann_ = true;
             }
-            if (interf->isFluidSolidType() && interf->writeForceBalance())
+            if (interf->isFluidSolidType() &&
+                domainPtr->fluidSolidCouplingRef(interf).writeForceBalance_)
             {
                 writeForceBalance_ = true;
             }
@@ -449,7 +450,9 @@ void fsiConvergence::updateInterfacePCorrChange_()
             {
                 pCorrSTKFieldPtr =
                     &pcEq->flowModelPtr()->pCorrRef().stkFieldRef();
-                robinAccelMapPtr = &pcEq->assemblerPtr()->robinAccelTermMap();
+                robinAccelMapPtr = &pcEq->assemblerPtr()
+                                        ->robinNeumannStateRef()
+                                        .robinAccelTermMap();
                 rnWallFluxSideSTKFieldPtr =
                     &pcEq->flowModelPtr()->rnWallFluxRef().stkFieldRef();
             }
@@ -512,7 +515,7 @@ void fsiConvergence::updateInterfacePCorrChange_()
     {
         for (const interface* interf : domainPtr->interfacesRef())
         {
-            if (!interf->isFluidSolidType() || !interf->isRobinNeumann())
+            if (!domainPtr->isRobinNeumann(interf))
             {
                 continue;
             }

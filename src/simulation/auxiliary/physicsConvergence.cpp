@@ -5,6 +5,7 @@
 // Copyright 2026 CCFNUM HSLU T&A. All Rights Reserved.
 
 #include "physicsConvergence.h"
+#include "domain.h"
 #include "fsiConvergence.h"
 #include "interface.h"
 #include "messager.h"
@@ -23,13 +24,17 @@ physicsConvergence::create(simulation& sim)
 
     bool fsi = false;
     bool forceBalanceRequested = false;
-    for (const interface* interf : sim.meshRef().interfaceVector())
+    for (const auto& domainPtr : sim.domainVector())
     {
-        if (interf->isFluidSolidType())
+        for (const interface* interf : domainPtr->interfacesRef())
         {
-            fsi = true;
-            forceBalanceRequested =
-                forceBalanceRequested || interf->writeForceBalance();
+            if (interf->isFluidSolidType())
+            {
+                fsi = true;
+                forceBalanceRequested =
+                    forceBalanceRequested ||
+                    domainPtr->fluidSolidCouplingRef(interf).writeForceBalance_;
+            }
         }
     }
 

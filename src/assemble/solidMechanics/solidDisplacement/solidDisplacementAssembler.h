@@ -83,11 +83,6 @@ private:
     void assembleNodeTermsFusedFirstOrderUnsteady_(const domain* domain,
                                                    Context* ctx) override;
 
-    void assembleNodeTermsFusedEulerD2dt2_(const domain* domain, Context* ctx);
-    void assembleNodeTermsFusedBackwardD2dt2_(const domain* domain,
-                                              Context* ctx);
-    // backward d2dt2 node loop (CVFEM and SFEM)
-    void assembleBackwardD2dt2NodeLoop_(const domain* domain, Context* ctx);
     void assembleNodeTermsFusedSecondOrderUnsteady_(const domain* domain,
                                                     Context* ctx) override;
 

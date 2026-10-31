@@ -77,17 +77,17 @@ public:
     ::linearSolver::GraphLayout
     setupSolver(const std::string system_name,
                 const std::string fallback_name = "");
-    // fullStencil: graph with every element partner, whatever the default
+    // forceFullStencil: full stencil even with bandwidth_reduction
     std::shared_ptr<Context> setupSolver(const std::string system_name,
                                          mesh& mesh,
                                          const std::string fallback_name = "",
-                                         const bool fullStencil = false);
+                                         const bool forceFullStencil = false);
     // subset-graph variant
     std::shared_ptr<Context> setupSolver(const std::string system_name,
                                          mesh& mesh,
                                          const std::vector<const zone*>& zones,
                                          const std::string fallback_name = "",
-                                         const bool fullStencil = false);
+                                         const bool forceFullStencil = false);
     void setEquationName(const std::vector<std::string>& name);
 
     simulation& simulationRef()
@@ -432,7 +432,7 @@ std::shared_ptr<typename linearSystem<N>::Context>
 linearSystem<N>::setupSolver(const std::string system_name,
                              mesh& mesh,
                              const std::string fallback_name,
-                             const bool fullStencil)
+                             const bool forceFullStencil)
 {
     // instantiate solver and set system_name
     std::shared_ptr<typename linearSystem<N>::Context> ctx;
@@ -446,13 +446,13 @@ linearSystem<N>::setupSolver(const std::string system_name,
             ctx = lsolver_->createContext(
                 this->system_name_,
                 mesh.getLocalOrderGraphPtr(!interpolationFreeGraph_,
-                                           fullStencil));
+                                           forceFullStencil));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
             ctx = lsolver_->createContext(
                 this->system_name_,
                 mesh.getGlobalOrderGraphPtr(!interpolationFreeGraph_,
-                                            fullStencil));
+                                            forceFullStencil));
             break;
     }
 
@@ -467,7 +467,7 @@ linearSystem<N>::setupSolver(const std::string system_name,
                              mesh& mesh,
                              const std::vector<const zone*>& zones,
                              const std::string fallback_name,
-                             const bool fullStencil)
+                             const bool forceFullStencil)
 {
     std::shared_ptr<typename linearSystem<N>::Context> ctx;
     switch (this->setupSolver(system_name, fallback_name) &
@@ -480,13 +480,13 @@ linearSystem<N>::setupSolver(const std::string system_name,
             ctx = lsolver_->createContext(
                 this->system_name_,
                 mesh.getCustomLocalOrderGraphPtr(
-                    zones, !interpolationFreeGraph_, fullStencil));
+                    zones, !interpolationFreeGraph_, forceFullStencil));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
             ctx = lsolver_->createContext(
                 this->system_name_,
                 mesh.getCustomGlobalOrderGraphPtr(
-                    zones, !interpolationFreeGraph_, fullStencil));
+                    zones, !interpolationFreeGraph_, forceFullStencil));
             break;
     }
 

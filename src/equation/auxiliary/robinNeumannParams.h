@@ -56,7 +56,7 @@ class robinNeumannCoupling
 public:
     robinNeumannCoupling(
         fieldBroker* model,
-        robinNeumannState* state,
+        robinNeumannState& state,
         const std::vector<std::shared_ptr<domain>>& domainVector);
 
     // Robin side fields: a_n, Q_vol (Tukovic Eq. 30) and the frozen term E
@@ -68,7 +68,7 @@ public:
     // reset Q_vol and E once per FSI iteration, not per segregated_flow pass
     void startOfOuterIteration();
 
-    // accumulate Q_vol from the p' just solved; later correctors reuse E
+    // after the Q_vol accumulation of a corrector: later correctors reuse E
     void postSolve();
 
     // one robin_alpha.out row per timestep
@@ -77,7 +77,7 @@ public:
 private:
     fieldBroker* model_;
 
-    robinNeumannState* state_;
+    robinNeumannState& state_;
 
     const std::vector<std::shared_ptr<domain>>& domainVector_;
 

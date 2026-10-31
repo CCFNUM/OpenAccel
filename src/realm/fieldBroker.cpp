@@ -2970,6 +2970,14 @@ void fieldBroker::setupYoungModulus(const std::shared_ptr<domain> domain)
     if (ERef().isZoneUnset(domain->index()))
     {
         SET_YOUNG_MODULUS_PROPERTY(this->ERef(), domain->getYAMLMaterial());
+
+        const auto& youngModulus =
+            domain->materialRef().mechanicalProperties_.youngModulus_;
+        if (youngModulus.option_ == youngModulusOption::derived)
+        {
+            initialCondition::setupFieldInitializationOverDomainFromValues(
+                ERef(), domain->index(), {youngModulus.value_});
+        }
     }
 }
 
@@ -2978,6 +2986,14 @@ void fieldBroker::setupPoissonRatio(const std::shared_ptr<domain> domain)
     if (nuRef().isZoneUnset(domain->index()))
     {
         SET_POISSON_RATIO_PROPERTY(this->nuRef(), domain->getYAMLMaterial());
+
+        const auto& poissonRatio =
+            domain->materialRef().mechanicalProperties_.poissonRatio_;
+        if (poissonRatio.option_ == poissonRatioOption::derived)
+        {
+            initialCondition::setupFieldInitializationOverDomainFromValues(
+                nuRef(), domain->index(), {poissonRatio.value_});
+        }
     }
 }
 
@@ -3099,16 +3115,6 @@ void fieldBroker::setupDisplacement(const std::shared_ptr<domain> domain)
         initialCondition::setupFieldInitializationOverDomainFromValues(
             DRef(), domain->index(), std::vector<scalar>(SPATIAL_DIM, 0.0));
 
-        // X^k on the same domains as D (solid writes, fluid receives)
-        if (solidCorrectionRef().isZoneUnset(domain->index()))
-        {
-            solidCorrectionRef().setZone(domain->index());
-            initialCondition::setupFieldInitializationOverDomainFromValues(
-                solidCorrectionRef(),
-                domain->index(),
-                std::vector<scalar>(SPATIAL_DIM, 0.0));
-        }
-
         // for a fluid-solid interface, the interface side in this domain will
         // act as a dirichlet boundary for the displacement diffusion equation,
         // which is being solved over this domain, thus, side fields on the
@@ -3127,6 +3133,17 @@ void fieldBroker::setupDisplacement(const std::shared_ptr<domain> domain)
                     // side flux field must be defined on this side
                     DRef().registerSideFluxFieldForInterfaceSide(
                         interf->index(), interf->isMasterZone(domain->index()));
+
+                    // receives the solid correction X^k (FSI residual)
+                    if (solidCorrectionRef().isZoneUnset(domain->index()))
+                    {
+                        solidCorrectionRef().setZone(domain->index());
+                        initialCondition::
+                            setupFieldInitializationOverDomainFromValues(
+                                solidCorrectionRef(),
+                                domain->index(),
+                                std::vector<scalar>(SPATIAL_DIM, 0.0));
+                    }
                 }
                 else
                 {
@@ -3424,39 +3441,27 @@ void fieldBroker::setupHeatFlowRate(const std::shared_ptr<domain> domain)
     }
 }
 
-namespace
+void fieldBroker::setupRnWallFields(const std::shared_ptr<domain> domain)
 {
-
-// put a Robin-Neumann wall field on this domain's RN interface sides
-void putOnRobinNeumannSides(sideField<scalar, 1>& field, const domain& domain)
-{
-    for (const interface* interf : domain.interfacesRef())
+    for (const interface* interf : domain->interfacesRef())
     {
-        if (!interf->isFluidSolidType() || !interf->isRobinNeumann())
+        if (!domain->isRobinNeumann(interf))
         {
             continue;
         }
         for (const auto* part :
-             interf->interfaceSideInfoPtr(domain.index())->currentPartVec_)
+             interf->interfaceSideInfoPtr(domain->index())->currentPartVec_)
         {
-            if (!field.definedOn(*part))
+            for (auto* field :
+                 {&aWallBcRef(), &rnWallFluxRef(), &rnWallFluxERef()})
             {
-                field.putFieldOnPart(*part);
+                if (!field->definedOn(*part))
+                {
+                    field->putFieldOnPart(*part);
+                }
             }
         }
     }
-}
-
-} // namespace
-
-void fieldBroker::setupRnWallAcceleration(const std::shared_ptr<domain> domain)
-{
-    putOnRobinNeumannSides(this->aWallBcRef(), *domain);
-}
-
-void fieldBroker::setupRnWallFlux(const std::shared_ptr<domain> domain)
-{
-    putOnRobinNeumannSides(this->rnWallFluxRef(), *domain);
 }
 
 void fieldBroker::zeroRnWallFlux(const std::shared_ptr<domain> domain)
@@ -3466,7 +3471,7 @@ void fieldBroker::zeroRnWallFlux(const std::shared_ptr<domain> domain)
 
     for (const interface* interf : domain->interfacesRef())
     {
-        if (!interf->isFluidSolidType() || !interf->isRobinNeumann())
+        if (!domain->isRobinNeumann(interf))
         {
             continue;
         }
@@ -3479,11 +3484,6 @@ void fieldBroker::zeroRnWallFlux(const std::shared_ptr<domain> domain)
     }
 }
 
-void fieldBroker::setupRnWallFluxE(const std::shared_ptr<domain> domain)
-{
-    putOnRobinNeumannSides(this->rnWallFluxERef(), *domain);
-}
-
 void fieldBroker::zeroRnWallFluxE(const std::shared_ptr<domain> domain)
 {
     // zero the frozen Robin term E on this domain's RN interface sides
@@ -3491,7 +3491,7 @@ void fieldBroker::zeroRnWallFluxE(const std::shared_ptr<domain> domain)
 
     for (const interface* interf : domain->interfacesRef())
     {
-        if (!interf->isFluidSolidType() || !interf->isRobinNeumann())
+        if (!domain->isRobinNeumann(interf))
         {
             continue;
         }

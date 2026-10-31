@@ -58,7 +58,7 @@ public:
     // per-BIP Robin acceleration term (fsiConvergence diagnostics)
     const std::unordered_map<uint64_t, scalar>& robinAccelTermMap() const
     {
-        return assembler_->robinAccelTermMap();
+        return assembler_->robinNeumannStateRef().robinAccelTermMap();
     }
 
 protected:

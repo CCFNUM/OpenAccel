@@ -6,6 +6,7 @@
 
 // code
 #include "domain.h"
+#include "interface.h"
 #include "macros.h"
 #include "messager.h"
 #include "realm.h"
@@ -28,6 +29,18 @@ void convertYoungPoissonToMooneyRivlin(scalar E,
     c1 = muEff / 2.0; // C10
     c2 = 0.0;         // C01 (pure neo-Hookean split if not specified)
     kappa = E / (3.0 * (1.0 - 2.0 * nu));
+}
+
+// modified Mooney-Rivlin (c1, c2, kappa) -> small-strain (E, nu)
+void convertMooneyRivlinToYoungPoisson(scalar c1,
+                                       scalar c2,
+                                       scalar kappa,
+                                       scalar& E,
+                                       scalar& nu)
+{
+    const scalar mu = 2.0 * (c1 + c2);
+    E = 9.0 * kappa * mu / (3.0 * kappa + mu);
+    nu = (3.0 * kappa - 2.0 * mu) / (2.0 * (3.0 * kappa + mu));
 }
 
 } // namespace
@@ -791,7 +804,6 @@ void domain::read_()
                             turbulence_.wallFunctionType_ =
                                 wallFunctionType::automatic;
                         }
-
                     }
                     break;
             }
@@ -1331,7 +1343,7 @@ void domain::read_()
                 }
             }
 
-            // Mooney-Rivlin: derive c1/c2/kappa from E/nu if not given
+            // Mooney-Rivlin: c1/c2/kappa from E/nu, or E/nu from c1/c2/kappa
             if (solidMechanics_.option_ ==
                 solidMechanicsOption::modifiedMooneyRivlin)
             {
@@ -1342,7 +1354,9 @@ void domain::read_()
                     const auto& materialBlock = materialBlockVector_[iMat];
                     if (!materialBlock["mechanical_properties"])
                     {
-                        continue;
+                        errorMsg("mooney_rivlin requires mechanical_properties "
+                                 "with c1/c2/kappa or "
+                                 "young_modulus/poisson_ratio");
                     }
 
                     const auto& mechanicalPropertiesBlock =
@@ -1356,17 +1370,6 @@ void domain::read_()
                     const bool hasKappa =
                         static_cast<bool>(mechanicalPropertiesBlock["kappa"]);
 
-                    if (hasC1 && hasC2 && hasKappa)
-                    {
-                        continue;
-                    }
-
-                    if (hasC1 || hasC2 || hasKappa)
-                    {
-                        errorMsg("mooney_rivlin requires all of c1, c2 and "
-                                 "kappa when any of them is given");
-                    }
-
                     const bool hasYoungPoisson =
                         mechanicalPropertiesBlock["young_modulus"] &&
                         mechanicalPropertiesBlock["young_modulus"]
@@ -1377,6 +1380,38 @@ void domain::read_()
 
                     auto& mechProps =
                         materialVector_[iMat].mechanicalProperties_;
+
+                    if (hasC1 && hasC2 && hasKappa)
+                    {
+                        // E/nu not given: small-strain values for E-based
+                        // coefficients (RN h_s)
+                        scalar E = 0.0;
+                        scalar nu = 0.0;
+                        convertMooneyRivlinToYoungPoisson(mechProps.c1_,
+                                                          mechProps.c2_,
+                                                          mechProps.kappa_,
+                                                          E,
+                                                          nu);
+                        if (!mechanicalPropertiesBlock["young_modulus"])
+                        {
+                            mechProps.youngModulus_.option_ =
+                                youngModulusOption::derived;
+                            mechProps.youngModulus_.value_ = E;
+                        }
+                        if (!mechanicalPropertiesBlock["poisson_ratio"])
+                        {
+                            mechProps.poissonRatio_.option_ =
+                                poissonRatioOption::derived;
+                            mechProps.poissonRatio_.value_ = nu;
+                        }
+                        continue;
+                    }
+
+                    if (hasC1 || hasC2 || hasKappa)
+                    {
+                        errorMsg("mooney_rivlin requires all of c1, c2 and "
+                                 "kappa when any of them is given");
+                    }
 
                     if (hasYoungPoisson)
                     {
@@ -1679,6 +1714,104 @@ void domain::read_()
                         .template as<bool>();
             }
         }
+    }
+}
+
+void domain::readFluidSolidCouplings_()
+{
+    fluidSolidCouplings_.clear();
+
+    const YAML::Node interfacesNode =
+        simulationRef().getYAMLPhysicalAnalysisNode()["interfaces"];
+
+    for (const interface* interf : interfacesRef())
+    {
+        if (!interf->isFluidSolidType())
+        {
+            continue;
+        }
+
+        fluidSolidCoupling coupling;
+
+        for (const auto& interfaceNode : interfacesNode)
+        {
+            if (!interfaceNode["name"] ||
+                interfaceNode["name"].template as<std::string>() !=
+                    interf->name() ||
+                !interfaceNode["coupling"])
+            {
+                continue;
+            }
+
+            const YAML::Node& couplingNode = interfaceNode["coupling"];
+
+            if (couplingNode["method"])
+            {
+                coupling.method_ = convertFsiCouplingMethodFromString(
+                    couplingNode["method"].template as<std::string>());
+            }
+
+            if (couplingNode["predict_solid_displacement"])
+            {
+                coupling.predictSolidDisplacement_ =
+                    couplingNode["predict_solid_displacement"]
+                        .template as<bool>();
+            }
+
+            if (couplingNode["write_force_balance"])
+            {
+                coupling.writeForceBalance_ =
+                    couplingNode["write_force_balance"].template as<bool>();
+            }
+
+            if (couplingNode["robin_parameters"])
+            {
+                const YAML::Node& robinNode = couplingNode["robin_parameters"];
+                auto& robin = coupling.robin_;
+
+                if (robinNode["reference_fluid_density"])
+                {
+                    robin.referenceFluidDensity_ =
+                        robinNode["reference_fluid_density"]
+                            .template as<scalar>();
+                    if (!(robin.referenceFluidDensity_ > 0.0))
+                    {
+                        errorMsg("reference_fluid_density must be > 0");
+                    }
+                    robin.useReferenceFluidDensity_ = true;
+                }
+
+                if (robinNode["write_robin_alpha"])
+                {
+                    robin.writeRobinAlpha_ =
+                        robinNode["write_robin_alpha"].template as<bool>();
+                }
+
+                if (robinNode["rn_accel_relaxation"])
+                {
+                    robin.rnAccelRelaxation_ =
+                        robinNode["rn_accel_relaxation"].template as<scalar>();
+                    if (robin.rnAccelRelaxation_ <= 0.0 ||
+                        robin.rnAccelRelaxation_ > 1.0)
+                    {
+                        errorMsg("rn_accel_relaxation must be in (0, 1]");
+                    }
+                }
+
+                if (robinNode["solid_thickness"])
+                {
+                    robin.solidThickness_ =
+                        robinNode["solid_thickness"].template as<scalar>();
+                    if (!(robin.solidThickness_ > 0.0))
+                    {
+                        errorMsg("solid_thickness must be > 0");
+                    }
+                    robin.usePhysicalSolidThickness_ = true;
+                }
+            }
+        }
+
+        fluidSolidCouplings_[interf->index()] = coupling;
     }
 }
 

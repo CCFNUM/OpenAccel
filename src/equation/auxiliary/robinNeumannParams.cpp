@@ -31,7 +31,7 @@ bool anyRobinNeumannFsi(
     {
         for (const interface* interf : domainPtr->interfacesRef())
         {
-            if (interf->isFluidSolidType() && interf->isRobinNeumann())
+            if (domainPtr->isRobinNeumann(interf))
                 return true;
         }
     }
@@ -74,7 +74,7 @@ robinNeumannParams computeRobinNeumannParams(
         const label fluidZone = domainPtr->zonePtr()->index();
         for (const interface* interf : domainPtr->interfacesRef())
         {
-            if (interf->isFluidSolidType() && interf->isRobinNeumann())
+            if (domainPtr->isRobinNeumann(interf))
             {
                 const label solidZone = interf->masterZoneIndex() == fluidZone
                                             ? interf->slaveZoneIndex()
@@ -139,10 +139,12 @@ robinNeumannParams computeRobinNeumannParams(
         {
             for (const interface* interf : domainPtr->interfacesRef())
             {
-                if (interf->isFluidSolidType() && interf->isRobinNeumann() &&
-                    interf->usePhysicalSolidThickness())
+                if (domainPtr->isRobinNeumann(interf) &&
+                    domainPtr->fluidSolidCouplingRef(interf)
+                        .robin_.usePhysicalSolidThickness_)
                 {
-                    h_s = interf->solidThickness();
+                    h_s = domainPtr->fluidSolidCouplingRef(interf)
+                              .robin_.solidThickness_;
                     thicknessFound = true;
                     break;
                 }
@@ -171,8 +173,9 @@ void writeRobinC1Diagnostics(
     {
         for (const interface* interf : domainPtr->interfacesRef())
         {
-            if (interf->isFluidSolidType() && interf->isRobinNeumann() &&
-                interf->writeRobinAlpha())
+            if (domainPtr->isRobinNeumann(interf) &&
+                domainPtr->fluidSolidCouplingRef(interf)
+                    .robin_.writeRobinAlpha_)
             {
                 writeRequested = true;
                 break;
@@ -247,7 +250,7 @@ void writeRobinC1Diagnostics(
 
 robinNeumannCoupling::robinNeumannCoupling(
     fieldBroker* model,
-    robinNeumannState* state,
+    robinNeumannState& state,
     const std::vector<std::shared_ptr<domain>>& domainVector)
     : model_(model), state_(state), domainVector_(domainVector)
 {
@@ -262,15 +265,7 @@ void robinNeumannCoupling::setup()
 
     for (const auto& domain : domainVector_)
     {
-        model_->setupRnWallAcceleration(domain);
-    }
-    for (const auto& domain : domainVector_)
-    {
-        model_->setupRnWallFlux(domain);
-    }
-    for (const auto& domain : domainVector_)
-    {
-        model_->setupRnWallFluxE(domain);
+        model_->setupRnWallFields(domain);
     }
 }
 
@@ -283,8 +278,8 @@ void robinNeumannCoupling::preTimeStep()
 
     const scalar dt = model_->controlsRef().getTimestep();
     const auto rnp = computeRobinNeumannParams(*model_, domainVector_, dt);
-    state_->resetC1Stats();
-    state_->invalidateRobinParams();
+    state_.resetC1Stats();
+    state_.invalidateRobinParams();
 
     if (anyRobinNeumannFsi(domainVector_))
     {
@@ -296,7 +291,7 @@ void robinNeumannCoupling::preTimeStep()
 
     if (rnp.valid)
     {
-        state_->setRobinParams(rnp.hs, rnp.rhoSolid);
+        state_.setRobinParams(rnp.hs, rnp.rhoSolid);
     }
 }
 
@@ -325,26 +320,18 @@ void robinNeumannCoupling::startOfOuterIteration()
     {
         model_->zeroRnWallFluxE(domain);
     }
-    state_->requestFreezeE();
+    state_.requestFreezeE();
 }
 
 void robinNeumannCoupling::postSolve()
 {
-    if (anyRobinNeumannFsi(domainVector_))
-    {
-        for (const auto& domain : domainVector_)
-        {
-            state_->accumulateRnWallFlux(domain.get());
-        }
-    }
-
-    state_->clearFreezeE();
+    state_.clearFreezeE();
 }
 
 void robinNeumannCoupling::postTimeStep()
 {
     writeRobinC1Diagnostics(
-        *state_, domainVector_, robinAlphaStream_, model_->controlsRef().time);
+        state_, domainVector_, robinAlphaStream_, model_->controlsRef().time);
 }
 
 } // namespace accel

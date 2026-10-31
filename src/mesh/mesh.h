@@ -175,19 +175,19 @@ private:
 
     std::unique_ptr<nodeGraph>
     createNodeGraph_(const ::linearSolver::GraphLayout layout,
-                     const bool fullStencil);
+                     const bool forceFullStencil);
 
     // true if a full-stencil request needs graphs apart from the default
-    bool separateFullGraph_(const bool fullStencil) const
+    bool separateFullGraph_(const bool forceFullStencil) const
     {
-        return fullStencil &&
+        return forceFullStencil &&
                stencil_ == ::linearSolver::GraphLayout::Stencil__Reduced;
     }
 
     // build the graph in this slot on demand (lazy); zones: subset or nullptr
     nodeGraph* lazyGraph_(std::unique_ptr<nodeGraph>& slot,
                           const ::linearSolver::GraphLayout order,
-                          const bool fullStencil,
+                          const bool forceFullStencil,
                           const std::vector<const zone*>* zones);
 
     // canonical sorted/unique zone-index key for a zone vector
@@ -549,24 +549,24 @@ public:
     // CRS node graph
 
     nodeGraph* getGlobalOrderGraphPtr(const bool oversetBlanking = true,
-                                      const bool fullStencil = false)
+                                      const bool forceFullStencil = false)
     {
-        return lazyGraph_(separateFullGraph_(fullStencil)
+        return lazyGraph_(separateFullGraph_(forceFullStencil)
                               ? globalOrderFullGraphPtr_
                               : globalOrderGraphPtr_,
                           ::linearSolver::GraphLayout::ColumnIndexOrder__Global,
-                          fullStencil,
+                          forceFullStencil,
                           nullptr);
     }
 
     nodeGraph* getLocalOrderGraphPtr(const bool oversetBlanking = true,
-                                     const bool fullStencil = false)
+                                     const bool forceFullStencil = false)
     {
-        return lazyGraph_(separateFullGraph_(fullStencil)
+        return lazyGraph_(separateFullGraph_(forceFullStencil)
                               ? localOrderFullGraphPtr_
                               : localOrderGraphPtr_,
                           ::linearSolver::GraphLayout::ColumnIndexOrder__Local,
-                          fullStencil,
+                          forceFullStencil,
                           nullptr);
     }
 
@@ -574,15 +574,15 @@ public:
     nodeGraph*
     getCustomLocalOrderGraphPtr(const std::vector<const zone*>& zones,
                                 const bool oversetBlanking = true,
-                                const bool fullStencil = false)
+                                const bool forceFullStencil = false)
     {
         if (useFullGraphForZones_(zones))
-            return getLocalOrderGraphPtr(oversetBlanking, fullStencil);
+            return getLocalOrderGraphPtr(oversetBlanking, forceFullStencil);
         customGraphEntry& e = findOrCreateCustomGraphEntry_(zones);
-        return lazyGraph_(separateFullGraph_(fullStencil) ? e.localFull
-                                                          : e.local,
+        return lazyGraph_(separateFullGraph_(forceFullStencil) ? e.localFull
+                                                               : e.local,
                           ::linearSolver::GraphLayout::ColumnIndexOrder__Local,
-                          fullStencil,
+                          forceFullStencil,
                           &zones);
     }
 
@@ -590,15 +590,15 @@ public:
     nodeGraph*
     getCustomGlobalOrderGraphPtr(const std::vector<const zone*>& zones,
                                  const bool oversetBlanking = true,
-                                 const bool fullStencil = false)
+                                 const bool forceFullStencil = false)
     {
         if (useFullGraphForZones_(zones))
-            return getGlobalOrderGraphPtr(oversetBlanking, fullStencil);
+            return getGlobalOrderGraphPtr(oversetBlanking, forceFullStencil);
         customGraphEntry& e = findOrCreateCustomGraphEntry_(zones);
-        return lazyGraph_(separateFullGraph_(fullStencil) ? e.globalFull
-                                                          : e.global,
+        return lazyGraph_(separateFullGraph_(forceFullStencil) ? e.globalFull
+                                                               : e.global,
                           ::linearSolver::GraphLayout::ColumnIndexOrder__Global,
-                          fullStencil,
+                          forceFullStencil,
                           &zones);
     }
 

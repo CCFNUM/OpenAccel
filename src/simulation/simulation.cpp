@@ -145,6 +145,9 @@ void simulation::initialize_()
     // Initialize the realm
     realmPtr_->initialize();
 
+    // physics-based convergence checks, once the material fields are set
+    physicsConvergences_ = physicsConvergence::create(*this);
+
     // initialize output
     initializeOutput_();
 }
@@ -309,13 +312,6 @@ void simulation::runTransient()
         const bool followsSolution =
             updateMeshPerIteration && meshMotionPtr_->followsSolution();
 
-        bool movedMeshBoundary = false;
-        for (const auto& equation : equationVector_)
-        {
-            movedMeshBoundary =
-                movedMeshBoundary || equation->movedMeshBoundary();
-        }
-
         for (controlsRef().iter = 1; controlsRef().iter <= maxCoeffIterations;
              controlsRef().iter++)
         {
@@ -334,7 +330,7 @@ void simulation::runTransient()
             // solution-driven mesh: at step start only if preTimeStep moved it
             if (updateMeshPerIteration &&
                 (!followsSolution ||
-                 (controlsRef().iter == 1 && movedMeshBoundary)))
+                 (controlsRef().iter == 1 && meshMotionPtr_->boundaryMoved())))
             {
                 meshMotionPtr_->update();
             }
@@ -429,7 +425,7 @@ void simulation::preWork()
         }
 
         // after preTimeStep(), so a check also sees the iterate computed there
-        for (auto& check : getPhysicsConvergences_())
+        for (auto& check : physicsConvergences_)
         {
             check->resetForTimeStep();
         }
@@ -508,7 +504,7 @@ bool simulation::checkConvergence()
     // active physics criteria replace the equation residuals
     bool physicsDecides = false;
     bool physicsConverged = true;
-    for (auto& check : getPhysicsConvergences_())
+    for (auto& check : physicsConvergences_)
     {
         if (!check->active())
         {
@@ -533,17 +529,6 @@ bool simulation::checkConvergence()
     }
 
     return convergence;
-}
-
-std::vector<std::unique_ptr<physicsConvergence>>&
-simulation::getPhysicsConvergences_()
-{
-    if (!physicsConvergencesCreated_)
-    {
-        physicsConvergences_ = physicsConvergence::create(*this);
-        physicsConvergencesCreated_ = true;
-    }
-    return physicsConvergences_;
 }
 
 // Access

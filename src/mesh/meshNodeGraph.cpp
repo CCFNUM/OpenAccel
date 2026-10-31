@@ -28,22 +28,23 @@ void mesh::lazyInitializeNodeGraph_()
 
 std::unique_ptr<nodeGraph>
 mesh::createNodeGraph_(const ::linearSolver::GraphLayout layout,
-                       const bool fullStencil)
+                       const bool forceFullStencil)
 {
     const ::linearSolver::GraphLayout stencil =
-        fullStencil ? ::linearSolver::GraphLayout::Stencil__Full : stencil_;
+        forceFullStencil ? ::linearSolver::GraphLayout::Stencil__Full
+                         : stencil_;
     return std::make_unique<nodeGraph>(
         messager::comm(), this, layout | stencil);
 }
 
 nodeGraph* mesh::lazyGraph_(std::unique_ptr<nodeGraph>& slot,
                             const ::linearSolver::GraphLayout order,
-                            const bool fullStencil,
+                            const bool forceFullStencil,
                             const std::vector<const zone*>* zones)
 {
     if (!slot)
     {
-        slot = createNodeGraph_(order, fullStencil);
+        slot = createNodeGraph_(order, forceFullStencil);
         assert(slot);
         if (zones)
         {

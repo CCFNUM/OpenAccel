@@ -82,29 +82,6 @@ protected:
     // FSI traction on the deformed area (follower, default) or reference
     bool useDeformedArea_ = true;
 
-    // solid solve with the previous-step fluid load first (s4f predictSolid)
-    bool predictSolidDisplacement_ = false;
-
-    // DN (zero-gradient pressure) or RN (mixed BC with solid inertia)
-    fsiCouplingMethod couplingMethod_ = fsiCouplingMethod::dirichletNeumann;
-
-    // rho_f in c1: local BIP density unless reference_fluid_density is set
-    scalar robinReferenceFluidDensity_ = 1000.0;
-    bool useReferenceFluidDensity_ = false;
-
-    // write c1 = rho_s*h_s/rho_f to postProcessing/robin_alpha.out
-    bool writeRobinAlpha_ = false;
-
-    // a_n under-relaxation beta in (0, 1] (rn_accel_relaxation)
-    scalar rnAccelRelaxation_ = 1.0;
-
-    // write the interface force balance to fsi_force_balance.out
-    bool writeForceBalance_ = false;
-
-    // true: h_s = solidThickness_ (Tukovic Sec. 2.4), else a_p*dt (Eq. 21)
-    bool usePhysicalSolidThickness_ = false;
-    scalar solidThickness_ = 0.0;
-
     // coupling activation time; coupling starts when all interfaces reached it
     scalar couplingStartTime_ = 0.0;
 
@@ -152,7 +129,6 @@ protected:
     void rebuildMatchingPairsFromIds_();
 
 public:
-
     // Constructors
 
     interface(mesh* meshPtr, label index, std::string name);
@@ -234,51 +210,6 @@ public:
     {
         return useDeformedArea_;
     };
-
-    bool predictSolidDisplacement() const
-    {
-        return predictSolidDisplacement_;
-    };
-
-    bool isRobinNeumann() const
-    {
-        return couplingMethod_ == fsiCouplingMethod::robinNeumann;
-    };
-
-    scalar robinReferenceFluidDensity() const
-    {
-        return robinReferenceFluidDensity_;
-    };
-
-    bool useReferenceFluidDensity() const
-    {
-        return useReferenceFluidDensity_;
-    }
-
-    bool writeRobinAlpha() const
-    {
-        return writeRobinAlpha_;
-    };
-
-    scalar rnAccelRelaxation() const
-    {
-        return rnAccelRelaxation_;
-    };
-
-    bool writeForceBalance() const
-    {
-        return writeForceBalance_;
-    };
-
-    bool usePhysicalSolidThickness() const
-    {
-        return usePhysicalSolidThickness_;
-    }
-
-    scalar solidThickness() const
-    {
-        return solidThickness_;
-    }
 
     scalar couplingStartTime() const
     {

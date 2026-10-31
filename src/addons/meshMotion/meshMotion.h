@@ -25,6 +25,9 @@ private:
     // aWallBc holds a previous a_n for rn_accel_relaxation
     bool hasAWallBc_ = false;
 
+    // a solved boundary displacement is newer than the last update()
+    bool boundaryMoved_ = false;
+
 public:
     // Constructors
     meshMotion(realm* realm);
@@ -44,6 +47,16 @@ public:
 
     // true if fluid-solid interfaces move the mesh: it follows the solution
     bool followsSolution() const;
+
+    bool boundaryMoved() const
+    {
+        return boundaryMoved_;
+    }
+
+    void markBoundaryMoved()
+    {
+        boundaryMoved_ = true;
+    }
 
 protected:
     // protected update methods

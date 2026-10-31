@@ -39,7 +39,7 @@ private:
     // strain tensor
     std::unique_ptr<simpleTensorField> epsilon_ = nullptr;
 
-    // von Mises stress sqrt(3/2 dev(sigma):dev(sigma)), written with stress
+    // von Mises stress sqrt(3/2 dev(sigma):dev(sigma)), output field
     std::unique_ptr<simpleScalarField> sigmaVonMises_ = nullptr;
 
 public:

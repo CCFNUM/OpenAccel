@@ -63,18 +63,6 @@ void solidDisplacementEquation::setup()
     FOREACH_DOMAIN(setupPoissonRatio);
     FOREACH_DOMAIN(setupDisplacement);
 
-    // the von Mises stress is written with the stress tensor
-    auto& outputFields = controlsRef().solverRef().outputControl_.outputFields_;
-    const auto requested = [&outputFields](const std::string& name)
-    {
-        return std::find(outputFields.begin(), outputFields.end(), name) !=
-               outputFields.end();
-    };
-    if (requested(smRealm::sigma_ID) && !requested(smRealm::sigmaVonMises_ID))
-    {
-        outputFields.push_back(smRealm::sigmaVonMises_ID);
-    }
-
     using Bucket = typename Assembler::Bucket;
     using BucketVector = typename Assembler::BucketVector;
 
@@ -317,34 +305,34 @@ void solidDisplacementEquation::preTimeStep()
     predicted_ = false;
 
     bool predict = false;
-    for (const interface* interf : meshRef().interfaceVector())
+    for (const auto& domain : domainVector_)
     {
-        if (interf->isFluidSolidType() && interf->predictSolidDisplacement())
+        for (const interface* interf : domain->interfacesRef())
         {
-            predict = true;
+            if (interf->isFluidSolidType() &&
+                domain->fluidSolidCouplingRef(interf).predictSolidDisplacement_)
+            {
+                predict = true;
+            }
         }
     }
 
+    // solid predictor with the previous-timestep fluid load
     if (predict && !frozen_)
     {
-        predict_();
-    }
-}
+        if (messager::master())
+        {
+            std::cout << std::endl
+                      << "Solid displacement predictor (previous-timestep "
+                      << "fluid load)" << std::endl
+                      << std::endl;
+        }
 
-void solidDisplacementEquation::predict_()
-{
-    if (messager::master())
-    {
-        std::cout << std::endl
-                  << "Solid displacement predictor (previous-timestep fluid "
-                  << "load)" << std::endl
-                  << std::endl;
+        // iteration 0: the predictor is the first iterate of the FSI sequence
+        controlsRef().iter = 0;
+        solveSubIterations(linearSystem::simulationRef().verbose());
+        predicted_ = true;
     }
-
-    // iteration 0: the predictor is the first iterate of the FSI sequence
-    controlsRef().iter = 0;
-    solveSubIterations(linearSystem::simulationRef().verbose());
-    predicted_ = true;
 }
 
 void solidDisplacementEquation::postSolve()
@@ -371,6 +359,11 @@ void solidDisplacementEquation::postSolve()
                     interf->index(), dataTransferType::copy, reverse);
             }
         }
+    }
+
+    if (auto* meshMotionPtr = linearSystem::simulationRef().meshMotionPtr())
+    {
+        meshMotionPtr->markBoundaryMoved();
     }
 }
 

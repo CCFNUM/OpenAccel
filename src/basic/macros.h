@@ -9,6 +9,8 @@
 #define MACROS_H
 
 // std
+#include <bit>
+#include <cstdint>
 #include <iostream>
 #include <span>
 #include <string>

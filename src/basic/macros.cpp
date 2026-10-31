@@ -7,9 +7,6 @@
 // code
 #include "macros.h"
 
-#include <bit>
-#include <cstdint>
-
 namespace accel
 {
 
