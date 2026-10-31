@@ -14,7 +14,8 @@
 #include "simulation.h"
 
 #include <ssdf.hpp>
-
+#include <cmath>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace accel
@@ -64,6 +65,196 @@ maskedRegion::maskedRegion(realm* realmPtr, label id)
     : realmPtr_(realmPtr), id_(id)
 {
 }
+
+namespace
+{
+
+scalar muskerUPlus(
+    const scalar yPlus,
+    scalar* derivative = nullptr)
+{
+    // Change the Musker constants only here.
+    constexpr scalar A = 5.424;
+    constexpr scalar B = 0.119760479041916;
+    constexpr scalar C = 0.488023952095808;
+    constexpr scalar D = 0.434;
+    constexpr scalar E = 10.6;
+    constexpr scalar F = 9.6;
+    constexpr scalar G = 8.15;
+    constexpr scalar H = 86.0;
+    constexpr scalar Q = 3.50727901936265;
+
+    if (!std::isfinite(yPlus) || yPlus < 0.0)
+    {
+        throw std::runtime_error(
+            "Musker requires finite, non-negative yPlus");
+    }
+
+    const scalar a = B * yPlus - C;
+    const scalar p = yPlus * yPlus - G * yPlus + H;
+    const scalar denominator = p * p + SMALL;
+
+    // Your reformulated expression, without changing its constants.
+    const scalar value =
+        A * std::atan(a)
+        + D * (
+            F * std::log(yPlus + E)
+            - std::log(denominator))
+        - Q;
+
+    if (!std::isfinite(value))
+    {
+        throw std::runtime_error(
+            "Non-finite Musker velocity profile");
+    }
+
+    if (derivative != nullptr)
+    {
+        *derivative =
+            A * B / (1.0 + a * a)
+            + D * (
+                F / (yPlus + E)
+                - 2.0 * p * (2.0 * yPlus - G)
+                  / denominator);
+
+        if (!std::isfinite(*derivative))
+        {
+            throw std::runtime_error(
+                "Non-finite Musker profile derivative");
+        }
+    }
+
+    return value;
+}
+
+
+scalar muskerFrictionVelocity(
+    const scalar tangentialSpeed,
+    const scalar distance,
+    const scalar nu)
+{
+    if (!std::isfinite(tangentialSpeed) ||
+        !std::isfinite(distance) ||
+        !std::isfinite(nu) ||
+        tangentialSpeed < 0.0 ||
+        distance <= 0.0 ||
+        nu <= 0.0)
+    {
+        throw std::runtime_error(
+            "Invalid Musker velocity, reference distance or viscosity");
+    }
+
+    if (tangentialSpeed == 0.0)
+    {
+        return 0.0;
+    }
+
+    constexpr int maxIterations = 100;
+    constexpr int maxBacktracks = 30;
+    constexpr scalar relativeTolerance = 1.0e-10;
+
+    // Initial guess from the viscous relation.
+    scalar uTau =
+        std::sqrt(nu) * std::sqrt(tangentialSpeed)
+        / std::sqrt(distance);
+
+    if (!std::isfinite(uTau) || uTau <= 0.0)
+    {
+        throw std::runtime_error(
+            "Invalid initial Musker friction velocity");
+    }
+
+    for (int iteration = 0; iteration < maxIterations; ++iteration)
+    {
+        const scalar yPlus = distance * uTau / nu;
+
+        scalar profileDerivative = 0.0;
+        const scalar uPlus =
+            muskerUPlus(yPlus, &profileDerivative);
+
+        const scalar residual =
+            uTau * uPlus - tangentialSpeed;
+
+        if (!std::isfinite(residual))
+        {
+            throw std::runtime_error(
+                "Non-finite Musker Newton residual");
+        }
+
+        if (std::abs(residual) <=
+            relativeTolerance * tangentialSpeed)
+        {
+            return uTau;
+        }
+
+        // Derivative with respect to uTau, not yPlus.
+        const scalar jacobian =
+            uPlus + yPlus * profileDerivative;
+
+        if (!std::isfinite(jacobian) ||
+            std::abs(jacobian) <= SMALL)
+        {
+            throw std::runtime_error(
+                "Invalid derivative in Musker Newton solve");
+        }
+
+        const scalar increment = residual / jacobian;
+
+        // Damped Newton: shorten the Newton step if necessary.
+        // This is not bisection.
+        scalar step = 1.0;
+        bool accepted = false;
+
+        for (int attempt = 0; attempt < maxBacktracks; ++attempt)
+        {
+            const scalar candidate = uTau - step * increment;
+
+            if (std::isfinite(candidate) && candidate > 0.0)
+            {
+                const scalar candidateYPlus =
+                    distance * candidate / nu;
+
+                if (std::isfinite(candidateYPlus))
+                {
+                    const scalar candidateResidual =
+                        candidate * muskerUPlus(candidateYPlus)
+                        - tangentialSpeed;
+
+                    if (std::isfinite(candidateResidual) &&
+                        std::abs(candidateResidual) <
+                            std::abs(residual))
+                    {
+                        uTau = candidate;
+                        accepted = true;
+
+                        if (std::abs(candidateResidual) <=
+                            relativeTolerance * tangentialSpeed)
+                        {
+                            return uTau;
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            step *= 0.5;
+        }
+
+        if (!accepted)
+        {
+            throw std::runtime_error(
+                "Musker Newton step failed to reduce the residual");
+        }
+    }
+
+    throw std::runtime_error(
+        "Musker Newton solver exceeded its iteration limit");
+}
+
+} // anonymous namespace
+
+
 
 void maskedRegion::read(const YAML::Node& regionNode)
 {
@@ -227,6 +418,29 @@ void maskedRegion::read(const YAML::Node& regionNode)
     {
         wallTreatment_ = convertMaskWallTreatmentFromString(
             regionNode["wall_treatment"].template as<std::string>());
+    }
+
+    wallLaw_ = maskWallLaw::standard;
+
+    if (regionNode["wall_law"])
+    {
+        const std::string law =
+            regionNode["wall_law"].template as<std::string>();
+
+        if (law == "standard")
+        {
+            wallLaw_ = maskWallLaw::standard;
+        }
+        else if (law == "musker")
+        {
+            wallLaw_ = maskWallLaw::musker;
+        }
+        else
+        {
+            errorMsg(
+                "maskedRegion `" + name_ +
+                "`: wall_law must be standard or musker");
+        }
     }
 }
 
@@ -1142,6 +1356,13 @@ scalar maskedRegion::frictionVelocity(size_t i,
         return 0.0;
     }
 
+    if (wallLaw_ == maskWallLaw::musker)
+    {
+        return muskerFrictionVelocity(tangentialMagnitude,
+                                      ringReferenceDistances_[i],
+                                      nu);
+    }
+
     return maskFrictionVelocity(tangentialMagnitude,
                                 ringReferenceDistances_[i],
                                 nu,
@@ -1199,12 +1420,48 @@ void maskedRegion::computeRingVelocities(const STKScalarField& U,
         const scalar viscosity = *stk::mesh::field_data(mu, node);
         const scalar nu = viscosity / std::max(density, SMALL);
 
-        const scalar uTau = maskFrictionVelocity(
-            tangentialMagnitude, ringReferenceDistances_[i], nu, kappa, E);
+        scalar uTau;
+        scalar uPlus;
 
-        const scalar yPlus = uTau * std::max(ringDistances_[i], SMALL) / nu;
-        const scalar uPlus =
-            (yPlus <= yPlusLimit) ? yPlus : std::log(E * yPlus) / kappa;
+        if (wallLaw_ == maskWallLaw::musker)
+        {
+            uTau = muskerFrictionVelocity(
+                tangentialMagnitude,
+                ringReferenceDistances_[i],
+                nu);
+
+            const scalar distance = ringDistances_[i];
+
+            if (!std::isfinite(distance) || distance < 0.0)
+            {
+                throw std::runtime_error(
+                    "Invalid treated-node distance for Musker wall law");
+            }
+
+            // Enforce zero velocity exactly at the wall.
+            // Do not modify the supplied Musker expression itself.
+            uPlus =
+                distance == 0.0
+                    ? 0.0
+                    : muskerUPlus(uTau * distance / nu);
+        }
+        else
+        {
+            uTau = maskFrictionVelocity(
+                tangentialMagnitude,
+                ringReferenceDistances_[i],
+                nu,
+                kappa,
+                E);
+
+            const scalar yPlus =
+                uTau * std::max(ringDistances_[i], SMALL) / nu;
+
+            uPlus =
+                (yPlus <= yPlusLimit)
+                    ? yPlus
+                    : std::log(E * yPlus) / kappa;
+        }
 
         for (label d = 0; d < SPATIAL_DIM; ++d)
         {

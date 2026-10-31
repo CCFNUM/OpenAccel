@@ -29,6 +29,13 @@ enum class maskState : int
     ring = 2
 };
 
+enum class maskWallLaw
+{
+    standard,
+    musker
+};
+
+
 // friction velocity that reproduces a tangential velocity at a given distance
 scalar maskFrictionVelocity(const scalar uTangential,
                             const scalar distance,
@@ -82,6 +89,7 @@ private:
     };
 
     maskWallTreatment wallTreatment_ = maskWallTreatment::wallFunction;
+    maskWallLaw wallLaw_ = maskWallLaw::standard;
 
     // body surface as an SSDF triangle soup (a 2D side is a degenerate
     // triangle)

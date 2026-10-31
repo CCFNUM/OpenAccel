@@ -44,7 +44,8 @@ void masking::setup()
     const auto selInterior =
         stk::mesh::selectUnion(meshRef().interiorActiveParts());
 
-    for (const char* name : {layer_ID, id_ID, distance_ID})
+    for (const char* name :
+     {layer_ID, id_ID, distance_ID, node_ID, reference_node_ID})
     {
         auto& stkFieldRef =
             metaData.declare_field<scalar>(stk::topology::NODE_RANK, name);
@@ -128,6 +129,71 @@ void masking::classify_(MaskingTimings* timings)
     }
 
     collect_();
+    
+    auto& bulkData = meshRef().bulkDataRef();
+    auto& metaData = meshRef().metaDataRef();
+
+    auto* nodeIdField = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, node_ID);
+
+    auto* referenceIdField = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, reference_node_ID);
+
+    // Initialize all owned nodes where these output fields exist.
+    const stk::mesh::Selector outputSelector =
+        metaData.locally_owned_part()
+        & stk::mesh::selectField(*nodeIdField);
+
+    for (const auto* bucket :
+         bulkData.get_buckets(stk::topology::NODE_RANK, outputSelector))
+    {
+        for (const auto node : *bucket)
+        {
+            *stk::mesh::field_data(*nodeIdField, node) =
+                static_cast<scalar>(bulkData.identifier(node));
+
+            *stk::mesh::field_data(*referenceIdField, node) = 0.0;
+        }
+    }
+
+    // Export the pairing already selected by masking.
+    // No additional nearest-node or nearest-triangle search is performed.
+    for (label r = 0; r < regionCount(); ++r)
+    {
+        const auto& region = regionRef(r);
+        const auto& treatedNodes = region.ringNodes();
+
+        for (std::size_t i = 0; i < treatedNodes.size(); ++i)
+        {
+            const auto node = treatedNodes[i];
+
+            if (!bulkData.bucket(node).owned())
+            {
+                continue;
+            }
+
+            const label graphIndex = graphIndexOf(node);
+
+            // Keep the exported pairing consistent with mask_id.
+            // For overlapping bodies, export only the selected body's pair.
+            if (graphIndex < 0 ||
+                bestId[graphIndex] != region.id())
+            {
+                continue;
+            }
+
+            const auto reference = region.ringReferenceNode(i);
+
+            *stk::mesh::field_data(*referenceIdField, node) =
+                static_cast<scalar>(bulkData.identifier(reference));
+        }
+    }
+
+    stk::mesh::copy_owned_to_shared(
+        bulkData, {nodeIdField, referenceIdField});
+
+    stk::mesh::communicate_field_data(
+        bulkData, {nodeIdField, referenceIdField});
 }
 
 label masking::graphIndexOf(const stk::mesh::Entity node) const
