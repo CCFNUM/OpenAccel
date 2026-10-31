@@ -10,7 +10,9 @@
 #include "interface.h"
 #include "ipInfo.h"
 #include "mesh.h"
+#include "messager.h"
 #include "navierStokesAssembler.h"
+#include "robinNeumannWall.h"
 #include "zoneTransformation.h"
 
 namespace accel
@@ -40,10 +42,29 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterfaces_(
 
             if (interf->isFluidSolidType())
             {
-                // If this is a fluid/solid interface, deal with as a no-slip
-                // wall
+                // Robin-Neumann row once all fluid-solid interfaces are coupled
+                bool robin = domain->isRobinNeumann(interf) &&
+                             model_->meshRef().interfacesCoupled(
+                                 model_->controlsRef().time);
+                if (robin && !robinNeumann_.robinParamsValid())
+                {
+                    // invalid parameters (c1 = 0): no-slip wall on all ranks
+                    if (messager::master() &&
+                        robinNeumann_.shouldWarnRn(interf->index()))
+                    {
+                        warningMsg("Robin-Neumann coupling requested on "
+                                   "interface " +
+                                   interf->name() +
+                                   " but its parameters are invalid "
+                                   "(solid E or rho not positive): this "
+                                   "run uses the Dirichlet-Neumann "
+                                   "(no-slip wall) pressure treatment on "
+                                   "all ranks, NOT Robin-Neumann");
+                    }
+                    robin = false;
+                }
                 assembleElemTermsInterfaceSideNoSlipWall_(
-                    domain, interfaceSideInfoPtr, ctx);
+                    domain, interfaceSideInfoPtr, ctx, robin);
             }
             else
             {
@@ -876,358 +897,21 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterfaceSide_(
 void bulkPressureCorrectionAssembler::assembleElemTermsInterfaceSideNoSlipWall_(
     const domain* domain,
     const interfaceSideInfo* interfaceSideInfoPtr,
-    Context* ctx)
+    Context* ctx,
+    const bool robin)
 {
-    auto& mesh = model_->meshRef();
+    wallPhase phase;
+    phase.rho = &model_->rhoRef(phaseIndex_).stkFieldRef();
+    phase.alpha = &model_->alphaRef(phaseIndex_).stkFieldRef();
+    phase.rhoMix = &model_->rhoRef().stkFieldRef();
+    phase.densityScale = model_->rhoRef(phaseIndex_).scale();
+    assembleWallInterfaceSide(
+        *this, domain, interfaceSideInfoPtr, ctx, phase, robin);
+}
 
-    Matrix& A = ctx->getAMatrix();
-    Vector& b = ctx->getBVector();
-
-    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
-    stk::mesh::MetaData& metaData = mesh.metaDataRef();
-
-    // required for frame motion (MFR)
-    const auto coriolisMatrix =
-        domain->zonePtr()->frameRotating()
-            ? domain->zonePtr()->transformationRef().rotation().coriolisMatrix_
-            : utils::matrix::Zero();
-    const scalar* p_mat = coriolisMatrix.data();
-
-    const auto origin =
-        domain->zonePtr()->frameRotating()
-            ? domain->zonePtr()->transformationRef().rotation().origin_
-            : utils::vector::Zero();
-    const scalar* p_ori = origin.data();
-
-    // mesh motion
-    const bool meshMoving = domain->zonePtr()->meshMoving();
-
-    // space for LHS/RHS; nodesPerElem*nodesPerElem and nodesPerElem
-    std::vector<scalar> lhs;
-    std::vector<scalar> rhs;
-    std::vector<label> scratchIds;
-    std::vector<scalar> scratchVals;
-    std::vector<stk::mesh::Entity> connectedNodes;
-
-    // ip values; both boundary and opposing surface
-    std::vector<scalar> umBip(SPATIAL_DIM);
-    std::vector<scalar> coordBip(SPATIAL_DIM);
-
-    // pointers to fixed values
-    scalar* p_umBip = &umBip[0];
-    scalar* p_coordBip = &coordBip[0];
-
-    // nodal fields to gather
-    std::vector<scalar> ws_Um;
-    std::vector<scalar> ws_coordinates;
-    std::vector<scalar> ws_rho;
-    std::vector<scalar> ws_alpha;
-
-    // master element
-    std::vector<scalar> ws_velocity_face_shape_function;
-    std::vector<scalar> ws_coordinate_face_shape_function;
-
-    // Get fields
-    const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
-    const auto& alphaSTKFieldRef = model_->alphaRef(phaseIndex_).stkFieldRef();
-    const auto& sideUSTKFieldRef = model_->URef().sideFieldRef().stkFieldRef();
-
-    const auto* UmSTKFieldPtr =
-        meshMoving ? model_->UmRef().stkFieldPtr() : nullptr;
-
-#ifndef NDEBUG
-    // SCL check field for debug: accumulates mesh flux to verify SCL
-    auto* sclCheckSTKFieldPtr =
-        meshMoving ? metaData.get_field<scalar>(stk::topology::NODE_RANK,
-                                                mesh::scl_check_ID)
-                   : nullptr;
-#endif /* NDEBUG */
-
-    // Get geometric fields
-    const auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
-        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
-    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
-        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
-
-    scalar densityScale = model_->rhoRef(phaseIndex_).scale();
-
-    // define vector of parent topos; should always be UNITY in size
-    std::vector<stk::topology> parentTopo;
-
-    // define some common selectors
-    stk::mesh::Selector selAllSides =
-        metaData.universal_part() &
-        stk::mesh::selectUnion(interfaceSideInfoPtr->currentPartVec_);
-
-    // shifted ip's for fields?
-    const bool isUShifted = model_->URef().isShifted();
-
-    stk::mesh::BucketVector const& sideBuckets =
-        bulkData.get_buckets(metaData.side_rank(), selAllSides);
-    for (stk::mesh::BucketVector::const_iterator ib = sideBuckets.begin();
-         ib != sideBuckets.end();
-         ++ib)
-    {
-        stk::mesh::Bucket& sideBucket = **ib;
-
-        // extract connected element topology
-        sideBucket.parent_topology(stk::topology::ELEMENT_RANK, parentTopo);
-        STK_ThrowAssert(parentTopo.size() == 1);
-        stk::topology theElemTopo = parentTopo[0];
-
-        // volume master element
-        MasterElement* meSCS =
-            MasterElementRepo::get_surface_master_element(theElemTopo);
-        const label nodesPerElement = meSCS->nodesPerElement_;
-
-        // face master element
-        MasterElement* meFC = MasterElementRepo::get_surface_master_element(
-            sideBucket.topology());
-        const label nodesPerSide = sideBucket.topology().num_nodes();
-        const label numScsBip = meFC->numIntPoints_;
-
-        // resize some things; matrix related
-        const label lhsSize = nodesPerElement * nodesPerElement;
-        const label rhsSize = nodesPerElement;
-        lhs.resize(lhsSize);
-        rhs.resize(rhsSize);
-        scratchIds.resize(rhsSize);
-        scratchVals.resize(rhsSize);
-        connectedNodes.resize(nodesPerElement);
-
-        // algorithm related; element
-        ws_Um.resize(nodesPerSide * SPATIAL_DIM);
-        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
-        ws_rho.resize(nodesPerSide);
-        ws_alpha.resize(nodesPerSide);
-        ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
-        ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
-
-        // pointers
-        scalar* p_lhs = &lhs[0];
-        scalar* p_rhs = &rhs[0];
-        scalar* p_Um = &ws_Um[0];
-        scalar* p_coordinates = &ws_coordinates[0];
-        scalar* p_rho = &ws_rho[0];
-        scalar* p_alpha = &ws_alpha[0];
-        scalar* p_velocity_face_shape_function =
-            &ws_velocity_face_shape_function[0];
-        scalar* p_coordinate_face_shape_function =
-            &ws_coordinate_face_shape_function[0];
-
-        // shape functions; boundary
-        if (isUShifted)
-        {
-            meFC->shifted_shape_fcn(&p_velocity_face_shape_function[0]);
-        }
-        else
-        {
-            meFC->shape_fcn(&p_velocity_face_shape_function[0]);
-        }
-
-        // Always use trilinear (standard) shape functions for coordinates
-        meFC->shape_fcn(&p_coordinate_face_shape_function[0]);
-
-        const stk::mesh::Bucket::size_type nSidesPerBucket = sideBucket.size();
-        for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSidesPerBucket;
-             ++iSide)
-        {
-            // zero lhs/rhs
-            for (label p = 0; p < lhsSize; ++p)
-            {
-                p_lhs[p] = 0.0;
-            }
-            for (label p = 0; p < rhsSize; ++p)
-            {
-                p_rhs[p] = 0.0;
-            }
-
-            // get face
-            stk::mesh::Entity side = sideBucket[iSide];
-
-            //======================================
-            // gather nodal data off of face
-            //======================================
-            stk::mesh::Entity const* sideNodeRels = bulkData.begin_nodes(side);
-            label numSideNodes = bulkData.num_nodes(side);
-
-            // sanity check on num nodes
-            STK_ThrowAssert(numSideNodes == nodesPerSide);
-            for (label ni = 0; ni < numSideNodes; ++ni)
-            {
-                stk::mesh::Entity node = sideNodeRels[ni];
-
-                // gather scalars
-                p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
-                p_alpha[ni] = *stk::mesh::field_data(alphaSTKFieldRef, node);
-
-                if (meshMoving)
-                {
-                    const scalar* Um =
-                        stk::mesh::field_data(*UmSTKFieldPtr, node);
-                    const label offSet = ni * SPATIAL_DIM;
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        p_Um[offSet + j] = Um[j];
-                    }
-                }
-                else
-                {
-                    const label offSet = ni * SPATIAL_DIM;
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        p_Um[offSet + j] = 0.0;
-                    }
-                }
-            }
-
-            // pointer to face data
-            const scalar* areaVec =
-                stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
-            const scalar* UbcVec =
-                stk::mesh::field_data(sideUSTKFieldRef, side);
-
-            // extract the connected element to this exposed face; should be
-            // single in size!
-            const stk::mesh::Entity* faceElemRels =
-                bulkData.begin_elements(side);
-            STK_ThrowAssert(bulkData.num_elements(side) == 1);
-
-            // get element; its face ordinal number and populate
-            // face_node_ordinals
-            stk::mesh::Entity element = faceElemRels[0];
-            const stk::mesh::ConnectivityOrdinal* face_elem_ords =
-                bulkData.begin_element_ordinals(side);
-            const label faceOrdinal = face_elem_ords[0];
-
-            // mapping from ip to nodes for this ordinal
-            const label* ipNodeMap = meSCS->ipNodeMap(faceOrdinal);
-
-            // populate faceNodeOrdinals
-            const label* faceNodeOrdinals =
-                meSCS->side_node_ordinals(faceOrdinal);
-
-            //======================================
-            // gather nodal data off of element
-            //======================================
-            stk::mesh::Entity const* elemNodeRels =
-                bulkData.begin_nodes(element);
-            label numNodes = bulkData.num_nodes(element);
-
-            // sanity check on num nodes
-            STK_ThrowAssert(numNodes == nodesPerElement);
-            for (label ni = 0; ni < numNodes; ++ni)
-            {
-                stk::mesh::Entity node = elemNodeRels[ni];
-
-                // set connected nodes
-                connectedNodes[ni] = node;
-
-                // gather vectors
-                const scalar* coords =
-                    stk::mesh::field_data(coordsSTKFieldRef, node);
-                const label offSet = ni * SPATIAL_DIM;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    p_coordinates[offSet + j] = coords[j];
-                }
-            }
-
-            // loop over boundary ips
-            for (label ip = 0; ip < numScsBip; ++ip)
-            {
-                const label offSetSF_face = ip * nodesPerSide;
-
-                const label nearestNode = ipNodeMap[ip];
-
-                // zero out vector quantities; form aMag
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    p_umBip[j] = 0.0;
-                    p_coordBip[j] = 0.0;
-                }
-
-                // interpolate to bip
-                scalar rhoBip = 0;
-                scalar alphaBip = 0;
-                for (label ic = 0; ic < nodesPerSide; ++ic)
-                {
-                    const label inn = faceNodeOrdinals[ic];
-
-                    const scalar r_vel =
-                        p_velocity_face_shape_function[offSetSF_face + ic];
-                    const scalar r_coord =
-                        p_coordinate_face_shape_function[offSetSF_face + ic];
-
-                    // use velocity shape functions
-                    rhoBip += r_vel * p_rho[ic];
-                    alphaBip += r_vel * p_alpha[ic];
-
-                    const label icNdim = ic * SPATIAL_DIM;
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        // use coordinates shape functions
-                        p_coordBip[j] +=
-                            r_coord * p_coordinates[inn * SPATIAL_DIM + j];
-
-                        // use velocity shape functions
-                        p_umBip[j] += r_vel * p_Um[icNdim + j];
-                    }
-                }
-
-                // form mDot; rho*uj*Aj
-                scalar mDot = 0.0;
-                for (label j = 0; j < SPATIAL_DIM; ++j)
-                {
-                    const scalar axj = areaVec[ip * SPATIAL_DIM + j];
-                    mDot += (rhoBip * UbcVec[ip * SPATIAL_DIM + j]) * axj;
-                }
-
-                // transform mDot to relative frame
-
-                // 1.) frame motion
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
-                    {
-                        mDot -= rhoBip * p_mat[i * SPATIAL_DIM + j] *
-                                (p_coordBip[j] - p_ori[j]) *
-                                areaVec[ip * SPATIAL_DIM + i];
-                    }
-                }
-
-                // 2.) mesh motion
-                for (label i = 0; i < SPATIAL_DIM; i++)
-                {
-                    mDot -= rhoBip * p_umBip[i] * areaVec[ip * SPATIAL_DIM + i];
-                }
-
-#ifndef NDEBUG
-                // SCL check: accumulate grid flux to nearest node
-                if (sclCheckSTKFieldPtr)
-                {
-                    scalar gridFlux = 0.0;
-                    for (label i = 0; i < SPATIAL_DIM; i++)
-                    {
-                        gridFlux += rhoBip * p_umBip[i] *
-                                    areaVec[ip * SPATIAL_DIM + i] * alphaBip /
-                                    densityScale;
-                    }
-                    stk::mesh::Entity node = elemNodeRels[nearestNode];
-                    scalar* scl =
-                        stk::mesh::field_data(*sclCheckSTKFieldPtr, node);
-                    *scl -= gridFlux;
-                }
-#endif /* NDEBUG */
-
-                // residual
-                p_rhs[nearestNode] -= mDot * alphaBip / densityScale;
-            }
-
-            this->applyCoeff_(
-                A, b, connectedNodes, scratchIds, scratchVals, rhs, lhs);
-        }
-    }
+void bulkPressureCorrectionAssembler::accumulateRnWallFlux(const domain* domain)
+{
+    accumulateRnWallFluxSides(*this, domain);
 }
 
 } // namespace accel

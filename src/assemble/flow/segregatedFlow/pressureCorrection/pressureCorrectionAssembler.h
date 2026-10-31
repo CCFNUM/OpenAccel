@@ -10,6 +10,7 @@
 
 // code
 #include "phiAssembler.h"
+#include "robinNeumannState.h"
 
 namespace accel
 {
@@ -46,8 +47,38 @@ public:
 
     void adjustMatrixForPressureReference(const domain* domain, Context* ctx);
 
+    // Tukovic Eq. 30: accumulate Q_vol after every corrector (postSolve)
+    void accumulateRnWallFlux(const domain* domain);
+
+    robinNeumannState& robinNeumannStateRef()
+    {
+        return robinNeumann_;
+    }
+
+    const robinNeumannState& robinNeumannStateRef() const
+    {
+        return robinNeumann_;
+    }
+
 private:
     flowModel* model_;
+
+    // Robin-Neumann FSI pressure BC state of this assembler
+    robinNeumannState robinNeumann_;
+
+    template <class Assembler>
+    friend void assembleWallInterfaceSide(Assembler&,
+                                          const domain*,
+                                          const interfaceSideInfo*,
+                                          typename Assembler::Context*,
+                                          const wallPhase&,
+                                          const bool);
+    template <class Assembler>
+    friend void accumulateRnWallFluxSide(Assembler&,
+                                         const domain*,
+                                         const interfaceSideInfo*);
+    template <class Assembler>
+    friend void accumulateRnWallFluxSides(Assembler&, const domain*);
 
     // kernel drivers
     void assembleNodeTermsFused_(const domain* domain, Context* ctx) override;
@@ -69,7 +100,8 @@ private:
     void assembleElemTermsInterfaceSideNoSlipWall_(
         const domain* domain,
         const interfaceSideInfo* interfaceSideInfoPtr,
-        Context* ctx);
+        Context* ctx,
+        const bool robin);
 
     void assembleElemTermsBoundary_(const domain* domain,
                                     Context* ctx) override;

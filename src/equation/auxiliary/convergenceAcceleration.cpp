@@ -6,9 +6,12 @@
 
 #include "convergenceAcceleration.h"
 #include "messager.h"
+#include "simulation.h"
+#include "version.h"
 #include <iostream>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace accel
@@ -18,6 +21,7 @@ convergenceAcceleration::convergenceAcceleration(const Config& cfg)
     : type_(cfg.type), aitkenOmega_(cfg.aitkenInitialOmega),
       aitkenOmegaInit_(cfg.aitkenInitialOmega),
       aitkenOmegaMin_(cfg.aitkenOmegaMin), aitkenOmegaMax_(cfg.aitkenOmegaMax),
+      sim_(cfg.sim), writeOmega_(cfg.writeOmega), name_(cfg.name),
       iqnIlsWindow_(cfg.iqnIlsWindow), iqnIlsFilter_(cfg.iqnIlsFilter),
       iqnIlsWindowsReused_(cfg.iqnIlsWindowsReused)
 {
@@ -82,10 +86,22 @@ scalar convergenceAcceleration::computeAitkenOmega_(const Vector& correction)
 {
     const size_t n = correction.size();
 
+    // one aitken_omega row per outer iteration, also when omega is not updated
+    auto recordOmega = [this](scalar omega)
+    {
+        if (writeOmega_)
+        {
+            if (!omegaStream_)
+                initializeOmegaFile_();
+            writeOmegaRow_(omega);
+        }
+    };
+
     if (aitkenIter_ == 0)
     {
         aitkenResidualPrev_ = correction;
         aitkenIter_++;
+        recordOmega(aitkenOmegaInit_);
         return aitkenOmegaInit_;
     }
 
@@ -97,6 +113,7 @@ scalar convergenceAcceleration::computeAitkenOmega_(const Vector& correction)
     {
         aitkenResidualPrev_ = correction;
         aitkenIter_++;
+        recordOmega(aitkenOmega_);
         return aitkenOmega_;
     }
 
@@ -128,10 +145,10 @@ scalar convergenceAcceleration::computeAitkenOmega_(const Vector& correction)
         }
     }
 
+    recordOmega(aitkenOmega_);
+
     if (messager::master())
     {
-        // one line per coupling iteration: a stalled coupling (omega pinned
-        // at its bound) can then be told apart from a diverging one
         std::cout << "Aitken omega: " << aitkenOmega_ << std::endl;
     }
 
@@ -301,6 +318,57 @@ void convergenceAcceleration::computeIqnIlsUpdate_(const Vector& correction,
     iqnPrevR_ = correction;
     iqnPrevUpdate_ = update;
     iqnHavePrev_ = true;
+}
+
+void convergenceAcceleration::initializeOmegaFile_()
+{
+    if (!sim_ || !messager::master())
+    {
+        return;
+    }
+
+    // one file per equation: aitken_omega_<sanitised equation name>.out
+    std::string tag = name_;
+    for (char& c : tag)
+    {
+        c = std::isalnum(static_cast<unsigned char>(c))
+                ? static_cast<char>(std::tolower(static_cast<unsigned char>(c)))
+                : '_';
+    }
+    const fs::path filePath =
+        sim_->getPostProcessingDirectory() /
+        (tag.empty() ? "aitken_omega.out" : "aitken_omega_" + tag + ".out");
+
+    omegaStream_ = std::make_shared<std::ofstream>(filePath, std::ios::app);
+    assert(omegaStream_->is_open());
+
+    auto now = std::chrono::system_clock::now();
+    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+
+    auto& fout = *omegaStream_;
+    fout << "\n# ===== New run =====\n";
+    fout << "# Accel solver timestamp: "
+         << std::put_time(std::localtime(&in_time_t), "%c\n");
+    fout << "# Version: " << accel::PROJECT_VERSION << '\n';
+    fout << "# Git hash: " << accel::GIT_HASH << '\n';
+    fout << "# Git describe: " << accel::GIT_DESCRIBE << '\n';
+    fout << "# Aitken relaxation factor history\n";
+    fout << "# Equation: " << name_ << '\n';
+    fout << "# \n";
+    fout << "# " << "sim_time[s]" << '\t' << "fsi_iter" << '\t' << "omega"
+         << '\n';
+}
+
+void convergenceAcceleration::writeOmegaRow_(scalar omega)
+{
+    if (!sim_ || !messager::master() || !omegaStream_)
+    {
+        return;
+    }
+
+    auto& fout = *omegaStream_;
+    fout << std::setprecision(6) << std::scientific << sim_->getSimulationTime()
+         << '\t' << sim_->getIterationCount() << '\t' << omega << std::endl;
 }
 
 } // namespace accel

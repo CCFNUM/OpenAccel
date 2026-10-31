@@ -12,6 +12,8 @@
 namespace accel
 {
 
+class simulation;
+
 class convergenceAcceleration
 {
 public:
@@ -25,6 +27,11 @@ public:
         scalar iqnIlsRegularization = 1e-8;
         scalar iqnIlsFilter = 1e-2;
         label iqnIlsWindowsReused = 8;
+
+        // aitken_omega_<name>.out writer; nullptr: no output
+        simulation* sim = nullptr;
+        bool writeOmega = false;
+        std::string name;
     };
 
     explicit convergenceAcceleration(const Config& cfg);
@@ -57,6 +64,12 @@ private:
     label aitkenIter_ = 0;
     Vector aitkenResidualPrev_;
 
+    // Aitken omega writer (postProcessing/aitken_omega_<name>.out)
+    simulation* sim_ = nullptr;
+    bool writeOmega_ = false;
+    std::string name_;
+    std::shared_ptr<std::ofstream> omegaStream_;
+
     // IQN-ILS state: secant columns newest-first, tagged by birth window
     label iqnIlsWindow_ = 40;
     scalar iqnIlsFilter_ = 1e-2;
@@ -74,6 +87,10 @@ private:
     void computeIqnIlsUpdate_(const Vector& correction,
                               scalar baseRelax,
                               Vector& update);
+
+    void initializeOmegaFile_();
+
+    void writeOmegaRow_(scalar omega);
 };
 
 } // namespace accel

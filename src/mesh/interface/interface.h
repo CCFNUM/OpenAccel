@@ -79,6 +79,12 @@ protected:
 
     scalar penaltyFactor_ = 1.0;
 
+    // FSI traction on the deformed area (follower, default) or reference
+    bool useDeformedArea_ = true;
+
+    // coupling activation time; coupling starts when all interfaces reached it
+    scalar couplingStartTime_ = 0.0;
+
     // Geometric transformations measured from salve to master
 
     utils::vector axisLocation_;
@@ -123,7 +129,6 @@ protected:
     void rebuildMatchingPairsFromIds_();
 
 public:
-
     // Constructors
 
     interface(mesh* meshPtr, label index, std::string name);
@@ -200,6 +205,22 @@ public:
     {
         return type_ == interfaceType::fluid_solid;
     };
+
+    bool useDeformedArea() const
+    {
+        return useDeformedArea_;
+    };
+
+    scalar couplingStartTime() const
+    {
+        return couplingStartTime_;
+    }
+
+    // true once time reached coupling_start_time (always for non-FSI types)
+    bool isCoupled(const scalar time) const
+    {
+        return !(time < couplingStartTime_ - ::accel::SMALL);
+    }
 
     bool isSlipNonOverlap() const
     {

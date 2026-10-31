@@ -4,8 +4,8 @@
 // Description:
 // Copyright 2024 CCFNUM HSLU T&A. All Rights Reserved.
 
-#include "dgInterfaceSideInfo.h"
 #include "controls.h"
+#include "dgInterfaceSideInfo.h"
 #include "interface.h"
 #include "messager.h"
 #include "zone.h"
@@ -87,6 +87,36 @@ void interface::read(const YAML::Node& inputNode)
         {
             isForceNonconformalTreatment_ =
                 inputNode["force_nonconformal_treatment"].template as<bool>();
+        }
+    }
+
+    // FSI coupling settings (fluid-solid interfaces only)
+    if (inputNode["coupling"])
+    {
+        if (type_ != interfaceType::fluid_solid)
+        {
+            if (messager::master())
+            {
+                warningMsg("coupling block is ignored: interface is not of "
+                           "fluid_solid type");
+            }
+        }
+        else
+        {
+            // the other coupling settings are read by the domains
+            const YAML::Node& couplingNode = inputNode["coupling"];
+
+            if (couplingNode["use_deformed_area"])
+            {
+                useDeformedArea_ =
+                    couplingNode["use_deformed_area"].template as<bool>();
+            }
+
+            if (couplingNode["coupling_start_time"])
+            {
+                couplingStartTime_ =
+                    couplingNode["coupling_start_time"].template as<scalar>();
+            }
         }
     }
 

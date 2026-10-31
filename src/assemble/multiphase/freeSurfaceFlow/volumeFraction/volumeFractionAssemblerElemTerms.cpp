@@ -9,6 +9,16 @@
 namespace accel
 {
 
+namespace
+{
+
+inline scalar vofProfileHyperC(const scalar t, const scalar Co)
+{
+    return std::min(t / (Co + 1.0e-16), 1.0);
+}
+
+} // namespace
+
 void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                                                          Context* ctx)
 {
@@ -22,6 +32,11 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     const scalar fct =
         domain->multiphase_.freeSurfaceModel_.fluxCorrectedTransport_ ? 0.0
                                                                       : 1.0;
+
+    // resolved once per assembly: the ip loop compares an integer only
+    const vofAdvectionSchemeType vofScheme =
+        domain->multiphase_.freeSurfaceModel_.advectionScheme_;
+    const scalar dt = mesh.controlsRef().getTimestep();
 
     // NSO active only when not using FCT and enabled in expert params
     const bool NSO =
@@ -369,26 +384,98 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                 {
                     phiUpwind = p_alpha[il];
 
-                    // deferred correction
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    switch (vofScheme)
                     {
-                        const scalar dxj =
-                            p_coordIp[j] - p_coordinates[il * SPATIAL_DIM + j];
-                        dcorr += p_beta[il] * dxj *
-                                 p_gradAlpha[il * SPATIAL_DIM + j];
+                        case vofAdvectionSchemeType::barthJespersen:
+                            {
+                                // deferred correction
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const scalar dxj =
+                                        p_coordIp[j] -
+                                        p_coordinates[il * SPATIAL_DIM + j];
+                                    dcorr += p_beta[il] * dxj *
+                                             p_gradAlpha[il * SPATIAL_DIM + j];
+                                }
+                                break;
+                            }
+                        case vofAdvectionSchemeType::hyperC:
+                            {
+                                scalar gradCd = 0.0;
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const scalar dj =
+                                        p_coordinates[ir * SPATIAL_DIM + j] -
+                                        p_coordinates[il * SPATIAL_DIM + j];
+                                    gradCd +=
+                                        p_gradAlpha[il * SPATIAL_DIM + j] * dj;
+                                }
+                                const scalar dq = 2.0 * gradCd;
+                                const scalar phiTilde =
+                                    1.0 - (p_alpha[ir] - p_alpha[il]) /
+                                              (dq + 1.0e-16);
+
+                                if (phiTilde > 0.0 && phiTilde < 1.0)
+                                {
+                                    const scalar Co =
+                                        std::abs(tmDot) * dt /
+                                        (p_rho[il] * p_scv_volume[il] +
+                                         1.0e-16);
+                                    const scalar phiFTilde =
+                                        vofProfileHyperC(phiTilde, Co);
+                                    dcorr = (phiFTilde - phiTilde) * dq;
+                                }
+                                break;
+                            }
                     }
                 }
                 else
                 {
                     phiUpwind = p_alpha[ir];
 
-                    // deferred correction
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    switch (vofScheme)
                     {
-                        const scalar dxj =
-                            p_coordIp[j] - p_coordinates[ir * SPATIAL_DIM + j];
-                        dcorr += p_beta[ir] * dxj *
-                                 p_gradAlpha[ir * SPATIAL_DIM + j];
+                        case vofAdvectionSchemeType::barthJespersen:
+                            {
+                                // deferred correction
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const scalar dxj =
+                                        p_coordIp[j] -
+                                        p_coordinates[ir * SPATIAL_DIM + j];
+                                    dcorr += p_beta[ir] * dxj *
+                                             p_gradAlpha[ir * SPATIAL_DIM + j];
+                                }
+                                break;
+                            }
+                        case vofAdvectionSchemeType::hyperC:
+                            {
+                                scalar gradCd = 0.0;
+                                for (label j = 0; j < SPATIAL_DIM; ++j)
+                                {
+                                    const scalar dj =
+                                        p_coordinates[il * SPATIAL_DIM + j] -
+                                        p_coordinates[ir * SPATIAL_DIM + j];
+                                    gradCd +=
+                                        p_gradAlpha[ir * SPATIAL_DIM + j] * dj;
+                                }
+                                const scalar dq = 2.0 * gradCd;
+                                const scalar phiTilde =
+                                    1.0 - (p_alpha[il] - p_alpha[ir]) /
+                                              (dq + 1.0e-16);
+
+                                if (phiTilde > 0.0 && phiTilde < 1.0)
+                                {
+                                    const scalar Co =
+                                        std::abs(tmDot) * dt /
+                                        (p_rho[ir] * p_scv_volume[ir] +
+                                         1.0e-16);
+                                    const scalar phiFTilde =
+                                        vofProfileHyperC(phiTilde, Co);
+                                    dcorr = (phiFTilde - phiTilde) * dq;
+                                }
+                                break;
+                            }
                     }
                 }
 

@@ -6,6 +6,7 @@
 
 #include "bulkPressureCorrectionEquation.h"
 #include "realm.h"
+#include "robinNeumannParams.h"
 #include "scaling.h"
 
 namespace accel
@@ -16,7 +17,8 @@ bulkPressureCorrectionEquation::bulkPressureCorrectionEquation(
     freeSurfaceFlowModel* model)
     : equation("Pressure Correction", true), model_(model),
       linearSystem(realm->simulationRef()),
-      assembler_(std::make_unique<Assembler>(model))
+      assembler_(std::make_unique<Assembler>(model)),
+      robinNeumann_(model, assembler_->robinNeumannStateRef(), domainVector_)
 {
     this->setEquationName({"P-Mass"});
 
@@ -51,6 +53,8 @@ void bulkPressureCorrectionEquation::setup()
 
     // setup the dedicated pressure correction field
     FOREACH_DOMAIN(model_->setupPressureCorrection);
+
+    robinNeumann_.setup();
 
     // setup assembler
     assembler_->setup(&model_->pRef(), null, domainVector_, nullptr);
@@ -169,17 +173,36 @@ void bulkPressureCorrectionEquation::solve()
     p.updateScale();
 }
 
+void bulkPressureCorrectionEquation::startOfOuterIteration()
+{
+    robinNeumann_.startOfOuterIteration();
+}
+
 void bulkPressureCorrectionEquation::postSolve()
 {
 #ifndef NDEBUG
     // Sync SCL check field after assembly
     FOREACH_DOMAIN(model_->syncSCLCheckField);
 #endif /* NDEBUG */
+
+    // Tukovic Eq. 30: Q_vol from the p' just solved
+    if (anyRobinNeumannFsi(domainVector_))
+    {
+        FOREACH_DOMAIN_PTR(assembler_->accumulateRnWallFlux);
+    }
+    robinNeumann_.postSolve();
 }
 
 void bulkPressureCorrectionEquation::preTimeStep()
 {
     FOREACH_DOMAIN(model_->updatePressurePrevTimeField);
+
+    robinNeumann_.preTimeStep();
+}
+
+void bulkPressureCorrectionEquation::postTimeStep()
+{
+    robinNeumann_.postTimeStep();
 }
 
 void bulkPressureCorrectionEquation::setResidualScales_()

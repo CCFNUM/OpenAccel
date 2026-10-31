@@ -6,6 +6,7 @@
 
 #include "domain.h"
 #include "boundary.h"
+#include "interface.h"
 #include "realm.h"
 #include "simulation.h"
 #include "zone.h"
@@ -26,6 +27,9 @@ domain::domain(simulation* simulationPtr,
 
 void domain::setup()
 {
+    // interfaces are assigned to the domains after construction
+    readFluidSolidCouplings_();
+
     // find reference pressure attributes
     setupPressureLevelInformation_();
 }
@@ -404,6 +408,24 @@ std::string domain::name() const
 bool domain::hasInterfaces() const
 {
     return zonePtr_->hasInterfaces();
+}
+
+const fluidSolidCoupling&
+domain::fluidSolidCouplingRef(const interface* interf) const
+{
+    const auto it = fluidSolidCouplings_.find(interf->index());
+    if (it == fluidSolidCouplings_.end())
+    {
+        errorMsg("domain `" + name() + "`: interface `" + interf->name() +
+                 "` is not a fluid-solid interface of this domain");
+    }
+    return it->second;
+}
+
+bool domain::isRobinNeumann(const interface* interf) const
+{
+    return interf->isFluidSolidType() &&
+           fluidSolidCouplingRef(interf).isRobinNeumann();
 }
 
 std::vector<interface*>& domain::interfacesRef()

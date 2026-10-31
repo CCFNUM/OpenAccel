@@ -110,8 +110,8 @@ private:
 
     std::unordered_map<std::string, scalar> scalarResiduals_;
 
-    // Physics-based convergence (FSI)
-    std::unique_ptr<physicsConvergence> physicsConvergencePtr_;
+    // Physics-based convergence checks (physicsConvergence::create)
+    std::vector<std::unique_ptr<physicsConvergence>> physicsConvergences_;
 
     // Private methods
 
@@ -160,8 +160,6 @@ private:
 
     // Initialize output structure and detect output fields to be written
     void initializeOutput_();
-
-    physicsConvergence* getPhysicsConvergence_();
 
 public:
     // Constructors
@@ -229,6 +227,11 @@ public:
     void plotResiduals();
 
     void addPlotItem(const residualPlotItem& item);
+
+    int verbose() const
+    {
+        return verbose_;
+    }
 
     Profiler& getProfiler()
     {

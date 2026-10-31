@@ -12,50 +12,40 @@
 namespace accel
 {
 
+class equation;
 class simulation;
 
 class physicsConvergence
 {
 public:
-    explicit physicsConvergence(simulation& sim);
+    explicit physicsConvergence(simulation& sim) : sim_(sim)
+    {
+    }
 
-    bool enabled() const;
+    virtual ~physicsConvergence() = default;
 
-    void resetForTimeStep();
+    // the checks physics_convergence requests for the physics of this run
+    static std::vector<std::unique_ptr<physicsConvergence>>
+    create(simulation& sim);
 
-    void update();
+    // start of a timestep, after the equations' preTimeStep()
+    virtual void resetForTimeStep() = 0;
 
-    bool isConverged() const;
+    // false while the coupled physics has not started
+    virtual bool active() const = 0;
 
-private:
+    // residuals of the outer iteration just solved
+    virtual void update() = 0;
+
+    // false: convergence falls back to the equation residuals
+    virtual bool hasCriteria() const = 0;
+
+    virtual bool isConverged() const = 0;
+
+protected:
     simulation& sim_;
 
-    std::map<label, std::vector<scalar>> fsiInterfaceDispPrev_;
-    std::map<label, scalar> fsiInterfaceResidualNormMax_;
-    // running max of ||D_total|| for the displacement-normalized residual
-    std::map<label, scalar> fsiInterfaceMaxTotalDisplNorm_;
-    std::map<label, scalar> fsiInterfaceResidualNorms_;
-    scalar fsiInterfaceResidualNorm_ = 0.0;
-
-    std::map<label, std::vector<scalar>> fsiInterfaceTractionPrev_;
-    std::map<label, scalar> fsiInterfaceTractionResidualNormMax_;
-    std::map<label, scalar> fsiForceResidualNorms_;
-    scalar fsiForceResidualNorm_ = 0.0;
-
-    std::map<std::string, std::map<label, std::shared_ptr<std::ofstream>>>
-        residualStreams_;
-
-    void updateFsiInterfaceResidual_(bool writeResiduals);
-
-    void updateFsiForceResidual_(bool writeResiduals);
-
-    void initializeResidualFile_(label interfIdx,
-                                 const std::string& interfName,
-                                 const std::string& criterionName);
-
-    void writeResidualLine_(const std::string& criterionName,
-                            label interfIdx,
-                            scalar residualNorm);
+    const std::vector<std::unique_ptr<equation>>& equations_() const;
 };
 
 } // namespace accel

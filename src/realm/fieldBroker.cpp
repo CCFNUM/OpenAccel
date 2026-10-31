@@ -2970,6 +2970,14 @@ void fieldBroker::setupYoungModulus(const std::shared_ptr<domain> domain)
     if (ERef().isZoneUnset(domain->index()))
     {
         SET_YOUNG_MODULUS_PROPERTY(this->ERef(), domain->getYAMLMaterial());
+
+        const auto& youngModulus =
+            domain->materialRef().mechanicalProperties_.youngModulus_;
+        if (youngModulus.option_ == youngModulusOption::derived)
+        {
+            initialCondition::setupFieldInitializationOverDomainFromValues(
+                ERef(), domain->index(), {youngModulus.value_});
+        }
     }
 }
 
@@ -2978,6 +2986,14 @@ void fieldBroker::setupPoissonRatio(const std::shared_ptr<domain> domain)
     if (nuRef().isZoneUnset(domain->index()))
     {
         SET_POISSON_RATIO_PROPERTY(this->nuRef(), domain->getYAMLMaterial());
+
+        const auto& poissonRatio =
+            domain->materialRef().mechanicalProperties_.poissonRatio_;
+        if (poissonRatio.option_ == poissonRatioOption::derived)
+        {
+            initialCondition::setupFieldInitializationOverDomainFromValues(
+                nuRef(), domain->index(), {poissonRatio.value_});
+        }
     }
 }
 
@@ -3117,6 +3133,17 @@ void fieldBroker::setupDisplacement(const std::shared_ptr<domain> domain)
                     // side flux field must be defined on this side
                     DRef().registerSideFluxFieldForInterfaceSide(
                         interf->index(), interf->isMasterZone(domain->index()));
+
+                    // receives the solid correction X^k (FSI residual)
+                    if (solidCorrectionRef().isZoneUnset(domain->index()))
+                    {
+                        solidCorrectionRef().setZone(domain->index());
+                        initialCondition::
+                            setupFieldInitializationOverDomainFromValues(
+                                solidCorrectionRef(),
+                                domain->index(),
+                                std::vector<scalar>(SPATIAL_DIM, 0.0));
+                    }
                 }
                 else
                 {
@@ -3411,6 +3438,69 @@ void fieldBroker::setupHeatFlowRate(const std::shared_ptr<domain> domain)
         {
             this->qDotRef().registerSideField(domain->index(), iBoundary);
         }
+    }
+}
+
+void fieldBroker::setupRnWallFields(const std::shared_ptr<domain> domain)
+{
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (!domain->isRobinNeumann(interf))
+        {
+            continue;
+        }
+        for (const auto* part :
+             interf->interfaceSideInfoPtr(domain->index())->currentPartVec_)
+        {
+            for (auto* field :
+                 {&aWallBcRef(), &rnWallFluxRef(), &rnWallFluxERef()})
+            {
+                if (!field->definedOn(*part))
+                {
+                    field->putFieldOnPart(*part);
+                }
+            }
+        }
+    }
+}
+
+void fieldBroker::zeroRnWallFlux(const std::shared_ptr<domain> domain)
+{
+    // zero the stored wall flux on this domain's RN interface sides
+    auto& rnWallFluxSideSTKFieldRef = this->rnWallFluxRef().stkFieldRef();
+
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (!domain->isRobinNeumann(interf))
+        {
+            continue;
+        }
+
+        const auto* interfaceSideInfoPtr =
+            interf->interfaceSideInfoPtr(domain->index());
+
+        ops::zero(&rnWallFluxSideSTKFieldRef,
+                  interfaceSideInfoPtr->currentPartVec_);
+    }
+}
+
+void fieldBroker::zeroRnWallFluxE(const std::shared_ptr<domain> domain)
+{
+    // zero the frozen Robin term E on this domain's RN interface sides
+    auto& rnWallFluxESideSTKFieldRef = this->rnWallFluxERef().stkFieldRef();
+
+    for (const interface* interf : domain->interfacesRef())
+    {
+        if (!domain->isRobinNeumann(interf))
+        {
+            continue;
+        }
+
+        const auto* interfaceSideInfoPtr =
+            interf->interfaceSideInfoPtr(domain->index());
+
+        ops::zero(&rnWallFluxESideSTKFieldRef,
+                  interfaceSideInfoPtr->currentPartVec_);
     }
 }
 
@@ -5342,6 +5432,74 @@ const heatFlowRate& fieldBroker::qDotRef() const
         realmPtr_->qDot_, heatFlowRate, realmPtr_, realm::qDot_ID, n_states);
 }
 
+sideField<scalar, 1>& fieldBroker::aWallBcRef()
+{
+    if (!realmPtr_->aWallBc_)
+    {
+        realmPtr_->aWallBc_ = std::make_unique<sideField<scalar, 1>>(
+            &realmPtr_->meshRef(), std::string(realm::aWallBc_ID) + "_side", 1);
+    }
+    return *realmPtr_->aWallBc_;
+}
+
+const sideField<scalar, 1>& fieldBroker::aWallBcRef() const
+{
+    if (!realmPtr_->aWallBc_)
+    {
+        realmPtr_->aWallBc_ = std::make_unique<sideField<scalar, 1>>(
+            &realmPtr_->meshRef(), std::string(realm::aWallBc_ID) + "_side", 1);
+    }
+    return *realmPtr_->aWallBc_;
+}
+
+sideField<scalar, 1>& fieldBroker::rnWallFluxRef()
+{
+    if (!realmPtr_->rnWallFlux_)
+    {
+        realmPtr_->rnWallFlux_ = std::make_unique<sideField<scalar, 1>>(
+            &realmPtr_->meshRef(),
+            std::string(realm::rnWallFlux_ID) + "_side",
+            1);
+    }
+    return *realmPtr_->rnWallFlux_;
+}
+
+const sideField<scalar, 1>& fieldBroker::rnWallFluxRef() const
+{
+    if (!realmPtr_->rnWallFlux_)
+    {
+        realmPtr_->rnWallFlux_ = std::make_unique<sideField<scalar, 1>>(
+            &realmPtr_->meshRef(),
+            std::string(realm::rnWallFlux_ID) + "_side",
+            1);
+    }
+    return *realmPtr_->rnWallFlux_;
+}
+
+sideField<scalar, 1>& fieldBroker::rnWallFluxERef()
+{
+    if (!realmPtr_->rnWallFluxE_)
+    {
+        realmPtr_->rnWallFluxE_ = std::make_unique<sideField<scalar, 1>>(
+            &realmPtr_->meshRef(),
+            std::string(realm::rnWallFluxE_ID) + "_side",
+            1);
+    }
+    return *realmPtr_->rnWallFluxE_;
+}
+
+const sideField<scalar, 1>& fieldBroker::rnWallFluxERef() const
+{
+    if (!realmPtr_->rnWallFluxE_)
+    {
+        realmPtr_->rnWallFluxE_ = std::make_unique<sideField<scalar, 1>>(
+            &realmPtr_->meshRef(),
+            std::string(realm::rnWallFluxE_ID) + "_side",
+            1);
+    }
+    return *realmPtr_->rnWallFluxE_;
+}
+
 momentumFlowRate& fieldBroker::pDotRef()
 {
     RETURN_REF_ALLOC(realmPtr_->pDot_,
@@ -5726,6 +5884,32 @@ const displacement& fieldBroker::DRef() const
         realmPtr_->D_, displacement, realmPtr_, realm::D_ID, n_states);
 }
 
+nodeVectorField& fieldBroker::solidCorrectionRef()
+{
+    RETURN_REF_ALLOC(realmPtr_->solidCorrection_,
+                     nodeVectorField,
+                     realmPtr_,
+                     realm::solidCorrection_ID,
+                     n_states,
+                     false,
+                     false,
+                     false,
+                     false);
+}
+
+const nodeVectorField& fieldBroker::solidCorrectionRef() const
+{
+    RETURN_REF_ALLOC(realmPtr_->solidCorrection_,
+                     nodeVectorField,
+                     realmPtr_,
+                     realm::solidCorrection_ID,
+                     n_states,
+                     false,
+                     false,
+                     false,
+                     false);
+}
+
 simpleTensorField& fieldBroker::stressRef()
 {
     RETURN_REF_ALLOC_AUX(realmPtr_->smRealm_->sigma_,
@@ -5741,6 +5925,24 @@ const simpleTensorField& fieldBroker::stressRef() const
                          simpleTensorField,
                          realmPtr_,
                          smRealm::sigma_ID,
+                         stk::topology::NODE_RANK);
+};
+
+simpleScalarField& fieldBroker::stressVonMisesRef()
+{
+    RETURN_REF_ALLOC_AUX(realmPtr_->smRealm_->sigmaVonMises_,
+                         simpleScalarField,
+                         realmPtr_,
+                         smRealm::sigmaVonMises_ID,
+                         stk::topology::NODE_RANK);
+};
+
+const simpleScalarField& fieldBroker::stressVonMisesRef() const
+{
+    RETURN_REF_ALLOC_AUX(realmPtr_->smRealm_->sigmaVonMises_,
+                         simpleScalarField,
+                         realmPtr_,
+                         smRealm::sigmaVonMises_ID,
                          stk::topology::NODE_RANK);
 };
 

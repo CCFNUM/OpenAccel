@@ -10,6 +10,7 @@ set(DIR ${CMAKE_CURRENT_SOURCE_DIR})
 target_sources(main_obj PRIVATE
     ${DIR}/simulation.cpp
     ${DIR}/simulationIO.cpp
+    ${DIR}/auxiliary/fsiConvergence.cpp
     ${DIR}/auxiliary/physicsConvergence.cpp
 )
 

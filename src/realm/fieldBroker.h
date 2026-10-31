@@ -161,6 +161,15 @@ public:
 
     virtual void setupHeatFlowRate(const std::shared_ptr<domain> domain);
 
+    // a_n, Q_vol and the frozen term E on this domain's RN interface sides
+    virtual void setupRnWallFields(const std::shared_ptr<domain> domain);
+
+    // zero the RN stored wall flux on this domain's RN interface sides
+    void zeroRnWallFlux(const std::shared_ptr<domain> domain);
+
+    // zero the frozen Robin term E on this domain's RN sides
+    void zeroRnWallFluxE(const std::shared_ptr<domain> domain);
+
     virtual void setupMomentumFlowRate(const std::shared_ptr<domain> domain);
 
     virtual void setupYoungModulus(const std::shared_ptr<domain> domain);
@@ -942,6 +951,18 @@ protected:
 
     const heatFlowRate& qDotRef() const;
 
+    sideField<scalar, 1>& aWallBcRef();
+
+    const sideField<scalar, 1>& aWallBcRef() const;
+
+    sideField<scalar, 1>& rnWallFluxRef();
+
+    const sideField<scalar, 1>& rnWallFluxRef() const;
+
+    sideField<scalar, 1>& rnWallFluxERef();
+
+    const sideField<scalar, 1>& rnWallFluxERef() const;
+
     momentumFlowRate& pDotRef();
 
     const momentumFlowRate& pDotRef() const;
@@ -1054,9 +1075,17 @@ protected:
 
     const displacement& DRef() const;
 
+    nodeVectorField& solidCorrectionRef();
+
+    const nodeVectorField& solidCorrectionRef() const;
+
     simpleTensorField& stressRef();
 
     const simpleTensorField& stressRef() const;
+
+    simpleScalarField& stressVonMisesRef();
+
+    const simpleScalarField& stressVonMisesRef() const;
 
     simpleTensorField& strainRef();
 

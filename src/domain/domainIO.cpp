@@ -6,12 +6,44 @@
 
 // code
 #include "domain.h"
+#include "interface.h"
 #include "macros.h"
+#include "messager.h"
 #include "realm.h"
 #include "simulation.h"
 
 namespace accel
 {
+
+namespace
+{
+
+// (E, nu) -> modified Mooney-Rivlin (c1, c2 = 0, kappa)
+void convertYoungPoissonToMooneyRivlin(scalar E,
+                                       scalar nu,
+                                       scalar& c1,
+                                       scalar& c2,
+                                       scalar& kappa)
+{
+    const scalar muEff = E / (2.0 * (1.0 + nu));
+    c1 = muEff / 2.0; // C10
+    c2 = 0.0;         // C01 (pure neo-Hookean split if not specified)
+    kappa = E / (3.0 * (1.0 - 2.0 * nu));
+}
+
+// modified Mooney-Rivlin (c1, c2, kappa) -> small-strain (E, nu)
+void convertMooneyRivlinToYoungPoisson(scalar c1,
+                                       scalar c2,
+                                       scalar kappa,
+                                       scalar& E,
+                                       scalar& nu)
+{
+    const scalar mu = 2.0 * (c1 + c2);
+    E = 9.0 * kappa * mu / (3.0 * kappa + mu);
+    nu = (3.0 * kappa - 2.0 * mu) / (2.0 * (3.0 * kappa + mu));
+}
+
+} // namespace
 
 // IO
 
@@ -529,6 +561,18 @@ void domain::read_()
                                 freeSurfaceModelBlock["n_alpha_corrections"]
                                     .template as<label>();
                         }
+
+                        if (freeSurfaceModelBlock["advection_scheme"])
+                        {
+                            multiphase_.freeSurfaceModel_.advectionScheme_ =
+                                convertVofAdvectionSchemeTypeFromString(
+                                    freeSurfaceModelBlock["advection_scheme"]
+                                        .template as<std::string>());
+                        }
+
+                        infoMsg("Volume fraction advection scheme: " +
+                                toString(multiphase_.freeSurfaceModel_
+                                             .advectionScheme_));
                     }
                 }
                 else
@@ -1172,87 +1216,101 @@ void domain::read_()
 
             if (solidMechanicsBlock["option"])
             {
-                solidMechanics_.option_ = convertSolidMechanicsOptionFromString(
-                    solidMechanicsBlock["option"].template as<std::string>());
+                const std::string optionName =
+                    solidMechanicsBlock["option"].template as<std::string>();
+
+                // deprecated alias of neo_hookean, normalised as the converter
+                std::string normalisedName = optionName;
+                ::accel::tolower(normalisedName);
+                std::replace(
+                    normalisedName.begin(), normalisedName.end(), '-', '_');
+                if (normalisedName == "simplified_new_hookean" &&
+                    messager::master())
+                {
+                    warningMsg("solid_mechanics option "
+                               "simplified_new_hookean is deprecated: use "
+                               "neo_hookean");
+                }
+
+                solidMechanics_.option_ =
+                    convertSolidMechanicsOptionFromString(optionName);
             }
 
+            // missing key: default total_lagrangian (domain.h)
             if (solidMechanicsBlock["formulation"])
             {
                 solidMechanics_.formulation_ =
                     convertKinematicFormulationTypeFromString(
                         solidMechanicsBlock["formulation"]
                             .template as<std::string>());
-
-                switch (solidMechanics_.formulation_)
-                {
-                    case kinematicFormulationType::totalLagrangian:
-                        {
-                            equations_[static_cast<int>(
-                                equationID::solidDisplacement)] = true;
-
-                            if (this->zonePtr()
-                                    ->meshPtr()
-                                    ->controlsRef()
-                                    .isTransient())
-                            {
-                                // set deforming zone
-                                this->zonePtr()->setMeshDeforming(true);
-                                this->zonePtr()
-                                    ->meshPtr()
-                                    ->setAnyZoneMeshDeforming(true);
-
-                                // call deformation
-                                auto& deformation =
-                                    this->zonePtr()->deformationRef();
-
-                                // force inherent mesh deformation
-                                deformation.setSpecification(
-                                    meshDeformationSpecificationType::inherent);
-
-                                // force total displacement
-                                deformation
-                                    .setDisplacementRelativeToPreviousMesh(
-                                        false);
-                            }
-                        }
-                        break;
-
-                    case kinematicFormulationType::updatedLagrangian:
-                        {
-                            errorMsg("updated_lagrangian not implemented yet");
-
-                            if (this->zonePtr()
-                                    ->meshPtr()
-                                    ->controlsRef()
-                                    .isTransient())
-                            {
-                                // set deforming zone
-                                this->zonePtr()->setMeshDeforming(true);
-                                this->zonePtr()
-                                    ->meshPtr()
-                                    ->setAnyZoneMeshDeforming(true);
-
-                                // call deformation
-                                auto& deformation =
-                                    this->zonePtr()->deformationRef();
-
-                                // force inherent mesh deformation
-                                deformation.setSpecification(
-                                    meshDeformationSpecificationType::inherent);
-
-                                // force relative displacement
-                                deformation
-                                    .setDisplacementRelativeToPreviousMesh(
-                                        true);
-                            }
-                        }
-                        break;
-                }
             }
-            else
+
+            switch (solidMechanics_.formulation_)
             {
-                equations_[static_cast<int>(equationID::solidDisplacement)] =
-                    true;
+                case kinematicFormulationType::totalLagrangian:
+                    {
+                        equations_[static_cast<int>(
+                            equationID::solidDisplacement)] = true;
+
+                        // the solid transient scheme sets the field states
+                        this->zonePtr()
+                            ->meshPtr()
+                            ->controlsRef()
+                            .setAnySolidMechanics(true);
+
+                        if (this->zonePtr()
+                                ->meshPtr()
+                                ->controlsRef()
+                                .isTransient())
+                        {
+                            // set deforming zone
+                            this->zonePtr()->setMeshDeforming(true);
+                            this->zonePtr()->meshPtr()->setAnyZoneMeshDeforming(
+                                true);
+
+                            // call deformation
+                            auto& deformation =
+                                this->zonePtr()->deformationRef();
+
+                            // force inherent mesh deformation
+                            deformation.setSpecification(
+                                meshDeformationSpecificationType::inherent);
+
+                            // force total displacement
+                            deformation.setDisplacementRelativeToPreviousMesh(
+                                false);
+                        }
+                    }
+                    break;
+
+                case kinematicFormulationType::updatedLagrangian:
+                    {
+                        errorMsg("updated_lagrangian not implemented yet");
+
+                        if (this->zonePtr()
+                                ->meshPtr()
+                                ->controlsRef()
+                                .isTransient())
+                        {
+                            // set deforming zone
+                            this->zonePtr()->setMeshDeforming(true);
+                            this->zonePtr()->meshPtr()->setAnyZoneMeshDeforming(
+                                true);
+
+                            // call deformation
+                            auto& deformation =
+                                this->zonePtr()->deformationRef();
+
+                            // force inherent mesh deformation
+                            deformation.setSpecification(
+                                meshDeformationSpecificationType::inherent);
+
+                            // force relative displacement
+                            deformation.setDisplacementRelativeToPreviousMesh(
+                                true);
+                        }
+                    }
+                    break;
             }
 
             if (solidMechanicsBlock["plane_stress"])
@@ -1285,7 +1343,7 @@ void domain::read_()
                 }
             }
 
-            // Mooney-Rivlin: derive c1/c2/kappa from E/nu if not given
+            // Mooney-Rivlin: c1/c2/kappa from E/nu, or E/nu from c1/c2/kappa
             if (solidMechanics_.option_ ==
                 solidMechanicsOption::modifiedMooneyRivlin)
             {
@@ -1296,21 +1354,21 @@ void domain::read_()
                     const auto& materialBlock = materialBlockVector_[iMat];
                     if (!materialBlock["mechanical_properties"])
                     {
-                        continue;
+                        errorMsg("mooney_rivlin requires mechanical_properties "
+                                 "with c1/c2/kappa or "
+                                 "young_modulus/poisson_ratio");
                     }
 
                     const auto& mechanicalPropertiesBlock =
                         materialBlock["mechanical_properties"];
 
-                    const bool hasC1C2Kappa =
-                        mechanicalPropertiesBlock["c1"] ||
-                        mechanicalPropertiesBlock["c2"] ||
-                        mechanicalPropertiesBlock["kappa"];
-
-                    if (hasC1C2Kappa)
-                    {
-                        continue;
-                    }
+                    // c1, c2, kappa all or none: a missing one would stay 0
+                    const bool hasC1 =
+                        static_cast<bool>(mechanicalPropertiesBlock["c1"]);
+                    const bool hasC2 =
+                        static_cast<bool>(mechanicalPropertiesBlock["c2"]);
+                    const bool hasKappa =
+                        static_cast<bool>(mechanicalPropertiesBlock["kappa"]);
 
                     const bool hasYoungPoisson =
                         mechanicalPropertiesBlock["young_modulus"] &&
@@ -1323,6 +1381,38 @@ void domain::read_()
                     auto& mechProps =
                         materialVector_[iMat].mechanicalProperties_;
 
+                    if (hasC1 && hasC2 && hasKappa)
+                    {
+                        // E/nu not given: small-strain values for E-based
+                        // coefficients (RN h_s)
+                        scalar E = 0.0;
+                        scalar nu = 0.0;
+                        convertMooneyRivlinToYoungPoisson(mechProps.c1_,
+                                                          mechProps.c2_,
+                                                          mechProps.kappa_,
+                                                          E,
+                                                          nu);
+                        if (!mechanicalPropertiesBlock["young_modulus"])
+                        {
+                            mechProps.youngModulus_.option_ =
+                                youngModulusOption::derived;
+                            mechProps.youngModulus_.value_ = E;
+                        }
+                        if (!mechanicalPropertiesBlock["poisson_ratio"])
+                        {
+                            mechProps.poissonRatio_.option_ =
+                                poissonRatioOption::derived;
+                            mechProps.poissonRatio_.value_ = nu;
+                        }
+                        continue;
+                    }
+
+                    if (hasC1 || hasC2 || hasKappa)
+                    {
+                        errorMsg("mooney_rivlin requires all of c1, c2 and "
+                                 "kappa when any of them is given");
+                    }
+
                     if (hasYoungPoisson)
                     {
                         const scalar E =
@@ -1334,11 +1424,11 @@ void domain::read_()
                                                      ["poisson_ratio"]
                                                          .template as<scalar>();
 
-                        // (E, nu) -> (c1, c2, kappa) with C01 = 0
-                        const scalar muEff = E / (2.0 * (1.0 + nu));
-                        mechProps.c1_ = muEff / 2.0;
-                        mechProps.c2_ = 0.0;
-                        mechProps.kappa_ = E / (3.0 * (1.0 - 2.0 * nu));
+                        convertYoungPoissonToMooneyRivlin(E,
+                                                          nu,
+                                                          mechProps.c1_,
+                                                          mechProps.c2_,
+                                                          mechProps.kappa_);
                     }
 
                     // mooney_rivlin needs c1/c2/kappa or E/nu
@@ -1350,10 +1440,12 @@ void domain::read_()
                 }
             }
 
-            // linear_elastic and neo_hookean need E and nu
+            // linear_elastic, neo_hookean, saint_venant_kirchhoff need E and nu
             if (solidMechanics_.option_ ==
                     solidMechanicsOption::linearElastic ||
-                solidMechanics_.option_ == solidMechanicsOption::neoHookean)
+                solidMechanics_.option_ == solidMechanicsOption::neoHookean ||
+                solidMechanics_.option_ ==
+                    solidMechanicsOption::saintVenantKirchhoff)
             {
                 for (label iMat = 0;
                      iMat < static_cast<label>(materialVector_.size());
@@ -1622,6 +1714,104 @@ void domain::read_()
                         .template as<bool>();
             }
         }
+    }
+}
+
+void domain::readFluidSolidCouplings_()
+{
+    fluidSolidCouplings_.clear();
+
+    const YAML::Node interfacesNode =
+        simulationRef().getYAMLPhysicalAnalysisNode()["interfaces"];
+
+    for (const interface* interf : interfacesRef())
+    {
+        if (!interf->isFluidSolidType())
+        {
+            continue;
+        }
+
+        fluidSolidCoupling coupling;
+
+        for (const auto& interfaceNode : interfacesNode)
+        {
+            if (!interfaceNode["name"] ||
+                interfaceNode["name"].template as<std::string>() !=
+                    interf->name() ||
+                !interfaceNode["coupling"])
+            {
+                continue;
+            }
+
+            const YAML::Node& couplingNode = interfaceNode["coupling"];
+
+            if (couplingNode["method"])
+            {
+                coupling.method_ = convertFsiCouplingMethodFromString(
+                    couplingNode["method"].template as<std::string>());
+            }
+
+            if (couplingNode["predict_solid_displacement"])
+            {
+                coupling.predictSolidDisplacement_ =
+                    couplingNode["predict_solid_displacement"]
+                        .template as<bool>();
+            }
+
+            if (couplingNode["write_force_balance"])
+            {
+                coupling.writeForceBalance_ =
+                    couplingNode["write_force_balance"].template as<bool>();
+            }
+
+            if (couplingNode["robin_parameters"])
+            {
+                const YAML::Node& robinNode = couplingNode["robin_parameters"];
+                auto& robin = coupling.robin_;
+
+                if (robinNode["reference_fluid_density"])
+                {
+                    robin.referenceFluidDensity_ =
+                        robinNode["reference_fluid_density"]
+                            .template as<scalar>();
+                    if (!(robin.referenceFluidDensity_ > 0.0))
+                    {
+                        errorMsg("reference_fluid_density must be > 0");
+                    }
+                    robin.useReferenceFluidDensity_ = true;
+                }
+
+                if (robinNode["write_robin_alpha"])
+                {
+                    robin.writeRobinAlpha_ =
+                        robinNode["write_robin_alpha"].template as<bool>();
+                }
+
+                if (robinNode["rn_accel_relaxation"])
+                {
+                    robin.rnAccelRelaxation_ =
+                        robinNode["rn_accel_relaxation"].template as<scalar>();
+                    if (robin.rnAccelRelaxation_ <= 0.0 ||
+                        robin.rnAccelRelaxation_ > 1.0)
+                    {
+                        errorMsg("rn_accel_relaxation must be in (0, 1]");
+                    }
+                }
+
+                if (robinNode["solid_thickness"])
+                {
+                    robin.solidThickness_ =
+                        robinNode["solid_thickness"].template as<scalar>();
+                    if (!(robin.solidThickness_ > 0.0))
+                    {
+                        errorMsg("solid_thickness must be > 0");
+                    }
+                    robin.usePhysicalSolidThickness_ = true;
+                }
+            }
+        }
+
+        fluidSolidCouplings_[interf->index()] = coupling;
     }
 }
 

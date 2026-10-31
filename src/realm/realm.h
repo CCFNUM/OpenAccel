@@ -20,6 +20,7 @@
 #include "momentumFlowRate.h"
 #include "pressure.h"
 #include "pressureCorrection.h"
+#include "sideField.h"
 #include "smRealm.h"
 #include "specificEnthalpy.h"
 #include "specificHeatCapacity.h"
@@ -120,6 +121,12 @@ private:
 
     std::unique_ptr<heatFlowRate> qDot_;
 
+    std::unique_ptr<sideField<scalar, 1>> aWallBc_;
+
+    std::unique_ptr<sideField<scalar, 1>> rnWallFlux_;
+
+    std::unique_ptr<sideField<scalar, 1>> rnWallFluxE_;
+
     std::unique_ptr<momentumFlowRate> pDot_;
 
     std::unique_ptr<turbRealm> tRealm_;
@@ -135,6 +142,9 @@ private:
 
     // displacement from the previous coordinates
     std::unique_ptr<displacement> D_ = nullptr;
+
+    // raw solid correction X^k, sent to the fluid side for the FSI residual
+    std::unique_ptr<nodeVectorField> solidCorrection_ = nullptr;
 
     // mesh velocity
     std::unique_ptr<nodeVectorField> Um_ = nullptr;
@@ -183,6 +193,12 @@ public:
 
     static constexpr char qDot_ID[] = "heat_flow_rate";
 
+    static constexpr char aWallBc_ID[] = "rn_wall_acceleration";
+
+    static constexpr char rnWallFlux_ID[] = "rn_wall_flux";
+
+    static constexpr char rnWallFluxE_ID[] = "rn_wall_flux_e";
+
     static constexpr char pDot_ID[] = "momentum_flow_rate";
 
     // other field identifiers
@@ -208,6 +224,8 @@ public:
     static constexpr char Dt_ID[] = "displacement_mesh"; // total displacement
 
     static constexpr char D_ID[] = "displacement";
+
+    static constexpr char solidCorrection_ID[] = "solid_correction_raw";
 
     static constexpr char Um_ID[] = "velocity_mesh";
 

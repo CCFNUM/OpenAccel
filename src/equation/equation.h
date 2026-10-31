@@ -149,6 +149,9 @@ public:
         return currentSubIter_ >= subIters_;
     }
 
+    // pre-solve, solve and post-solve with the sub-iterations of the equation
+    void solveSubIterations(const int verbose);
+
     virtual void addDomain(std::shared_ptr<domain> domain)
     {
         checkDomain(domain);

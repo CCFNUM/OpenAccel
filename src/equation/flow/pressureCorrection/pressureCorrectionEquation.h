@@ -12,6 +12,7 @@
 #include "flowModel.h"
 #include "linearSystem.h"
 #include "pressureCorrectionAssembler.h"
+#include "robinNeumannParams.h"
 
 namespace accel
 {
@@ -27,6 +28,16 @@ public:
     static constexpr equationID ID = equationID::pressureCorrection;
 
     pressureCorrectionEquation(realm* realm, flowModel* model);
+
+    flowModel* flowModelPtr() const
+    {
+        return model_;
+    }
+
+    pressureCorrectionAssembler* assemblerPtr() const
+    {
+        return assembler_.get();
+    }
 
     void checkDomain(const std::shared_ptr<domain> domain) override;
 
@@ -44,7 +55,12 @@ public:
 
     void postSolve() override;
 
+    // before each corrector loop: Robin-Neumann Q_vol and E reset
+    void startOfOuterIteration();
+
     void preTimeStep() override;
+
+    void postTimeStep() override;
 
     void printScales() override;
 
@@ -122,6 +138,8 @@ protected:
     }
 
     std::unique_ptr<Assembler> assembler_;
+
+    robinNeumannCoupling robinNeumann_;
 };
 
 } /* namespace accel */

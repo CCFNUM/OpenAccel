@@ -12,6 +12,9 @@
 #include "zoneDeformation.h"
 #include "zoneTransformation.h"
 
+// std
+#include <limits>
+
 namespace accel
 {
 
@@ -118,6 +121,9 @@ void meshMotion::initialize()
     // set total displacement and mesh velocity to zero
     reset();
 
+    // no previous a_n after start-up or restart: the first one is unrelaxed
+    hasAWallBc_ = false;
+
     // initialize deformation
     if (deformationPtr_)
     {
@@ -129,6 +135,18 @@ void meshMotion::initialize()
     {
         transformationPtr_->initialize();
     }
+}
+
+bool meshMotion::followsSolution() const
+{
+    for (const interface* interf : this->meshRef().interfaceVector())
+    {
+        if (interf->isFluidSolidType())
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void meshMotion::update()
@@ -150,20 +168,25 @@ void meshMotion::update()
         transformationPtr_->update();
     }
 
-    // update mesh and mesh fields
-
-    // update mesh coordinates, zones and boundaries, from total displacement
+    // Update mesh coordinates from Dt (coords = original + Dt).
     updateCoordinates_();
 
     // calculate mesh velocity from total displacement
     updateMeshVelocityField_();
 
-    // update mesh divergence field in case there is a deforming zone only: the
-    // check for deforming zone is inside
+    // update div(Um) for deforming zones
     if (deformationPtr_)
     {
         updateMeshVelocityDivergenceField_();
     }
+
+    // wall velocity from Dt on the fluid-solid sides (no-slip wall velocity)
+    this->updateFsiWallVelocity_();
+
+    // Robin-Neumann wall normal acceleration from Dt
+    this->updateFsiWallAcceleration_();
+
+    boundaryMoved_ = false;
 
     if (messager::master())
     {
@@ -189,13 +212,6 @@ void meshMotion::updateCoordinates_()
             stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
             stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-            // Get fields
-            auto& DtSTKFieldRef = DtRef().stkFieldRef();
-            const auto& originalCoordsSTKFieldRef = *metaData.get_field<scalar>(
-                stk::topology::NODE_RANK, mesh::original_coordinates_ID);
-            auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
-                stk::topology::NODE_RANK, mesh::coordinates_ID);
-
             // get interior parts the domain is defined on
             const stk::mesh::PartVector& partVec =
                 this->meshRef().zoneRef(iZone).interiorParts();
@@ -206,6 +222,13 @@ void meshMotion::updateCoordinates_()
 
             stk::mesh::BucketVector const& nodeBuckets = bulkData.get_buckets(
                 stk::topology::NODE_RANK, selUniversalNodes);
+
+            auto& DtSTKFieldRef = DtRef().stkFieldRef();
+            const auto& originalCoordsSTKFieldRef = *metaData.get_field<scalar>(
+                stk::topology::NODE_RANK, mesh::original_coordinates_ID);
+            auto& coordsSTKFieldRef = *metaData.get_field<scalar>(
+                stk::topology::NODE_RANK, mesh::coordinates_ID);
+
             for (stk::mesh::BucketVector::const_iterator ib =
                      nodeBuckets.begin();
                  ib != nodeBuckets.end();
@@ -265,13 +288,6 @@ void meshMotion::updateMeshVelocityField_()
             stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
             stk::mesh::MetaData& metaData = mesh.metaDataRef();
 
-            // Get fields
-            const auto& DtSTKFieldRef = DtRef().stkFieldRef();
-            const auto& DtSTKFieldRefOld = DtRef().prevTimeRef().stkFieldRef();
-            const auto& DtSTKFieldRefOldOld =
-                DtRef().prevTimeRef().prevTimeRef().stkFieldRef();
-            auto& UmSTKFieldRef = UmRef().stkFieldRef();
-
             // get interior parts the domain is defined on
             const stk::mesh::PartVector& partVec =
                 this->meshRef().zoneRef(iZone).interiorParts();
@@ -280,13 +296,21 @@ void meshMotion::updateMeshVelocityField_()
             stk::mesh::Selector selUniversalNodes =
                 metaData.universal_part() & stk::mesh::selectUnion(partVec);
 
+            stk::mesh::BucketVector const& nodeBuckets = bulkData.get_buckets(
+                stk::topology::NODE_RANK, selUniversalNodes);
+
+            // Get fields
+            const auto& DtSTKFieldRef = DtRef().stkFieldRef();
+            const auto& DtSTKFieldRefOld = DtRef().prevTimeRef().stkFieldRef();
+            const auto& DtSTKFieldRefOldOld =
+                DtRef().prevTimeRef().prevTimeRef().stkFieldRef();
+            auto& UmSTKFieldRef = UmRef().stkFieldRef();
+
             const scalar dt = meshRef().controlsRef().getTimestep();
 
             const auto c =
                 BDF2::coeff(dt, meshRef().controlsRef().getTimestep(-1));
 
-            stk::mesh::BucketVector const& nodeBuckets = bulkData.get_buckets(
-                stk::topology::NODE_RANK, selUniversalNodes);
             for (stk::mesh::BucketVector::const_iterator ib =
                      nodeBuckets.begin();
                  ib != nodeBuckets.end();
@@ -1097,6 +1121,387 @@ void meshMotion::updateMeshVelocityDivergenceField_()
             }
         }
     }
+}
+
+void meshMotion::updateFsiWallVelocity_()
+{
+    // wall velocity from Dt at the fluid-solid BIPs (BDF2 for backward)
+
+    // only fluid-solid interfaces carry a wall velocity
+    bool anyFsi = false;
+    for (auto& zonePtr : realmPtr_->simulationRef().domainVector())
+    {
+        if (zonePtr->type() != domainType::fluid)
+            continue;
+
+        for (const interface* interf : zonePtr->interfacesRef())
+        {
+            if (interf->isFluidSolidType())
+            {
+                anyFsi = true;
+                break;
+            }
+        }
+        if (anyFsi)
+            break;
+    }
+    if (!anyFsi)
+        return;
+
+    auto& mesh = meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    const scalar dt = mesh.controlsRef().getTimestep();
+    const scalar invDt = 1.0 / (dt + SMALL);
+
+    const auto& DtSTKFieldRef = DtRef().stkFieldRef();
+    const auto& DtOldSTKFieldRef = DtRef().prevTimeRef().stkFieldRef();
+    auto& sideUSTKFieldRef = URef().sideFieldRef().stkFieldRef();
+
+    // BDF2 wall velocity only with solid_transient_scheme: backward
+    const label tsCount = mesh.controlsRef().getTimeStepCount();
+    const bool useVelocityBdf2 =
+        (mesh.controlsRef().getSolidTransientScheme() ==
+         solidTransientSchemeType::backwardD2dt2) &&
+        (tsCount >= 2);
+
+    // variable-step BDF2 coefficients (as in updateFsiWallAcceleration_())
+    const scalar dt0 = mesh.controlsRef().getTimestep(-1);
+    const scalar safedt0 = (dt0 > 0.0) ? dt0 : dt;
+    const scalar coefft = 1.0 + dt / (dt + safedt0);
+    const scalar coefft00 = dt * dt / (safedt0 * (dt + safedt0));
+    const scalar coefft0 = coefft + coefft00;
+
+    // DtOld2 field: only accessed when BDF2 is active
+    const auto* DtOld2STKFieldPtr =
+        useVelocityBdf2 ? &DtRef().prevTimeRef().prevTimeRef().stkFieldRef()
+                        : nullptr;
+
+    // write UbcVec on the fluid-side faces of each fluid-solid interface
+    for (auto& zonePtr : realmPtr_->simulationRef().domainVector())
+    {
+        if (zonePtr->type() != domainType::fluid)
+            continue;
+
+        const label iZone = zonePtr->index();
+
+        for (const interface* interf : zonePtr->interfacesRef())
+        {
+            if (!interf->isFluidSolidType())
+                continue;
+
+            // Only write on the fluid side (this zone's own side info).
+            const auto* fluidSideInfoPtr = interf->interfaceSideInfoPtr(iZone);
+
+            stk::mesh::Selector selAllSides =
+                metaData.universal_part() &
+                stk::mesh::selectUnion(fluidSideInfoPtr->currentPartVec_);
+
+            stk::mesh::BucketVector const& sideBuckets =
+                bulkData.get_buckets(metaData.side_rank(), selAllSides);
+
+            for (auto ib = sideBuckets.begin(); ib != sideBuckets.end(); ++ib)
+            {
+                stk::mesh::Bucket& sideBucket = **ib;
+
+                MasterElement* meFC =
+                    MasterElementRepo::get_surface_master_element(
+                        sideBucket.topology());
+                const label numScsBip = meFC->numIntPoints_;
+                const label nodesPerSide = sideBucket.topology().num_nodes();
+
+                std::vector<scalar> ws_shape(numScsBip * nodesPerSide);
+                meFC->shape_fcn(&ws_shape[0]);
+
+                const stk::mesh::Bucket::size_type nSides = sideBucket.size();
+                for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSides;
+                     ++iSide)
+                {
+                    stk::mesh::Entity side = sideBucket[iSide];
+                    scalar* UbcVec =
+                        stk::mesh::field_data(sideUSTKFieldRef, side);
+
+                    stk::mesh::Entity const* sideNodeRels =
+                        bulkData.begin_nodes(side);
+                    const label numSideNodes = bulkData.num_nodes(side);
+
+                    // nodal wall velocity
+                    std::vector<scalar> vNodal(numSideNodes * SPATIAL_DIM);
+                    for (label ni = 0; ni < numSideNodes; ++ni)
+                    {
+                        stk::mesh::Entity node = sideNodeRels[ni];
+                        const scalar* Dt =
+                            stk::mesh::field_data(DtSTKFieldRef, node);
+                        const scalar* DtOld =
+                            stk::mesh::field_data(DtOldSTKFieldRef, node);
+                        const scalar* DtOld2 = nullptr;
+                        if (useVelocityBdf2)
+                            DtOld2 =
+                                stk::mesh::field_data(*DtOld2STKFieldPtr, node);
+
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            if (useVelocityBdf2)
+                            {
+                                vNodal[ni * SPATIAL_DIM + j] =
+                                    (coefft * Dt[j] - coefft0 * DtOld[j] +
+                                     coefft00 * DtOld2[j]) *
+                                    invDt;
+                            }
+                            else
+                            {
+                                vNodal[ni * SPATIAL_DIM + j] =
+                                    (Dt[j] - DtOld[j]) * invDt;
+                            }
+                        }
+                    }
+
+                    // Interpolate to BIPs and write UbcVec.
+                    for (label ip = 0; ip < numScsBip; ++ip)
+                    {
+                        const label offSF = ip * nodesPerSide;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            scalar vip = 0.0;
+                            for (label ic = 0; ic < nodesPerSide; ++ic)
+                            {
+                                vip += ws_shape[offSF + ic] *
+                                       vNodal[ic * SPATIAL_DIM + j];
+                            }
+                            UbcVec[ip * SPATIAL_DIM + j] = vip;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void meshMotion::updateFsiWallAcceleration_()
+{
+    // RN wall normal acceleration from Dt (solid d2dt2 operator)
+
+    // the aWallBc side field exists on Robin-Neumann interfaces only
+    bool anyRnFsi = false;
+    for (auto& zonePtr : realmPtr_->simulationRef().domainVector())
+    {
+        if (zonePtr->type() != domainType::fluid)
+            continue;
+
+        for (const interface* interf : zonePtr->interfacesRef())
+        {
+            if (zonePtr->isRobinNeumann(interf))
+            {
+                anyRnFsi = true;
+                break;
+            }
+        }
+        if (anyRnFsi)
+            break;
+    }
+    if (!anyRnFsi)
+        return;
+
+    auto& mesh = meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+
+    const scalar dt = mesh.controlsRef().getTimestep();
+    const scalar rDeltaT2 = 1.0 / (dt * dt);
+
+    const bool isBackward = (mesh.controlsRef().getSolidTransientScheme() ==
+                             solidTransientSchemeType::backwardD2dt2);
+
+    // Dt3/Dt4 exist only with the backward scheme
+    const auto& DtSTKFieldRef = DtRef().stkFieldRef();
+    const auto& Dt1STKFieldRef = DtRef().prevTimeRef().stkFieldRef();
+    const auto& Dt2STKFieldRef =
+        DtRef().prevTimeRef().prevTimeRef().stkFieldRef();
+
+    const stk::mesh::Field<scalar>* Dt3STKFieldPtr = nullptr;
+    const stk::mesh::Field<scalar>* Dt4STKFieldPtr = nullptr;
+    if (isBackward)
+    {
+        Dt3STKFieldPtr =
+            &DtRef().prevTimeRef().prevTimeRef().prevTimeRef().stkFieldRef();
+        Dt4STKFieldPtr = &DtRef()
+                              .prevTimeRef()
+                              .prevTimeRef()
+                              .prevTimeRef()
+                              .prevTimeRef()
+                              .stkFieldRef();
+    }
+
+    // outer BDF2 coefficients as in the solid backward d2dt2 node terms
+    scalar coefft = 0.0, coefft0 = 0.0, coefft00 = 0.0;
+    const scalar inner_c0 = 1.5;
+    const scalar inner_c1 = -2.0;
+    const scalar inner_c2 = 0.5;
+    if (isBackward)
+    {
+        const scalar dt0 = mesh.controlsRef().getTimestep(-1);
+        const scalar safedt0 = (dt0 > 0.0) ? dt0 : dt;
+        coefft = 1.0 + dt / (dt + safedt0);
+        coefft00 = dt * dt / (safedt0 * (dt + safedt0));
+        coefft0 = coefft + coefft00;
+    }
+
+    // exposed area vector: same field and normalisation as the RN kernel
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), mesh::exposed_area_vector_ID);
+
+    auto& aWallBcSideSTKFieldRef = aWallBcRef().stkFieldRef();
+
+    std::vector<scalar> aBip(SPATIAL_DIM);
+    scalar* p_aBip = &aBip[0];
+
+    for (auto& zonePtr : realmPtr_->simulationRef().domainVector())
+    {
+        if (zonePtr->type() != domainType::fluid)
+            continue;
+
+        const label iZone = zonePtr->index();
+
+        for (const interface* interf : zonePtr->interfacesRef())
+        {
+            if (!zonePtr->isRobinNeumann(interf))
+                continue;
+
+            const auto* fluidSideInfoPtr = interf->interfaceSideInfoPtr(iZone);
+
+            // RN a_n under-relaxation factor of this interface (1 = none)
+            const scalar rnAccelRelax = zonePtr->fluidSolidCouplingRef(interf)
+                                            .robin_.rnAccelRelaxation_;
+
+            stk::mesh::Selector selAllSides =
+                metaData.universal_part() &
+                stk::mesh::selectUnion(fluidSideInfoPtr->currentPartVec_);
+
+            stk::mesh::BucketVector const& sideBuckets =
+                bulkData.get_buckets(metaData.side_rank(), selAllSides);
+
+            for (auto ib = sideBuckets.begin(); ib != sideBuckets.end(); ++ib)
+            {
+                stk::mesh::Bucket& sideBucket = **ib;
+
+                MasterElement* meFC =
+                    MasterElementRepo::get_surface_master_element(
+                        sideBucket.topology());
+                const label numScsBip = meFC->numIntPoints_;
+                const label nodesPerSide = sideBucket.topology().num_nodes();
+
+                std::vector<scalar> ws_shape(numScsBip * nodesPerSide);
+                meFC->shape_fcn(&ws_shape[0]);
+
+                const stk::mesh::Bucket::size_type nSides = sideBucket.size();
+                for (stk::mesh::Bucket::size_type iSide = 0; iSide < nSides;
+                     ++iSide)
+                {
+                    stk::mesh::Entity side = sideBucket[iSide];
+                    scalar* aWallBcVals =
+                        stk::mesh::field_data(aWallBcSideSTKFieldRef, side);
+                    const scalar* areaVec =
+                        stk::mesh::field_data(exposedAreaVecSTKFieldRef, side);
+
+                    stk::mesh::Entity const* sideNodeRels =
+                        bulkData.begin_nodes(side);
+                    const label numSideNodes = bulkData.num_nodes(side);
+
+                    // nodal wall acceleration
+                    std::vector<scalar> aNodal(numSideNodes * SPATIAL_DIM);
+                    for (label ni = 0; ni < numSideNodes; ++ni)
+                    {
+                        stk::mesh::Entity node = sideNodeRels[ni];
+                        const scalar* Dt =
+                            stk::mesh::field_data(DtSTKFieldRef, node);
+                        const scalar* Dt1 =
+                            stk::mesh::field_data(Dt1STKFieldRef, node);
+                        const scalar* Dt2 =
+                            stk::mesh::field_data(Dt2STKFieldRef, node);
+
+                        if (isBackward)
+                        {
+                            const scalar* Dt3 =
+                                stk::mesh::field_data(*Dt3STKFieldPtr, node);
+                            const scalar* Dt4 =
+                                stk::mesh::field_data(*Dt4STKFieldPtr, node);
+
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                const scalar bdf2_n = inner_c0 * Dt[j] +
+                                                      inner_c1 * Dt1[j] +
+                                                      inner_c2 * Dt2[j];
+                                const scalar bdf2_n1 = inner_c0 * Dt1[j] +
+                                                       inner_c1 * Dt2[j] +
+                                                       inner_c2 * Dt3[j];
+                                const scalar bdf2_n2 = inner_c0 * Dt2[j] +
+                                                       inner_c1 * Dt3[j] +
+                                                       inner_c2 * Dt4[j];
+
+                                aNodal[ni * SPATIAL_DIM + j] =
+                                    rDeltaT2 *
+                                    (coefft * bdf2_n - coefft0 * bdf2_n1 +
+                                     coefft00 * bdf2_n2);
+                            }
+                        }
+                        else
+                        {
+                            // Euler d2dt2: (D - 2*D_old + D_old2)/dt^2
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                aNodal[ni * SPATIAL_DIM + j] =
+                                    rDeltaT2 * (Dt[j] - 2.0 * Dt1[j] + Dt2[j]);
+                            }
+                        }
+                    }
+
+                    // BIP value projected on the exposed normal
+                    for (label ip = 0; ip < numScsBip; ++ip)
+                    {
+                        const label offSF = ip * nodesPerSide;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            p_aBip[j] = 0.0;
+                        }
+                        for (label ic = 0; ic < nodesPerSide; ++ic)
+                        {
+                            const scalar r = ws_shape[offSF + ic];
+                            for (label j = 0; j < SPATIAL_DIM; ++j)
+                            {
+                                p_aBip[j] += r * aNodal[ic * SPATIAL_DIM + j];
+                            }
+                        }
+
+                        scalar aMagSq = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            const scalar axj = areaVec[ip * SPATIAL_DIM + j];
+                            aMagSq += axj * axj;
+                        }
+                        const scalar invAMag =
+                            1.0 / (std::sqrt(aMagSq) + SMALL);
+
+                        scalar an = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            an += p_aBip[j] * areaVec[ip * SPATIAL_DIM + j] *
+                                  invAMag;
+                        }
+
+                        // a = beta*a_new + (1 - beta)*a_prev
+                        aWallBcVals[ip] =
+                            (hasAWallBc_ && rnAccelRelax < 1.0)
+                                ? rnAccelRelax * an +
+                                      (1.0 - rnAccelRelax) * aWallBcVals[ip]
+                                : an;
+                    }
+                }
+            }
+        }
+    }
+
+    hasAWallBc_ = true;
 }
 
 } // namespace accel

@@ -65,6 +65,8 @@ struct multiphase
         label interfaceCompressionLevel_ = 0;
         bool fluxCorrectedTransport_ = false;
         label nAlphaCorrections_ = 1; // FCT outer corrections
+        vofAdvectionSchemeType advectionScheme_ =
+            vofAdvectionSchemeType::barthJespersen;
     };
 
     bool homogeneous_ = true;
@@ -82,6 +84,42 @@ struct solidMechanics
 
     // mass-proportional Rayleigh damping coefficient [1/s]; 0 = undamped
     scalar dampingCoeff_ = 0.0;
+};
+
+// coupling settings of one fluid-solid interface (YAML interfaces: coupling)
+struct fluidSolidCoupling
+{
+    fsiCouplingMethod method_ = fsiCouplingMethod::dirichletNeumann;
+
+    // solid solve with the previous-step fluid load first (s4f predictSolid)
+    bool predictSolidDisplacement_ = false;
+
+    // write the interface force balance to fsi_force_balance.out
+    bool writeForceBalance_ = false;
+
+    struct robinParameters
+    {
+        // rho_f in c1: local BIP density unless reference_fluid_density is set
+        bool useReferenceFluidDensity_ = false;
+        scalar referenceFluidDensity_ = 1000.0;
+
+        // true: h_s = solidThickness_ (Tukovic Sec. 2.4), else a_p*dt (Eq. 21)
+        bool usePhysicalSolidThickness_ = false;
+        scalar solidThickness_ = 0.0;
+
+        // a_n under-relaxation beta in (0, 1] (rn_accel_relaxation)
+        scalar rnAccelRelaxation_ = 1.0;
+
+        // write c1 = rho_s*h_s/rho_f to postProcessing/robin_alpha.out
+        bool writeRobinAlpha_ = false;
+    };
+
+    robinParameters robin_;
+
+    bool isRobinNeumann() const
+    {
+        return method_ == fsiCouplingMethod::robinNeumann;
+    }
 };
 
 struct buoyancy
@@ -199,11 +237,13 @@ struct material
         struct youngModulus
         {
             youngModulusOption option_ = youngModulusOption::value;
+            scalar value_ = 0.0; // derived option only
         };
 
         struct poissonRatio
         {
             poissonRatioOption option_ = poissonRatioOption::value;
+            scalar value_ = 0.0; // derived option only
         };
 
         youngModulus youngModulus_;
@@ -310,6 +350,9 @@ protected:
     generalMomentumSource generalMomentumSource_;
 
     void read_();
+
+    // coupling settings of the fluid-solid interfaces of this domain
+    void readFluidSolidCouplings_();
 
 public:
     domain(simulation* simulation_ptr,
@@ -501,6 +544,15 @@ public:
     buoyancy buoyancy_;
 
     std::vector<fluidPairModel> fluidPairModels_;
+
+    // coupling of each fluid-solid interface of the domain, by interface index
+    std::map<label, fluidSolidCoupling> fluidSolidCouplings_;
+
+    const fluidSolidCoupling&
+    fluidSolidCouplingRef(const interface* interf) const;
+
+    // true if interf is a Robin-Neumann fluid-solid interface of this domain
+    bool isRobinNeumann(const interface* interf) const;
 
     const std::vector<fluidPairModel>& fluidPairModels() const
     {

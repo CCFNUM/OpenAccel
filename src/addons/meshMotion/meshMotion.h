@@ -22,6 +22,12 @@ private:
 
     std::unique_ptr<transformation> transformationPtr_ = nullptr;
 
+    // aWallBc holds a previous a_n for rn_accel_relaxation
+    bool hasAWallBc_ = false;
+
+    // a solved boundary displacement is newer than the last update()
+    bool boundaryMoved_ = false;
+
 public:
     // Constructors
     meshMotion(realm* realm);
@@ -39,6 +45,19 @@ public:
 
     void update();
 
+    // true if fluid-solid interfaces move the mesh: it follows the solution
+    bool followsSolution() const;
+
+    bool boundaryMoved() const
+    {
+        return boundaryMoved_;
+    }
+
+    void markBoundaryMoved()
+    {
+        boundaryMoved_ = true;
+    }
+
 protected:
     // protected update methods
     void updateCoordinates_();
@@ -50,6 +69,12 @@ protected:
     void updateRigidRotationMeshVelocity_(label iZone);
 
     void updateMeshVelocityDivergenceField_();
+
+    // no-slip wall velocity from the Dt history at the fluid-solid BIPs
+    void updateFsiWallVelocity_();
+
+    // RN wall normal acceleration (solid d2dt2 operator on Dt) at the BIPs
+    void updateFsiWallAcceleration_();
 };
 
 } // namespace accel

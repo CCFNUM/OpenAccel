@@ -15,7 +15,8 @@ pressureCorrectionEquation::pressureCorrectionEquation(realm* realm,
                                                        flowModel* model)
     : equation("Pressure Correction", true), model_(model),
       linearSystem(realm->simulationRef()),
-      assembler_(std::make_unique<Assembler>(model))
+      assembler_(std::make_unique<Assembler>(model)),
+      robinNeumann_(model, assembler_->robinNeumannStateRef(), domainVector_)
 {
     this->setEquationName({"P-Mass"});
 
@@ -50,6 +51,8 @@ void pressureCorrectionEquation::setup()
 
     // setup the dedicated pressure correction field
     FOREACH_DOMAIN(model_->setupPressureCorrection);
+
+    robinNeumann_.setup();
 
     // setup assembler
     assembler_->setup(&model_->pRef(), null, domainVector_, nullptr);
@@ -160,17 +163,38 @@ void pressureCorrectionEquation::solve()
     p.updateScale();
 }
 
+void pressureCorrectionEquation::startOfOuterIteration()
+{
+    robinNeumann_.startOfOuterIteration();
+}
+
 void pressureCorrectionEquation::postSolve()
 {
 #ifndef NDEBUG
     // Sync SCL check field after assembly
     FOREACH_DOMAIN(model_->syncSCLCheckField);
 #endif /* NDEBUG */
+
+    // Tukovic Eq. 30: Q_vol from the p' just solved
+    if (anyRobinNeumannFsi(domainVector_))
+    {
+        FOREACH_DOMAIN_PTR(assembler_->accumulateRnWallFlux);
+    }
+    robinNeumann_.postSolve();
+
+    // TODO: Tukovic Eq. 31 (normal-velocity reconstruction)
 }
 
 void pressureCorrectionEquation::preTimeStep()
 {
     FOREACH_DOMAIN(model_->updatePressurePrevTimeField);
+
+    robinNeumann_.preTimeStep();
+}
+
+void pressureCorrectionEquation::postTimeStep()
+{
+    robinNeumann_.postTimeStep();
 }
 
 void pressureCorrectionEquation::setResidualScales_()

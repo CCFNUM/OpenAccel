@@ -8,11 +8,63 @@
 #include "boundary.h"
 #include "convergenceAcceleration.h"
 #include "mesh.h"
+#include "messager.h"
 #include "simulation.h"
 #include "zone.h"
 
 namespace accel
 {
+
+void equation::solveSubIterations(const int verbose)
+{
+    if (messager::master() && subIters() > 1)
+    {
+        std::cout << std::endl << "Sub-iterating " + name() << ":\n";
+    }
+
+    for (label subIter = 1; subIter <= subIters(); subIter++)
+    {
+        setCurrentSubIter(subIter);
+
+        // only print sub-iter if it is active (> 1)
+        if (messager::master() && subIters() > 1)
+        {
+            std::cout << std::endl << " sub-iter: " << subIter << "\n";
+        }
+
+        // 1.)
+        if (messager::master() && verbose > 1)
+        {
+            std::cout << "\t pre-solve equation: " << name() << "\n";
+        }
+        preSolve();
+
+        // 2.)
+        if (messager::master() && verbose > 1)
+        {
+            std::cout << "\t solve equation: " << name() << "\n";
+        }
+        // FIXME: This check may not apply
+        // for segregated equation queues(?):
+        // if (!isConverged()) {
+        // solve();
+        // }
+        solve(); // conservative choice
+
+        // 3.)
+        if (messager::master() && verbose > 1)
+        {
+            std::cout << "\t post-solve equation: " << name() << "\n";
+        }
+        postSolve();
+
+        // if converged .. break sub-iter loop
+        if (isConverged())
+        {
+            break;
+        }
+    }
+}
 
 stk::mesh::PartVector equation::collectInactiveInteriorParts()
 {
@@ -172,6 +224,13 @@ void equation::initializeAcceleration_()
         cfg.iqnIlsRegularization =
             eqAccel["iqn_ils_regularization"].template as<scalar>();
     }
+    if (eqAccel["write_omega"])
+    {
+        cfg.writeOmega = eqAccel["write_omega"].template as<bool>();
+    }
+
+    cfg.sim = &domainVector_[0]->simulationRef();
+    cfg.name = this->name();
 
     accelerationPtr_ = std::make_unique<convergenceAcceleration>(cfg);
 }

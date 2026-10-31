@@ -11,6 +11,7 @@
 #include "linearSolver.h"
 #include "macros.h"
 #include "mesh.h"
+#include "messager.h"
 #include "residual.h"
 #include "scaling.h"
 #include "schur.h"
@@ -76,14 +77,17 @@ public:
     ::linearSolver::GraphLayout
     setupSolver(const std::string system_name,
                 const std::string fallback_name = "");
+    // forceFullStencil: full stencil even with bandwidth_reduction
     std::shared_ptr<Context> setupSolver(const std::string system_name,
                                          mesh& mesh,
-                                         const std::string fallback_name = "");
+                                         const std::string fallback_name = "",
+                                         const bool forceFullStencil = false);
     // subset-graph variant
     std::shared_ptr<Context> setupSolver(const std::string system_name,
                                          mesh& mesh,
                                          const std::vector<const zone*>& zones,
-                                         const std::string fallback_name = "");
+                                         const std::string fallback_name = "",
+                                         const bool forceFullStencil = false);
     void setEquationName(const std::vector<std::string>& name);
 
     simulation& simulationRef()
@@ -427,7 +431,8 @@ template <size_t N>
 std::shared_ptr<typename linearSystem<N>::Context>
 linearSystem<N>::setupSolver(const std::string system_name,
                              mesh& mesh,
-                             const std::string fallback_name)
+                             const std::string fallback_name,
+                             const bool forceFullStencil)
 {
     // instantiate solver and set system_name
     std::shared_ptr<typename linearSystem<N>::Context> ctx;
@@ -440,12 +445,14 @@ linearSystem<N>::setupSolver(const std::string system_name,
             ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
             ctx = lsolver_->createContext(
                 this->system_name_,
-                mesh.getLocalOrderGraphPtr(!interpolationFreeGraph_));
+                mesh.getLocalOrderGraphPtr(!interpolationFreeGraph_,
+                                           forceFullStencil));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
             ctx = lsolver_->createContext(
                 this->system_name_,
-                mesh.getGlobalOrderGraphPtr(!interpolationFreeGraph_));
+                mesh.getGlobalOrderGraphPtr(!interpolationFreeGraph_,
+                                            forceFullStencil));
             break;
     }
 
@@ -459,7 +466,8 @@ std::shared_ptr<typename linearSystem<N>::Context>
 linearSystem<N>::setupSolver(const std::string system_name,
                              mesh& mesh,
                              const std::vector<const zone*>& zones,
-                             const std::string fallback_name)
+                             const std::string fallback_name,
+                             const bool forceFullStencil)
 {
     std::shared_ptr<typename linearSystem<N>::Context> ctx;
     switch (this->setupSolver(system_name, fallback_name) &
@@ -469,14 +477,16 @@ linearSystem<N>::setupSolver(const std::string system_name,
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local:
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Local |
             ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(this->system_name_,
-                                          mesh.getCustomLocalOrderGraphPtr(
-                                              zones, !interpolationFreeGraph_));
+            ctx = lsolver_->createContext(
+                this->system_name_,
+                mesh.getCustomLocalOrderGraphPtr(
+                    zones, !interpolationFreeGraph_, forceFullStencil));
             break;
         case ::linearSolver::GraphLayout::ColumnIndexOrder__Global:
-            ctx = lsolver_->createContext(this->system_name_,
-                                          mesh.getCustomGlobalOrderGraphPtr(
-                                              zones, !interpolationFreeGraph_));
+            ctx = lsolver_->createContext(
+                this->system_name_,
+                mesh.getCustomGlobalOrderGraphPtr(
+                    zones, !interpolationFreeGraph_, forceFullStencil));
             break;
     }
 
@@ -499,7 +509,6 @@ void linearSystem<N>::setEquationName(const std::vector<std::string>& name)
 template <size_t N>
 void linearSystem<N>::condense()
 {
-
     // schur complement condensation
     auto& coeffs = lsolver_->getContext()->getCoefficients();
     if (coeffs.numConstraints() > 0)
@@ -723,6 +732,31 @@ void linearSystem<N>::convergenceReport_()
 
     // additional reporting from linear solver
     lsolver_->report();
+
+    // abort_on_nan: MPI_Abort, since only this system's ranks get here
+    if (sim_.controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.abortOnNan_)
+    {
+        for (int i = 0; i < LinearSolver::BLOCKSIZE; i++)
+        {
+            if (!isFiniteValue(residual[i]) ||
+                !isFiniteValue(cdata.solver_initial_res[i]) ||
+                !isFiniteValue(cdata.solver_final_res[i]))
+            {
+                std::cerr << "abort_on_nan: " << equation_name_[i]
+                          << " residual is not finite (RMS " << residual[i]
+                          << ", linear solver " << cdata.solver_initial_res[i]
+                          << "/" << cdata.solver_final_res[i]
+                          << ") at t = " << sim_.controlsRef().time
+                          << " s, outer iteration " << sim_.getIterationCount()
+                          << "; set expert_parameters: abort_on_nan: false "
+                             "to continue"
+                          << std::endl;
+                MPI_Abort(messager::comm(), 1);
+            }
+        }
+    }
 
     // update residual and check convergence
     control_residual = residual;

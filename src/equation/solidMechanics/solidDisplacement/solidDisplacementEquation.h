@@ -56,17 +56,24 @@ public:
         return ID;
     }
 
+    // true if this timestep started with a solid predictor
+    bool predicted() const
+    {
+        return predicted_;
+    }
+
 protected:
     void setResidualScales_() override;
-
-    void applyDependencyUpdates_(const domain* domain,
-                                 const stk::mesh::EntityRank entityRank,
-                                 STKScalarField& stk_dst) override;
 
     stk::mesh::PartVector collectDirichletBoundaryParts_();
 
 private:
     std::unique_ptr<Assembler> assembler_;
+
+    // not solved until all interfaces reached coupling_start_time
+    bool frozen_ = false;
+
+    bool predicted_ = false;
 };
 
 } /* namespace accel */

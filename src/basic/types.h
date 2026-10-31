@@ -284,7 +284,8 @@ enum class solidMechanicsOption
     none,
     linearElastic,
     neoHookean,
-    modifiedMooneyRivlin
+    modifiedMooneyRivlin,
+    saintVenantKirchhoff
 };
 
 solidMechanicsOption convertSolidMechanicsOptionFromString(std::string s);
@@ -430,7 +431,8 @@ convertThermalExpansivityOptionFromString(std::string s);
 // Young modulus option
 enum class youngModulusOption
 {
-    value
+    value,
+    derived // from the constants of the solid model (set by the parser)
 };
 
 youngModulusOption convertYoungModulusOptionFromString(std::string s);
@@ -438,7 +440,8 @@ youngModulusOption convertYoungModulusOptionFromString(std::string s);
 // Poisson ratio option
 enum class poissonRatioOption
 {
-    value
+    value,
+    derived // from the constants of the solid model (set by the parser)
 };
 
 poissonRatioOption convertPoissonRatioOptionFromString(std::string s);
@@ -464,6 +467,16 @@ enum class transientSchemeType
 };
 
 transientSchemeType convertTransientSchemeTypeFromString(std::string s);
+
+// Solid mechanics d2dt2 (second time derivative) scheme
+enum class solidTransientSchemeType
+{
+    eulerD2dt2,
+    backwardD2dt2
+};
+
+solidTransientSchemeType
+convertSolidTransientSchemeTypeFromString(std::string s);
 
 struct BDF1
 {
@@ -510,6 +523,17 @@ enum class advectionSchemeType
 };
 
 advectionSchemeType convertAdvectionSchemeTypeFromString(std::string s);
+
+// volume fraction advection scheme (free_surface_model advection_scheme)
+enum class vofAdvectionSchemeType
+{
+    barthJespersen,
+    hyperC
+};
+
+vofAdvectionSchemeType convertVofAdvectionSchemeTypeFromString(std::string s);
+
+std::string toString(vofAdvectionSchemeType type);
 
 // Physical bounadaries
 enum class boundaryPhysicalType
@@ -785,6 +809,14 @@ enum class meshStiffnessSpecificationType
 
 meshStiffnessSpecificationType
 convertMeshStiffnessSpecificationTypeFromString(std::string s);
+
+enum class fsiCouplingMethod
+{
+    dirichletNeumann,
+    robinNeumann
+};
+
+fsiCouplingMethod convertFsiCouplingMethodFromString(std::string s);
 
 // Boundary relative frame type
 enum class boundaryRelativeFrameType

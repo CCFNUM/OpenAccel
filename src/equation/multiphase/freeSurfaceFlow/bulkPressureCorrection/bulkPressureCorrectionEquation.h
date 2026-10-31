@@ -12,6 +12,10 @@
 #include "equation.h"
 #include "freeSurfaceFlowModel.h"
 #include "linearSystem.h"
+#include "robinNeumannParams.h"
+
+#include <fstream>
+#include <unordered_map>
 
 namespace accel
 {
@@ -42,9 +46,20 @@ public:
 
     void postSolve() override;
 
+    // before each corrector loop: Robin-Neumann Q_vol and E reset
+    void startOfOuterIteration();
+
     void preTimeStep() override;
 
+    void postTimeStep() override;
+
     void printScales() override;
+
+    // per-BIP Robin acceleration term (fsiConvergence diagnostics)
+    const std::unordered_map<uint64_t, scalar>& robinAccelTermMap() const
+    {
+        return assembler_->robinNeumannStateRef().robinAccelTermMap();
+    }
 
 protected:
     void setResidualScales_() override;
@@ -116,6 +131,8 @@ protected:
 
 private:
     std::unique_ptr<Assembler> assembler_;
+
+    robinNeumannCoupling robinNeumann_;
 };
 
 } /* namespace accel */

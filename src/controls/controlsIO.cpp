@@ -247,7 +247,15 @@ void controls::read(YAML::Node inputNode)
 
             if (analysisType_.transient_)
             {
-                if (basicSettings["transient_scheme"])
+                // fluid_transient_scheme (or the alias transient_scheme)
+                if (basicSettings["fluid_transient_scheme"])
+                {
+                    solver_.solverControl_.basicSettings_.transientScheme_ =
+                        convertTransientSchemeTypeFromString(
+                            basicSettings["fluid_transient_scheme"]
+                                .template as<std::string>());
+                }
+                else if (basicSettings["transient_scheme"])
                 {
                     solver_.solverControl_.basicSettings_.transientScheme_ =
                         convertTransientSchemeTypeFromString(
@@ -256,8 +264,18 @@ void controls::read(YAML::Node inputNode)
                 }
                 else
                 {
-                    errorMsg("transient_scheme key is not provided in the yaml "
-                             "input file");
+                    errorMsg("fluid_transient_scheme (or transient_scheme) key "
+                             "is not provided in the yaml input file");
+                }
+
+                // solid_transient_scheme (optional, defaults to euler)
+                if (basicSettings["solid_transient_scheme"])
+                {
+                    solver_.solverControl_.basicSettings_
+                        .solidTransientScheme_ =
+                        convertSolidTransientSchemeTypeFromString(
+                            basicSettings["solid_transient_scheme"]
+                                .template as<std::string>());
                 }
             }
 
@@ -271,6 +289,14 @@ void controls::read(YAML::Node inputNode)
                 solver_.solverControl_.basicSettings_.convergenceControl_
                     .maxIterations_ =
                     convCtrl["max_iterations"].template as<label>();
+
+                if (convCtrl["max_iterations_uncoupled"])
+                {
+                    solver_.solverControl_.basicSettings_.convergenceControl_
+                        .maxIterationsUncoupled_ =
+                        convCtrl["max_iterations_uncoupled"]
+                            .template as<label>();
+                }
 
                 if (!analysisType_.transient_)
                 {
@@ -386,9 +412,16 @@ void controls::read(YAML::Node inputNode)
                     .residualTarget_ =
                     convCriteria["residual_target"].template as<scalar>();
 
+                if (convCriteria["fsi_convergence"])
+                {
+                    errorMsg("fsi_convergence is not a valid key: use "
+                             "physics_convergence");
+                }
+
                 if (convCriteria["physics_convergence"])
                 {
-                    const auto& physConv = convCriteria["physics_convergence"];
+                    const YAML::Node physConv =
+                        convCriteria["physics_convergence"];
 
                     if (physConv["enabled"])
                     {
@@ -397,11 +430,29 @@ void controls::read(YAML::Node inputNode)
                             physConv["enabled"].template as<bool>();
                     }
 
-                    if (physConv["write_residuals"])
+                    // write_residuals: deprecated name of print_residuals
+                    if (physConv["write_residuals"] && messager::master())
+                    {
+                        warningMsg(
+                            physConv["print_residuals"]
+                                ? "write_residuals is deprecated and ignored "
+                                  "since print_residuals is given"
+                                : "write_residuals is deprecated: use "
+                                  "print_residuals");
+                    }
+
+                    if (physConv["print_residuals"])
                     {
                         solver_.solverControl_.basicSettings_
                             .convergenceCriteria_.physicsConvergence_
-                            .writeResiduals_ =
+                            .printResiduals_ =
+                            physConv["print_residuals"].template as<bool>();
+                    }
+                    else if (physConv["write_residuals"])
+                    {
+                        solver_.solverControl_.basicSettings_
+                            .convergenceCriteria_.physicsConvergence_
+                            .printResiduals_ =
                             physConv["write_residuals"].template as<bool>();
                     }
 
@@ -435,6 +486,18 @@ void controls::read(YAML::Node inputNode)
                                 .fsiForceResidualTarget_ =
                                 targets["fsi_force_residual"]
                                     .template as<scalar>();
+                        }
+                    }
+
+                    if (physConv["diagnostics"])
+                    {
+                        const auto& diagNode = physConv["diagnostics"];
+                        if (diagNode["enabled"])
+                        {
+                            solver_.solverControl_.basicSettings_
+                                .convergenceCriteria_.physicsConvergence_
+                                .diagnosticsEnabled_ =
+                                diagNode["enabled"].template as<bool>();
                         }
                     }
                 }
@@ -1129,6 +1192,12 @@ void controls::read(YAML::Node inputNode)
             {
                 solver_.solverControl_.expertParameters_.bandwidthReduction_ =
                     expertParameters["bandwidth_reduction"].template as<bool>();
+            }
+
+            if (expertParameters["abort_on_nan"])
+            {
+                solver_.solverControl_.expertParameters_.abortOnNan_ =
+                    expertParameters["abort_on_nan"].template as<bool>();
             }
 
             if (expertParameters["node_reordering"])

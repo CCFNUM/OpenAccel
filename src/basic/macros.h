@@ -9,6 +9,8 @@
 #define MACROS_H
 
 // std
+#include <bit>
+#include <cstdint>
 #include <iostream>
 #include <span>
 #include <string>
@@ -58,6 +60,9 @@ std::ostream& operator<<(std::ostream& os, const std::span<T>& data)
 void tolower(std::string& s);
 
 void errorMsg(std::string msg);
+
+// NaN/Inf test on the bits: std::isfinite may fold to true with fast-math
+bool isFiniteValue(double x);
 
 void warningMsg(std::string msg);
 

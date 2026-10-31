@@ -145,6 +145,9 @@ void simulation::initialize_()
     // Initialize the realm
     realmPtr_->initialize();
 
+    // physics-based convergence checks, once the material fields are set
+    physicsConvergences_ = physicsConvergence::create(*this);
+
     // initialize output
     initializeOutput_();
 }
@@ -273,6 +276,20 @@ void simulation::runTransient()
                                        .solverControl_.basicSettings_
                                        .convergenceControl_.maxIterations_;
 
+        // optional outer-iteration cap until all interfaces are coupled
+        const bool coupled = meshRef().interfacesCoupled(controlsRef().time);
+        {
+            const label maxUncoupled =
+                controlsRef()
+                    .solverRef()
+                    .solverControl_.basicSettings_.convergenceControl_
+                    .maxIterationsUncoupled_;
+            if (maxUncoupled > 0 && !coupled)
+            {
+                maxCoeffIterations = maxUncoupled;
+            }
+        }
+
         if (messager::master())
             std::cout << std::endl
                       << "Time = " << std::scientific << std::setprecision(2)
@@ -281,6 +298,19 @@ void simulation::runTransient()
 
         // pre work: update time states
         preWork();
+
+        // per-iteration mesh motion (not frozen per timestep)
+        const bool updateMeshPerIteration =
+            (this->meshRef().anyZoneMeshDeforming() ||
+             this->meshRef().anyZoneMeshTransforming()) &&
+            !controlsRef()
+                 .solverRef()
+                 .solverControl_.advancedOptions_.equationControls_.meshMotion_
+                 .freezePerTimestep_;
+
+        // prescribed motion before the equations, solution-driven after them
+        const bool followsSolution =
+            updateMeshPerIteration && meshMotionPtr_->followsSolution();
 
         for (controlsRef().iter = 1; controlsRef().iter <= maxCoeffIterations;
              controlsRef().iter++)
@@ -297,17 +327,12 @@ void simulation::runTransient()
                           << std::endl;
             }
 
-            // update mesh in case of deforming/moving mesh
-            if (this->meshRef().anyZoneMeshDeforming() ||
-                this->meshRef().anyZoneMeshTransforming())
+            // solution-driven mesh: at step start only if preTimeStep moved it
+            if (updateMeshPerIteration &&
+                (!followsSolution ||
+                 (controlsRef().iter == 1 && meshMotionPtr_->boundaryMoved())))
             {
-                if (!controlsRef()
-                         .solverRef()
-                         .solverControl_.advancedOptions_.equationControls_
-                         .meshMotion_.freezePerTimestep_)
-                {
-                    meshMotionPtr_->update();
-                }
+                meshMotionPtr_->update();
             }
 
             controlsRef().globalIter++;
@@ -317,6 +342,11 @@ void simulation::runTransient()
 
             // assemble and solve systems now
             assembleAndSolveSystems();
+
+            if (followsSolution && coupled)
+            {
+                meshMotionPtr_->update();
+            }
 
             auto elapsedIterTimeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::duration<scalar> elapsedSeconds =
@@ -379,56 +409,7 @@ void simulation::assembleAndSolveSystems()
 
     for (auto& equation : equationVector_)
     {
-        if (messager::master() && equation->subIters() > 1)
-        {
-            std::cout << std::endl
-                      << "Sub-iterating " + equation->name() << ":\n";
-        }
-
-        for (label subIter = 1; subIter <= equation->subIters(); subIter++)
-        {
-            equation->setCurrentSubIter(subIter);
-
-            // only print sub-iter if it is active (> 1)
-            if (messager::master() && equation->subIters() > 1)
-            {
-                std::cout << std::endl << " sub-iter: " << subIter << "\n";
-            }
-
-            // 1.)
-            if (messager::master() && verbose_ > 1)
-            {
-                std::cout << "\t pre-solve equation: " << equation->name()
-                          << "\n";
-            }
-            equation->preSolve();
-
-            // 2.)
-            if (messager::master() && verbose_ > 1)
-            {
-                std::cout << "\t solve equation: " << equation->name() << "\n";
-            }
-            // FIXME: This check may not apply
-            // for segregated equation queues(?):
-            // if (!equation->isConverged()) {
-            // equation->solve();
-            // }
-            equation->solve(); // conservative choice
-
-            // 3.)
-            if (messager::master() && verbose_ > 1)
-            {
-                std::cout << "\t post-solve equation: " << equation->name()
-                          << "\n";
-            }
-            equation->postSolve();
-
-            // if converged .. break sub-iter loop
-            if (equation->isConverged())
-            {
-                break;
-            }
-        }
+        equation->solveSubIterations(verbose_);
     }
 }
 
@@ -436,16 +417,17 @@ void simulation::preWork()
 {
     if (controlsRef().isTransient())
     {
-        if (physicsConvergence* physConv = getPhysicsConvergence_())
-        {
-            physConv->resetForTimeStep();
-        }
-
         // equation dependent pre-timestep tasks for transient simulations
         // (typically updating temporal fields)
         for (auto& equation : equationVector_)
         {
             equation->preTimeStep();
+        }
+
+        // after preTimeStep(), so a check also sees the iterate computed there
+        for (auto& check : physicsConvergences_)
+        {
+            check->resetForTimeStep();
         }
 
         // reset/update mesh motion quantities
@@ -519,14 +501,25 @@ void simulation::postWork()
 
 bool simulation::checkConvergence()
 {
-    physicsConvergence* physConv = getPhysicsConvergence_();
-    if (physConv)
+    // active physics criteria replace the equation residuals
+    bool physicsDecides = false;
+    bool physicsConverged = true;
+    for (auto& check : physicsConvergences_)
     {
-        physConv->update();
-        if (physConv->enabled())
+        if (!check->active())
         {
-            return physConv->isConverged();
+            continue;
         }
+        check->update();
+        if (check->hasCriteria())
+        {
+            physicsDecides = true;
+            physicsConverged = physicsConverged && check->isConverged();
+        }
+    }
+    if (physicsDecides)
+    {
+        return physicsConverged;
     }
 
     bool convergence = true;
@@ -536,25 +529,6 @@ bool simulation::checkConvergence()
     }
 
     return convergence;
-}
-
-physicsConvergence* simulation::getPhysicsConvergence_()
-{
-    const auto& physConv = controlsRef()
-                               .solverRef()
-                               .solverControl_.basicSettings_
-                               .convergenceCriteria_.physicsConvergence_;
-
-    if (!physConv.enabled_ || physConv.criteria_.empty())
-    {
-        return nullptr;
-    }
-
-    if (!physicsConvergencePtr_)
-    {
-        physicsConvergencePtr_ = std::make_unique<physicsConvergence>(*this);
-    }
-    return physicsConvergencePtr_.get();
 }
 
 // Access
