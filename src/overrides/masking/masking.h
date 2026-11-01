@@ -80,6 +80,7 @@ public:
     static constexpr char distance_ID[] = "mask_distance";
     static constexpr char node_ID[] = "mask_node_id";
     static constexpr char reference_node_ID[] = "mask_reference_node_id";
+    static constexpr char reference_layer_ID[] = "mask_reference_layer";
 
     masking(realm* realmPtr);
 

@@ -45,7 +45,7 @@ void masking::setup()
         stk::mesh::selectUnion(meshRef().interiorActiveParts());
 
     for (const char* name :
-     {layer_ID, id_ID, distance_ID, node_ID, reference_node_ID})
+     {layer_ID, id_ID, distance_ID, node_ID, reference_node_ID, reference_layer_ID})
     {
         auto& stkFieldRef =
             metaData.declare_field<scalar>(stk::topology::NODE_RANK, name);
@@ -129,7 +129,7 @@ void masking::classify_(MaskingTimings* timings)
     }
 
     collect_();
-    
+
     auto& bulkData = meshRef().bulkDataRef();
     auto& metaData = meshRef().metaDataRef();
 
@@ -138,6 +138,13 @@ void masking::classify_(MaskingTimings* timings)
 
     auto* referenceIdField = metaData.get_field<scalar>(
         stk::topology::NODE_RANK, reference_node_ID);
+
+    auto* referenceLayerField = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, reference_layer_ID);
+
+    // A reference can belong to another MPI rank. Read its owner's layer.
+    stk::mesh::copy_owned_to_shared(bulkData, {layerField});
+    stk::mesh::communicate_field_data(bulkData, {layerField});
 
     // Initialize all owned nodes where these output fields exist.
     const stk::mesh::Selector outputSelector =
@@ -153,6 +160,7 @@ void masking::classify_(MaskingTimings* timings)
                 static_cast<scalar>(bulkData.identifier(node));
 
             *stk::mesh::field_data(*referenceIdField, node) = 0.0;
+            *stk::mesh::field_data(*referenceLayerField, node) = -1.0;
         }
     }
 
@@ -186,14 +194,17 @@ void masking::classify_(MaskingTimings* timings)
 
             *stk::mesh::field_data(*referenceIdField, node) =
                 static_cast<scalar>(bulkData.identifier(reference));
+
+            *stk::mesh::field_data(*referenceLayerField, node) =
+                *stk::mesh::field_data(*layerField, reference);
         }
     }
 
-    stk::mesh::copy_owned_to_shared(
-        bulkData, {nodeIdField, referenceIdField});
+            stk::mesh::copy_owned_to_shared(
+                bulkData, {nodeIdField, referenceIdField, referenceLayerField});
 
-    stk::mesh::communicate_field_data(
-        bulkData, {nodeIdField, referenceIdField});
+            stk::mesh::communicate_field_data(
+                bulkData, {nodeIdField, referenceIdField, referenceLayerField});
 }
 
 label masking::graphIndexOf(const stk::mesh::Entity node) const
