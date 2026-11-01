@@ -45,7 +45,9 @@ void masking::setup()
         stk::mesh::selectUnion(meshRef().interiorActiveParts());
 
     for (const char* name :
-     {layer_ID, id_ID, distance_ID, node_ID, reference_node_ID, reference_layer_ID})
+     {layer_ID, id_ID, distance_ID, node_ID, reference_node_ID, reference_layer_ID, "mask_normal_x", "mask_normal_y", "mask_normal_z",
+        "mask_wall_y", "mask_ref_wall_y",
+        "mask_ref_ut_used", "mask_u_tau", "mask_target_ut"})
     {
         auto& stkFieldRef =
             metaData.declare_field<scalar>(stk::topology::NODE_RANK, name);

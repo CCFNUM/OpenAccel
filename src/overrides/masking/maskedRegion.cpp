@@ -1261,6 +1261,21 @@ const auto domainSelector = selectDomains_();
 
     ringVelocities_.assign(SPATIAL_DIM * ringNodes_.size(), 0.0);
 
+    const auto& meta = U.mesh_meta_data();
+
+    auto field = [&](const char* name) {
+        return meta.get_field<scalar>(stk::topology::NODE_RANK, name);
+    };
+
+    auto* normalXField = field("mask_normal_x");
+    auto* normalYField = field("mask_normal_y");
+    auto* normalZField = field("mask_normal_z");
+    auto* wallYField   = field("mask_wall_y");
+    auto* refYField    = field("mask_ref_wall_y");
+    auto* refUtField   = field("mask_ref_ut_used");
+    auto* uTauField    = field("mask_u_tau");
+    auto* targetField  = field("mask_target_ut");
+
     label counts[2] = {static_cast<label>(coveredNodes_.size()),
                        static_cast<label>(ringNodes_.size())};
     if (messager::parallel())
@@ -1350,6 +1365,17 @@ scalar maskedRegion::frictionVelocity(size_t i,
         tangentialMagnitude += t * t;
     }
     tangentialMagnitude = std::sqrt(tangentialMagnitude);
+
+    *stk::mesh::field_data(*normalXField, node) = normal[0];
+    *stk::mesh::field_data(*normalYField, node) = normal[1];
+    *stk::mesh::field_data(*normalZField, node) =
+        SPATIAL_DIM == 3 ? normal[2] : 0.0;
+
+    *stk::mesh::field_data(*wallYField, node) = ringDistances_[i];
+    *stk::mesh::field_data(*refYField, node)  = ringReferenceDistances_[i];
+    *stk::mesh::field_data(*refUtField, node) = tangentialMagnitude;
+    *stk::mesh::field_data(*uTauField, node)  = 0.0;
+    *stk::mesh::field_data(*targetField, node) = 0.0;
 
     if (tangentialMagnitude < SMALL)
     {
@@ -1462,6 +1488,9 @@ void maskedRegion::computeRingVelocities(const STKScalarField& U,
                     ? yPlus
                     : std::log(E * yPlus) / kappa;
         }
+
+        *stk::mesh::field_data(*uTauField, node)   = uTau;
+        *stk::mesh::field_data(*targetField, node) = uTau * uPlus;
 
         for (label d = 0; d < SPATIAL_DIM; ++d)
         {
