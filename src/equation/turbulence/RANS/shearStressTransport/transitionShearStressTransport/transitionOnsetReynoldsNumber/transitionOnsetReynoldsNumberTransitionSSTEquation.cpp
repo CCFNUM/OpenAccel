@@ -110,9 +110,12 @@ void transitionOnsetReynoldsNumberTransitionSSTEquation::initialize()
     // 1) update gradient
     FOREACH_DOMAIN(model_->updateTransitionOnsetReynoldsNumberGradientField);
 
-    // 2) update high-res fields
-    FOREACH_DOMAIN(
-        model_->updateTransitionOnsetReynoldsNumberBlendingFactorField);
+    // 2) update high-res fields (restored on restart)
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(
+            model_->updateTransitionOnsetReynoldsNumberBlendingFactorField);
+    }
 
     // 3) update scale
     model_->ReThetaRef().updateScale();

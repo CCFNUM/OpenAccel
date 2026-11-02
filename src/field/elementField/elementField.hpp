@@ -544,8 +544,7 @@ void elementField<T, N>::initializeField(label iZone)
         this->meshRef().ioBrokerRef().read_input_field(mf);
         assert(mf.field_restored());
 
-        stk::mesh::communicate_field_data(this->bulkDataRef(),
-                                          {this->stkFieldPtr_});
+        this->synchronizeAllStates();
 
         if (messager::master())
         {

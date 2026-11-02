@@ -268,6 +268,8 @@ public:
     virtual void
     initializeDivMeshVelocity(const std::shared_ptr<domain> domain);
 
+    void restoreMassFlowRate(const std::shared_ptr<domain> domain);
+
     virtual void initializeMassFlowRate(const std::shared_ptr<domain> domain);
 
     // public API for phasic field raw initialization (iPhase is global to the

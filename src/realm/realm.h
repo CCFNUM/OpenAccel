@@ -41,6 +41,8 @@ class mesh;
 class realm
 {
 private:
+    void restoreWallFields_();
+
     // friend access
     friend class fieldBroker;
 

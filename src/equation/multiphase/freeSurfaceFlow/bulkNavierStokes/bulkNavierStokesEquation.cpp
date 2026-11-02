@@ -52,10 +52,14 @@ void bulkNavierStokesEquation::postInitialize()
                           phaseIndex,
                           domain->isMaterialCompressible(
                               domain->globalToLocalMaterialIndex(phaseIndex)));
-        FOREACH_DOMAIN_IF(model_->fieldBroker::updateDensityBlendingFactorField,
-                          phaseIndex,
-                          domain->isMaterialCompressible(
-                              domain->globalToLocalMaterialIndex(phaseIndex)));
+        if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+        {
+            FOREACH_DOMAIN_IF(
+                model_->fieldBroker::updateDensityBlendingFactorField,
+                phaseIndex,
+                domain->isMaterialCompressible(
+                    domain->globalToLocalMaterialIndex(phaseIndex)));
+        }
         FOREACH_DOMAIN(model_->fieldBroker::initializeDynamicViscosity,
                        phaseIndex);
 
@@ -66,7 +70,10 @@ void bulkNavierStokesEquation::postInitialize()
         // initialize phase mass flux
         FOREACH_DOMAIN(model_->fieldBroker::initializeMassFlowRate, phaseIndex);
 
-        FOREACH_DOMAIN(model_->transformMassFlowRateToRelative, phaseIndex);
+        if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+        {
+            FOREACH_DOMAIN(model_->transformMassFlowRateToRelative, phaseIndex);
+        }
 
         // in case of transient, old density must be updated before div update
         if (!model_->controlsRef().solverRef().restartControl_.isRestart_ &&
@@ -86,9 +93,10 @@ void bulkNavierStokesEquation::postInitialize()
     FOREACH_DOMAIN(model_->initializeDensity);
     FOREACH_DOMAIN(model_->initializeDynamicViscosity);
 
-    // update scale of bulk density and viscosity
+    // update scale of bulk density, viscosity and velocity
     model_->rhoRef().updateScale();
     model_->muRef().updateScale();
+    model_->URef().updateScale();
 
     // update bulk mass flux: we do here in order to make use of all
     // transformations done just before
@@ -105,6 +113,10 @@ void bulkNavierStokesEquation::postInitialize()
     if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
     {
         FOREACH_DOMAIN(model_->flowModel::updateMassDivergenceField);
+    }
+    else
+    {
+        FOREACH_DOMAIN(model_->restoreMassFlowRate);
     }
 }
 

@@ -138,6 +138,9 @@ private:
 
     void initializeCoordinateField_();
 
+    bool restoreOriginalCoordinates_(label iZone,
+                                     STKScalarField* orgCoordinates);
+
     void initializeZones_();
 
     void initializeInterfaces_();

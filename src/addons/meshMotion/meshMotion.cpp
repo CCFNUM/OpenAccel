@@ -29,6 +29,10 @@ meshMotion::meshMotion(realm* realm) : fieldBroker(realm)
     DtRef();
     UmRef();
 
+    // a restart resumes on the moved mesh
+    realmPtr_->registerRestartField(realm::Dt_ID);
+    realmPtr_->registerRestartField(realm::Um_ID);
+
     // create deformation
     if (this->meshRef().anyZoneMeshDeforming())
     {
@@ -36,6 +40,7 @@ meshMotion::meshMotion(realm* realm) : fieldBroker(realm)
 
         // required for GCL
         divUmRef();
+        realmPtr_->registerRestartField(realm::divUm_ID);
 
         // ensure that all deforming zones are consistent in their relative
         // motion
@@ -118,8 +123,32 @@ void meshMotion::reset()
 
 void meshMotion::initialize()
 {
-    // set total displacement and mesh velocity to zero
-    reset();
+    if (this->meshRef().controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        // restore total displacement and mesh velocities
+        for (auto domain : realmPtr_->simulationRef().domainVector())
+        {
+            if (domain->zonePtr()->meshMoving())
+            {
+                initializeTotalDisplacement(domain);
+                initializeMeshVelocity(domain);
+
+                if (domain->type() == domainType::fluid &&
+                    domain->zonePtr()->meshDeforming())
+                {
+                    initializeDivMeshVelocity(domain);
+                }
+            }
+        }
+
+        // resume on the moved mesh (coords = original + Dt)
+        updateCoordinates_();
+    }
+    else
+    {
+        // set total displacement and mesh velocity to zero
+        reset();
+    }
 
     // no previous a_n after start-up or restart: the first one is unrelaxed
     hasAWallBc_ = false;

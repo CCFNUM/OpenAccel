@@ -27,6 +27,10 @@ wallScale::wallScale(wallDistance* wallDistancePtr)
                 wallScaleDiffusionEquation_ =
                     std::make_unique<wallScaleDiffusionEquation>(
                         &wallDistancePtr_->realmRef());
+
+                // warm-starts every wall scale solve
+                wallDistancePtr_->realmRef().registerRestartField(
+                    realm::yScale_ID);
             }
 
             // register domain for equation

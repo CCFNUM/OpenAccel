@@ -109,8 +109,12 @@ void turbulentDissipationRateEquation::initialize()
     // 1) update gradient
     FOREACH_DOMAIN(model_->updateTurbulentDissipationRateGradientField);
 
-    // 2) update high-res fields
-    FOREACH_DOMAIN(model_->updateTurbulentDissipationRateBlendingFactorField);
+    // 2) update high-res fields (restored on restart)
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(
+            model_->updateTurbulentDissipationRateBlendingFactorField);
+    }
 
     // 3) update scale
     model_->epsilonRef().updateScale();

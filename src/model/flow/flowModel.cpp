@@ -29,6 +29,7 @@ flowModel::flowModel(realm* realm)
     pRef();
     p0Ref();
     wallShearStressRef();
+    realm->registerRestartField(turbRealm::uWallCoeffs_ID);
     uWallCoeffsRef();
 
     // if a transient simulation, Courant number field must be instantiated
