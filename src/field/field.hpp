@@ -64,6 +64,19 @@ void field<T, N>::synchronizeGhostedEntities(label iZone)
 }
 
 template <class T, size_t N>
+void field<T, N>::synchronizeAllStates()
+{
+    std::vector<const stk::mesh::FieldBase*> states;
+    for (unsigned iState = 0; iState < this->stkFieldPtr_->number_of_states();
+         iState++)
+    {
+        states.push_back(this->stkFieldPtr_->field_state(
+            static_cast<stk::mesh::FieldState>(iState)));
+    }
+    stk::mesh::communicate_field_data(this->bulkDataRef(), states);
+}
+
+template <class T, size_t N>
 void field<T, N>::synchronizeGhostedEntities(label iZone, label iBoundary)
 {
     // ensure zone is active

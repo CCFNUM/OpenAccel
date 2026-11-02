@@ -729,6 +729,10 @@ void nodeField<N, M>::setupGradientField()
     {
         gradFieldPtr_ = std::make_unique<nodeField<M>>(
             this->meshPtr(), this->name() + "_gradient", 1, false);
+
+        // relaxed gradient carries iteration history
+        this->meshRef().controlsRef().registerRestartField(this->name() +
+                                                           "_gradient");
     }
 
     // populate gradient limiter field if required
@@ -851,8 +855,9 @@ void nodeField<N, M>::initializeField(label iZone)
     const auto& restart_ctrl =
         this->meshRef().controlsRef().solverRef().restartControl_;
 
-    // restore field data for explicit restarts
-    if (restart_ctrl.isRestart_)
+    // restore field data for explicit restarts, once
+    bool restored = false;
+    if (restart_ctrl.isRestart_ && !this->isInitialized(iZone))
     {
         stk::mesh::FieldBase* theField = stk::mesh::get_field_by_name(
             this->name(), this->meshRef().metaDataRef());
@@ -886,49 +891,59 @@ void nodeField<N, M>::initializeField(label iZone)
         // restore
         this->meshRef().ioBrokerRef().read_input_field(mf);
 
-        assert(mf.field_restored());
+        restored = mf.field_restored();
+        isImportedFromDataBase_[iZone] = restored;
 
-        stk::mesh::communicate_field_data(this->bulkDataRef(),
-                                          {this->stkFieldPtr_});
-        if (messager::master())
+        if (restored)
         {
-            std::cout << "Field " + this->name() + " has been restored at time "
-                      << std::scientific << mf.time_restored() << std::endl;
-        }
+            this->synchronizeAllStates();
+            if (messager::master())
+            {
+                std::cout << "Field " + this->name() +
+                                 " has been restored at time "
+                          << std::scientific << mf.time_restored() << std::endl;
+            }
 
-        // FIXME: Since we operate on fields individually
-        // rather than calling bulk field restore method from STK API, it is
-        // possible that individual fields may have inconsistent restored
-        // time (typically this should not happen based on tests I did, but
-        // it is a possibility and it will happen here).
-        //
-        // WARNING: The assignments to the global
-        // controlsRef().time/globalIter variables below will be executed
-        // for EVERY restored field, it is assumed these calls will be
-        // directed to the correct internal STK database and hence they all
-        // produce the same value for mf.time_restored() and global
-        // parameter fetch.
-        this->meshRef().controlsRef().deserializeRestartParam(
-            this->meshRef().ioBrokerRef());
-        if (this->meshRef().controlsRef().isTransient())
-        {
-            this->meshRef().controlsRef().time = mf.time_restored();
+            // FIXME: Since we operate on fields individually
+            // rather than calling bulk field restore method from STK API, it is
+            // possible that individual fields may have inconsistent restored
+            // time (typically this should not happen based on tests I did, but
+            // it is a possibility and it will happen here).
+            //
+            // WARNING: The assignments to the global
+            // controlsRef().time/globalIter variables below will be executed
+            // for EVERY restored field, it is assumed these calls will be
+            // directed to the correct internal STK database and hence they all
+            // produce the same value for mf.time_restored() and global
+            // parameter fetch.
+            this->meshRef().controlsRef().deserializeRestartParam(
+                this->meshRef().ioBrokerRef());
+            if (this->meshRef().controlsRef().isTransient())
+            {
+                this->meshRef().controlsRef().time = mf.time_restored();
+            }
+            else
+            {
+                assert(mf.time_restored() -
+                           static_cast<label>(mf.time_restored()) ==
+                       0.0);
+                assert(this->meshRef().controlsRef().globalIter == 0 ||
+                       this->meshRef().controlsRef().globalIter ==
+                           static_cast<label>(mf.time_restored()));
+                this->meshRef().controlsRef().globalIter =
+                    static_cast<label>(mf.time_restored());
+            }
         }
         else
         {
-            assert(mf.time_restored() -
-                       static_cast<label>(mf.time_restored()) ==
-                   0.0);
-            assert(this->meshRef().controlsRef().globalIter == 0 ||
-                   this->meshRef().controlsRef().globalIter ==
-                       static_cast<label>(mf.time_restored()));
-            this->meshRef().controlsRef().globalIter =
-                static_cast<label>(mf.time_restored());
+            warningMsg("Field " + this->name() +
+                       " not found in the restart file: using its initial "
+                       "condition");
         }
     }
 
     // apply zone loop
-    if (!restart_ctrl.isRestart_) // value initialization from yaml
+    if (!restored) // value initialization from yaml
     {
         const auto& initCond = this->initialConditionRef(iZone);
         if (initCond.type() == initialConditionOption::value)
@@ -3492,12 +3507,26 @@ void nodeField<N, M>::updateGradientField(label iZone)
     const auto& bulkData = this->meshRef().bulkDataRef();
     const auto& metaData = this->meshRef().metaDataRef();
 
-    // A gradient is a derived field and is not restored from a restart.
-    // Explicitly initialize its first reconstruction instead of relaxing
+    // Explicitly initialize the first reconstruction instead of relaxing
     // storage that may not yet contain valid values (notably aura/shared
     // entities created while reading a decomposed restart).
     const bool firstGradientReconstruction =
         !this->gradRef().isInitialized(iZone);
+
+    // keep the restored relaxed gradient while a restart initializes
+    if (this->meshRef().controlsRef().solverRef().restartControl_.isRestoring_)
+    {
+        if (firstGradientReconstruction)
+        {
+            this->gradRef().initialize(iZone);
+        }
+
+        if (this->gradRef().isImportedFromDataBase(iZone))
+        {
+            return;
+        }
+    }
+
     const scalar gradientAssemblyFactor =
         firstGradientReconstruction ? 1.0 : gradURF_;
 

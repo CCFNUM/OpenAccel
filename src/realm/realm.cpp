@@ -10,6 +10,10 @@
 #include "mesh.h"
 #include "simulation.h"
 
+#include <stk_io/MeshField.hpp>
+#include <stk_io/StkMeshIoBroker.hpp>
+#include <stk_mesh/base/FieldParallel.hpp>
+
 namespace accel
 {
 
@@ -26,6 +30,46 @@ realm::realm(simulation* simulationPtr, std::string name)
 
 void realm::initialize()
 {
+    if (meshPtr_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        restoreWallFields_();
+    }
+}
+
+void realm::restoreWallFields_()
+{
+    const auto& restart_ctrl =
+        meshPtr_->controlsRef().solverRef().restartControl_;
+
+    scalar restart_time = restart_ctrl.restartTime_;
+    if (restart_time == 0.0)
+    {
+        restart_time = meshPtr_->ioBrokerRef().get_max_time();
+    }
+
+    // lagged wall state: last, as the equations rebuild it while initializing
+    for (const std::string& name :
+         {std::string(U_ID) + "_side", std::string(turbRealm::uWallCoeffs_ID)})
+    {
+        stk::mesh::FieldBase* theField =
+            stk::mesh::get_field_by_name(name, meshPtr_->metaDataRef());
+        if (theField == nullptr)
+        {
+            continue;
+        }
+
+        stk::io::MeshField mf(theField,
+                              std::to_string(std::hash<std::string>{}(name)),
+                              restart_ctrl.timeMatchOption_);
+        mf.set_read_time(restart_time);
+        mf.set_single_state(false);
+        meshPtr_->ioBrokerRef().read_input_field(mf);
+        if (mf.field_restored())
+        {
+            stk::mesh::communicate_field_data(meshPtr_->bulkDataRef(),
+                                              {theField});
+        }
+    }
 }
 
 void realm::registerRestartField(const std::string& fieldName)

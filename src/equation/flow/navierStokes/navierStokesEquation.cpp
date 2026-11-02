@@ -97,8 +97,11 @@ void navierStokesEquation::initialize()
     // update velocity gradient
     FOREACH_DOMAIN(model_->updateVelocityGradientField);
 
-    // update high-res fields
-    FOREACH_DOMAIN(model_->updateVelocityBlendingFactorField);
+    // update high-res fields (restored on restart)
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->updateVelocityBlendingFactorField);
+    }
 }
 
 void navierStokesEquation::postInitialize()
@@ -107,8 +110,11 @@ void navierStokesEquation::postInitialize()
     FOREACH_DOMAIN(model_->initializeDensity);
     FOREACH_DOMAIN_IF(model_->updateDensityGradientField,
                       domain->isMaterialCompressible());
-    FOREACH_DOMAIN_IF(model_->updateDensityBlendingFactorField,
-                      domain->isMaterialCompressible());
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN_IF(model_->updateDensityBlendingFactorField,
+                          domain->isMaterialCompressible());
+    }
     FOREACH_DOMAIN(model_->initializeDynamicViscosity);
 
     // post initialization
@@ -122,7 +128,10 @@ void navierStokesEquation::postInitialize()
 
     // transform mDot to relative: availability of a moving frame
     // will be checked inside. Then, update divergence fields
-    FOREACH_DOMAIN(model_->transformMassFlowRateToRelative);
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->transformMassFlowRateToRelative);
+    }
 
     // in case of transient, old density must be updated before div update
     if (!model_->controlsRef().solverRef().restartControl_.isRestart_ &&

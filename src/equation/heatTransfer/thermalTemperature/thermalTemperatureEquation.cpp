@@ -114,8 +114,11 @@ void thermalTemperatureEquation::initialize()
     // 1) update temperature gradient
     FOREACH_DOMAIN(updateTemperatureGradientField);
 
-    // 2) update high-res fields
-    FOREACH_DOMAIN(updateTemperatureBlendingFactorField);
+    // 2) update high-res fields (restored on restart)
+    if (!controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(updateTemperatureBlendingFactorField);
+    }
 
     // update velocity scale
     TRef().updateScale();

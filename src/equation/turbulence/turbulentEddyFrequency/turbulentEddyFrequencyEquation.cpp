@@ -62,8 +62,11 @@ void turbulentEddyFrequencyEquation::initialize()
     // 1) update gradient
     FOREACH_DOMAIN(model_->updateTurbulentEddyFrequencyGradientField);
 
-    // 2) update high-res fields
-    FOREACH_DOMAIN(model_->updateTurbulentEddyFrequencyBlendingFactorField);
+    // 2) update high-res fields (restored on restart)
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->updateTurbulentEddyFrequencyBlendingFactorField);
+    }
 
     // 3) update scale
     model_->omegaRef().updateScale();

@@ -146,9 +146,12 @@ void totalEnergyEquation::postInitialize()
     FOREACH_DOMAIN(updateSpecificEnthalpyGradientField);
     FOREACH_DOMAIN(updateSpecificTotalEnthalpyGradientField);
 
-    // update high-res field of specific total enthalpy
-    FOREACH_DOMAIN_IF(updateSpecificTotalEnthalpyBlendingFactorField,
-                      domain->type() == domainType::fluid);
+    // update high-res field of specific total enthalpy (restored on restart)
+    if (!controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN_IF(updateSpecificTotalEnthalpyBlendingFactorField,
+                          domain->type() == domainType::fluid);
+    }
 
     // update scales
     hRef().updateScale();

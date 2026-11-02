@@ -3754,6 +3754,16 @@ void fieldBroker::initializeDivMeshVelocity(
     }
 }
 
+void fieldBroker::restoreMassFlowRate(const std::shared_ptr<domain> domain)
+{
+    if (realmPtr_->mDot_)
+    {
+        mDotRef().initializeField(domain->index());
+        mDotRef().divRef().initialize(domain->index());
+        mDotRef().restoreSideField(domain->index());
+    }
+}
+
 void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain)
 {
     if (realmPtr_->mDot_)
@@ -3769,9 +3779,7 @@ void fieldBroker::initializeMassFlowRate(const std::shared_ptr<domain> domain)
             // the Rhie-Chow interpolation.  Restore them on a continuation; a
             // raw reconstruction here would not match the consistently
             // assembled state produced at the end of the previous run.
-            mDotRef().initializeField(domain->index());
-            mDotRef().divRef().initialize(domain->index());
-            mDotRef().restoreSideField(domain->index());
+            restoreMassFlowRate(domain);
         }
         else
         {
