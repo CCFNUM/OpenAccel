@@ -55,6 +55,9 @@ struct turbulence
 
     // C_scale; 0 gives f_r = 1 everywhere (plain SST)
     scalar curvatureCorrectionCoeff_ = 1.0;
+
+    // Sc_t for turbulent scalar diffusion, nu_t / Sc_t; zero disables it
+    scalar turbulentSchmidtNumber_ = 0.0;
 };
 
 struct multiphase

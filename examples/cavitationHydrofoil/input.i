@@ -7,7 +7,11 @@ simulation:
     verbose: 1
     physical_analysis:
         analysis_type:
-            option: steady_state
+            option: transient
+            total_time: 0.3
+            time_steps:
+                option: constant
+                timestep: 0.0001
         domains:
         - name: default_domain
           type: fluid
@@ -18,6 +22,7 @@ simulation:
           fluid_models:
             turbulence:
                 option: k_epsilon
+                turbulent_schmidt_number: 0.9
             multiphase:
                 homogeneous: true
                 free_surface_model:
@@ -94,16 +99,18 @@ simulation:
             basic_settings:
                 advection_scheme: high_resolution
                 turbulence_numerics: upwind
+                transient_scheme: first_order_backward_euler
                 convergence_controls:
                     min_iterations: 1
-                    max_iterations: 2000
-                    physical_timescale: 1
+                    max_iterations: 10
                     relaxation_parameters:
                         velocity_relaxation_factor: 0.7
                         pressure_relaxation_factor: 0.3
                 convergence_criteria:
                     residual_type: RMS
                     residual_target: 1.0e-5
+            expert_parameters:
+                volume_fraction_compressive_beta_max: 1.0
             advanced_options:
                 linear_solver_settings:
                     default:
@@ -126,14 +133,11 @@ simulation:
                                 type: GMRES
                             precond:
                                 type: BoomerAMG
-        restart_control:
-#written by Stage 1; the index.NNN is the number of restart.*
-#directories present at that run(000 for a clean first run)
-            file_path: restart.000/restart_noCav.e
-            write_initial: false
         output_control:
             file_path: results_cav.e
-            output_frequency: 10
+            output_frequency:
+                option: timestep_interval
+                timestep_interval: 10
             restart_file_name: restart_cav.e
             restart_frequency: 10
             output_fields: [velocity, pressure, density, volume_fraction.water, volume_fraction.water_vapor, turbulent_kinetic_energy, turbulent_dissipation_rate, turbulent_viscosity, mass_transfer_rate.water_water_vapor]

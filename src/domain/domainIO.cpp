@@ -887,6 +887,26 @@ void domain::read_()
                 }
             }
 
+            if (turbulenceBlock["turbulent_schmidt_number"])
+            {
+                if (turbulence_.option_ == turbulenceOption::laminar)
+                {
+                    errorMsg("turbulent_schmidt_number requires a turbulence "
+                             "model");
+                }
+
+                turbulence_.turbulentSchmidtNumber_ =
+                    turbulenceBlock["turbulent_schmidt_number"]
+                        .template as<scalar>();
+
+                if (!std::isfinite(turbulence_.turbulentSchmidtNumber_) ||
+                    turbulence_.turbulentSchmidtNumber_ <= 0.0)
+                {
+                    errorMsg("turbulent_schmidt_number must be finite and "
+                             "positive");
+                }
+            }
+
             // if heat transfer model enabled, a turbulent flux closure for heat
             // transfer is required
             if (turbulence_.option_ != turbulenceOption::laminar &&
