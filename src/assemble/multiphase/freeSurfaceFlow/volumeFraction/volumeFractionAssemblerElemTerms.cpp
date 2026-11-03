@@ -36,6 +36,8 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     // resolved once per assembly: the ip loop compares an integer only
     const vofAdvectionSchemeType vofScheme =
         domain->multiphase_.freeSurfaceModel_.advectionScheme_;
+    const scalar turbulentSchmidt = domain->turbulence_.turbulentSchmidtNumber_;
+    const bool turbulentDiffusion = turbulentSchmidt > 0.0;
     const scalar dt = mesh.controlsRef().getTimestep();
 
     // NSO active only when not using FCT and enabled in expert params
@@ -103,6 +105,10 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
     const auto& rhoSTKFieldRef = rhoRef().stkFieldRef();
     const scalar gamma = model_->gamma(domain);
+    const STKScalarField* mutSTKFieldPtr =
+        turbulentDiffusion ? model_->mutRef().stkFieldPtr() : nullptr;
+    const STKScalarField* rhoBulkSTKFieldPtr =
+        turbulentDiffusion ? model_->rhoRef().stkFieldPtr() : nullptr;
 
     // Get geometric fields
     const auto& coordinatesRef = *metaData.get_field<scalar>(
@@ -266,6 +272,14 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                 const scalar* nHat =
                     stk::mesh::field_data(nHatSTKFieldRef, node);
                 const scalar* rho = stk::mesh::field_data(rhoSTKFieldRef, node);
+
+                if (turbulentDiffusion)
+                {
+                    p_Gamma[ni] =
+                        rho[0] * *stk::mesh::field_data(*mutSTKFieldPtr, node) /
+                        (*stk::mesh::field_data(*rhoBulkSTKFieldPtr, node) *
+                         turbulentSchmidt);
+                }
 
                 p_alpha[ni] = phi[0];
                 p_beta[ni] = beta[0];
@@ -506,6 +520,29 @@ void volumeFractionAssembler::assembleElemTermsInterior_(const domain* domain,
                 const scalar alhsfacR = 0.5 * (tmDot - std::abs(tmDot));
                 p_lhs[rRiR_i] -= alhsfacR;
                 p_lhs[rLiR_i] += alhsfacR;
+
+                //================================
+                // Turbulent diffusion
+                //================================
+                if (turbulentDiffusion)
+                {
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const label offSetDnDx =
+                            SPATIAL_DIM * nodesPerElement * ip +
+                            ic * SPATIAL_DIM;
+                        scalar lhsfac = 0.0;
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            lhsfac += -GammaIp * p_dndx[offSetDnDx + j] *
+                                      p_scs_areav[ip * SPATIAL_DIM + j];
+                        }
+                        p_lhs[rowL + ic] += lhsfac;
+                        p_lhs[rowR + ic] -= lhsfac;
+                        p_rhs[indexL] -= lhsfac * p_alpha[ic];
+                        p_rhs[indexR] += lhsfac * p_alpha[ic];
+                    }
+                }
 
                 //================================
                 // NSO stabilization
