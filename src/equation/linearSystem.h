@@ -131,7 +131,6 @@ protected:
     residualType residual_type_ = residualType::RMS;
     std::vector<std::string> equation_name_; // descriptive names for equations
     bool plot_res_ = true;
-    bool deferConvergenceReport_ = false;
 
     LinearSolver* lsolver_;
 
@@ -599,10 +598,7 @@ void linearSystem<N>::solveSystem_()
         lsolver_->solve();
         sim_.getProfiler().pop();
 
-        if (!deferConvergenceReport_)
-        {
-            this->convergenceReport_();
-        }
+        this->convergenceReport_();
     }
     else
     {

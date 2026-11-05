@@ -52,12 +52,6 @@ void volumeFractionEquation::setup()
         domain->multiphase_.freeSurfaceModel_.fluxCorrectedTransport_,
         phaseIndex_);
 
-    for (const auto& domain : domainVector_)
-    {
-        deferConvergenceReport_ |=
-            domain->multiphase_.freeSurfaceModel_.fluxCorrectedTransport_;
-    }
-
     using Bucket = typename Assembler::Bucket;
     using BucketVector = typename Assembler::BucketVector;
 
@@ -131,6 +125,26 @@ void volumeFractionEquation::solve()
     auto ctx = linearSystem::getContext();
     ctx->zeroSystemStorage();
 
+    // FCT: assemble and solve at alpha_LO of the previous pass (alpha holds
+    // alpha_HO = alpha_LO + c); on the first pass of a step alpha_LO := alpha
+    if (linearSystem::simulationRef().getIterationCount() > 1 ||
+        this->currentSubIter() > 1)
+    {
+        const auto* alphaLOSTKFieldPtr =
+            model_->meshRef().metaDataRef().get_field<scalar>(
+                stk::topology::NODE_RANK,
+                "alphaLO" + std::to_string(phaseIndex_));
+        for (const auto& domain : domainVector_)
+        {
+            if (domain->multiphase_.freeSurfaceModel_.fluxCorrectedTransport_)
+            {
+                ops::copy<scalar>(alphaLOSTKFieldPtr,
+                                  model_->alphaRef(phaseIndex_).stkFieldPtr(),
+                                  domain->zonePtr()->interiorParts());
+            }
+        }
+    }
+
     // assembly
     linearSystem::simulationRef().getProfiler().push("linear_system_assembly");
 
@@ -144,65 +158,10 @@ void volumeFractionEquation::solve()
 
     linearSystem::simulationRef().getProfiler().pop();
 
-    // FCT residual: r = b - A (alpha_LO - alpha) at the previous FCT step
-    const bool firstFCTStep =
-        linearSystem::simulationRef().getIterationCount() == 1 &&
-        this->currentSubIter() == 1;
-    auto rFCT = ctx->getControlData().scaled_initial_res;
-    if (deferConvergenceReport_ && ctx->getGraph()->isGraphMember())
-    {
-        const auto& metaData = model_->meshRef().metaDataRef();
-        const auto& bulkData = model_->meshRef().bulkDataRef();
-        const auto* alphaLOSTKFieldPtr = metaData.get_field<scalar>(
-            stk::topology::NODE_RANK, "alphaLO" + std::to_string(phaseIndex_));
-
-        auto& x = ctx->getXVector();
-        for (const auto& domain : domainVector_)
-        {
-            if (!domain->multiphase_.freeSurfaceModel_
-                     .fluxCorrectedTransport_ ||
-                firstFCTStep)
-            {
-                continue;
-            }
-
-            const stk::mesh::Selector selection =
-                metaData.locally_owned_part() &
-                stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
-            for (const stk::mesh::Bucket* bucket :
-                 bulkData.get_buckets(stk::topology::NODE_RANK, selection))
-            {
-                const scalar* alpha = stk::mesh::field_data(
-                    model_->alphaRef(phaseIndex_).stkFieldRef(), *bucket);
-                const scalar* alphaLO =
-                    stk::mesh::field_data(*alphaLOSTKFieldPtr, *bucket);
-                for (size_t i = 0; i < bucket->size(); i++)
-                {
-                    const int64_t row = ctx->getGraph()->localToRow(
-                        bulkData.local_id((*bucket)[i]));
-                    if (row >= 0)
-                    {
-                        x[row] = alphaLO[i] - alpha[i];
-                    }
-                }
-            }
-        }
-
-        ::linearSolver::residual::compute(*ctx->coeffs());
-        rFCT = ::linearSolver::residual::RMSErrorDiagNormalized(*ctx->coeffs());
-        std::fill(x.begin(), x.end(), 0.0);
-    }
-
     // solve linear system
     if (ctx->getGraph()->isGraphMember())
     {
         linearSystem::solve();
-
-        if (deferConvergenceReport_)
-        {
-            ctx->getControlData().scaled_initial_res = rFCT;
-            this->convergenceReport_();
-        }
     }
     messager::barrier();
 

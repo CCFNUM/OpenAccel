@@ -3151,7 +3151,7 @@ void freeSurfaceFlowModel::setupFCTFields(const std::shared_ptr<domain> domain,
         }
     }
 
-    // # alpha before the FCT correction (FCT residual)
+    // # alpha_LO: alpha before the FCT correction (alpha equation assembled at it)
     if (!alphaLOSTKFieldPtr_)
     {
         scalar initialValue = 0.0;
