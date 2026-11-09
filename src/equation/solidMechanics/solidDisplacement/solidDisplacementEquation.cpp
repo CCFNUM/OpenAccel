@@ -61,6 +61,8 @@ void solidDisplacementEquation::setup()
     FOREACH_DOMAIN(setupDensity);
     FOREACH_DOMAIN(setupYoungModulus);
     FOREACH_DOMAIN(setupPoissonRatio);
+    FOREACH_DOMAIN_IF(setupThermalExpansionCoefficient,
+                      domain->solidMechanics_.thermalStress_);
     FOREACH_DOMAIN(setupDisplacement);
 
     using Bucket = typename Assembler::Bucket;
@@ -112,6 +114,8 @@ void solidDisplacementEquation::initialize()
     FOREACH_DOMAIN(initializeDensity);
     FOREACH_DOMAIN(initializeYoungModulus);
     FOREACH_DOMAIN(initializePoissonRatio);
+    FOREACH_DOMAIN_IF(initializeThermalExpansionCoefficient,
+                      domain->solidMechanics_.thermalStress_);
 
     // update displacement gradient
     FOREACH_DOMAIN(updateDisplacementGradientField);
@@ -154,6 +158,8 @@ void solidDisplacementEquation::preSolve()
     FOREACH_DOMAIN(updateDensity);
     FOREACH_DOMAIN(updateYoungModulus);
     FOREACH_DOMAIN(updatePoissonRatio);
+    FOREACH_DOMAIN_IF(updateThermalExpansionCoefficient,
+                      domain->solidMechanics_.thermalStress_);
 }
 
 void solidDisplacementEquation::solve()

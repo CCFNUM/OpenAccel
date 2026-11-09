@@ -46,6 +46,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         std::vector<scalar> ws_D;
         std::vector<scalar> ws_E;
         std::vector<scalar> ws_nu;
+        std::vector<scalar> ws_betaDT; // beta*(T - T_ref), thermal stress
 
         // Geometry related
         std::vector<scalar> ws_scs_areav;
@@ -87,6 +88,14 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
 
         // Check if plane stress or plane strain
         const bool planeStress = domain->solidMechanics_.planeStress_;
+
+        // thermal stress -beta*(T - T_ref)*I (linear elastic only)
+        const bool thermalStress = domain->solidMechanics_.thermalStress_;
+        const scalar TRefValue = domain->solidMechanics_.referenceTemperature_;
+        const STKScalarField* TSTKFieldPtr =
+            thermalStress ? model_->TRef().stkFieldPtr() : nullptr;
+        const STKScalarField* alphaTSTKFieldPtr =
+            thermalStress ? model_->alphaTRef().stkFieldPtr() : nullptr;
 
         // solid mechanics option (linear elastic or neo-Hookean)
         const solidMechanicsOption solidMechOption =
@@ -131,6 +140,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
             ws_D.resize(nodesPerElement * SPATIAL_DIM);
             ws_E.resize(nodesPerElement);
             ws_nu.resize(nodesPerElement);
+            ws_betaDT.assign(nodesPerElement, 0.0);
             ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
             ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
             ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
@@ -150,6 +160,7 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
             scalar* p_D = &ws_D[0];
             scalar* p_E = &ws_E[0];
             scalar* p_nu = &ws_nu[0];
+            scalar* p_betaDT = &ws_betaDT[0];
             scalar* p_scs_areav = &ws_scs_areav[0];
             scalar* p_dndx = &ws_dndx[0];
             scalar* p_shape_function = &ws_shape_function[0];
@@ -196,6 +207,18 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
 
                     p_E[ni] = *stk::mesh::field_data(ESTKFieldRef, node);
                     p_nu[ni] = *stk::mesh::field_data(nuSTKFieldRef, node);
+
+                    if (thermalStress)
+                    {
+                        const scalar alphaT =
+                            *stk::mesh::field_data(*alphaTSTKFieldPtr, node);
+                        const scalar T =
+                            *stk::mesh::field_data(*TSTKFieldPtr, node);
+                        p_betaDT[ni] =
+                            solidMechanicsModel::thermalStressCoefficient(
+                                p_E[ni], p_nu[ni], alphaT, planeStress) *
+                            (T - TRefValue);
+                    }
 
                     for (label i = 0; i < SPATIAL_DIM; ++i)
                     {
@@ -330,6 +353,26 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                                 const scalar dxi = p_D[ic * SPATIAL_DIM + i];
                                 p_rhs[indexL] -= lhs_riC_i * dxi;
                                 p_rhs[indexR] += lhs_riC_i * dxi;
+                            }
+                        }
+
+                        // thermal stress flux: -beta*(T - T_ref)*A_i
+                        if (thermalStress)
+                        {
+                            scalar betaDTIp = 0.0;
+                            for (label ic = 0; ic < nodesPerElement; ++ic)
+                            {
+                                betaDTIp += p_shape_function[offSetSF + ic] *
+                                            p_betaDT[ic];
+                            }
+
+                            for (label i = 0; i < SPATIAL_DIM; ++i)
+                            {
+                                const scalar flux =
+                                    betaDTIp *
+                                    p_scs_areav[ip * SPATIAL_DIM + i];
+                                p_rhs[il * SPATIAL_DIM + i] -= flux;
+                                p_rhs[ir * SPATIAL_DIM + i] += flux;
                             }
                         }
                     }
@@ -551,6 +594,14 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         // FEM lambda follows the same plane_stress switch as CVFEM
         const bool usePlaneStressForFEM = domain->solidMechanics_.planeStress_;
 
+        // thermal stress -beta*(T - T_ref)*I (linear elastic only)
+        const bool thermalStress = domain->solidMechanics_.thermalStress_;
+        const scalar TRefValue = domain->solidMechanics_.referenceTemperature_;
+        const STKScalarField* TSTKFieldPtr =
+            thermalStress ? model_->TRef().stkFieldPtr() : nullptr;
+        const STKScalarField* alphaTSTKFieldPtr =
+            thermalStress ? model_->alphaTRef().stkFieldPtr() : nullptr;
+
         // element state of the current bucket and element, read by the kernels
         smesh::ElemType sfemElementType = smesh::INVALID;
         bool useOpenAccelQuad4 = false;
@@ -573,6 +624,17 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
         std::vector<const scalar*> displacementStreams;
         std::vector<scalar*> gradientStreams;
         std::vector<scalar*> hessianStreams;
+
+        // thermal stress load int beta*(T - T_ref)*dN/dx dV on the SCV points
+        MasterElement* meSCV = nullptr;
+        label numScvIp = 0;
+        std::vector<scalar> betaDT;
+        std::vector<scalar> scvCoordinates;
+        std::vector<scalar> scvVolume;
+        std::vector<scalar> scvShapeFunction;
+        std::vector<scalar> scvDndx;
+        std::vector<scalar> scvDeriv;
+        std::vector<scalar> scvDetJ;
 
         // element loop around a model kernel: the model is fixed per call
         const auto assembleElements = [&](const auto& elementKernel)
@@ -652,6 +714,21 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                 for (label entry = 0; entry < lhsSize; ++entry)
                     hessianStreams[entry] = &lhs[entry];
 
+                if (thermalStress)
+                {
+                    meSCV =
+                        MasterElementRepo::get_volume_master_element(topology);
+                    numScvIp = meSCV->numIntPoints_;
+                    betaDT.resize(nodesPerElement);
+                    scvCoordinates.resize(dofsPerElement);
+                    scvVolume.resize(numScvIp);
+                    scvShapeFunction.resize(numScvIp * nodesPerElement);
+                    scvDndx.resize(numScvIp * dofsPerElement);
+                    scvDeriv.resize(numScvIp * dofsPerElement);
+                    scvDetJ.resize(numScvIp);
+                    meSCV->shape_fcn(scvShapeFunction.data());
+                }
+
                 for (stk::mesh::Entity elem : *bucket)
                 {
                     std::fill(lhs.begin(), lhs.end(), 0.0);
@@ -689,6 +766,21 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                             usePlaneStressForFEM
                                 ? nu * E / ((1.0 + nu) * (1.0 - nu))
                                 : nu * E / ((1.0 + nu) * (1.0 - 2.0 * nu));
+
+                        if (thermalStress)
+                        {
+                            const scalar alphaT = *stk::mesh::field_data(
+                                *alphaTSTKFieldPtr, nodeRels[node]);
+                            const scalar T = *stk::mesh::field_data(
+                                *TSTKFieldPtr, nodeRels[node]);
+                            betaDT[node] =
+                                solidMechanicsModel::thermalStressCoefficient(
+                                    E, nu, alphaT, usePlaneStressForFEM) *
+                                (T - TRefValue);
+                            for (label dim = 0; dim < SPATIAL_DIM; ++dim)
+                                scvCoordinates[node * SPATIAL_DIM + dim] =
+                                    xyz[dim];
+                        }
                     }
 
                     mu /= nodesPerElement;
@@ -1170,6 +1262,49 @@ void solidDisplacementAssembler::assembleElemTermsInterior_(
                             {
                                 rhs[row] -= lhs[row * dofsPerElement + col] *
                                             displacement[col];
+                            }
+                        }
+
+                        // thermal stress: f_int gets -beta*dT*dN/dx_i
+                        if (thermalStress)
+                        {
+                            scalar scvError = 0.0;
+                            meSCV->determinant(1,
+                                               scvCoordinates.data(),
+                                               scvVolume.data(),
+                                               &scvError);
+                            meSCV->grad_op(1,
+                                           scvCoordinates.data(),
+                                           scvDndx.data(),
+                                           scvDeriv.data(),
+                                           scvDetJ.data(),
+                                           &scvError);
+
+                            for (label ip = 0; ip < numScvIp; ++ip)
+                            {
+                                scalar betaDTIp = 0.0;
+                                for (label node = 0; node < nodesPerElement;
+                                     ++node)
+                                {
+                                    betaDTIp +=
+                                        scvShapeFunction[ip * nodesPerElement +
+                                                         node] *
+                                        betaDT[node];
+                                }
+
+                                for (label node = 0; node < nodesPerElement;
+                                     ++node)
+                                {
+                                    for (label dim = 0; dim < SPATIAL_DIM;
+                                         ++dim)
+                                    {
+                                        rhs[node * SPATIAL_DIM + dim] +=
+                                            betaDTIp *
+                                            scvDndx[ip * dofsPerElement +
+                                                    node * SPATIAL_DIM + dim] *
+                                            scvVolume[ip];
+                                    }
+                                }
                             }
                         }
                     });

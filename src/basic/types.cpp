@@ -413,6 +413,27 @@ convertThermalExpansivityOptionFromString(std::string s)
     return thermalExpansivityOptionMap[s];
 }
 
+// thermal expansion coefficient option
+std::unordered_map<std::string, thermalExpansionCoefficientOption>
+    thermalExpansionCoefficientOptionMap{
+        {"value", thermalExpansionCoefficientOption::value}};
+
+thermalExpansionCoefficientOption
+convertThermalExpansionCoefficientOptionFromString(std::string s)
+{
+    ::accel::tolower(s);
+    std::replace(s.begin(), s.end(), '-', '_'); // replace hyphen with
+    // underscore
+    const auto it =
+        thermalExpansionCoefficientOptionMap.find(s); // check that `s` exists
+    if (it == thermalExpansionCoefficientOptionMap.end())
+    {
+        errorMsg("No thermal expansion coefficient option found for `" + s +
+                 "`");
+    }
+    return thermalExpansionCoefficientOptionMap[s];
+}
+
 // Young modulus option
 std::unordered_map<std::string, youngModulusOption> youngModulusOptionMap{
     {"value", youngModulusOption::value}};

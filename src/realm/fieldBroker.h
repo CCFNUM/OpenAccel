@@ -176,6 +176,9 @@ public:
 
     virtual void setupPoissonRatio(const std::shared_ptr<domain> domain);
 
+    virtual void
+    setupThermalExpansionCoefficient(const std::shared_ptr<domain> domain);
+
     // public API for phasic field setup (iPhase is global to the simulation:
     // i.e. material index)
 
@@ -240,6 +243,9 @@ public:
     virtual void initializeYoungModulus(const std::shared_ptr<domain> domain);
 
     virtual void initializePoissonRatio(const std::shared_ptr<domain> domain);
+
+    virtual void
+    initializeThermalExpansionCoefficient(const std::shared_ptr<domain> domain);
 
     virtual void initializeDensity(const std::shared_ptr<domain> domain);
 
@@ -409,6 +415,9 @@ public:
     virtual void updateYoungModulus(const std::shared_ptr<domain> domain);
 
     virtual void updatePoissonRatio(const std::shared_ptr<domain> domain);
+
+    virtual void
+    updateThermalExpansionCoefficient(const std::shared_ptr<domain> domain);
 
     virtual void updateDensity(const std::shared_ptr<domain> domain);
 
@@ -975,6 +984,10 @@ protected:
 
     const poissonRatio& nuRef() const;
 
+    thermalExpansionCoefficient& alphaTRef();
+
+    const thermalExpansionCoefficient& alphaTRef() const;
+
     dynamicViscosity& muRef();
 
     const dynamicViscosity& muRef() const;
@@ -1467,6 +1480,27 @@ protected:
                         (domain)->index(),                                     \
                         (materialBlock)["mechanical_properties"]               \
                                        ["poisson_ratio"]);                     \
+            }                                                                  \
+        }                                                                      \
+    } while (0)
+
+#define SET_THERMAL_EXPANSION_COEFFICIENT_PROPERTY(                            \
+    alphaTField, materialBlock, ...)                                           \
+    do                                                                         \
+    {                                                                          \
+        if ((alphaTField).isZoneUnset((domain)->index()))                      \
+        {                                                                      \
+            (alphaTField).setZone((domain)->index());                          \
+            if (domain->materialRef(__VA_ARGS__)                               \
+                    .thermalProperties_.thermalExpansionCoefficient_           \
+                    .option_ == thermalExpansionCoefficientOption::value)      \
+            {                                                                  \
+                initialCondition::                                             \
+                    setupFieldInitializationOverDomainFromConfig(              \
+                        (alphaTField),                                         \
+                        (domain)->index(),                                     \
+                        (materialBlock)["thermal_properties"]                  \
+                                       ["thermal_expansion_coefficient"]);     \
             }                                                                  \
         }                                                                      \
     } while (0)

@@ -290,6 +290,11 @@ void solidDisplacementAssembler::assembleElemTermsInterfaceSide_(
         }
         else
         {
+            // the interface stress below has no thermal part
+            STK_ThrowRequireMsg(!domain->solidMechanics_.thermalStress_,
+                                "thermal_expansion_coefficient is not "
+                                "available with solid-solid interfaces");
+
             scalar penaltyFactor =
                 interfaceSideInfoPtr->interfPtr()->penaltyFactor();
 

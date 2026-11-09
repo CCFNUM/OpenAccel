@@ -2997,6 +2997,13 @@ void fieldBroker::setupPoissonRatio(const std::shared_ptr<domain> domain)
     }
 }
 
+void fieldBroker::setupThermalExpansionCoefficient(
+    const std::shared_ptr<domain> domain)
+{
+    SET_THERMAL_EXPANSION_COEFFICIENT_PROPERTY(this->alphaTRef(),
+                                               domain->getYAMLMaterial());
+}
+
 void fieldBroker::setupDensity(const std::shared_ptr<domain> domain)
 {
     if (realmPtr_->rho_)
@@ -3667,6 +3674,15 @@ void fieldBroker::initializePoissonRatio(const std::shared_ptr<domain> domain)
     }
 }
 
+void fieldBroker::initializeThermalExpansionCoefficient(
+    const std::shared_ptr<domain> domain)
+{
+    if (realmPtr_->smRealm_->alphaT_)
+    {
+        alphaTRef().initialize(domain->index());
+    }
+}
+
 void fieldBroker::initializeDensity(const std::shared_ptr<domain> domain)
 {
     if (realmPtr_->rho_)
@@ -4099,6 +4115,15 @@ void fieldBroker::updatePoissonRatio(const std::shared_ptr<domain> domain)
     if (realmPtr_->smRealm_->nu_)
     {
         nuRef().update(domain->index());
+    }
+}
+
+void fieldBroker::updateThermalExpansionCoefficient(
+    const std::shared_ptr<domain> domain)
+{
+    if (realmPtr_->smRealm_->alphaT_)
+    {
+        alphaTRef().update(domain->index());
     }
 }
 
@@ -5168,6 +5193,28 @@ const poissonRatio& fieldBroker::nuRef() const
                      poissonRatio,
                      realmPtr_,
                      smRealm::nu_ID,
+                     n_states,
+                     false,
+                     true);
+}
+
+thermalExpansionCoefficient& fieldBroker::alphaTRef()
+{
+    RETURN_REF_ALLOC(realmPtr_->smRealm_->alphaT_,
+                     thermalExpansionCoefficient,
+                     realmPtr_,
+                     smRealm::alphaT_ID,
+                     n_states,
+                     false,
+                     true);
+}
+
+const thermalExpansionCoefficient& fieldBroker::alphaTRef() const
+{
+    RETURN_REF_ALLOC(realmPtr_->smRealm_->alphaT_,
+                     thermalExpansionCoefficient,
+                     realmPtr_,
+                     smRealm::alphaT_ID,
                      n_states,
                      false,
                      true);

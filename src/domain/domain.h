@@ -84,6 +84,10 @@ struct solidMechanics
 
     // mass-proportional Rayleigh damping coefficient [1/s]; 0 = undamped
     scalar dampingCoeff_ = 0.0;
+
+    // thermal stress -beta*(T - T_ref)*I, on when the material has alpha
+    bool thermalStress_ = false;
+    scalar referenceTemperature_ = 0.0;
 };
 
 // coupling settings of one fluid-solid interface (YAML interfaces: coupling)
@@ -265,6 +269,18 @@ struct material
         thermalExpansivity thermalExpansivity_;
     };
 
+    struct thermalProperties
+    {
+        // linear thermal expansion coefficient alpha (solid thermal stress)
+        struct thermalExpansionCoefficient
+        {
+            thermalExpansionCoefficientOption option_ =
+                thermalExpansionCoefficientOption::value;
+        };
+
+        thermalExpansionCoefficient thermalExpansionCoefficient_;
+    };
+
     std::string name_ = "";
     thermodynamicStateOption thermodynamicStateOption_ =
         thermodynamicStateOption::gas;
@@ -272,6 +288,7 @@ struct material
     transportProperties transportProperties_;
     mechanicalProperties mechanicalProperties_;
     buoyancyProperties buoyancyProperties_;
+    thermalProperties thermalProperties_;
 };
 
 struct source
