@@ -21,6 +21,17 @@ solidMechanicsModel::solidMechanicsModel(realm* realm) : model(realm)
     ERef();
     nuRef();
 
+    // thermal expansion coefficient only for domains with thermal stress
+    for (const auto& domain : realm->simulationRef().domainVector())
+    {
+        if (domain->type() == domainType::solid &&
+            domain->solidMechanics_.thermalStress_)
+        {
+            alphaTRef();
+            break;
+        }
+    }
+
     // create post-processing field instances
     stressRef();
     stressVonMisesRef();
@@ -1183,21 +1194,24 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
         (*followerPressureData.value() > 0.5);
 
     // Determine which contributions are active
-    const bool hasPressure = (pressureData.type() == inputDataType::constant ||
-                              pressureData.type() == inputDataType::timeTable);
-    const bool hasShear = (shearData.type() == inputDataType::constant ||
-                           shearData.type() == inputDataType::timeTable);
+    const bool pressureExpression =
+        pressureData.type() == inputDataType::expression;
+    const bool shearExpression = shearData.type() == inputDataType::expression;
+    const bool hasPressure =
+        (pressureData.type() == inputDataType::constant ||
+         pressureData.type() == inputDataType::timeTable || pressureExpression);
+    const bool hasShear =
+        (shearData.type() == inputDataType::constant ||
+         shearData.type() == inputDataType::timeTable || shearExpression);
 
     // Check for unsupported input types
-    if (pressureData.type() == inputDataType::expression ||
-        pressureData.type() == inputDataType::profileData)
+    if (pressureData.type() == inputDataType::profileData)
     {
-        errorMsg("expression and profileData not provided yet for pressure");
+        errorMsg("profileData not provided yet for pressure");
     }
-    if (shearData.type() == inputDataType::expression ||
-        shearData.type() == inputDataType::profileData)
+    if (shearData.type() == inputDataType::profileData)
     {
-        errorMsg("expression and profileData not provided yet for shear");
+        errorMsg("profileData not provided yet for shear");
     }
 
     // Early return if no work needed
@@ -1237,6 +1251,46 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
         }
     }
 
+    // expressions in t, x, y, z, evaluated at the side integration points
+    typedef exprtk::symbol_table<scalar> symbol_table_t;
+    typedef exprtk::expression<scalar> expression_t;
+    typedef exprtk::parser<scalar> parser_t;
+
+    scalar t = this->meshRef().controlsRef().time;
+    scalar x = 0.0, y = 0.0, z = 0.0;
+    symbol_table_t symbolTable;
+    symbolTable.add_constants();
+    symbolTable.add_variable("t", t);
+    symbolTable.add_variable("x", x);
+    symbolTable.add_variable("y", y);
+    symbolTable.add_variable("z", z);
+
+    parser_t parser;
+    expression_t pressureExpr;
+    std::vector<expression_t> shearExpr(shearExpression ? SPATIAL_DIM : 0);
+    if (pressureExpression)
+    {
+        pressureExpr.register_symbol_table(symbolTable);
+        if (!parser.compile(pressureData.expression()[0], pressureExpr))
+        {
+            errorMsg("Error in the expression provided for pressure: " +
+                     pressureData.expression()[0]);
+        }
+    }
+    for (label i = 0; i < static_cast<label>(shearExpr.size()); ++i)
+    {
+        shearExpr[i].register_symbol_table(symbolTable);
+        if (!parser.compile(shearData.expression()[i], shearExpr[i]))
+        {
+            errorMsg("Error in the expression provided for shear: " +
+                     shearData.expression()[i]);
+        }
+    }
+    const bool anyExpression = pressureExpression || shearExpression;
+    const STKScalarField* coordinatesSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    std::vector<scalar> faceShapeFunction;
+
     // Get field references and mesh data (only once)
     auto& sideFluxSTKFieldRef = this->DRef().sideFluxFieldRef().stkFieldRef();
 
@@ -1271,9 +1325,23 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
 
     for (const stk::mesh::Bucket* bucket : sideBuckets)
     {
-        const MasterElement* meFC =
+        MasterElement* meFC =
             MasterElementRepo::get_surface_master_element(bucket->topology());
         const label numScsBip = meFC->numIntPoints_;
+        const label nodesPerSide = meFC->nodesPerElement_;
+
+        if (anyExpression)
+        {
+            faceShapeFunction.resize(numScsBip * nodesPerSide);
+            if (this->DRef().isShifted())
+            {
+                meFC->shifted_shape_fcn(faceShapeFunction.data());
+            }
+            else
+            {
+                meFC->shape_fcn(faceShapeFunction.data());
+            }
+        }
 
         for (const stk::mesh::Entity side : *bucket)
         {
@@ -1288,9 +1356,41 @@ void solidMechanicsModel::updateDisplacementBoundarySideFieldTraction_(
                 (followerPressure && hasPressure) ? &deformedAreaVec[ipOffset]
                                                   : nullptr;
 
+            const stk::mesh::Entity* sideNodes = bulkData.begin_nodes(side);
+
             // Loop over integration points
             for (label ip = 0; ip < numScsBip; ++ip)
             {
+                // expression values at the integration point coordinates
+                if (anyExpression)
+                {
+                    scalar ipCoordinates[3] = {0.0, 0.0, 0.0};
+                    for (label n = 0; n < nodesPerSide; ++n)
+                    {
+                        const scalar* coords = stk::mesh::field_data(
+                            *coordinatesSTKFieldPtr, sideNodes[n]);
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                        {
+                            ipCoordinates[j] +=
+                                faceShapeFunction[ip * nodesPerSide + n] *
+                                coords[j];
+                        }
+                    }
+                    x = ipCoordinates[0];
+                    y = ipCoordinates[1];
+                    z = ipCoordinates[2];
+
+                    if (pressureExpression)
+                    {
+                        pressureValue = pressureExpr.value();
+                    }
+                    for (label j = 0; j < static_cast<label>(shearExpr.size());
+                         ++j)
+                    {
+                        shearValue[j] = shearExpr[j].value();
+                    }
+                }
+
                 // reference area magnitude dA0
                 scalar aMag0 = 0.0;
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -1360,6 +1460,14 @@ void solidMechanicsModel::updateStressAndStrain_(
     // Check if plane stress or plane strain
     const bool planeStress = domain->solidMechanics_.planeStress_;
 
+    // thermal stress -beta*(T - T_ref)*I (linear elastic only)
+    const bool thermalStress = domain->solidMechanics_.thermalStress_;
+    const scalar TRefValue = domain->solidMechanics_.referenceTemperature_;
+    const STKScalarField* TSTKFieldPtr =
+        thermalStress ? TRef().stkFieldPtr() : nullptr;
+    const STKScalarField* alphaTSTKFieldPtr =
+        thermalStress ? alphaTRef().stkFieldPtr() : nullptr;
+
     // FEM: post-processed stress/strain must match the solve's model
     bool useNeoHookeanStress = false;
     bool useMooneyRivlinStress = false;
@@ -1400,6 +1508,83 @@ void solidMechanicsModel::updateStressAndStrain_(
     stk::mesh::BucketVector const& elemBuckets =
         bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
 
+    // nodal recovery of the element values: per node [stress, strain,
+    // sigma_zz]; sigma_zz is carried in the von Mises field until the end
+    constexpr label nTensor = SPATIAL_DIM * SPATIAL_DIM;
+    constexpr label nQ = 2 * nTensor + 1;
+    const auto nodeQ = [&](stk::mesh::Entity node, label q) -> scalar&
+    {
+        if (q < nTensor)
+        {
+            return stk::mesh::field_data(*sigmaSTKFieldPtr, node)[q];
+        }
+        if (q < 2 * nTensor)
+        {
+            return stk::mesh::field_data(*epsilonSTKFieldPtr,
+                                         node)[q - nTensor];
+        }
+        return *stk::mesh::field_data(*sigmaVonMisesSTKFieldPtr, node);
+    };
+
+    // boundary nodes: nodes of sides with one element in this domain
+    std::vector<char> isBoundaryNode(bulkData.get_size_of_entity_index_space(),
+                                     0);
+    for (const stk::mesh::Bucket* sideBucket :
+         bulkData.get_buckets(metaData.side_rank(), metaData.universal_part()))
+    {
+        for (stk::mesh::Entity side : *sideBucket)
+        {
+            label nDomainElements = 0;
+            const stk::mesh::Entity* sideElements =
+                bulkData.begin_elements(side);
+            for (unsigned ie = 0; ie < bulkData.num_elements(side); ++ie)
+            {
+                if (selAllElements(bulkData.bucket(sideElements[ie])))
+                {
+                    nDomainElements++;
+                }
+            }
+
+            if (nDomainElements == 1)
+            {
+                const stk::mesh::Entity* sideNodes = bulkData.begin_nodes(side);
+                for (unsigned in = 0; in < bulkData.num_nodes(side); ++in)
+                {
+                    isBoundaryNode[sideNodes[in].local_offset()] = 1;
+                }
+            }
+        }
+    }
+
+    // zero the nodal accumulators of this domain
+    std::vector<scalar> nodeWeight(bulkData.get_size_of_entity_index_space(),
+                                   0.0);
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selAllElements);
+    for (const stk::mesh::Bucket* nodeBucket : nodeBuckets)
+    {
+        for (stk::mesh::Entity node : *nodeBucket)
+        {
+            for (label q = 0; q < nQ; ++q)
+            {
+                nodeQ(node, q) = 0.0;
+            }
+        }
+    }
+
+    // elements with boundary nodes, kept for the boundary extrapolation
+    struct boundaryElement
+    {
+        std::vector<stk::mesh::Entity> nodes;
+        std::vector<scalar> coordinates; // node coordinates
+        std::vector<scalar> centroid;
+        std::vector<scalar> gradOp; // dN/dx at the centre (SCV mean)
+        std::vector<scalar> Q;      // element values seen by each node
+        std::vector<scalar> weight; // SCV volume of each node
+    };
+
+    std::vector<boundaryElement> boundaryElements;
+
     // Scratch arrays
     std::vector<scalar> ws_coordinates;
     std::vector<scalar> ws_disp;
@@ -1411,6 +1596,11 @@ void solidMechanicsModel::updateStressAndStrain_(
     std::vector<scalar> ws_grad_u;
     std::vector<scalar> ws_strain;
     std::vector<scalar> ws_stress;
+    std::vector<scalar> ws_T;
+    std::vector<scalar> ws_alphaT;
+    std::vector<scalar> ws_shape_function;
+    std::vector<scalar> ws_scv_volume;
+    std::vector<scalar> ws_node_volume;
 
     for (stk::mesh::BucketVector::const_iterator ib = elemBuckets.begin();
          ib != elemBuckets.end();
@@ -1435,6 +1625,12 @@ void solidMechanicsModel::updateStressAndStrain_(
         ws_grad_u.resize(SPATIAL_DIM * SPATIAL_DIM);
         ws_strain.resize(SPATIAL_DIM * SPATIAL_DIM);
         ws_stress.resize(SPATIAL_DIM * SPATIAL_DIM);
+        ws_T.resize(nodesPerElement);
+        ws_alphaT.resize(nodesPerElement);
+        ws_shape_function.resize(numScvIp * nodesPerElement);
+        ws_scv_volume.resize(numScvIp);
+        ws_node_volume.resize(nodesPerElement);
+        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // Create pointers
         scalar* p_coordinates = &ws_coordinates[0];
@@ -1445,6 +1641,15 @@ void solidMechanicsModel::updateStressAndStrain_(
         scalar* p_grad_u = &ws_grad_u[0];
         scalar* p_strain = &ws_strain[0];
         scalar* p_stress = &ws_stress[0];
+        scalar* p_T = &ws_T[0];
+        scalar* p_alphaT = &ws_alphaT[0];
+        scalar* p_shape_function = &ws_shape_function[0];
+
+        // shape functions for the element-mean temperature (thermal stress)
+        if (thermalStress)
+        {
+            meSCV->shape_fcn(p_shape_function);
+        }
 
         for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
         {
@@ -1470,6 +1675,13 @@ void solidMechanicsModel::updateStressAndStrain_(
                 }
                 p_E[ni] = E[0];
                 p_nu[ni] = nu[0];
+
+                if (thermalStress)
+                {
+                    p_T[ni] = *stk::mesh::field_data(*TSTKFieldPtr, node);
+                    p_alphaT[ni] =
+                        *stk::mesh::field_data(*alphaTSTKFieldPtr, node);
+                }
             }
 
             // Compute gradients
@@ -1480,6 +1692,70 @@ void solidMechanicsModel::updateStressAndStrain_(
                            &ws_deriv[0],
                            &ws_det_j[0],
                            &scs_error);
+
+            // SCV volume of each node: weight of the nodal recovery
+            meSCV->determinant(
+                1, &ws_coordinates[0], &ws_scv_volume[0], &scs_error);
+            std::fill(ws_node_volume.begin(), ws_node_volume.end(), 0.0);
+            for (label ip = 0; ip < numScvIp; ++ip)
+            {
+                ws_node_volume[scvIpNodeMap[ip]] += ws_scv_volume[ip];
+            }
+
+            // record elements touching the boundary
+            boundaryElement* record = nullptr;
+            for (label ni = 0; ni < nodesPerElement; ++ni)
+            {
+                if (isBoundaryNode[elemNodes[ni].local_offset()])
+                {
+                    boundaryElements.emplace_back();
+                    record = &boundaryElements.back();
+                    break;
+                }
+            }
+            if (record)
+            {
+                record->nodes.assign(elemNodes, elemNodes + nodesPerElement);
+                record->coordinates.assign(ws_coordinates.begin(),
+                                           ws_coordinates.begin() +
+                                               nodesPerElement * SPATIAL_DIM);
+                record->centroid.assign(SPATIAL_DIM, 0.0);
+                record->gradOp.assign(nodesPerElement * SPATIAL_DIM, 0.0);
+                record->Q.assign(nodesPerElement * nQ, 0.0);
+                record->weight.assign(ws_node_volume.begin(),
+                                      ws_node_volume.end());
+                for (label ic = 0; ic < nodesPerElement; ++ic)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        record->centroid[j] +=
+                            p_coordinates[ic * SPATIAL_DIM + j] /
+                            nodesPerElement;
+                        for (label ip = 0; ip < numScvIp; ++ip)
+                        {
+                            record->gradOp[ic * SPATIAL_DIM + j] +=
+                                p_dndx[SPATIAL_DIM * nodesPerElement * ip +
+                                       ic * SPATIAL_DIM + j] /
+                                numScvIp;
+                        }
+                    }
+                }
+            }
+
+            // element-mean temperature, consistent with the mean strain
+            scalar TMean = 0.0;
+            if (thermalStress)
+            {
+                for (label ip = 0; ip < numScvIp; ++ip)
+                {
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        TMean += p_shape_function[ip * nodesPerElement + ic] *
+                                 p_T[ic];
+                    }
+                }
+                TMean /= numScvIp;
+            }
 
             // Loop over nodes to compute stress and strain at each node
             for (label ni = 0; ni < nodesPerElement; ++ni)
@@ -1835,45 +2111,220 @@ void solidMechanicsModel::updateStressAndStrain_(
                     // plane strain: eps_zz = 0
                     sigmaZZ = lambda * trace_strain;
 #endif
-                }
 
-                // Store stress and strain
-                scalar* node_stress =
-                    stk::mesh::field_data(*sigmaSTKFieldPtr, node);
-                scalar* node_strain =
-                    stk::mesh::field_data(*epsilonSTKFieldPtr, node);
-
-                for (label i = 0; i < SPATIAL_DIM * SPATIAL_DIM; ++i)
-                {
-                    node_stress[i] = p_stress[i];
-                    node_strain[i] = p_strain[i];
-                }
-
-                // von Mises sqrt(3/2 dev:dev) of the 3D stress (s4f sigmaEq)
-                scalar trSigma = sigmaZZ;
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    trSigma += p_stress[i * SPATIAL_DIM + i];
-                }
-                const scalar sigmaMean = trSigma / 3.0;
-
-                scalar devSqr = 0.0;
-                for (label i = 0; i < SPATIAL_DIM; ++i)
-                {
-                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    if (thermalStress)
                     {
-                        const scalar dev_ij = p_stress[i * SPATIAL_DIM + j] -
-                                              ((i == j) ? sigmaMean : 0.0);
-                        devSqr += dev_ij * dev_ij;
+                        const scalar betaDT =
+                            thermalStressCoefficient(
+                                E, nu, p_alphaT[ni], planeStress) *
+                            (TMean - TRefValue);
+
+                        for (label i = 0; i < SPATIAL_DIM; ++i)
+                        {
+                            p_stress[i * SPATIAL_DIM + i] -= betaDT;
+                        }
+#if SPATIAL_DIM == 2
+                        if (!planeStress)
+                        {
+                            sigmaZZ -= betaDT;
+                        }
+#endif
                     }
                 }
+
+                // accumulate the element value, weighted by the SCV volume
+                const scalar w = ws_node_volume[ni];
+                for (label i = 0; i < nTensor; ++i)
+                {
+                    nodeQ(node, i) += w * p_stress[i];
+                    nodeQ(node, nTensor + i) += w * p_strain[i];
+                }
+                nodeQ(node, 2 * nTensor) += w * sigmaZZ;
+                nodeWeight[node.local_offset()] += w;
+
+                if (record)
+                {
+                    scalar* Q = &record->Q[ni * nQ];
+                    for (label i = 0; i < nTensor; ++i)
+                    {
+                        Q[i] = p_stress[i];
+                        Q[nTensor + i] = p_strain[i];
+                    }
+                    Q[2 * nTensor] = sigmaZZ;
+                }
+            }
+        }
+    }
+
+    // interior nodes: SCV-weighted average of the element values
+    for (const stk::mesh::Bucket* nodeBucket : nodeBuckets)
+    {
+        for (stk::mesh::Entity node : *nodeBucket)
+        {
+            const scalar w = nodeWeight[node.local_offset()];
+            if (w > 0.0)
+            {
+                for (label q = 0; q < nQ; ++q)
+                {
+                    nodeQ(node, q) /= w;
+                }
+            }
+        }
+    }
+
+    const std::vector<const stk::mesh::FieldBase*> recoveredFields = {
+        sigmaSTKFieldPtr, epsilonSTKFieldPtr, sigmaVonMisesSTKFieldPtr};
+    if (messager::parallel())
+    {
+        stk::mesh::communicate_field_data(bulkData, recoveredFields);
+    }
+
+    // boundary nodes: mean of sigma_e + grad(sigma).(x - x_e) over their
+    // elements, grad from the recovered field, iterated to a fixed point
+    constexpr label maxBoundaryIterations = 100;
+    constexpr scalar boundaryTolerance = 1.0e-10;
+
+    // compact index of the owned/shared boundary nodes (aura nodes are
+    // filled by the owner through the communication)
+    std::vector<label> boundaryIndex(bulkData.get_size_of_entity_index_space(),
+                                     -1);
+    std::vector<stk::mesh::Entity> boundaryNodes;
+    for (const stk::mesh::Bucket* nodeBucket : nodeBuckets)
+    {
+        if (!nodeBucket->owned() && !nodeBucket->shared())
+        {
+            continue;
+        }
+        for (stk::mesh::Entity node : *nodeBucket)
+        {
+            if (isBoundaryNode[node.local_offset()])
+            {
+                boundaryIndex[node.local_offset()] =
+                    static_cast<label>(boundaryNodes.size());
+                boundaryNodes.push_back(node);
+            }
+        }
+    }
+
+    std::vector<scalar> boundarySum(boundaryNodes.size() * nQ);
+    std::vector<scalar> boundaryWeight(boundaryNodes.size());
+    std::vector<scalar> gradQ(SPATIAL_DIM * nQ);
+    for (label iter = 0; iter < maxBoundaryIterations; ++iter)
+    {
+        std::fill(boundarySum.begin(), boundarySum.end(), 0.0);
+        std::fill(boundaryWeight.begin(), boundaryWeight.end(), 0.0);
+
+        for (const boundaryElement& element : boundaryElements)
+        {
+            const label nNodes = static_cast<label>(element.nodes.size());
+
+            std::fill(gradQ.begin(), gradQ.end(), 0.0);
+            for (label ic = 0; ic < nNodes; ++ic)
+            {
+                for (label q = 0; q < nQ; ++q)
+                {
+                    const scalar value = nodeQ(element.nodes[ic], q);
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        gradQ[j * nQ + q] +=
+                            element.gradOp[ic * SPATIAL_DIM + j] * value;
+                    }
+                }
+            }
+
+            for (label ic = 0; ic < nNodes; ++ic)
+            {
+                const label ib =
+                    boundaryIndex[element.nodes[ic].local_offset()];
+                if (ib < 0)
+                {
+                    continue;
+                }
+
+                const scalar w = element.weight[ic];
+                for (label q = 0; q < nQ; ++q)
+                {
+                    scalar value = element.Q[ic * nQ + q];
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        value += gradQ[j * nQ + q] *
+                                 (element.coordinates[ic * SPATIAL_DIM + j] -
+                                  element.centroid[j]);
+                    }
+                    boundarySum[ib * nQ + q] += w * value;
+                }
+                boundaryWeight[ib] += w;
+            }
+        }
+
+        // update; change relative to the largest stress component
+        scalar maxChange = 0.0;
+        scalar maxStress = 0.0;
+        for (std::size_t ib = 0; ib < boundaryNodes.size(); ++ib)
+        {
+            const stk::mesh::Entity node = boundaryNodes[ib];
+            for (label q = 0; q < nQ; ++q)
+            {
+                const scalar value =
+                    boundarySum[ib * nQ + q] / boundaryWeight[ib];
+                if (q < nTensor)
+                {
+                    maxChange =
+                        std::max(maxChange, std::abs(value - nodeQ(node, q)));
+                    maxStress = std::max(maxStress, std::abs(value));
+                }
+                nodeQ(node, q) = value;
+            }
+        }
+
+        if (messager::parallel())
+        {
+            stk::mesh::communicate_field_data(bulkData, recoveredFields);
+        }
+
+        messager::maxReduce(maxChange);
+        messager::maxReduce(maxStress);
+        if (maxChange <= boundaryTolerance * std::max(maxStress, SMALL))
+        {
+            break;
+        }
+    }
+
+    // von Mises sqrt(3/2 dev:dev) of the recovered 3D stress (s4f sigmaEq)
+    for (const stk::mesh::Bucket* nodeBucket : nodeBuckets)
+    {
+        for (stk::mesh::Entity node : *nodeBucket)
+        {
+            const scalar* stress =
+                stk::mesh::field_data(*sigmaSTKFieldPtr, node);
 #if SPATIAL_DIM == 2
-                devSqr += (sigmaZZ - sigmaMean) * (sigmaZZ - sigmaMean);
+            const scalar sigmaZZ = nodeQ(node, 2 * nTensor);
+#else
+            const scalar sigmaZZ = 0.0;
 #endif
 
-                *stk::mesh::field_data(*sigmaVonMisesSTKFieldPtr, node) =
-                    std::sqrt(1.5 * devSqr);
+            scalar trSigma = sigmaZZ;
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                trSigma += stress[i * SPATIAL_DIM + i];
             }
+            const scalar sigmaMean = trSigma / 3.0;
+
+            scalar devSqr = 0.0;
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+            {
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    const scalar dev_ij = stress[i * SPATIAL_DIM + j] -
+                                          ((i == j) ? sigmaMean : 0.0);
+                    devSqr += dev_ij * dev_ij;
+                }
+            }
+#if SPATIAL_DIM == 2
+            devSqr += (sigmaZZ - sigmaMean) * (sigmaZZ - sigmaMean);
+#endif
+
+            nodeQ(node, 2 * nTensor) = std::sqrt(1.5 * devSqr);
         }
     }
 }

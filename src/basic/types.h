@@ -428,6 +428,15 @@ enum class thermalExpansivityOption
 thermalExpansivityOption
 convertThermalExpansivityOptionFromString(std::string s);
 
+// thermal expansion coefficient option (solid thermal stress)
+enum class thermalExpansionCoefficientOption
+{
+    value
+};
+
+thermalExpansionCoefficientOption
+convertThermalExpansionCoefficientOptionFromString(std::string s);
+
 // Young modulus option
 enum class youngModulusOption
 {

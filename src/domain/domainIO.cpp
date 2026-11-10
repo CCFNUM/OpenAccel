@@ -364,6 +364,25 @@ void domain::read_()
                 }
             }
 
+            // thermal properties
+            if (materialBlockVector_[localMaterialIndex]["thermal_properties"])
+            {
+                const auto& thermalPropertiesBlock =
+                    materialBlockVector_[localMaterialIndex]
+                                        ["thermal_properties"];
+
+                // set thermal expansion coefficient option
+                if (thermalPropertiesBlock["thermal_expansion_coefficient"])
+                {
+                    mat.thermalProperties_.thermalExpansionCoefficient_
+                        .option_ =
+                        convertThermalExpansionCoefficientOptionFromString(
+                            thermalPropertiesBlock
+                                ["thermal_expansion_coefficient"]["option"]
+                                    .template as<std::string>());
+                }
+            }
+
             // mechanical properties
             if (materialBlockVector_[localMaterialIndex]
                                     ["mechanical_properties"])
@@ -1465,6 +1484,51 @@ void domain::read_()
                                  "young_modulus and poisson_ratio in "
                                  "mechanical_properties");
                     }
+                }
+            }
+
+            // thermal stress: on when a material gives thermal expansion
+            for (const auto& materialBlock : materialBlockVector_)
+            {
+                if (materialBlock["thermal_properties"] &&
+                    materialBlock["thermal_properties"]
+                                 ["thermal_expansion_coefficient"])
+                {
+                    solidMechanics_.thermalStress_ = true;
+                }
+            }
+
+            if (solidMechanicsBlock["reference_temperature"])
+            {
+                solidMechanics_.referenceTemperature_ =
+                    solidMechanicsBlock["reference_temperature"]
+                        .template as<scalar>();
+            }
+
+            if (solidMechanics_.thermalStress_)
+            {
+                if (solidMechanics_.option_ !=
+                    solidMechanicsOption::linearElastic)
+                {
+                    errorMsg("thermal_expansion_coefficient is only "
+                             "available with solid_mechanics option "
+                             "linear_elastic");
+                }
+
+                if (heatTransfer_.option_ !=
+                        heatTransferOption::thermalEnergy &&
+                    heatTransfer_.option_ != heatTransferOption::totalEnergy)
+                {
+                    errorMsg("thermal_expansion_coefficient requires "
+                             "heat_transfer option thermal_energy or "
+                             "total_energy in the solid models of domain `" +
+                             this->name() + "`");
+                }
+
+                if (!solidMechanicsBlock["reference_temperature"])
+                {
+                    errorMsg("thermal_expansion_coefficient requires "
+                             "solid_mechanics reference_temperature");
                 }
             }
         }

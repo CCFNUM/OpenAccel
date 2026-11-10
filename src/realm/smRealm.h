@@ -10,6 +10,7 @@
 
 // code
 #include "poissonRatio.h"
+#include "thermalExpansionCoefficient.h"
 #include "youngModulus.h"
 
 namespace accel
@@ -31,6 +32,8 @@ private:
 
     std::unique_ptr<poissonRatio> nu_;
 
+    std::unique_ptr<thermalExpansionCoefficient> alphaT_;
+
     // solid mechanics post-processing fields
 
     // Cauchy stress tensor
@@ -47,6 +50,8 @@ public:
     static constexpr char E_ID[] = "young_modulus";
 
     static constexpr char nu_ID[] = "poisson_ratio";
+
+    static constexpr char alphaT_ID[] = "thermal_expansion_coefficient";
 
     static constexpr char sigma_ID[] = "stress";
 

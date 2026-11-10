@@ -36,6 +36,7 @@ target_sources(main_obj PRIVATE
     ${DIR}/nodeField/scalar/transport/turbulence/turbulentKineticEnergy.cpp
     ${DIR}/nodeField/scalar/property/solidMechanics/youngModulus.cpp
     ${DIR}/nodeField/scalar/property/solidMechanics/poissonRatio.cpp
+    ${DIR}/nodeField/scalar/property/solidMechanics/thermalExpansionCoefficient.cpp
     ${DIR}/nodeField/tensor/nodeTensorField.cpp
     ${DIR}/nodeField/vector/nodeVectorField.cpp
     ${DIR}/nodeField/vector/transport/flow/velocity.cpp

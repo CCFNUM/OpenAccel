@@ -32,6 +32,7 @@ private:
 public:
     solidMechanicsModel(realm* realm);
 
+    using fieldBroker::alphaTRef;
     using fieldBroker::DRef;
     using fieldBroker::ERef;
     using fieldBroker::nuRef;
@@ -40,6 +41,7 @@ public:
     using fieldBroker::strainRef;
     using fieldBroker::stressRef;
     using fieldBroker::stressVonMisesRef;
+    using fieldBroker::TRef;
     using fieldBroker::wallShearStressRef;
 
     // setup
@@ -49,6 +51,17 @@ public:
     // update
 
     void updateDisplacement(const std::shared_ptr<domain> domain) override;
+
+    // thermal stress -beta*(T - T_ref)*I: beta = 3K*alpha in 3D and plane
+    // strain, E*alpha/(1 - nu) in plane stress
+    static scalar thermalStressCoefficient(const scalar E,
+                                           const scalar nu,
+                                           const scalar alpha,
+                                           const bool planeStress)
+    {
+        return planeStress ? E * alpha / (1.0 - nu)
+                           : E * alpha / (1.0 - 2.0 * nu);
+    }
 
 protected:
     void updateStressAndStrain_(const std::shared_ptr<domain> domain);
