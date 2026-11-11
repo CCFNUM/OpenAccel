@@ -15,6 +15,7 @@
 #include "macros.h"
 #include "realm.h"
 #include "types.h"
+#include <set>
 
 namespace accel
 {
@@ -58,6 +59,12 @@ protected:
 
 private:
     std::unique_ptr<Assembler> assembler_;
+
+    // domains whose stiffness is evaluated on the initial mesh (computed once)
+    std::set<label> stiffnessFrozen_;
+
+    // reads the fixed stiffness from the restart file
+    bool restoreStiffness_(STKScalarField& Gamma);
 };
 
 } /* namespace accel */

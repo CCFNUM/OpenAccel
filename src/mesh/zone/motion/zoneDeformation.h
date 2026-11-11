@@ -25,6 +25,10 @@ struct displacementDiffusionDictionary
 
     scalar referenceLengthScale_ = 1.0;
 
+    // geometry (wall distance, control volume) the stiffness is evaluated on:
+    // false = current mesh, every time step; true = initial mesh, once
+    bool stiffnessOnInitialMesh_ = false;
+
     // Blended distance and small volumes model parameters
     scalar blendedVolumeWeight_ = 0.5;
     scalar blendedDistanceWeight_ = 0.5;
