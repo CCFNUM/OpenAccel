@@ -157,6 +157,34 @@ void zoneDeformation::read(const YAML::Node& inputNode)
                                                     .template as<scalar>();
                                     }
                                 }
+
+                                // mesh whose wall distance / control volumes
+                                // the stiffness is evaluated on
+                                if (meshStiffnessBlock["evaluated_on"])
+                                {
+                                    const std::string evaluatedOn =
+                                        meshStiffnessBlock["evaluated_on"]
+                                            .template as<std::string>();
+                                    if (evaluatedOn == "current_mesh")
+                                    {
+                                        displacementDiffusion_
+                                            .stiffnessOnInitialMesh_ = false;
+                                    }
+                                    else if (evaluatedOn == "initial_mesh")
+                                    {
+                                        displacementDiffusion_
+                                            .stiffnessOnInitialMesh_ = true;
+                                    }
+                                    else
+                                    {
+                                        errorMsg("Unrecognized value " +
+                                                 evaluatedOn +
+                                                 " for evaluated_on in the "
+                                                 "mesh_stiffness block: use "
+                                                 "current_mesh or "
+                                                 "initial_mesh");
+                                    }
+                                }
                             }
                             else
                             {

@@ -7,7 +7,11 @@
 #include "displacementDiffusionEquation.h"
 #include "initialConditions.h"
 #include "meshMotion.h"
+#include "messager.h"
 #include "scaling.h"
+#include <stk_io/MeshField.hpp>
+#include <stk_io/StkMeshIoBroker.hpp>
+#include <stk_mesh/base/FieldParallel.hpp>
 
 namespace accel
 {
@@ -62,6 +66,41 @@ void displacementDiffusionEquation::setup()
         const stk::mesh::MetaData& metaData = mesh.metaDataRef();
         const stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
 
+        // evaluated_on initial_mesh: the stiffness is computed once on the
+        // undeformed geometry and kept (default current_mesh: every step)
+        const bool onInitialMesh = domain->zonePtr()
+                                       ->deformationRef()
+                                       .displacementDiffusion()
+                                       .stiffnessOnInitialMesh_;
+        if (onInitialMesh && stiffnessFrozen_.count(domain->index()))
+        {
+            return;
+        }
+        if (onInitialMesh)
+        {
+            stiffnessFrozen_.insert(domain->index());
+
+            // a restart starts on the deformed mesh: take the stored stiffness
+            if (this->meshRef()
+                    .controlsRef()
+                    .solverRef()
+                    .restartControl_.isRestart_)
+            {
+                if (restoreStiffness_(Gamma))
+                {
+                    return;
+                }
+                if (messager::master())
+                {
+                    warningMsg("restart: no mesh stiffness in the restart "
+                               "file, computed on the restart mesh");
+                }
+            }
+        }
+        const char* dualNodalVolumeID =
+            onInitialMesh ? mesh::original_dual_nodal_volume_ID
+                          : mesh::dual_nodal_volume_ID;
+
         // define selector for domain
         const stk::mesh::PartVector& partVec =
             domain->zonePtr()->interiorParts();
@@ -110,7 +149,7 @@ void displacementDiffusionEquation::setup()
 
             const auto& dualNodalVolumeSTKFieldRef =
                 *metaData.get_field<scalar>(stk::topology::NODE_RANK,
-                                            mesh::dual_nodal_volume_ID);
+                                            dualNodalVolumeID);
 
             // calculate reference volume: mean control volume
             scalar volRef = 0.0;
@@ -177,7 +216,7 @@ void displacementDiffusionEquation::setup()
             // guarding against yMin -> 0 at boundary-adjacent / deformed nodes
             const auto& dualNodalVolumeSTKFieldRef =
                 *metaData.get_field<scalar>(stk::topology::NODE_RANK,
-                                            mesh::dual_nodal_volume_ID);
+                                            dualNodalVolumeID);
             scalar volMin = std::numeric_limits<scalar>::max();
             for (size_t ib = 0; ib < nodeBuckets.size(); ib++)
             {
@@ -234,7 +273,7 @@ void displacementDiffusionEquation::setup()
 
             const auto& dualNodalVolumeSTKFieldRef =
                 *metaData.get_field<scalar>(stk::topology::NODE_RANK,
-                                            mesh::dual_nodal_volume_ID);
+                                            dualNodalVolumeID);
 
             const auto& yMinSTKFieldRef = this->yMinRef().stkFieldRef();
 
@@ -314,6 +353,21 @@ void displacementDiffusionEquation::setup()
         }
     });
 
+    // a stiffness evaluated on the initial mesh cannot be recomputed after a
+    // restart (the mesh is deformed then): store it
+    for (const auto& domain : domainVector_)
+    {
+        if (domain->zonePtr()
+                ->deformationRef()
+                .displacementDiffusion()
+                .stiffnessOnInitialMesh_)
+        {
+            fieldBroker::realmRef().registerRestartField("Gamma_" +
+                                                         this->DRef().name());
+            break;
+        }
+    }
+
     // mesh deformation is solved per grid on its own stencils
     linearSystem::interpolationFreeGraph_ = true;
 
@@ -326,6 +380,39 @@ void displacementDiffusionEquation::setup()
         this->name(), fieldBroker::meshRef(), this->fallbackName());
 
     equation::isCreated_ = true;
+}
+
+bool displacementDiffusionEquation::restoreStiffness_(STKScalarField& Gamma)
+{
+    auto& mesh = fieldBroker::meshRef();
+    const auto& restartCtrl = mesh.controlsRef().solverRef().restartControl_;
+
+    scalar restartTime = restartCtrl.restartTime_;
+    if (restartTime == 0.0)
+    {
+        restartTime = mesh.ioBrokerRef().get_max_time();
+    }
+
+    stk::io::MeshField mf(
+        &Gamma,
+        std::to_string(std::hash<std::string>{}(Gamma.name())),
+        restartCtrl.timeMatchOption_);
+    mf.set_read_time(restartTime);
+    mf.set_single_state(false);
+    try
+    {
+        mesh.ioBrokerRef().read_input_field(mf);
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+    if (!mf.field_restored())
+    {
+        return false;
+    }
+    stk::mesh::communicate_field_data(mesh.bulkDataRef(), {&Gamma});
+    return true;
 }
 
 void displacementDiffusionEquation::initialize()
