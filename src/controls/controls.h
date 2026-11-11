@@ -365,6 +365,7 @@ struct solverDictionary
     {
         std::string inputFilePath_;
         bool isRestart_{false};
+        bool isRestoring_{false}; // restart database is being read
         bool writeInitial_{false};
         scalar restartTime_{0.0};
         label keepNRestartSnapshots_{4};

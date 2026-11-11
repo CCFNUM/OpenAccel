@@ -1462,6 +1462,7 @@ void controls::read(YAML::Node inputNode)
         {
             const auto& restartCtrl = solver["restart_control"];
             solver_.restartControl_.isRestart_ = true;
+            solver_.restartControl_.isRestoring_ = true;
 
             if (restartCtrl["file_path"])
             {

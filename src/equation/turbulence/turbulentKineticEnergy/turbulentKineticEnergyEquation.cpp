@@ -62,8 +62,11 @@ void turbulentKineticEnergyEquation::initialize()
     // 1) update gradient
     FOREACH_DOMAIN(model_->updateTurbulentKineticEnergyGradientField);
 
-    // 2) update high-res fields
-    FOREACH_DOMAIN(model_->updateTurbulentKineticEnergyBlendingFactorField);
+    // 2) update high-res fields (restored on restart)
+    if (!model_->controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN(model_->updateTurbulentKineticEnergyBlendingFactorField);
+    }
 
     // 3) update scale
     model_->kRef().updateScale();

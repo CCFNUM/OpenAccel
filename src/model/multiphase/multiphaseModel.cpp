@@ -112,13 +112,15 @@ void multiphaseModel::setupMassTransfer_(realm* realm)
                              fpm,
                              partVec);
 
-                // the rate is the state of the relaxation
+                // relaxation state and alpha coefficient, read before rebuild
                 if (!declared)
                 {
                     STKScalarField* mdotSTKFieldPtr = mdotSTKFieldPtrs_[key];
                     stk::io::set_field_output_type(*mdotSTKFieldPtr,
                                                    fieldType[1]);
                     realm->registerRestartField(mdotSTKFieldPtr->name());
+                    realm->registerRestartField(
+                        dmdotdalphaSTKFieldPtrs_[key]->name());
                 }
             }
         }
@@ -137,41 +139,44 @@ void multiphaseModel::initializeMassTransferRate(
     {
         if (fpm.massTransfer_.option_ != massTransferModelOption::none)
         {
-            STKScalarField* mdotSTKFieldPtr =
-                mdotSTKFieldPtrs_.at({fpm.massTransfer_.liquidIndex_,
-                                      fpm.massTransfer_.vaporIndex_});
+            const std::pair<label, label> key = {fpm.massTransfer_.liquidIndex_,
+                                                 fpm.massTransfer_.vaporIndex_};
 
-            stk::io::MeshField mf(mdotSTKFieldPtr,
-                                  std::to_string(std::hash<std::string>{}(
-                                      mdotSTKFieldPtr->name())),
-                                  restart_ctrl.timeMatchOption_);
-
-            scalar restart_time = restart_ctrl.restartTime_;
-            if (restart_time == 0.0)
+            for (STKScalarField* stkFieldPtr :
+                 {mdotSTKFieldPtrs_.at(key), dmdotdalphaSTKFieldPtrs_.at(key)})
             {
-                restart_time = this->meshRef().ioBrokerRef().get_max_time();
-            }
-            mf.set_read_time(restart_time);
-            mf.set_single_state(false);
+                stk::io::MeshField mf(stkFieldPtr,
+                                      std::to_string(std::hash<std::string>{}(
+                                          stkFieldPtr->name())),
+                                      restart_ctrl.timeMatchOption_);
 
-            for (const stk::mesh::Part* part :
-                 domain->zonePtr()->interiorParts())
-            {
-                mf.add_subset(*part);
-            }
+                scalar restart_time = restart_ctrl.restartTime_;
+                if (restart_time == 0.0)
+                {
+                    restart_time = this->meshRef().ioBrokerRef().get_max_time();
+                }
+                mf.set_read_time(restart_time);
+                mf.set_single_state(false);
 
-            this->meshRef().ioBrokerRef().read_input_field(mf);
+                for (const stk::mesh::Part* part :
+                     domain->zonePtr()->interiorParts())
+                {
+                    mf.add_subset(*part);
+                }
 
-            if (mf.field_restored())
-            {
-                stk::mesh::communicate_field_data(this->meshRef().bulkDataRef(),
-                                                  {mdotSTKFieldPtr});
-            }
-            else
-            {
-                warningMsg("Field " + mdotSTKFieldPtr->name() +
-                           " not found in the restart file: starting from "
-                           "zero");
+                this->meshRef().ioBrokerRef().read_input_field(mf);
+
+                if (mf.field_restored())
+                {
+                    stk::mesh::communicate_field_data(
+                        this->meshRef().bulkDataRef(), {stkFieldPtr});
+                }
+                else
+                {
+                    warningMsg("Field " + stkFieldPtr->name() +
+                               " not found in the restart file: starting from "
+                               "zero");
+                }
             }
         }
     }

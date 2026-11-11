@@ -663,6 +663,9 @@ void simulation::initializeOutput_()
         ::accel::mesh::rank_ID);
 #endif /* NDEBUG */
 
+    // results geometry is the undeformed mesh, also when restarting
+    meshRef().writeOutputMesh(io.fileIndex_);
+
     // Write result fields at time = t_0
     io.writeTime_ = controlsRef().time;
     const auto& outFreq = io.outputFrequency_;
@@ -697,6 +700,22 @@ void simulation::initializeOutput_()
             // simplify the registration process, unconditional registration is
             // used in constructors and then sanitized here to ensure all fields
             // registered in the restart list are valid fields only.
+            continue;
+        }
+        // per-topology sized side fields clash on mixed side sets: not written
+        std::set<unsigned> sizes;
+        for (const auto& restriction : field->restrictions())
+        {
+            sizes.insert(restriction.num_scalars_per_entity());
+        }
+        if (field->entity_rank() == metaData.side_rank() && sizes.size() > 1)
+        {
+            if (messager::master())
+            {
+                warningMsg("restart: " + field_name +
+                           " is not written (its size differs between face "
+                           "topologies)");
+            }
             continue;
         }
         sanitized_fields.insert(field_name);

@@ -6,6 +6,7 @@
 
 // code
 #include "boundary.h"
+#include "controls.h"
 #include "dgInfo.h"
 #include "interface.h"
 #include "interfaceSideInfo.h"
@@ -40,6 +41,9 @@ void mesh::setupCoordinateField_()
                 stk::mesh::selectUnion(this->zoneRef(iZone).interiorParts()),
                 SPATIAL_DIM,
                 nullptr);
+
+            // restart database coordinates may already be moved
+            controlsRef().registerRestartField(original_coordinates_ID);
         }
     }
 }
@@ -426,7 +430,7 @@ void mesh::initializeCoordinateField_()
             stk::mesh::MetaData& metaData = this->metaDataRef();
 
             // get fields
-            const STKScalarField* coordinates = metaData.get_field<scalar>(
+            STKScalarField* coordinates = metaData.get_field<scalar>(
                 stk::topology::NODE_RANK, coordinates_ID);
             STKScalarField* orgCoordinates = metaData.get_field<scalar>(
                 stk::topology::NODE_RANK, original_coordinates_ID);
@@ -471,8 +475,55 @@ void mesh::initializeCoordinateField_()
             ops::copy<scalar>(coordinates,
                               orgCoordinates,
                               this->zoneRef(iZone).interiorParts());
+
+            // a restart starts from the original coordinates in its database
+            if (restoreOriginalCoordinates_(iZone, orgCoordinates))
+            {
+                ops::copy<scalar>(orgCoordinates,
+                                  coordinates,
+                                  this->zoneRef(iZone).interiorParts());
+            }
         }
     }
+}
+
+bool mesh::restoreOriginalCoordinates_(label iZone,
+                                       STKScalarField* orgCoordinates)
+{
+    const auto& restart_ctrl = controlsRef().solverRef().restartControl_;
+    if (!restart_ctrl.isRestart_)
+    {
+        return false;
+    }
+
+    stk::io::MeshField mf(
+        orgCoordinates,
+        std::to_string(std::hash<std::string>{}(orgCoordinates->name())),
+        restart_ctrl.timeMatchOption_);
+
+    scalar restart_time = restart_ctrl.restartTime_;
+    if (restart_time == 0.0)
+    {
+        restart_time = ioBrokerRef().get_max_time();
+    }
+    mf.set_read_time(restart_time);
+    mf.set_single_state(false);
+
+    // limit initialized parts to current zone's
+    for (const stk::mesh::Part* part : this->zoneRef(iZone).interiorParts())
+    {
+        mf.add_subset(*part);
+    }
+
+    // restore
+    ioBrokerRef().read_input_field(mf);
+
+    if (mf.field_restored())
+    {
+        stk::mesh::communicate_field_data(bulkDataRef(), {orgCoordinates});
+    }
+
+    return mf.field_restored();
 }
 
 void mesh::initializeZones_()

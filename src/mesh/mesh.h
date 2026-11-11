@@ -138,6 +138,9 @@ private:
 
     void initializeCoordinateField_();
 
+    bool restoreOriginalCoordinates_(label iZone,
+                                     STKScalarField* orgCoordinates);
+
     void initializeZones_();
 
     void initializeInterfaces_();
@@ -295,6 +298,9 @@ public:
                std::array<scalar, SPATIAL_DIM> scaleVector);
 
     void write(size_t resultsFileIndex, scalar writeTime);
+
+    // writes the mesh definition with moving zones at original coordinates
+    void writeOutputMesh(size_t resultsFileIndex);
 
     // Access
 

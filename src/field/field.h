@@ -120,6 +120,8 @@ public:
 
     void synchronizeGhostedEntities(label iZone);
 
+    void synchronizeAllStates();
+
     void synchronizeGhostedEntities(label iZone, label iBoundary);
 
     // Getters and setters

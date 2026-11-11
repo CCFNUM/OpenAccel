@@ -28,6 +28,7 @@ velocity::velocity(realm* realmPtr,
                       false)
 {
     realmPtr->registerRestartField(name);
+    realmPtr->registerRestartField(name + "_side");
 
     interpolationScheme_ =
         meshRef()

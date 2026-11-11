@@ -148,6 +148,9 @@ void simulation::initialize_()
     // physics-based convergence checks, once the material fields are set
     physicsConvergences_ = physicsConvergence::create(*this);
 
+    // the restart database is fully read
+    controlsRef().solverRef().restartControl_.isRestoring_ = false;
+
     // initialize output
     initializeOutput_();
 }

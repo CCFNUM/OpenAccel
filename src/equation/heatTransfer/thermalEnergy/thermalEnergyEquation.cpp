@@ -131,9 +131,12 @@ void thermalEnergyEquation::initialize()
     // 1) update enthalpy gradient
     FOREACH_DOMAIN(updateSpecificEnthalpyGradientField);
 
-    // 2) update high-res fields for enthalpy
-    FOREACH_DOMAIN_IF(updateSpecificEnthalpyBlendingFactorField,
-                      domain->type() == domainType::fluid);
+    // 2) update high-res fields for enthalpy (restored on restart)
+    if (!controlsRef().solverRef().restartControl_.isRestart_)
+    {
+        FOREACH_DOMAIN_IF(updateSpecificEnthalpyBlendingFactorField,
+                          domain->type() == domainType::fluid);
+    }
 
     // update enthalpy scale
     hRef().updateScale();
