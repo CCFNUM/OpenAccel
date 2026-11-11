@@ -811,6 +811,8 @@ void flowModel::initializePressure(const std::shared_ptr<domain> domain)
     // raw initialization
     fieldBroker::initializePressure(domain);
 
+    setupWindkesselRestart_(domain);
+
     if (controlsRef().solverRef().restartControl_.isRestart_)
     {
         return;
@@ -21920,6 +21922,17 @@ void flowModel::updatePressureBoundarySideFieldWindkessel_(
     }
 
     state.pn = pn;
+    // stored as the next step's history: a restart needs no field to shift it
+    WindkesselState next = state;
+    next.timeStepCount = timeStepCount + 1;
+    next.nTimeSteps = state.nTimeSteps + 1;
+    next.poo = state.po;
+    next.po = pn;
+    next.Qoo = state.Qo;
+    next.Qo = Qn;
+    controlsRef().getRestartParam().set_value(
+        windkesselRestartName_(domain->index(), boundary->index()),
+        packWindkesselState_(next));
 
     // apply the uniform pressure to the boundary ips
     {
@@ -21966,6 +21979,71 @@ void flowModel::updatePressureBoundarySideFieldWindkessel_(
     if (correctedBoundaryNodeValues)
     {
         pRef().correctBoundaryNodes(domain->index(), boundary->index());
+    }
+}
+
+std::string flowModel::windkesselRestartName_(label iDomain, label iBoundary)
+{
+    return "windkessel_" + std::to_string(iDomain) + "_" +
+           std::to_string(iBoundary);
+}
+
+std::vector<scalar> flowModel::packWindkesselState_(const WindkesselState& s)
+{
+    return {static_cast<scalar>(s.timeStepCount),
+            static_cast<scalar>(s.nTimeSteps),
+            s.po,
+            s.poo,
+            s.Qo,
+            s.Qoo,
+            s.pn};
+}
+
+void flowModel::setupWindkesselRestart_(const std::shared_ptr<domain> domain)
+{
+    const bool isRestart = controlsRef().solverRef().restartControl_.isRestart_;
+
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         iBoundary++)
+    {
+        if (pRef().boundaryConditionRef(domain->index(), iBoundary).type() !=
+            boundaryConditionType::windkesselPressure)
+        {
+            continue;
+        }
+
+        const std::string name =
+            windkesselRestartName_(domain->index(), iBoundary);
+        auto& state = windkesselStates_[std::make_pair(
+            static_cast<label>(domain->index()), iBoundary)];
+
+        if (isRestart)
+        {
+            std::vector<scalar> values;
+            const bool found =
+                meshRef().ioBrokerRef().get_global(name, values, false);
+            if (found && values.size() == 7)
+            {
+                state.timeStepCount = static_cast<label>(values[0]);
+                state.nTimeSteps = static_cast<label>(values[1]);
+                state.po = values[2];
+                state.poo = values[3];
+                state.Qo = values[4];
+                state.Qoo = values[5];
+                state.pn = values[6];
+            }
+            else if (messager::master())
+            {
+                warningMsg("restart: no Windkessel state for boundary `" +
+                           domain->zonePtr()->boundaryPtr(iBoundary)->name() +
+                           "`: history restarts");
+            }
+        }
+
+        constexpr bool to_output = false;
+        constexpr bool to_restart = true;
+        controlsRef().getRestartParam().set_param(
+            name, packWindkesselState_(state), to_output, to_restart);
     }
 }
 

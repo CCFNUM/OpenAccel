@@ -331,6 +331,14 @@ private:
 
     std::map<std::pair<label, label>, WindkesselState> windkesselStates_;
 
+    // restart global holding a Windkessel state
+    static std::string windkesselRestartName_(label iDomain, label iBoundary);
+
+    static std::vector<scalar> packWindkesselState_(const WindkesselState& s);
+
+    // registers the Windkessel states for restart and reads them on a restart
+    void setupWindkesselRestart_(const std::shared_ptr<domain> domain);
+
     // momentum interface imbalance reporting (vector analogue of FlowBoundary-
     // Data; in/out binned per component from the pDot side field)
     MPI_Datatype MPIMomentumBoundaryData;
