@@ -48,6 +48,7 @@ public:
     // Enable public use
 
     using fieldBroker::alphaRef;
+    using fieldBroker::mutRef;
 
     // Methods
 
