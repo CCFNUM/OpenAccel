@@ -637,6 +637,77 @@ void mesh::write(size_t resultsFileIndex, scalar writeTime)
     }
 }
 
+void mesh::writeOutputMesh(size_t resultsFileIndex)
+{
+    // moving meshes are written undeformed, the displacement is a field
+    stk::mesh::BulkData& bulkData = this->bulkDataRef();
+    stk::mesh::MetaData& metaData = this->metaDataRef();
+    auto& coordsSTKFieldRef =
+        *metaData.get_field<scalar>(stk::topology::NODE_RANK, coordinates_ID);
+
+    const stk::mesh::BucketVector& nodeBuckets = bulkData.get_buckets(
+        stk::topology::NODE_RANK, metaData.universal_part());
+
+    std::vector<scalar> savedCoords;
+    for (const stk::mesh::Bucket* bucket : nodeBuckets)
+    {
+        const scalar* coordsb =
+            stk::mesh::field_data(coordsSTKFieldRef, *bucket);
+        savedCoords.insert(
+            savedCoords.end(), coordsb, coordsb + SPATIAL_DIM * bucket->size());
+    }
+
+    // coordinates only: the geometry fields keep the current mesh
+    for (label iZone = 0; iZone < this->nZones(); iZone++)
+    {
+        if (!this->zoneRef(iZone).meshMoving())
+        {
+            continue;
+        }
+
+        const auto& originalCoordsSTKFieldRef = *metaData.get_field<scalar>(
+            stk::topology::NODE_RANK, original_coordinates_ID);
+
+        stk::mesh::Selector selUniversalNodes =
+            metaData.universal_part() &
+            stk::mesh::selectUnion(this->zoneRef(iZone).interiorParts());
+
+        for (const stk::mesh::Bucket* bucket :
+             bulkData.get_buckets(stk::topology::NODE_RANK, selUniversalNodes))
+        {
+            const scalar* orgCoordsb =
+                stk::mesh::field_data(originalCoordsSTKFieldRef, *bucket);
+            scalar* coordsb = stk::mesh::field_data(coordsSTKFieldRef, *bucket);
+            std::copy(
+                orgCoordsb, orgCoordsb + SPATIAL_DIM * bucket->size(), coordsb);
+        }
+    }
+
+    if (scaleMesh_ && exportOriginal_)
+    {
+        std::array<scalar, SPATIAL_DIM> invScaleVector;
+        for (label i = 0; i < SPATIAL_DIM; i++)
+        {
+            invScaleVector[i] = 1.0 / scaleVector_[i];
+        }
+        scale(invScaleVector);
+    }
+
+    this->ioBrokerPtr()->write_output_mesh(resultsFileIndex);
+
+    // restore the current coordinates exactly
+    size_t offset = 0;
+    for (const stk::mesh::Bucket* bucket : nodeBuckets)
+    {
+        scalar* coordsb = stk::mesh::field_data(coordsSTKFieldRef, *bucket);
+        const size_t n = SPATIAL_DIM * bucket->size();
+        std::copy(savedCoords.begin() + offset,
+                  savedCoords.begin() + offset + n,
+                  coordsb);
+        offset += n;
+    }
+}
+
 void mesh::validateYamlAgainstExodus_(const YAML::Node& inputNode)
 {
     // Only master rank needs to perform validation

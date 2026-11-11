@@ -299,6 +299,9 @@ public:
 
     void write(size_t resultsFileIndex, scalar writeTime);
 
+    // writes the mesh definition with moving zones at original coordinates
+    void writeOutputMesh(size_t resultsFileIndex);
+
     // Access
 
     void setAnyZoneFrameRotating(bool state)
