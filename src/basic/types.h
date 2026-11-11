@@ -564,6 +564,7 @@ enum class boundaryConditionType
     specifiedDirection,            // specific to velocity
     staticPressure,                // specific to pressure
     averageStaticPressure,         // specific to pressure
+    windkesselPressure,            // specific to pressure
     totalPressure,                 // specific to pressure
     staticTemperature,             // specific to temperature
     totalTemperature,              // specific to temperature

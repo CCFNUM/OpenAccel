@@ -685,6 +685,7 @@ std::unordered_map<std::string, boundaryConditionType> boundaryConditionTypeMap{
     {"mass_flow_rate", boundaryConditionType::massFlowRate},
     {"static_pressure", boundaryConditionType::staticPressure},
     {"average_static_pressure", boundaryConditionType::averageStaticPressure},
+    {"windkessel_pressure", boundaryConditionType::windkesselPressure},
     {"total_pressure", boundaryConditionType::totalPressure},
     {"static_temperature", boundaryConditionType::staticTemperature},
     {"total_temperature", boundaryConditionType::totalTemperature},

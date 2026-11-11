@@ -156,6 +156,8 @@ void navierStokesAssembler::assembleElemTermsBoundary_(const domain* domain,
                                     case boundaryConditionType::staticPressure:
                                     case boundaryConditionType::
                                         averageStaticPressure:
+                                    case boundaryConditionType::
+                                        windkesselPressure:
                                         {
                                             assembleElemTermsBoundaryOutletSpecifiedPressure_(
                                                 domain, boundary, ctx);
