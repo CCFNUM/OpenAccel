@@ -17,6 +17,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <unordered_map>
+#include <stk_mesh/base/FieldParallel.hpp>
 
 namespace accel
 {
@@ -1498,6 +1499,34 @@ void maskedRegion::computeRingVelocities(const STKScalarField& U,
                 uTau * uPlus * tangential[d] / tangentialMagnitude;
         }
     }
+
+    auto& bulkData = realmPtr_->meshRef().bulkDataRef();
+
+    stk::mesh::copy_owned_to_shared(
+        bulkData,
+        {
+            normalXField,
+            normalYField,
+            normalZField,
+            wallYField,
+            refYField,
+            refUtField,
+            uTauField,
+            targetField
+        });
+
+    stk::mesh::communicate_field_data(
+        bulkData,
+        {
+            normalXField,
+            normalYField,
+            normalZField,
+            wallYField,
+            refYField,
+            refUtField,
+            uTauField,
+            targetField
+        });
 }
 
 void maskedRegion::reapplyVelocity(STKScalarField& U) const
