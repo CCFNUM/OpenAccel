@@ -5640,7 +5640,7 @@ void freeSurfaceFlowModel::updateVofCourantField(
 
     if (messager::parallel())
     {
-        stk::mesh::parallel_sum(bulkData, {vofCourantSTKFieldPtr_});
+        stk::mesh::communicate_field_data(bulkData, {vofCourantSTKFieldPtr_});
     }
 }
 
