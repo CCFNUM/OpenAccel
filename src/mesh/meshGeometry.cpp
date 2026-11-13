@@ -1364,6 +1364,12 @@ void mesh::updateDualNodalVolumeField_(stk::mesh::ConstPartVector interiorParts)
         }
     }
 
+    if (messager::parallel())
+    {
+        stk::mesh::communicate_field_data(bulkData,
+                                          {&dualNodalVolumeSTKFieldRef});
+    }
+
 #ifndef NDEBUG
     // Check for negative volumes in debug mode
     {
