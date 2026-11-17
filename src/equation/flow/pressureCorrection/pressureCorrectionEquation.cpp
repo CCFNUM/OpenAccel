@@ -189,6 +189,17 @@ void pressureCorrectionEquation::preTimeStep()
 {
     FOREACH_DOMAIN(model_->updatePressurePrevTimeField);
 
+    if (model_->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.linearFlowPredictor_)
+    {
+        for (const auto& domain : domainVector_)
+        {
+            model_->pRef().extrapolateFromPrevTimes(domain->index());
+            model_->pRef().synchronizeGhostedEntities(domain->index());
+        }
+    }
+
     robinNeumann_.preTimeStep();
 }
 

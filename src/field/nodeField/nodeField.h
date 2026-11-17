@@ -143,6 +143,9 @@ protected:
 
     scalar blendingFactorMax_ = 1.0; // maximum blending factor
 
+    // high-resolution without limiter: blending factor = max everywhere
+    bool unlimitedAdvection_ = false;
+
     scalar gradURF_ = 0.5625; // gradient under-relaxation
 
     // values of nodes at boundaries are corrected or conservative?
@@ -309,6 +312,9 @@ public:
     void restorePrevIterField(label iZone);
 
     void restorePrevTimeField(label iZone);
+
+    // current = 2 prev - prevprev (no-op without two time levels)
+    void extrapolateFromPrevTimes(label iZone);
 
     // Sub-field updates
 

@@ -127,6 +127,12 @@ nodeField<N, M>::nodeField(mesh* meshPtr,
                 .solverRef()
                 .solverControl_.expertParameters_.blendFactorMax_;
 
+        unlimitedAdvection_ =
+            this->meshRef()
+                .controlsRef()
+                .solverRef()
+                .solverControl_.expertParameters_.unlimitedAdvection_;
+
         // Update high-resolution blending coefficient field
         this->setupBlendingFactorField();
     }
@@ -1887,6 +1893,47 @@ void nodeField<N, M>::updatePrevTimeField(label iZone)
 }
 
 template <size_t N, size_t M>
+void nodeField<N, M>::extrapolateFromPrevTimes(label iZone)
+{
+    assert(this->isZoneSet(iZone));
+
+    if (prevTimeFieldPtr_ == nullptr ||
+        this->prevTimeRef().prevTimeFieldPtr_ == nullptr)
+    {
+        return;
+    }
+
+    auto& currentSTKFieldRef = this->stkFieldRef();
+    const auto& prevSTKFieldRef = this->prevTimeRef().stkFieldRef();
+    const auto& prevPrevSTKFieldRef =
+        this->prevTimeRef().prevTimeRef().stkFieldRef();
+
+    stk::mesh::Selector selAllNodes =
+        this->metaDataRef().universal_part() &
+        stk::mesh::selectUnion(
+            this->meshPtr()->zonePtr(iZone)->interiorParts());
+    stk::mesh::BucketVector const& nodeBuckets =
+        this->bulkDataRef().get_buckets(stk::topology::NODE_RANK, selAllNodes);
+    for (stk::mesh::BucketVector::const_iterator ib = nodeBuckets.begin();
+         ib != nodeBuckets.end();
+         ++ib)
+    {
+        stk::mesh::Bucket& b = **ib;
+        const stk::mesh::Bucket::size_type length = b.size();
+        scalar* valueb = stk::mesh::field_data(currentSTKFieldRef, b);
+        const scalar* p1 = stk::mesh::field_data(prevSTKFieldRef, b);
+        const scalar* p2 = stk::mesh::field_data(prevPrevSTKFieldRef, b);
+        for (stk::mesh::Bucket::size_type k = 0; k < length; ++k)
+        {
+            for (label i = 0; i < N; i++)
+            {
+                valueb[N * k + i] = 2.0 * p1[N * k + i] - p2[N * k + i];
+            }
+        }
+    }
+}
+
+template <size_t N, size_t M>
 void nodeField<N, M>::restorePrevIterField(label iZone)
 {
     assert(this->isZoneSet(iZone));
@@ -2319,6 +2366,14 @@ void nodeField<N, M>::updateBlendingFactorField(label iZone)
     this->blendingFactorRef().setToValue(
         std::vector<scalar>(N, blendingFactorMax_),
         this->meshPtr()->zonePtr(iZone)->interiorParts());
+
+    // unlimited second-order upwind: keep beta = blend factor max everywhere,
+    // skip the limiter and the beta relaxation
+    if (unlimitedAdvection_)
+    {
+        this->blendingFactorRef().synchronizeGhostedEntities(iZone);
+        return;
+    }
 
     //
     // Evaluate the blending factor

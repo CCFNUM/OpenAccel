@@ -18,6 +18,16 @@ bulkNavierStokesEquation::bulkNavierStokesEquation(realm* realm,
 
 void bulkNavierStokesEquation::setup()
 {
+    // TODO: linear flow predictor for free surface flows: the bulk pressure
+    // correction does not extrapolate p, and alpha is not extrapolated either
+    if (model_->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.linearFlowPredictor_)
+    {
+        errorMsg("linear_flow_predictor is not yet supported for free surface "
+                 "flows");
+    }
+
     // setup bulk fields
     navierStokesEquation::setup();
 
