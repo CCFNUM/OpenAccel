@@ -1196,6 +1196,19 @@ void controls::read(YAML::Node inputNode)
                     expertParameters["consistent"].template as<bool>();
             }
 
+            if (expertParameters["unlimited_advection"])
+            {
+                solver_.solverControl_.expertParameters_.unlimitedAdvection_ =
+                    expertParameters["unlimited_advection"].template as<bool>();
+            }
+
+            if (expertParameters["linear_flow_predictor"])
+            {
+                solver_.solverControl_.expertParameters_.linearFlowPredictor_ =
+                    expertParameters["linear_flow_predictor"]
+                        .template as<bool>();
+            }
+
             if (expertParameters["fractional_step_method"])
             {
                 solver_.solverControl_.expertParameters_.fractionalStepMethod_ =

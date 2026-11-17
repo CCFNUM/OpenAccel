@@ -230,6 +230,17 @@ void navierStokesEquation::preTimeStep()
 {
     FOREACH_DOMAIN(model_->updateVelocityPrevTimeField);
     FOREACH_DOMAIN(model_->updateDensityPrevTimeField);
+
+    if (model_->controlsRef()
+            .solverRef()
+            .solverControl_.expertParameters_.linearFlowPredictor_)
+    {
+        for (const auto& domain : domainVector_)
+        {
+            model_->URef().extrapolateFromPrevTimes(domain->index());
+            model_->URef().synchronizeGhostedEntities(domain->index());
+        }
+    }
 }
 
 void navierStokesEquation::setResidualScales_()

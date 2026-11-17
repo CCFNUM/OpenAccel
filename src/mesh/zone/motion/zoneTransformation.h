@@ -15,18 +15,18 @@ namespace accel
 
 struct translationDictionary
 {
-    utils::vector v_;
+    utils::vector v_ = utils::vector::Zero();
 };
 
 struct rotationDictionary
 {
-    scalar omega_;
+    scalar omega_ = 0.0;
 
-    utils::vector origin_;
+    utils::vector origin_ = utils::vector::Zero();
 
-    utils::vector axis_;
+    utils::vector axis_ = utils::vector::Zero();
 
-    utils::matrix coriolisMatrix_;
+    utils::matrix coriolisMatrix_ = utils::matrix::Zero();
 };
 
 // forward declaration

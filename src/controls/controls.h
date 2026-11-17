@@ -257,6 +257,12 @@ struct solverDictionary
             bool usePrescribedValueForGrad_ = false;
             bool falseMassAccumulation_ = true;
             bool fractionalStepMethod_ = false;
+            // linear-in-time predictor for U and p at the start of each
+            // timestep: phi = 2 phi^n - phi^(n-1) (along the node path)
+            bool linearFlowPredictor_ = false;
+            // high_resolution without limiter: beta = blend_factor_max
+            // everywhere (unlimited second-order upwind)
+            bool unlimitedAdvection_ = false;
             bool coriolisProductionTurbulence_ = false;
             bool bodyForceRedistribution_ = true;
             wallDistanceMethod wallDistanceMethod_ =
