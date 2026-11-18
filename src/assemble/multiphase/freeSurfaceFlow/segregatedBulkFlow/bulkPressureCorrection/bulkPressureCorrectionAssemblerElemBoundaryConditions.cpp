@@ -2033,7 +2033,6 @@ void bulkPressureCorrectionAssembler::
     std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -2045,7 +2044,6 @@ void bulkPressureCorrectionAssembler::
     scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -2062,10 +2060,9 @@ void bulkPressureCorrectionAssembler::
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_rhoBulk_elem;
     std::vector<scalar> ws_FOrig_elem;
-    std::vector<scalar> ws_scv_volume;
-    std::vector<scalar> ws_scv_weight;
-    std::vector<scalar> B_el(SPATIAL_DIM);
+    std::vector<scalar> B_el;
 
     // master element
     std::vector<scalar> ws_velocity_face_shape_function;
@@ -2076,6 +2073,9 @@ void bulkPressureCorrectionAssembler::
 
     // Get fields
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
+    const auto& rhoBulkSTKFieldRef = model_->rhoRef().stkFieldRef();
+    const bool balancedForce = model_->bodyForceTreatment(domain) ==
+                               bodyForceTreatmentType::balancedForce;
     const auto& alphaSTKFieldRef = model_->alphaRef(phaseIndex_).stkFieldRef();
     const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
@@ -2151,10 +2151,6 @@ void bulkPressureCorrectionAssembler::
             MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
-        MasterElement* meSCV =
-            MasterElementRepo::get_volume_master_element(theElemTopo);
-        const label numScvIp = meSCV->numIntPoints_;
-
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
@@ -2186,9 +2182,9 @@ void bulkPressureCorrectionAssembler::
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rhoBulk_elem.resize(nodesPerElement);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
-        ws_scv_volume.resize(numScvIp);
-        ws_scv_weight.resize(nodesPerElement);
+        B_el.resize(nodesPerElement * SPATIAL_DIM);
         ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -2211,6 +2207,7 @@ void bulkPressureCorrectionAssembler::
         scalar* p_FOrig = &ws_FOrig[0];
         scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
         scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_rhoBulk_elem = &ws_rhoBulk_elem[0];
         scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_velocity_face_shape_function =
             &ws_velocity_face_shape_function[0];
@@ -2306,6 +2303,8 @@ void bulkPressureCorrectionAssembler::
                 const scalar* Gjp_e =
                     stk::mesh::field_data(gradPSTKFieldRef, node);
                 const scalar* F_e = stk::mesh::field_data(FSTKFieldRef, node);
+                p_rhoBulk_elem[ni] =
+                    *stk::mesh::field_data(rhoBulkSTKFieldRef, node);
                 const scalar* FOrig_e =
                     stk::mesh::field_data(FOrigSTKFieldRef, node);
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -2316,61 +2315,9 @@ void bulkPressureCorrectionAssembler::
                 }
             }
 
-            // volume-weighted + vector harmonic for FOrig
-            {
-                scalar scv_error = 0.0;
-                meSCV->determinant(
-                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
-            }
-            // projection-based harmonic mean for FOrig
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] = 0.0;
-                for (label ni = 0; ni < nodesPerElement; ++ni)
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] *= invN;
-
-                scalar mag = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    mag += B_el[d] * B_el[d];
-                mag = std::sqrt(mag);
-
-                if (mag < SMALL)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = 0.0;
-                }
-                else
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        p_uhat[d] = B_el[d] / mag;
-
-                    scalar h = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += p_uhat[d] * p_FOrig_elem[d];
-                    h = std::max(h, 0.0);
-
-                    for (label ni = 1; ni < nodesPerElement; ++ni)
-                    {
-                        scalar dk = 0.0;
-                        for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk +=
-                                p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                        dk = std::max(dk, 0.0);
-                        if (h > 0.0)
-                            h = static_cast<scalar>(ni + 1) * dk * h /
-                                (static_cast<scalar>(ni) * dk + h);
-                        else
-                            h = 0.0;
-                    }
-
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * p_uhat[d];
-                }
-            }
+            // element body force seen by each node
+            model_->elementBodyForce(
+                theElemTopo, &p_coordinates[0], &p_FOrig_elem[0], &B_el[0]);
 
             //======================================
             // gather nodal data off of face
@@ -2486,24 +2433,26 @@ void bulkPressureCorrectionAssembler::
                         p_dpdxBip[j] = 0.0;
                         p_duBip[j] = 0.0;
                         p_duRhsBip[j] = 0.0;
-                        p_FOrigBip[j] = B_el[j];
+                        p_FOrigBip[j] =
+                            0.5 * (B_el[faceNodeOrdinals[localFaceNode] *
+                                            SPATIAL_DIM +
+                                        j] +
+                                   B_el[opposingNode * SPATIAL_DIM + j]);
 
-                        const scalar fFace =
-                            p_F[localFaceNode * SPATIAL_DIM + j];
-                        const scalar fOpp =
-                            p_F_elem[opposingNode * SPATIAL_DIM + j];
-                        p_FBip[j] =
-                            (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
-                            (std::abs(fFace) + std::abs(fOpp) + SMALL);
-
-                        // 2-node harmonic for Gpdx
-                        const scalar gFace =
-                            p_Gpdx[localFaceNode * SPATIAL_DIM + j];
-                        const scalar gOpp =
-                            p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
-                        p_GpdxBip[j] =
-                            (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
-                            (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                        // body force and pressure gradient of the face node and
+                        // the opposing node
+                        p_FBip[j] = model_->rhieChowNodalPair(
+                            p_F[localFaceNode * SPATIAL_DIM + j],
+                            p_F_elem[opposingNode * SPATIAL_DIM + j],
+                            p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                            p_rhoBulk_elem[opposingNode],
+                            balancedForce);
+                        p_GpdxBip[j] = model_->rhieChowNodalPair(
+                            p_Gpdx[localFaceNode * SPATIAL_DIM + j],
+                            p_Gpdx_elem[opposingNode * SPATIAL_DIM + j],
+                            p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                            p_rhoBulk_elem[opposingNode],
+                            balancedForce);
                     }
 
                     // interpolate to bip
@@ -2538,6 +2487,21 @@ void bulkPressureCorrectionAssembler::
                                 r_coord * p_coordinates[inn * SPATIAL_DIM + j];
                         }
                     }
+
+                    // balanced_force: body force at the boundary integration
+                    // point
+                    if (balancedForce)
+                        model_->balancedForceIp(
+                            domain,
+                            nodesPerElement,
+                            p_rhoBulk_elem,
+                            &p_FOrig_elem[0],
+                            &p_coordinates[0],
+                            &p_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                            &p_coordBip[0],
+                            faceNodeOrdinals[localFaceNode],
+                            opposingNode,
+                            &p_FOrigBip[0]);
 
                     // form dpdxBip
                     for (label ic = 0; ic < nodesPerElement; ++ic)
@@ -3289,7 +3253,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -3301,7 +3264,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -3318,10 +3280,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_rhoBulk_elem;
     std::vector<scalar> ws_FOrig_elem;
-    std::vector<scalar> ws_scv_volume;
-    std::vector<scalar> ws_scv_weight;
-    std::vector<scalar> B_el(SPATIAL_DIM);
+    std::vector<scalar> B_el;
 
     // master element
     std::vector<scalar> ws_velocity_face_shape_function;
@@ -3332,6 +3293,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
 
     // Get fields
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
+    const auto& rhoBulkSTKFieldRef = model_->rhoRef().stkFieldRef();
+    const bool balancedForce = model_->bodyForceTreatment(domain) ==
+                               bodyForceTreatmentType::balancedForce;
     const auto& alphaSTKFieldRef = model_->alphaRef(phaseIndex_).stkFieldRef();
     const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
@@ -3405,10 +3369,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
             MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
-        MasterElement* meSCV =
-            MasterElementRepo::get_volume_master_element(theElemTopo);
-        const label numScvIp = meSCV->numIntPoints_;
-
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
@@ -3440,9 +3400,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rhoBulk_elem.resize(nodesPerElement);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
-        ws_scv_volume.resize(numScvIp);
-        ws_scv_weight.resize(nodesPerElement);
+        B_el.resize(nodesPerElement * SPATIAL_DIM);
         ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -3465,6 +3425,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
         scalar* p_FOrig = &ws_FOrig[0];
         scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
         scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_rhoBulk_elem = &ws_rhoBulk_elem[0];
         scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_velocity_face_shape_function =
             &ws_velocity_face_shape_function[0];
@@ -3558,6 +3519,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                 const scalar* Gjp_e =
                     stk::mesh::field_data(gradPSTKFieldRef, node);
                 const scalar* F_e = stk::mesh::field_data(FSTKFieldRef, node);
+                p_rhoBulk_elem[ni] =
+                    *stk::mesh::field_data(rhoBulkSTKFieldRef, node);
                 const scalar* FOrig_e =
                     stk::mesh::field_data(FOrigSTKFieldRef, node);
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -3568,61 +3531,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                 }
             }
 
-            // volume-weighted + vector harmonic for FOrig
-            {
-                scalar scv_error = 0.0;
-                meSCV->determinant(
-                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
-            }
-            // projection-based harmonic mean for FOrig
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] = 0.0;
-                for (label ni = 0; ni < nodesPerElement; ++ni)
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] *= invN;
-
-                scalar mag = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    mag += B_el[d] * B_el[d];
-                mag = std::sqrt(mag);
-
-                if (mag < SMALL)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = 0.0;
-                }
-                else
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        p_uhat[d] = B_el[d] / mag;
-
-                    scalar h = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += p_uhat[d] * p_FOrig_elem[d];
-                    h = std::max(h, 0.0);
-
-                    for (label ni = 1; ni < nodesPerElement; ++ni)
-                    {
-                        scalar dk = 0.0;
-                        for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk +=
-                                p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                        dk = std::max(dk, 0.0);
-                        if (h > 0.0)
-                            h = static_cast<scalar>(ni + 1) * dk * h /
-                                (static_cast<scalar>(ni) * dk + h);
-                        else
-                            h = 0.0;
-                    }
-
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * p_uhat[d];
-                }
-            }
+            // element body force seen by each node
+            model_->elementBodyForce(
+                theElemTopo, &p_coordinates[0], &p_FOrig_elem[0], &B_el[0]);
 
             //======================================
             // gather nodal data off of face
@@ -3731,23 +3642,26 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
                     p_duRhsBip[j] = 0.0;
-                    p_FOrigBip[j] = B_el[j];
+                    p_FOrigBip[j] =
+                        0.5 *
+                        (B_el[faceNodeOrdinals[localFaceNode] * SPATIAL_DIM +
+                              j] +
+                         B_el[opposingNode * SPATIAL_DIM + j]);
 
-                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
-                    const scalar fOpp =
-                        p_F_elem[opposingNode * SPATIAL_DIM + j];
-                    p_FBip[j] =
-                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
-                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
-
-                    // 2-node harmonic for Gpdx
-                    const scalar gFace =
-                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
-                    const scalar gOpp =
-                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
-                    p_GpdxBip[j] =
-                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
-                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    // body force and pressure gradient of the face node and
+                    // the opposing node
+                    p_FBip[j] = model_->rhieChowNodalPair(
+                        p_F[localFaceNode * SPATIAL_DIM + j],
+                        p_F_elem[opposingNode * SPATIAL_DIM + j],
+                        p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                        p_rhoBulk_elem[opposingNode],
+                        balancedForce);
+                    p_GpdxBip[j] = model_->rhieChowNodalPair(
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j],
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j],
+                        p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                        p_rhoBulk_elem[opposingNode],
+                        balancedForce);
                 }
 
                 // interpolate to bip
@@ -3781,6 +3695,20 @@ void bulkPressureCorrectionAssembler::assembleElemTermsBoundaryOpening_(
                             r_coord * p_coordinates[inn * SPATIAL_DIM + j];
                     }
                 }
+
+                // balanced_force: body force at the boundary integration point
+                if (balancedForce)
+                    model_->balancedForceIp(
+                        domain,
+                        nodesPerElement,
+                        p_rhoBulk_elem,
+                        &p_FOrig_elem[0],
+                        &p_coordinates[0],
+                        &p_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                        &p_coordBip[0],
+                        faceNodeOrdinals[localFaceNode],
+                        opposingNode,
+                        &p_FOrigBip[0]);
 
                 // form dpdxBip
                 for (label ic = 0; ic < nodesPerElement; ++ic)
@@ -3936,7 +3864,6 @@ void bulkPressureCorrectionAssembler::
     std::vector<scalar> duRhsBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -3948,7 +3875,6 @@ void bulkPressureCorrectionAssembler::
     scalar* p_duRhsBip = &duRhsBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -3965,10 +3891,9 @@ void bulkPressureCorrectionAssembler::
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_rhoBulk_elem;
     std::vector<scalar> ws_FOrig_elem;
-    std::vector<scalar> ws_scv_volume;
-    std::vector<scalar> ws_scv_weight;
-    std::vector<scalar> B_el(SPATIAL_DIM);
+    std::vector<scalar> B_el;
 
     // master element
     std::vector<scalar> ws_velocity_face_shape_function;
@@ -3979,6 +3904,9 @@ void bulkPressureCorrectionAssembler::
 
     // Get fields
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
+    const auto& rhoBulkSTKFieldRef = model_->rhoRef().stkFieldRef();
+    const bool balancedForce = model_->bodyForceTreatment(domain) ==
+                               bodyForceTreatmentType::balancedForce;
     const auto& alphaSTKFieldRef = model_->alphaRef(phaseIndex_).stkFieldRef();
     const auto& pSTKFieldRef = model_->pRef().stkFieldRef();
     const auto& USTKFieldRef = model_->URef().stkFieldRef();
@@ -4054,10 +3982,6 @@ void bulkPressureCorrectionAssembler::
             MasterElementRepo::get_surface_master_element(theElemTopo);
         const label nodesPerElement = meSCS->nodesPerElement_;
 
-        MasterElement* meSCV =
-            MasterElementRepo::get_volume_master_element(theElemTopo);
-        const label numScvIp = meSCV->numIntPoints_;
-
         // face master element
         MasterElement* meFC = MasterElementRepo::get_surface_master_element(
             sideBucket.topology());
@@ -4089,9 +4013,9 @@ void bulkPressureCorrectionAssembler::
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rhoBulk_elem.resize(nodesPerElement);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
-        ws_scv_volume.resize(numScvIp);
-        ws_scv_weight.resize(nodesPerElement);
+        B_el.resize(nodesPerElement * SPATIAL_DIM);
         ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -4114,6 +4038,7 @@ void bulkPressureCorrectionAssembler::
         scalar* p_FOrig = &ws_FOrig[0];
         scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
         scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_rhoBulk_elem = &ws_rhoBulk_elem[0];
         scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_velocity_face_shape_function =
             &ws_velocity_face_shape_function[0];
@@ -4209,6 +4134,8 @@ void bulkPressureCorrectionAssembler::
                 const scalar* Gjp_e =
                     stk::mesh::field_data(gradPSTKFieldRef, node);
                 const scalar* F_e = stk::mesh::field_data(FSTKFieldRef, node);
+                p_rhoBulk_elem[ni] =
+                    *stk::mesh::field_data(rhoBulkSTKFieldRef, node);
                 const scalar* FOrig_e =
                     stk::mesh::field_data(FOrigSTKFieldRef, node);
                 for (label j = 0; j < SPATIAL_DIM; ++j)
@@ -4219,61 +4146,9 @@ void bulkPressureCorrectionAssembler::
                 }
             }
 
-            // volume-weighted + vector harmonic for FOrig
-            {
-                scalar scv_error = 0.0;
-                meSCV->determinant(
-                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
-            }
-            // projection-based harmonic mean for FOrig
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] = 0.0;
-                for (label ni = 0; ni < nodesPerElement; ++ni)
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] *= invN;
-
-                scalar mag = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    mag += B_el[d] * B_el[d];
-                mag = std::sqrt(mag);
-
-                if (mag < SMALL)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = 0.0;
-                }
-                else
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        p_uhat[d] = B_el[d] / mag;
-
-                    scalar h = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += p_uhat[d] * p_FOrig_elem[d];
-                    h = std::max(h, 0.0);
-
-                    for (label ni = 1; ni < nodesPerElement; ++ni)
-                    {
-                        scalar dk = 0.0;
-                        for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk +=
-                                p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                        dk = std::max(dk, 0.0);
-                        if (h > 0.0)
-                            h = static_cast<scalar>(ni + 1) * dk * h /
-                                (static_cast<scalar>(ni) * dk + h);
-                        else
-                            h = 0.0;
-                    }
-
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * p_uhat[d];
-                }
-            }
+            // element body force seen by each node
+            model_->elementBodyForce(
+                theElemTopo, &p_coordinates[0], &p_FOrig_elem[0], &B_el[0]);
 
             //======================================
             // gather nodal data off of face
@@ -4384,24 +4259,26 @@ void bulkPressureCorrectionAssembler::
                         p_dpdxBip[j] = 0.0;
                         p_duBip[j] = 0.0;
                         p_duRhsBip[j] = 0.0;
-                        p_FOrigBip[j] = B_el[j];
+                        p_FOrigBip[j] =
+                            0.5 * (B_el[faceNodeOrdinals[localFaceNode] *
+                                            SPATIAL_DIM +
+                                        j] +
+                                   B_el[opposingNode * SPATIAL_DIM + j]);
 
-                        const scalar fFace =
-                            p_F[localFaceNode * SPATIAL_DIM + j];
-                        const scalar fOpp =
-                            p_F_elem[opposingNode * SPATIAL_DIM + j];
-                        p_FBip[j] =
-                            (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
-                            (std::abs(fFace) + std::abs(fOpp) + SMALL);
-
-                        // 2-node harmonic for Gpdx
-                        const scalar gFace =
-                            p_Gpdx[localFaceNode * SPATIAL_DIM + j];
-                        const scalar gOpp =
-                            p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
-                        p_GpdxBip[j] =
-                            (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
-                            (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                        // body force and pressure gradient of the face node and
+                        // the opposing node
+                        p_FBip[j] = model_->rhieChowNodalPair(
+                            p_F[localFaceNode * SPATIAL_DIM + j],
+                            p_F_elem[opposingNode * SPATIAL_DIM + j],
+                            p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                            p_rhoBulk_elem[opposingNode],
+                            balancedForce);
+                        p_GpdxBip[j] = model_->rhieChowNodalPair(
+                            p_Gpdx[localFaceNode * SPATIAL_DIM + j],
+                            p_Gpdx_elem[opposingNode * SPATIAL_DIM + j],
+                            p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                            p_rhoBulk_elem[opposingNode],
+                            balancedForce);
                     }
 
                     // interpolate to bip
@@ -4436,6 +4313,21 @@ void bulkPressureCorrectionAssembler::
                                 r_coord * p_coordinates[inn * SPATIAL_DIM + j];
                         }
                     }
+
+                    // balanced_force: body force at the boundary integration
+                    // point
+                    if (balancedForce)
+                        model_->balancedForceIp(
+                            domain,
+                            nodesPerElement,
+                            p_rhoBulk_elem,
+                            &p_FOrig_elem[0],
+                            &p_coordinates[0],
+                            &p_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                            &p_coordBip[0],
+                            faceNodeOrdinals[localFaceNode],
+                            opposingNode,
+                            &p_FOrigBip[0]);
 
                     // form dpdxBip
                     for (label ic = 0; ic < nodesPerElement; ++ic)

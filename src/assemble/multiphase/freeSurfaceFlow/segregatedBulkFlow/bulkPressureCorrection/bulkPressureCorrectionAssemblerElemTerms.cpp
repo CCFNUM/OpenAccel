@@ -57,6 +57,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_coordinates;
     std::vector<scalar> ws_p;
     std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_rhoBulk;
     std::vector<scalar> ws_alpha;
     std::vector<scalar> ws_betaRho;
     std::vector<scalar> ws_gradRho;
@@ -67,8 +68,6 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_capPot;
     std::vector<scalar> ws_sk;
-    std::vector<scalar> ws_scv_volume;
-    std::vector<scalar> ws_scv_weight;
 
     // geometry related to populate
     std::vector<scalar> ws_scs_areav;
@@ -88,8 +87,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     std::vector<scalar> duRhsIp(SPATIAL_DIM);
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
-    std::vector<scalar> B_el(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
+    std::vector<scalar> B_el;
 
     // pointers to everyone...
     scalar* p_coordIp = &coordIp[0];
@@ -101,10 +99,11 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
     scalar* p_duRhsIp = &duRhsIp[0];
     scalar* p_FIp = &FIp[0];
     scalar* p_FOrigIp = &FOrigIp[0];
-    scalar* p_uhat = &uhat[0];
 
     // Get transport fields/side fields
     const auto& rhoSTKFieldRef = model_->rhoRef(phaseIndex_).stkFieldRef();
+    const bool balancedForce = model_->bodyForceTreatment(domain) ==
+                               bodyForceTreatmentType::balancedForce;
     const auto& betaRhoSTKFieldRef =
         model_->rhoRef(phaseIndex_).blendingFactorRef().stkFieldRef();
     const auto& gradRhoSTKFieldRef =
@@ -187,15 +186,11 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         // extract master elements
         MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
             elementBucket.topology());
-        MasterElement* meSCV = MasterElementRepo::get_volume_master_element(
-            elementBucket.topology());
 
         // extract master element specifics
         const label nodesPerElement = meSCS->nodesPerElement_;
         const label numScsIp = meSCS->numIntPoints_;
         const label* lrscv = meSCS->adjacentNodes();
-        const label numScvIp = meSCV->numIntPoints_;
-        const label* scvIpNodeMap = meSCV->ipNodeMap();
 
         // resize some things; matrix related
         const label lhsSize = nodesPerElement * nodesPerElement;
@@ -213,6 +208,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
         ws_p.resize(nodesPerElement);
         ws_rho.resize(nodesPerElement);
+        ws_rhoBulk.resize(nodesPerElement);
         ws_alpha.resize(nodesPerElement);
         ws_betaRho.resize(nodesPerElement);
         ws_gradRho.resize(nodesPerElement * SPATIAL_DIM);
@@ -221,10 +217,9 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         ws_duRhs.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
+        B_el.resize(nodesPerElement * SPATIAL_DIM);
         ws_capPot.resize(nodesPerElement);
         ws_sk.resize(nodesPerElement);
-        ws_scv_volume.resize(numScvIp);
-        ws_scv_weight.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
         ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
         ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
@@ -241,6 +236,7 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
         scalar* p_coordinates = &ws_coordinates[0];
         scalar* p_p = &ws_p[0];
         scalar* p_rho = &ws_rho[0];
+        scalar* p_rhoBulk = &ws_rhoBulk[0];
         scalar* p_alpha = &ws_alpha[0];
         scalar* p_betaRho = &ws_betaRho[0];
         scalar* p_gradRho = &ws_gradRho[0];
@@ -315,6 +311,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                 // gather scalars
                 p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
                 p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_rhoBulk[ni] = *stk::mesh::field_data(
+                    model_->rhoRef().stkFieldRef(), node);
                 p_alpha[ni] = *stk::mesh::field_data(alphaSTKFieldRef, node);
                 p_betaRho[ni] =
                     *stk::mesh::field_data(betaRhoSTKFieldRef, node);
@@ -376,81 +374,12 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
             meSCS->determinant(
                 1, &p_coordinates[0], &p_scs_areav[0], &scs_error);
 
-            // compute SCV volumes for volume-weighted element-centre averaging
-            {
-                scalar scv_error = 0.0;
-                meSCV->determinant(
-                    1, &p_coordinates[0], &ws_scv_volume[0], &scv_error);
-                scalar V_el = 0.0;
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    V_el += ws_scv_volume[ip];
-                }
-                const scalar invV_el = 1.0 / V_el;
-                for (label i = 0; i < nodesPerElement; ++i)
-                {
-                    ws_scv_weight[i] = 0.0;
-                }
-                for (label ip = 0; ip < numScvIp; ++ip)
-                {
-                    ws_scv_weight[scvIpNodeMap[ip]] +=
-                        ws_scv_volume[ip] * invV_el;
-                }
-            }
-
-            // projection-based harmonic mean of the non-ST body force
-            // (buoyancy); the CSF part is added below as grad(psi)
-            {
-                // Step 1: arithmetic mean direction
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] = 0.0;
-                for (label ni = 0; ni < nodesPerElement; ++ni)
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] += p_FOrig[ni * SPATIAL_DIM + d];
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    B_el[d] *= invN;
-
-                // Step 2: unit direction
-                scalar mag = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                    mag += B_el[d] * B_el[d];
-                mag = std::sqrt(mag);
-
-                if (mag < SMALL)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = 0.0;
-                }
-                else
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        p_uhat[d] = B_el[d] / mag;
-
-                    // Step 3: recursive harmonic of scalar projections
-                    scalar h = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        h += p_uhat[d] * p_FOrig[d];
-                    h = std::max(h, 0.0);
-
-                    for (label ni = 1; ni < nodesPerElement; ++ni)
-                    {
-                        scalar dk = 0.0;
-                        for (label d = 0; d < SPATIAL_DIM; ++d)
-                            dk += p_uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
-                        dk = std::max(dk, 0.0);
-                        if (h > 0.0)
-                            h = static_cast<scalar>(ni + 1) * dk * h /
-                                (static_cast<scalar>(ni) * dk + h);
-                        else
-                            h = 0.0;
-                    }
-
-                    // Step 4: result vector
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        B_el[d] = h * p_uhat[d];
-                }
-            }
+            // element body force (non-ST, buoyancy) seen by each node; the
+            // CSF part is added below as grad(psi)
+            model_->elementBodyForce(elementBucket.topology(),
+                                     &p_coordinates[0],
+                                     &p_FOrig[0],
+                                     &B_el[0]);
 
             // compute dndx for residual
             if (isPGradientShifted)
@@ -493,7 +422,8 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     p_dpdxIp[j] = 0.0;
                     p_duIp[j] = 0.0;
                     p_duRhsIp[j] = 0.0;
-                    p_FOrigIp[j] = B_el[j];
+                    p_FOrigIp[j] = 0.5 * (B_el[il * SPATIAL_DIM + j] +
+                                          B_el[ir * SPATIAL_DIM + j]);
                 }
 
                 // 2-node component-wise harmonic for FIp
@@ -546,6 +476,20 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     }
                 }
 
+                // balanced_force: body force at the integration point
+                if (balancedForce)
+                    model_->balancedForceIp(
+                        domain,
+                        nodesPerElement,
+                        p_rhoBulk,
+                        &p_FOrig[0],
+                        &p_coordinates[0],
+                        &p_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                        &p_coordIp[0],
+                        il,
+                        ir,
+                        &p_FOrigIp[0]);
+
                 // balanced CSF: FOrigIp += sigma*kappa_ip * compact
                 // grad(alpha), so it cancels grad p at equilibrium (const
                 // kappa)
@@ -560,6 +504,28 @@ void bulkPressureCorrectionAssembler::assembleElemTermsInterior_(
                     const scalar gR = p_Gpdx[SPATIAL_DIM * ir + j];
                     p_GpdxIp[j] = (std::abs(gL) * gR + gL * std::abs(gR)) /
                                   (std::abs(gL) + std::abs(gR) + SMALL);
+                }
+
+                // balanced_force: momentum-weighted interpolation of the nodal
+                // pressure gradient and body force, D_ip X_ip = sum_n N_n D_n
+                // X_n
+                if (balancedForce)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        scalar duGp = 0.0;
+                        scalar duF = 0.0;
+                        for (label ic = 0; ic < nodesPerElement; ++ic)
+                        {
+                            const scalar w =
+                                p_velocity_shape_function[offSetSF + ic] *
+                                p_duRhs[SPATIAL_DIM * ic + j];
+                            duGp += w * p_Gpdx[SPATIAL_DIM * ic + j];
+                            duF += w * p_F[SPATIAL_DIM * ic + j];
+                        }
+                        p_GpdxIp[j] = duGp / p_duRhsIp[j];
+                        p_FIp[j] = duF / p_duRhsIp[j];
+                    }
                 }
 
                 // assemble UDot

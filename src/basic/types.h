@@ -641,6 +641,19 @@ enum class gradientAveragingType
 
 gradientAveragingType convertGradientAveragingTypeFromString(std::string s);
 
+// Body force treatment of the free-surface model at the Rhie-Chow
+// integration points (free_surface_model: body_force_treatment)
+enum class bodyForceTreatmentType
+{
+    none,
+    harmonic,
+    balancedForce
+};
+
+bodyForceTreatmentType convertBodyForceTreatmentTypeFromString(std::string s);
+
+std::string toString(bodyForceTreatmentType t);
+
 // Where the viscous-work flux tau.U of the total-enthalpy equation is formed
 enum class viscousWorkType
 {

@@ -570,6 +570,18 @@ void domain::read_()
                                         .template as<std::string>());
                         }
 
+                        if (freeSurfaceModelBlock["body_force_treatment"])
+                        {
+                            multiphase_.freeSurfaceModel_.bodyForceTreatment_ =
+                                convertBodyForceTreatmentTypeFromString(
+                                    freeSurfaceModelBlock
+                                        ["body_force_treatment"]
+                                            .template as<std::string>());
+                            infoMsg("Body force treatment: " +
+                                    toString(*multiphase_.freeSurfaceModel_
+                                                  .bodyForceTreatment_));
+                        }
+
                         infoMsg("Volume fraction advection scheme: " +
                                 toString(multiphase_.freeSurfaceModel_
                                              .advectionScheme_));
