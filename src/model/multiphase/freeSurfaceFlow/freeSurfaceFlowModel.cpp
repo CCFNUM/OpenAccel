@@ -1361,6 +1361,43 @@ void freeSurfaceFlowModel::reconstructIpImbalance_(
                 rb[nR * iNode + nM + d] = R[d];
         }
     }
+
+    // fluid-solid interface nodes carry the solid velocity and only half a
+    // control volume, so the least-squares R there passes wall pressure
+    // oscillations on to the fluxes: they keep the nodal force, R = F - Gp
+    if (withForce)
+    {
+        const STKScalarField& GpRef = this->pRef().gradRef().stkFieldRef();
+        for (const interface* interf : domain->zonePtr()->interfacesRef())
+        {
+            if (!interf->isFluidSolidType())
+                continue;
+            stk::mesh::Selector sel =
+                metaData.universal_part() &
+                stk::mesh::selectUnion(
+                    interf->interfaceSideInfoPtr(domain->index())
+                        ->currentPartVec_);
+            for (auto* sideBucket :
+                 bulkData.get_buckets(metaData.side_rank(), sel))
+                for (stk::mesh::Bucket::size_type k = 0;
+                     k < sideBucket->size();
+                     ++k)
+                {
+                    stk::mesh::Entity const* nodes = sideBucket->begin_nodes(k);
+                    for (unsigned n = 0; n < sideBucket->num_nodes(k); ++n)
+                    {
+                        scalar* r = stk::mesh::field_data(*rcReconSTKFieldPtr_,
+                                                          nodes[n]);
+                        const scalar* FOrig = stk::mesh::field_data(
+                            *FOriginalSTKFieldPtr_, nodes[n]);
+                        const scalar* Gp =
+                            stk::mesh::field_data(GpRef, nodes[n]);
+                        for (label d = 0; d < SPATIAL_DIM; ++d)
+                            r[nM + d] = FOrig[d] - Gp[d];
+                    }
+                }
+        }
+    }
 }
 
 void freeSurfaceFlowModel::reconstructBodyForceImbalance_(
