@@ -61,8 +61,16 @@ bool segregatedFreeSurfaceFlowEquations::isConverged() const
 {
     bool converged = U_eq_->isConverged() && pCorr_eq_->isConverged();
 
-    // alpha residual (normalized by max-min = 1) may never reach the target
-    if (!this->controlsRef().bypassVolumeFractionConvergence())
+    // alpha residual (normalized by max-min = 1) may never reach the target;
+    // with volume_fraction_update: once_per_time_step alpha is not iterated
+    bool oncePerStep = false;
+    for (const auto& domain : domainVector_)
+    {
+        oncePerStep =
+            oncePerStep ||
+            domain->multiphase_.freeSurfaceModel_.volumeFractionOncePerStep_;
+    }
+    if (!this->controlsRef().bypassVolumeFractionConvergence() && !oncePerStep)
     {
         for (label iPhase = 0; iPhase < nPhases(); iPhase++)
         {
@@ -161,7 +169,22 @@ void segregatedFreeSurfaceFlowEquations::postInitialize()
 
 void segregatedFreeSurfaceFlowEquations::solve()
 {
+    // volume_fraction_update: once_per_time_step advects the volume fraction
+    // at the first outer iteration only, with the old-time mass flux (as
+    // interFoam); the outer iterations then converge momentum and pressure
+    // for that volume fraction. Damps free-surface waves much less than
+    // re-advecting it every iteration (fully implicit)
+    bool oncePerStep = false;
+    for (const auto& domain : domainVector_)
+    {
+        oncePerStep =
+            oncePerStep ||
+            domain->multiphase_.freeSurfaceModel_.volumeFractionOncePerStep_;
+    }
+    const bool solveAlpha = !oncePerStep || controlsRef().iter == 1;
+
     // solve volume fraction
+    if (solveAlpha)
     {
         for (label iPhase = 0; iPhase < nPhases(); iPhase++)
         {
@@ -211,7 +234,9 @@ void segregatedFreeSurfaceFlowEquations::solve()
                 alpha_eq_[iPhase]->postSolve();
             }
         }
+    }
 
+    {
         // bulk properties update
         FOREACH_DOMAIN(updateDensity);
         FOREACH_DOMAIN(updateDynamicViscosity);
