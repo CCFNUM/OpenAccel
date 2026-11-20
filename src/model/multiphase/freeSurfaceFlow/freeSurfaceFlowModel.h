@@ -72,8 +72,46 @@ public:
     // Body forces override (adds CSF surface tension after base class forces)
     void computeBodyForces(const std::shared_ptr<domain> domain) override;
 
-    // body force redistribution with harmonic density-weighted interpolation
+    // body force redistribution: harmonic or balanced_force
     void redistributeBodyForces(const std::shared_ptr<domain> domain) override;
+
+    // harmonic body force of one element seen by each of its nodes
+    void elementBodyForce(const stk::topology& topology,
+                          const scalar* coordinates,
+                          const scalar* F,
+                          scalar* B) const;
+
+    // nodal pressure gradient or body force of the two nodes of an ip:
+    // harmonic mean, or density-weighted for balanced_force
+    scalar rhieChowNodalPair(scalar vL,
+                             scalar vR,
+                             scalar rhoL,
+                             scalar rhoR,
+                             bool balancedForce) const;
+
+    // balanced_force: grad(p') from the same reconstruction as the
+    // momentum source
+    void reconstructPressureCorrectionGradient(const domain* domain);
+
+    // whether the domain has a fluid-solid interface
+    bool hasFluidSolidInterface(const domain* domain) const;
+
+    // body force treatment of a free-surface domain
+    bodyForceTreatmentType bodyForceTreatment(const domain* domain) const;
+
+    // balanced_force: body force at a Rhie-Chow integration point, gravity
+    // in balanced-force (face) form plus the other body forces of the nodes
+    // iA, iB
+    void balancedForceIp(const domain* domain,
+                         label nodesPerElement,
+                         const scalar* rho,
+                         const scalar* FOrig,
+                         const scalar* coordinates,
+                         const scalar* dndxIp,
+                         const scalar* coordIp,
+                         label iA,
+                         label iB,
+                         scalar* F) const;
 
     // methods (iPhase is global to the simulation)
 
@@ -205,6 +243,26 @@ protected:
     STKScalarField* curvDenSTKFieldPtr_ = nullptr;
     STKScalarField* curvAccumSTKFieldPtr_ = nullptr;
     STKScalarField* curvCntSTKFieldPtr_ = nullptr;
+
+    // balanced_force: scratch for the nodal reconstruction of the Rhie-Chow
+    // imbalance (SPATIAL_DIM^2 matrix + SPATIAL_DIM rhs per node)
+    STKScalarField* rcReconSTKFieldPtr_ = nullptr;
+
+    // balanced_force: nodal source of the first outer iteration of a step
+    STKScalarField* bfSourceSTKFieldPtr_ = nullptr;
+
+    // balanced_force: F := Gp + reconstruct(B_ip - grad(p)_ip)
+    void reconstructBodyForceImbalance_(const std::shared_ptr<domain> domain);
+
+    // balanced_force: nodal reconstruction of (force) - grad(p) at the ips
+    void reconstructIpImbalance_(const domain* domain,
+                                 const STKScalarField& pSTKFieldRef,
+                                 bool withForce);
+
+    void setFromReconstruction_(const domain* domain,
+                                STKScalarField* out,
+                                const STKScalarField* add,
+                                scalar sign);
 
     void initializeMassFlowRateInterior_(const std::shared_ptr<domain> domain,
                                          label iPhase) override;

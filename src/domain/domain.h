@@ -10,6 +10,7 @@
 
 // code
 #include "types.h"
+#include <optional>
 
 namespace accel
 {
@@ -67,6 +68,12 @@ struct multiphase
         label nAlphaCorrections_ = 1; // FCT outer corrections
         vofAdvectionSchemeType advectionScheme_ =
             vofAdvectionSchemeType::barthJespersen;
+        // body force treatment; unset: from expert_parameters
+        // body_force_redistribution (true: harmonic, false: none)
+        std::optional<bodyForceTreatmentType> bodyForceTreatment_;
+        // volume_fraction_update: once_per_time_step advects the volume
+        // fraction at the first outer iteration only (old-time mass flux)
+        bool volumeFractionOncePerStep_ = false;
     };
 
     bool homogeneous_ = true;

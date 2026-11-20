@@ -874,6 +874,32 @@ gradientAveragingType convertGradientAveragingTypeFromString(std::string s)
     return it->second;
 }
 
+// Body force treatment type
+
+std::unordered_map<std::string, bodyForceTreatmentType>
+    bodyForceTreatmentTypeMap{
+        {"none", bodyForceTreatmentType::none},
+        {"harmonic", bodyForceTreatmentType::harmonic},
+        {"balanced_force", bodyForceTreatmentType::balancedForce},
+    };
+
+bodyForceTreatmentType convertBodyForceTreatmentTypeFromString(std::string s)
+{
+    ::accel::tolower(s);
+    auto it = bodyForceTreatmentTypeMap.find(s);
+    if (it == bodyForceTreatmentTypeMap.end())
+        errorMsg("body force treatment '" + s + "' not available");
+    return it->second;
+}
+
+std::string toString(bodyForceTreatmentType t)
+{
+    for (const auto& kv : bodyForceTreatmentTypeMap)
+        if (kv.second == t)
+            return kv.first;
+    return "unknown";
+}
+
 // Viscous work type
 
 std::unordered_map<std::string, viscousWorkType> viscousWorkTypeMap{

@@ -223,6 +223,35 @@ freeSurfaceFlowModel::freeSurfaceFlowModel(realm* realm)
         }
     }
 
+    // balanced_force: scratch field for the nodal imbalance reconstruction
+    for (const auto& domain : realm->simulationRef().domainVector())
+    {
+        if (bodyForceTreatment(domain.get()) !=
+            bodyForceTreatmentType::balancedForce)
+        {
+            continue;
+        }
+        if (!rcReconSTKFieldPtr_)
+        {
+            rcReconSTKFieldPtr_ = &metaData.declare_field<scalar>(
+                stk::topology::NODE_RANK, "rc_imbalance_reconstruction");
+            bfSourceSTKFieldPtr_ = &metaData.declare_field<scalar>(
+                stk::topology::NODE_RANK, "balanced_force_source");
+        }
+        for (const stk::mesh::Part* part : domain->zonePtr()->interiorParts())
+        {
+            if (!rcReconSTKFieldPtr_->defined_on(*part))
+                stk::mesh::put_field_on_mesh(*rcReconSTKFieldPtr_,
+                                             *part,
+                                             SPATIAL_DIM * SPATIAL_DIM +
+                                                 SPATIAL_DIM,
+                                             nullptr);
+            if (!bfSourceSTKFieldPtr_->defined_on(*part))
+                stk::mesh::put_field_on_mesh(
+                    *bfSourceSTKFieldPtr_, *part, SPATIAL_DIM, nullptr);
+        }
+    }
+
     // setup interphase mass transfer (e.g. cavitation)
     setupMassTransfer_(realm);
 }
@@ -836,27 +865,32 @@ void freeSurfaceFlowModel::smoothField_(const std::shared_ptr<domain> domain,
 void freeSurfaceFlowModel::redistributeBodyForces(
     const std::shared_ptr<domain> domain)
 {
-    // Vector harmonic body force redistribution for free surface:
-    //
-    // For free surface flows, standard volume-weighted averaging smears
-    // the body force across the density interface, creating spurious pressure
-    // gradients and parasitic currents.
-    //
-    // Instead, we use a projection-based vector harmonic average:
-    //
-    // Step 1: Arithmetic mean direction, unit vector
-    // Step 2: Recursive harmonic mean of scalar projections onto unit vector
-    // Step 3: Result = harmonic_magnitude * unit_vector
-    //
-    // Step 4: Scatter the element-centre value back to all nodes,
-    // weighted by SCV volumes:
-    // F_node += B_el * V_scv_node
-    //
-    // Step 5: Normalize by dual nodal volume:
-    // F_node /= V_dual
-    if (this->controlsRef()
-            .solverRef()
-            .solverControl_.expertParameters_.bodyForceRedistribution_)
+    // harmonic: element body force scattered to the nodes by SCV volume;
+    // balanced_force: reconstruction of the ip imbalance (includes CSF)
+    const bodyForceTreatmentType treatment = bodyForceTreatment(domain.get());
+    if (treatment == bodyForceTreatmentType::balancedForce)
+    {
+        // with a fluid-solid interface, built at the first coupling
+        // iteration of a step and held through the coupling loop
+        const stk::mesh::PartVector& partVec =
+            domain->zonePtr()->interiorParts();
+        if (!hasFluidSolidInterface(domain.get()))
+        {
+            reconstructBodyForceImbalance_(domain);
+        }
+        else if (this->controlsRef().iter == 1)
+        {
+            reconstructBodyForceImbalance_(domain);
+            ops::copy<scalar>(FSTKFieldPtr_, bfSourceSTKFieldPtr_, partVec);
+        }
+        else
+        {
+            ops::copy<scalar>(bfSourceSTKFieldPtr_, FSTKFieldPtr_, partVec);
+        }
+        return;
+    }
+
+    if (treatment == bodyForceTreatmentType::harmonic)
     {
         auto& mesh = this->meshRef();
         stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
@@ -881,14 +915,7 @@ void freeSurfaceFlowModel::redistributeBodyForces(
         std::vector<scalar> ws_F;
         std::vector<scalar> ws_coordinates;
         std::vector<scalar> ws_scv_volume;
-
-        // Fixed-size workspace arrays (reused in inner loop)
-        std::vector<scalar> F_el(SPATIAL_DIM);
-        std::vector<scalar> uhat(SPATIAL_DIM);
-
-        // pointers to fixed-size arrays
-        scalar* p_F_el = &F_el[0];
-        scalar* p_uhat = &uhat[0];
+        std::vector<scalar> ws_F_el;
 
         // Define selectors
         stk::mesh::Selector selAllElements =
@@ -912,6 +939,7 @@ void freeSurfaceFlowModel::redistributeBodyForces(
             ws_F.resize(nodesPerElement * SPATIAL_DIM);
             ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
             ws_scv_volume.resize(numScvIp);
+            ws_F_el.resize(nodesPerElement * SPATIAL_DIM);
 
             // Loop over elements in bucket
             for (stk::mesh::Bucket::size_type k = 0; k < nElementsPerBucket;
@@ -942,81 +970,14 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                 meSCV->determinant(
                     1, &ws_coordinates[0], &ws_scv_volume[0], &scv_error);
 
-                // projection-based harmonic mean
-                // Step 1: arithmetic mean direction
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_F_el[d] = 0.0;
-                }
-                for (label ni = 0; ni < numNodes; ++ni)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        p_F_el[d] += ws_F[ni * SPATIAL_DIM + d];
-                    }
-                }
-                const scalar invN = 1.0 / static_cast<scalar>(numNodes);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_F_el[d] *= invN;
-                }
+                // element body force seen by each node
+                elementBodyForce(elementBucket.topology(),
+                                 &ws_coordinates[0],
+                                 &ws_F[0],
+                                 &ws_F_el[0]);
 
-                // Step 2: unit direction
-                scalar mag = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    mag += p_F_el[d] * p_F_el[d];
-                }
-                mag = std::sqrt(mag);
-
-                if (mag < SMALL)
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                        p_F_el[d] = 0.0;
-                }
-                else
-                {
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        p_uhat[d] = p_F_el[d] / mag;
-                    }
-
-                    // Step 3: recursive harmonic of scalar projections
-                    scalar h = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        h += p_uhat[d] * ws_F[d];
-                    }
-                    h = std::max(h, 0.0);
-
-                    for (label ni = 1; ni < numNodes; ++ni)
-                    {
-                        scalar dk = 0.0;
-                        for (label d = 0; d < SPATIAL_DIM; ++d)
-                        {
-                            dk += p_uhat[d] * ws_F[ni * SPATIAL_DIM + d];
-                        }
-                        dk = std::max(dk, 0.0);
-                        if (h > 0.0)
-                        {
-                            h = static_cast<scalar>(ni + 1) * dk * h /
-                                (static_cast<scalar>(ni) * dk + h);
-                        }
-                        else
-                        {
-                            h = 0.0;
-                        }
-                    }
-
-                    // Step 4: result vector
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        p_F_el[d] = h * p_uhat[d];
-                    }
-                }
-
-                // Scatter element-centre value back to nodes weighted by
-                // SCV volumes: F_node += B_el * V_scv
+                // Scatter the element body force of each node to the node,
+                // weighted by SCV volumes: F_node += B_el,node * V_scv
                 for (label ip = 0; ip < numScvIp; ++ip)
                 {
                     const label nn = ipNodeMap[ip];
@@ -1028,7 +989,7 @@ void freeSurfaceFlowModel::redistributeBodyForces(
 
                     for (label d = 0; d < SPATIAL_DIM; ++d)
                     {
-                        F_node[d] += p_F_el[d] * scV;
+                        F_node[d] += ws_F_el[nn * SPATIAL_DIM + d] * scV;
                     }
                 }
             }
@@ -1096,6 +1057,596 @@ void freeSurfaceFlowModel::redistributeBodyForces(
                 for (label d = 0; d < SPATIAL_DIM; ++d)
                     Fb[SPATIAL_DIM * in + d] +=
                         skb[in] * gradAlphab[SPATIAL_DIM * in + d];
+        }
+    }
+}
+
+void freeSurfaceFlowModel::reconstructIpImbalance_(
+    const domain* domain,
+    const STKScalarField& pSTKFieldRef,
+    bool withForce)
+{
+    // Nodal reconstruction of the integration-point imbalance X_ip = F_ip -
+    // grad(p)_ip, R_n = [sum A A^T/|A|]^-1 sum A (X_ip . A)/|A| (OpenFOAM
+    // fvc::reconstruct); R_n = 0 exactly at hydrostatic rest
+    auto& mesh = this->meshRef();
+    stk::mesh::BulkData& bulkData = mesh.bulkDataRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    const stk::mesh::PartVector& partVec = domain->zonePtr()->interiorParts();
+    constexpr label nM = SPATIAL_DIM * SPATIAL_DIM;
+    constexpr label nR = nM + SPATIAL_DIM;
+
+    ops::zero(rcReconSTKFieldPtr_, partVec);
+
+    const auto& coordinatesRef = *metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, this->getCoordinatesID_(domain));
+    const auto* capPotSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_potential");
+    const auto* sigKappaSTKFieldPtr = metaData.get_field<scalar>(
+        stk::topology::NODE_RANK, "capillary_sigma_kappa");
+    const bool balancedST = withForce && capPotSTKFieldPtr != nullptr &&
+                            sigKappaSTKFieldPtr != nullptr;
+    const bool isUShifted = this->URef().isShifted();
+    const bool isPGradientShifted = this->pRef().isGradientShifted();
+
+    std::vector<scalar> ws_coordinates, ws_p, ws_FOrig, ws_areav, ws_dndx,
+        ws_deriv, ws_det_j, ws_shape, ws_capPot, ws_sk, ws_rho, ws_cshape;
+
+    stk::mesh::Selector selAllElements =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+    stk::mesh::BucketVector const& elementBuckets =
+        bulkData.get_buckets(stk::topology::ELEMENT_RANK, selAllElements);
+    for (auto ib = elementBuckets.begin(); ib != elementBuckets.end(); ++ib)
+    {
+        stk::mesh::Bucket& elementBucket = **ib;
+        MasterElement* meSCS = MasterElementRepo::get_surface_master_element(
+            elementBucket.topology());
+        const label nodesPerElement = meSCS->nodesPerElement_;
+        const label numScsIp = meSCS->numIntPoints_;
+        const label* lrscv = meSCS->adjacentNodes();
+
+        ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
+        ws_p.resize(nodesPerElement);
+        ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
+        ws_areav.resize(numScsIp * SPATIAL_DIM);
+        ws_dndx.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
+        ws_deriv.resize(SPATIAL_DIM * numScsIp * nodesPerElement);
+        ws_det_j.resize(numScsIp);
+        ws_shape.resize(numScsIp * nodesPerElement);
+        ws_capPot.resize(nodesPerElement);
+        ws_sk.resize(nodesPerElement);
+        ws_rho.resize(nodesPerElement);
+        ws_cshape.resize(numScsIp * nodesPerElement);
+        meSCS->shape_fcn(&ws_cshape[0]);
+        if (isUShifted)
+            meSCS->shifted_shape_fcn(&ws_shape[0]);
+        else
+            meSCS->shape_fcn(&ws_shape[0]);
+
+        for (stk::mesh::Bucket::size_type k = 0; k < elementBucket.size(); ++k)
+        {
+            stk::mesh::Entity const* nodeRels = elementBucket.begin_nodes(k);
+            for (label ni = 0; ni < nodesPerElement; ++ni)
+            {
+                stk::mesh::Entity node = nodeRels[ni];
+                const scalar* coords =
+                    stk::mesh::field_data(coordinatesRef, node);
+                const scalar* FOrig =
+                    stk::mesh::field_data(*FOriginalSTKFieldPtr_, node);
+                for (label d = 0; d < SPATIAL_DIM; ++d)
+                {
+                    ws_coordinates[ni * SPATIAL_DIM + d] = coords[d];
+                    ws_FOrig[ni * SPATIAL_DIM + d] = FOrig[d];
+                }
+                ws_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
+                ws_rho[ni] =
+                    *stk::mesh::field_data(this->rhoRef().stkFieldRef(), node);
+                if (balancedST)
+                {
+                    ws_capPot[ni] =
+                        *stk::mesh::field_data(*capPotSTKFieldPtr, node);
+                    ws_sk[ni] =
+                        *stk::mesh::field_data(*sigKappaSTKFieldPtr, node);
+                }
+            }
+
+            scalar err = 0.0;
+            meSCS->determinant(1, &ws_coordinates[0], &ws_areav[0], &err);
+            if (isPGradientShifted)
+                meSCS->shifted_grad_op(1,
+                                       &ws_coordinates[0],
+                                       &ws_dndx[0],
+                                       &ws_deriv[0],
+                                       &ws_det_j[0],
+                                       &err);
+            else
+                meSCS->grad_op(1,
+                               &ws_coordinates[0],
+                               &ws_dndx[0],
+                               &ws_deriv[0],
+                               &ws_det_j[0],
+                               &err);
+
+            for (label ip = 0; ip < numScsIp; ++ip)
+            {
+                const label il = lrscv[2 * ip];
+                const label ir = lrscv[2 * ip + 1];
+
+                // imbalance at the integration point, exactly as the
+                // Rhie-Chow flux forms it
+                scalar X[SPATIAL_DIM];
+                scalar skIp = 0.0;
+                for (label ic = 0; ic < nodesPerElement; ++ic)
+                    if (balancedST)
+                        skIp += ws_shape[ip * nodesPerElement + ic] * ws_sk[ic];
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    scalar dpdx = 0.0;
+                    scalar dadx = 0.0;
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                    {
+                        const scalar dn =
+                            ws_dndx[SPATIAL_DIM * nodesPerElement * ip +
+                                    ic * SPATIAL_DIM + j];
+                        dpdx += dn * ws_p[ic];
+                        if (balancedST)
+                            dadx += dn * ws_capPot[ic];
+                    }
+                    X[j] = skIp * dadx - dpdx;
+                }
+                if (withForce)
+                {
+                    scalar xIp[SPATIAL_DIM] = {};
+                    for (label ic = 0; ic < nodesPerElement; ++ic)
+                        for (label d = 0; d < SPATIAL_DIM; ++d)
+                            xIp[d] += ws_cshape[ip * nodesPerElement + ic] *
+                                      ws_coordinates[ic * SPATIAL_DIM + d];
+                    scalar Fb[SPATIAL_DIM];
+                    balancedForceIp(
+                        domain,
+                        nodesPerElement,
+                        &ws_rho[0],
+                        &ws_FOrig[0],
+                        &ws_coordinates[0],
+                        &ws_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                        xIp,
+                        il,
+                        ir,
+                        Fb);
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        X[j] += Fb[j];
+                }
+
+                const scalar* A = &ws_areav[ip * SPATIAL_DIM];
+                scalar magA = 0.0;
+                scalar XA = 0.0;
+                for (label j = 0; j < SPATIAL_DIM; ++j)
+                {
+                    magA += A[j] * A[j];
+                    XA += X[j] * A[j];
+                }
+                magA = std::sqrt(magA);
+                const scalar invMagA = 1.0 / (magA + SMALL);
+
+                for (const label n : {il, ir})
+                {
+                    scalar* r = stk::mesh::field_data(*rcReconSTKFieldPtr_,
+                                                      nodeRels[n]);
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                    {
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                            r[i * SPATIAL_DIM + j] += A[i] * A[j] * invMagA;
+                        r[nM + i] += A[i] * XA * invMagA;
+                    }
+                }
+            }
+        }
+    }
+
+    // wall, symmetry and fluid-solid interface faces carry no flux relative
+    // to the (moving) wall: they add A A^T/|A| and nothing to the right-hand
+    // side, as the boundary faces in OpenFOAM's reconstruct
+    const auto& exposedAreaVecSTKFieldRef = *metaData.get_field<scalar>(
+        metaData.side_rank(), this->getExposedAreaVectorID_(domain));
+    auto addNoFluxFaces = [&](const stk::mesh::PartVector& parts)
+    {
+        stk::mesh::Selector selAllSides =
+            metaData.universal_part() & stk::mesh::selectUnion(parts);
+        stk::mesh::BucketVector const& sideBuckets =
+            bulkData.get_buckets(metaData.side_rank(), selAllSides);
+        for (auto ib = sideBuckets.begin(); ib != sideBuckets.end(); ++ib)
+        {
+            stk::mesh::Bucket& sideBucket = **ib;
+            MasterElement* meFC = MasterElementRepo::get_surface_master_element(
+                sideBucket.topology());
+            const label numScsBip = meFC->numIntPoints_;
+            const label* faceIpNodeMap = meFC->ipNodeMap();
+            for (stk::mesh::Bucket::size_type k = 0; k < sideBucket.size(); ++k)
+            {
+                const scalar* areaVec = stk::mesh::field_data(
+                    exposedAreaVecSTKFieldRef, sideBucket, k);
+                stk::mesh::Entity const* sideNodes = sideBucket.begin_nodes(k);
+                for (label ip = 0; ip < numScsBip; ++ip)
+                {
+                    const scalar* A = &areaVec[ip * SPATIAL_DIM];
+                    scalar magA = 0.0;
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        magA += A[j] * A[j];
+                    magA = std::sqrt(magA);
+                    scalar* r = stk::mesh::field_data(
+                        *rcReconSTKFieldPtr_, sideNodes[faceIpNodeMap[ip]]);
+                    for (label i = 0; i < SPATIAL_DIM; ++i)
+                        for (label j = 0; j < SPATIAL_DIM; ++j)
+                            r[i * SPATIAL_DIM + j] +=
+                                A[i] * A[j] / (magA + SMALL);
+                }
+            }
+        }
+    };
+    for (label iBoundary = 0; iBoundary < domain->zonePtr()->nBoundaries();
+         ++iBoundary)
+    {
+        const auto& boundary = domain->zonePtr()->boundaryRef(iBoundary);
+        if (boundary.type() == boundaryPhysicalType::wall ||
+            boundary.type() == boundaryPhysicalType::symmetry)
+        {
+            addNoFluxFaces(boundary.parts());
+        }
+    }
+    for (const interface* interf : domain->zonePtr()->interfacesRef())
+    {
+        if (interf->isFluidSolidType())
+        {
+            addNoFluxFaces(
+                interf->interfaceSideInfoPtr(domain->index())->currentPartVec_);
+        }
+    }
+
+    if (messager::parallel())
+    {
+        stk::mesh::communicate_field_data(bulkData, {rcReconSTKFieldPtr_});
+    }
+
+    // R from the small SPATIAL_DIM x SPATIAL_DIM system, stored in place
+    stk::mesh::Selector selAllNodes =
+        metaData.universal_part() & stk::mesh::selectUnion(partVec);
+    stk::mesh::BucketVector const& nodeBuckets =
+        bulkData.get_buckets(stk::topology::NODE_RANK, selAllNodes);
+    for (auto ib = nodeBuckets.begin(); ib != nodeBuckets.end(); ++ib)
+    {
+        stk::mesh::Bucket& nodeBucket = **ib;
+        scalar* rb = stk::mesh::field_data(*rcReconSTKFieldPtr_, nodeBucket);
+        for (stk::mesh::Bucket::size_type iNode = 0; iNode < nodeBucket.size();
+             ++iNode)
+        {
+            scalar M[nM];
+            scalar R[SPATIAL_DIM];
+            for (label i = 0; i < nM; ++i)
+                M[i] = rb[nR * iNode + i];
+            for (label i = 0; i < SPATIAL_DIM; ++i)
+                R[i] = rb[nR * iNode + nM + i];
+
+            // Gaussian elimination with partial pivoting (2x2 / 3x3)
+            for (label c = 0; c < SPATIAL_DIM; ++c)
+            {
+                label piv = c;
+                for (label r = c + 1; r < SPATIAL_DIM; ++r)
+                    if (std::abs(M[r * SPATIAL_DIM + c]) >
+                        std::abs(M[piv * SPATIAL_DIM + c]))
+                        piv = r;
+                if (piv != c)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        std::swap(M[c * SPATIAL_DIM + j],
+                                  M[piv * SPATIAL_DIM + j]);
+                    std::swap(R[c], R[piv]);
+                }
+                for (label r = c + 1; r < SPATIAL_DIM; ++r)
+                {
+                    const scalar f =
+                        M[r * SPATIAL_DIM + c] / M[c * SPATIAL_DIM + c];
+                    for (label j = c; j < SPATIAL_DIM; ++j)
+                        M[r * SPATIAL_DIM + j] -= f * M[c * SPATIAL_DIM + j];
+                    R[r] -= f * R[c];
+                }
+            }
+            for (label c = SPATIAL_DIM - 1; c >= 0; --c)
+            {
+                for (label j = c + 1; j < SPATIAL_DIM; ++j)
+                    R[c] -= M[c * SPATIAL_DIM + j] * R[j];
+                R[c] /= M[c * SPATIAL_DIM + c];
+            }
+
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+                rb[nR * iNode + nM + d] = R[d];
+        }
+    }
+
+    // fluid-solid interface nodes carry the solid velocity and only half a
+    // control volume, so the least-squares R there passes wall pressure
+    // oscillations on to the fluxes: they keep the nodal force, R = F - Gp
+    if (withForce)
+    {
+        const STKScalarField& GpRef = this->pRef().gradRef().stkFieldRef();
+        for (const interface* interf : domain->zonePtr()->interfacesRef())
+        {
+            if (!interf->isFluidSolidType())
+                continue;
+            stk::mesh::Selector sel =
+                metaData.universal_part() &
+                stk::mesh::selectUnion(
+                    interf->interfaceSideInfoPtr(domain->index())
+                        ->currentPartVec_);
+            for (auto* sideBucket :
+                 bulkData.get_buckets(metaData.side_rank(), sel))
+                for (stk::mesh::Bucket::size_type k = 0;
+                     k < sideBucket->size();
+                     ++k)
+                {
+                    stk::mesh::Entity const* nodes = sideBucket->begin_nodes(k);
+                    for (unsigned n = 0; n < sideBucket->num_nodes(k); ++n)
+                    {
+                        scalar* r = stk::mesh::field_data(*rcReconSTKFieldPtr_,
+                                                          nodes[n]);
+                        const scalar* FOrig = stk::mesh::field_data(
+                            *FOriginalSTKFieldPtr_, nodes[n]);
+                        const scalar* Gp =
+                            stk::mesh::field_data(GpRef, nodes[n]);
+                        for (label d = 0; d < SPATIAL_DIM; ++d)
+                            r[nM + d] = FOrig[d] - Gp[d];
+                    }
+                }
+        }
+    }
+}
+
+void freeSurfaceFlowModel::reconstructBodyForceImbalance_(
+    const std::shared_ptr<domain> domain)
+{
+    // momentum source F - Gp := R, the reconstruction of B_ip - grad(p)_ip
+    reconstructIpImbalance_(domain.get(), this->pRef().stkFieldRef(), true);
+    setFromReconstruction_(
+        domain.get(), FSTKFieldPtr_, this->pRef().gradRef().stkFieldPtr(), 1.0);
+}
+
+void freeSurfaceFlowModel::reconstructPressureCorrectionGradient(
+    const domain* domain)
+{
+    // grad(p') := reconstruction of grad(p')_ip, as the momentum source, so
+    // that the velocity correction uses the same operator as the predictor
+    reconstructIpImbalance_(domain, this->pCorrRef().stkFieldRef(), false);
+    setFromReconstruction_(
+        domain, this->pCorrRef().gradRef().stkFieldPtr(), nullptr, -1.0);
+}
+
+void freeSurfaceFlowModel::setFromReconstruction_(const domain* domain,
+                                                  STKScalarField* out,
+                                                  const STKScalarField* add,
+                                                  scalar sign)
+{
+    // out = add + sign * R
+    auto& mesh = this->meshRef();
+    stk::mesh::MetaData& metaData = mesh.metaDataRef();
+    constexpr label nM = SPATIAL_DIM * SPATIAL_DIM;
+    constexpr label nR = nM + SPATIAL_DIM;
+    stk::mesh::Selector selAllNodes =
+        metaData.universal_part() &
+        stk::mesh::selectUnion(domain->zonePtr()->interiorParts());
+    for (auto* bucket :
+         mesh.bulkDataRef().get_buckets(stk::topology::NODE_RANK, selAllNodes))
+    {
+        scalar* ob = stk::mesh::field_data(*out, *bucket);
+        const scalar* ab = add ? stk::mesh::field_data(*add, *bucket) : nullptr;
+        const scalar* rb = stk::mesh::field_data(*rcReconSTKFieldPtr_, *bucket);
+        for (stk::mesh::Bucket::size_type iNode = 0; iNode < bucket->size();
+             ++iNode)
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+                ob[SPATIAL_DIM * iNode + d] =
+                    (ab ? ab[SPATIAL_DIM * iNode + d] : 0.0) +
+                    sign * rb[nR * iNode + nM + d];
+    }
+}
+
+void freeSurfaceFlowModel::balancedForceIp(const domain* domain,
+                                           label nodesPerElement,
+                                           const scalar* rho,
+                                           const scalar* FOrig,
+                                           const scalar* coordinates,
+                                           const scalar* dndxIp,
+                                           const scalar* coordIp,
+                                           label iA,
+                                           label iB,
+                                           scalar* F) const
+{
+    // Body force at a Rhie-Chow integration point: gravity in balanced-force
+    // form grad((rho - rho_ref) g.x) - (g.x) grad(rho), with the same
+    // shape-function derivatives as grad(p), plus the mean of the other body
+    // forces of the nodes iA, iB
+    const bool buoyant = domain->buoyancy_.option_ == buoyancyOption::buoyant &&
+                         domain->buoyancy_.model_ == buoyancyModel::full;
+    const auto& g = domain->buoyancy_.gravity_;
+    const scalar rhoRef = domain->buoyancy_.referenceDensity_;
+
+    for (label j = 0; j < SPATIAL_DIM; ++j)
+    {
+        F[j] =
+            0.5 * (FOrig[iA * SPATIAL_DIM + j] + FOrig[iB * SPATIAL_DIM + j]);
+        if (buoyant)
+        {
+            F[j] -= 0.5 * (rho[iA] + rho[iB] - 2.0 * rhoRef) * g[j];
+        }
+    }
+    if (!buoyant)
+    {
+        return;
+    }
+
+    // g.x multiplying grad(rho) is taken at the element centroid, not at the
+    // integration point: grad(rho) is one vector per element row, so an
+    // element-constant g.x keeps grad(p) = F solvable at rest on skewed cells
+    // (sub-control surfaces at different heights with a vertical normal)
+    (void)coordIp;
+    scalar gxIp = 0.0;
+    for (label ic = 0; ic < nodesPerElement; ++ic)
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+            gxIp += g[d] * coordinates[ic * SPATIAL_DIM + d];
+    gxIp /= nodesPerElement;
+    for (label j = 0; j < SPATIAL_DIM; ++j)
+    {
+        scalar dphi = 0.0;
+        scalar drho = 0.0;
+        for (label ic = 0; ic < nodesPerElement; ++ic)
+        {
+            scalar gx = 0.0;
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+                gx += g[d] * coordinates[ic * SPATIAL_DIM + d];
+            const scalar dn = dndxIp[ic * SPATIAL_DIM + j];
+            dphi += dn * (rho[ic] - rhoRef) * gx;
+            drho += dn * rho[ic];
+        }
+        F[j] += dphi - gxIp * drho;
+    }
+}
+
+bool freeSurfaceFlowModel::hasFluidSolidInterface(const domain* domain) const
+{
+    for (const interface* interf : domain->zonePtr()->interfacesRef())
+    {
+        if (interf->isFluidSolidType())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bodyForceTreatmentType
+freeSurfaceFlowModel::bodyForceTreatment(const domain* domain) const
+{
+    // free_surface_model: body_force_treatment; without it the pre-existing
+    // expert_parameters: body_force_redistribution (true: harmonic)
+    const auto& t = domain->multiphase_.freeSurfaceModel_.bodyForceTreatment_;
+    if (t)
+    {
+        return *t;
+    }
+    return this->controlsRef()
+                   .solverRef()
+                   .solverControl_.expertParameters_.bodyForceRedistribution_
+               ? bodyForceTreatmentType::harmonic
+               : bodyForceTreatmentType::none;
+}
+
+scalar freeSurfaceFlowModel::rhieChowNodalPair(scalar vL,
+                                               scalar vR,
+                                               scalar rhoL,
+                                               scalar rhoR,
+                                               bool balancedForce) const
+{
+    if (balancedForce)
+    {
+        // density-weighted interpolation (Bartholomew et al. 2018, eq. 92)
+        return (vL / rhoL + vR / rhoR) / (1.0 / rhoL + 1.0 / rhoR);
+    }
+
+    return (std::abs(vL) * vR + vL * std::abs(vR)) /
+           (std::abs(vL) + std::abs(vR) + SMALL);
+}
+
+void freeSurfaceFlowModel::elementBodyForce(const stk::topology& topology,
+                                            const scalar* coordinates,
+                                            const scalar* F,
+                                            scalar* B) const
+{
+    // Body force of an element seen by each of its nodes (node-major): the
+    // projection-based harmonic mean of F, the same for all nodes
+    MasterElement* meSCV =
+        MasterElementRepo::get_volume_master_element(topology);
+    const label nodesPerElement = meSCV->nodesPerElement_;
+
+    // projection-based harmonic mean, the same for all nodes
+    scalar B_el[SPATIAL_DIM];
+
+    // Step 1: arithmetic mean direction
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        B_el[d] = 0.0;
+    }
+    for (label ni = 0; ni < nodesPerElement; ++ni)
+    {
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            B_el[d] += F[ni * SPATIAL_DIM + d];
+        }
+    }
+    const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        B_el[d] *= invN;
+    }
+
+    // Step 2: unit direction
+    scalar mag = 0.0;
+    for (label d = 0; d < SPATIAL_DIM; ++d)
+    {
+        mag += B_el[d] * B_el[d];
+    }
+    mag = std::sqrt(mag);
+
+    if (mag < SMALL)
+    {
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            B_el[d] = 0.0;
+        }
+    }
+    else
+    {
+        scalar uhat[SPATIAL_DIM];
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            uhat[d] = B_el[d] / mag;
+        }
+
+        // Step 3: recursive harmonic of scalar projections
+        scalar h = 0.0;
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            h += uhat[d] * F[d];
+        }
+        h = std::max(h, 0.0);
+
+        for (label ni = 1; ni < nodesPerElement; ++ni)
+        {
+            scalar dk = 0.0;
+            for (label d = 0; d < SPATIAL_DIM; ++d)
+            {
+                dk += uhat[d] * F[ni * SPATIAL_DIM + d];
+            }
+            dk = std::max(dk, 0.0);
+            if (h > 0.0)
+            {
+                h = static_cast<scalar>(ni + 1) * dk * h /
+                    (static_cast<scalar>(ni) * dk + h);
+            }
+            else
+            {
+                h = 0.0;
+            }
+        }
+
+        // Step 4: result vector
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            B_el[d] = h * uhat[d];
+        }
+    }
+
+    for (label n = 0; n < nodesPerElement; ++n)
+    {
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+        {
+            B[n * SPATIAL_DIM + d] = B_el[d];
         }
     }
 }
@@ -6450,6 +7001,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     std::vector<scalar> ws_coordinates;
     std::vector<scalar> ws_p;
     std::vector<scalar> ws_rho;
+    std::vector<scalar> ws_rhoBulk;
     std::vector<scalar> ws_betaRho;
     std::vector<scalar> ws_gradRho;
     std::vector<scalar> ws_F;
@@ -6473,8 +7025,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     std::vector<scalar> coordIp(SPATIAL_DIM);
     std::vector<scalar> FIp(SPATIAL_DIM);
     std::vector<scalar> FOrigIp(SPATIAL_DIM);
-    std::vector<scalar> B_el(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
+    std::vector<scalar> B_el;
 
     // pointers to everyone...
     scalar* p_uIp = &uIp[0];
@@ -6484,12 +7035,13 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
     scalar* p_coordIp = &coordIp[0];
     scalar* p_FIp = &FIp[0];
     scalar* p_FOrigIp = &FOrigIp[0];
-    scalar* p_uhat = &uhat[0];
 
     // Get pressure diffusivity coefficient field and others
     const auto& USTKFieldRef = this->URef().stkFieldRef();
     const auto& pSTKFieldRef = this->pRef().stkFieldRef();
     const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const bool balancedForce = bodyForceTreatment(domain.get()) ==
+                               bodyForceTreatmentType::balancedForce;
     const auto& betaRhoSTKFieldRef = rhoField.blendingFactorRef().stkFieldRef();
     const auto& gradRhoSTKFieldRef = rhoField.gradRef().stkFieldRef();
     const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
@@ -6559,10 +7111,12 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
         ws_coordinates.resize(nodesPerElement * SPATIAL_DIM);
         ws_p.resize(nodesPerElement);
         ws_rho.resize(nodesPerElement);
+        ws_rhoBulk.resize(nodesPerElement);
         ws_betaRho.resize(nodesPerElement);
         ws_gradRho.resize(nodesPerElement * SPATIAL_DIM);
         ws_F.resize(nodesPerElement * SPATIAL_DIM);
         ws_FOrig.resize(nodesPerElement * SPATIAL_DIM);
+        B_el.resize(nodesPerElement * SPATIAL_DIM);
         ws_capPot.resize(nodesPerElement);
         ws_sk.resize(nodesPerElement);
         ws_scs_areav.resize(numScsIp * SPATIAL_DIM);
@@ -6579,6 +7133,7 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
         scalar* p_coordinates = &ws_coordinates[0];
         scalar* p_p = &ws_p[0];
         scalar* p_rho = &ws_rho[0];
+        scalar* p_rhoBulk = &ws_rhoBulk[0];
         scalar* p_betaRho = &ws_betaRho[0];
         scalar* p_gradRho = &ws_gradRho[0];
         scalar* p_F = &ws_F[0];
@@ -6636,6 +7191,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                 // gather scalars
                 p_p[ni] = *stk::mesh::field_data(pSTKFieldRef, node);
                 p_rho[ni] = *stk::mesh::field_data(rhoSTKFieldRef, node);
+                p_rhoBulk[ni] =
+                    *stk::mesh::field_data(this->rhoRef().stkFieldRef(), node);
                 p_betaRho[ni] =
                     *stk::mesh::field_data(betaRhoSTKFieldRef, node);
 
@@ -6693,74 +7250,11 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                                &scs_error);
             }
 
-            // projection-based harmonic mean of FOrig
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                B_el[d] = 0.0;
-            }
-            for (label ni = 0; ni < nodesPerElement; ++ni)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] += p_FOrig[ni * SPATIAL_DIM + d];
-                }
-            }
-
-            {
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] *= invN;
-                }
-            }
-            scalar mag = 0.0;
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                mag += B_el[d] * B_el[d];
-            }
-            mag = std::sqrt(mag);
-            if (mag < SMALL)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = 0.0;
-                }
-            }
-            else
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_uhat[d] = B_el[d] / mag;
-                }
-                scalar h = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    h += p_uhat[d] * p_FOrig[d];
-                }
-                h = std::max(h, 0.0);
-                for (label ni = 1; ni < nodesPerElement; ++ni)
-                {
-                    scalar dk = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        dk += p_uhat[d] * p_FOrig[ni * SPATIAL_DIM + d];
-                    }
-                    dk = std::max(dk, 0.0);
-                    if (h > 0.0)
-                    {
-                        h = static_cast<scalar>(ni + 1) * dk * h /
-                            (static_cast<scalar>(ni) * dk + h);
-                    }
-                    else
-                    {
-                        h = 0.0;
-                    }
-                }
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = h * p_uhat[d];
-                }
-            }
+            // element body force seen by each node
+            elementBodyForce(elementBucket.topology(),
+                             &p_coordinates[0],
+                             &p_FOrig[0],
+                             &B_el[0]);
 
             for (label ip = 0; ip < numScsIp; ++ip)
             {
@@ -6779,7 +7273,8 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                     p_uIp[j] = 0.0;
                     p_dpdxIp[j] = 0.0;
                     p_duIp[j] = 0.0;
-                    p_FOrigIp[j] = B_el[j];
+                    p_FOrigIp[j] = 0.5 * (B_el[il * SPATIAL_DIM + j] +
+                                          B_el[ir * SPATIAL_DIM + j]);
 
                     // pressure gradient interpolation: harmonic for Gpdx
                     const scalar gL = p_Gpdx[il * SPATIAL_DIM + j];
@@ -6828,6 +7323,41 @@ void freeSurfaceFlowModel::updateMassFlowRateInterior_(
                         // use coordinates shape functions
                         p_coordIp[j] +=
                             r_coord * p_coordinates[SPATIAL_DIM * ic + j];
+                    }
+                }
+
+                // balanced_force: body force at the integration point
+                if (balancedForce)
+                    balancedForceIp(domain.get(),
+                                    nodesPerElement,
+                                    p_rhoBulk,
+                                    p_FOrig,
+                                    p_coordinates,
+                                    &p_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                                    p_coordIp,
+                                    il,
+                                    ir,
+                                    p_FOrigIp);
+
+                // balanced_force: momentum-weighted interpolation of the nodal
+                // pressure gradient and body force, D_ip X_ip = sum_n N_n D_n
+                // X_n
+                if (balancedForce)
+                {
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                    {
+                        scalar duGp = 0.0;
+                        scalar duF = 0.0;
+                        for (label ic = 0; ic < nodesPerElement; ++ic)
+                        {
+                            const scalar w =
+                                p_velocity_shape_function[offSetSF + ic] *
+                                p_du[SPATIAL_DIM * ic + j];
+                            duGp += w * p_Gpdx[SPATIAL_DIM * ic + j];
+                            duF += w * p_F[SPATIAL_DIM * ic + j];
+                        }
+                        p_GpdxIp[j] = duGp / p_duIp[j];
+                        p_FIp[j] = duF / p_duIp[j];
                     }
                 }
 
@@ -7524,7 +8054,6 @@ void freeSurfaceFlowModel::
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -7534,7 +8063,6 @@ void freeSurfaceFlowModel::
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -7547,10 +8075,11 @@ void freeSurfaceFlowModel::
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_rhoBulk_elem;
     std::vector<scalar> ws_FOrig_elem;
     std::vector<scalar> ws_capPot;
     std::vector<scalar> ws_sk;
-    std::vector<scalar> B_el(SPATIAL_DIM);
+    std::vector<scalar> B_el;
 
     // master element
     std::vector<scalar> ws_face_shape_function;
@@ -7560,6 +8089,9 @@ void freeSurfaceFlowModel::
 
     // Get fields
     const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const auto& rhoBulkSTKFieldRef = rhoRef().stkFieldRef();
+    const bool balancedForce = bodyForceTreatment(domain.get()) ==
+                               bodyForceTreatmentType::balancedForce;
     const auto& pSTKFieldRef = this->pRef().stkFieldRef();
     const auto& nodalSidePSTKFieldRef =
         this->pRef().nodeSideFieldRef().stkFieldRef();
@@ -7651,7 +8183,9 @@ void freeSurfaceFlowModel::
         ws_det_j.resize(numScsBip);
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rhoBulk_elem.resize(nodesPerElement);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        B_el.resize(nodesPerElement * SPATIAL_DIM);
 
         // pointers
         scalar* p_coordinates = &ws_coordinates[0];
@@ -7670,6 +8204,7 @@ void freeSurfaceFlowModel::
         scalar* p_dndx = &ws_dndx[0];
         scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
         scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_rhoBulk_elem = &ws_rhoBulk_elem[0];
         scalar* p_FOrig_elem = &ws_FOrig_elem[0];
 
         // Always use trilinear (standard) shape functions for coordinates
@@ -7737,6 +8272,8 @@ void freeSurfaceFlowModel::
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
                 scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
                 const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                p_rhoBulk_elem[ni] =
+                    *stk::mesh::field_data(rhoBulkSTKFieldRef, node);
                 const scalar* FOrig_e =
                     stk::mesh::field_data(*FOrigSTKFieldPtr, node);
                 const label offSet = ni * SPATIAL_DIM;
@@ -7749,73 +8286,9 @@ void freeSurfaceFlowModel::
                 }
             }
 
-            // projection-based harmonic mean of FOrig
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                B_el[d] = 0.0;
-            }
-            for (label ni = 0; ni < nodesPerElement; ++ni)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                }
-            }
-            {
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] *= invN;
-                }
-            }
-            scalar mag = 0.0;
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                mag += B_el[d] * B_el[d];
-            }
-            mag = std::sqrt(mag);
-            if (mag < SMALL)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = 0.0;
-                }
-            }
-            else
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_uhat[d] = B_el[d] / mag;
-                }
-                scalar h = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    h += p_uhat[d] * p_FOrig_elem[d];
-                }
-                h = std::max(h, 0.0);
-                for (label ni = 1; ni < nodesPerElement; ++ni)
-                {
-                    scalar dk = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                    }
-                    dk = std::max(dk, 0.0);
-                    if (h > 0.0)
-                    {
-                        h = static_cast<scalar>(ni + 1) * dk * h /
-                            (static_cast<scalar>(ni) * dk + h);
-                    }
-                    else
-                    {
-                        h = 0.0;
-                    }
-                }
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = h * p_uhat[d];
-                }
-            }
+            // element body force seen by each node
+            elementBodyForce(
+                theElemTopo, &p_coordinates[0], &p_FOrig_elem[0], &B_el[0]);
 
             //======================================
             // gather nodal data off of face
@@ -7898,24 +8371,27 @@ void freeSurfaceFlowModel::
                 {
                     p_coordBip[j] = 0.0;
                     p_uBip[j] = 0.0;
-                    // pressure gradient: harmonic for Gpdx
-                    const scalar gFace =
-                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
-                    const scalar gOpp =
-                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
-                    p_GpdxBip[j] =
-                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
-                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    // pressure gradient and body force of the face node and
+                    // the opposing node
+                    p_GpdxBip[j] = rhieChowNodalPair(
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j],
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j],
+                        p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                        p_rhoBulk_elem[opposingNode],
+                        balancedForce);
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
-                    // body force: harmonic for F
-                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
-                    const scalar fOpp =
-                        p_F_elem[opposingNode * SPATIAL_DIM + j];
-                    p_FBip[j] =
-                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
-                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                    p_FOrigBip[j] = B_el[j];
+                    p_FBip[j] = rhieChowNodalPair(
+                        p_F[localFaceNode * SPATIAL_DIM + j],
+                        p_F_elem[opposingNode * SPATIAL_DIM + j],
+                        p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                        p_rhoBulk_elem[opposingNode],
+                        balancedForce);
+                    p_FOrigBip[j] =
+                        0.5 *
+                        (B_el[faceNodeOrdinals[localFaceNode] * SPATIAL_DIM +
+                              j] +
+                         B_el[opposingNode * SPATIAL_DIM + j]);
                 }
 
                 // interpolate to bip
@@ -7942,6 +8418,19 @@ void freeSurfaceFlowModel::
                         p_duBip[j] += r * p_du[icNdim + j];
                     }
                 }
+
+                // balanced_force: body force at the boundary integration point
+                if (balancedForce)
+                    balancedForceIp(domain.get(),
+                                    nodesPerElement,
+                                    p_rhoBulk_elem,
+                                    p_FOrig_elem,
+                                    p_coordinates,
+                                    &p_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                                    p_coordBip,
+                                    faceNodeOrdinals[localFaceNode],
+                                    opposingNode,
+                                    p_FOrigBip);
 
                 // form dpdxBip
                 for (label ic = 0; ic < nodesPerElement; ++ic)
@@ -8007,7 +8496,6 @@ void freeSurfaceFlowModel::
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -8017,7 +8505,6 @@ void freeSurfaceFlowModel::
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -8030,10 +8517,11 @@ void freeSurfaceFlowModel::
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_rhoBulk_elem;
     std::vector<scalar> ws_FOrig_elem;
     std::vector<scalar> ws_capPot;
     std::vector<scalar> ws_sk;
-    std::vector<scalar> B_el(SPATIAL_DIM);
+    std::vector<scalar> B_el;
 
     // master element
     std::vector<scalar> ws_face_shape_function;
@@ -8043,6 +8531,9 @@ void freeSurfaceFlowModel::
 
     // Get fields
     const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const auto& rhoBulkSTKFieldRef = rhoRef().stkFieldRef();
+    const bool balancedForce = bodyForceTreatment(domain.get()) ==
+                               bodyForceTreatmentType::balancedForce;
     const auto& pSTKFieldRef = this->pRef().stkFieldRef();
     const auto& USTKFieldRef = this->URef().stkFieldRef();
     const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
@@ -8131,7 +8622,9 @@ void freeSurfaceFlowModel::
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rhoBulk_elem.resize(nodesPerElement);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        B_el.resize(nodesPerElement * SPATIAL_DIM);
         ws_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -8150,6 +8643,7 @@ void freeSurfaceFlowModel::
         scalar* p_FOrig = &ws_FOrig[0];
         scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
         scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_rhoBulk_elem = &ws_rhoBulk_elem[0];
         scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_face_shape_function = &ws_face_shape_function[0];
         scalar* p_coordinate_face_shape_function =
@@ -8225,6 +8719,8 @@ void freeSurfaceFlowModel::
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
                 scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
                 const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                p_rhoBulk_elem[ni] =
+                    *stk::mesh::field_data(rhoBulkSTKFieldRef, node);
                 const scalar* FOrig_e =
                     stk::mesh::field_data(*FOrigSTKFieldPtr, node);
                 const label offSet = ni * SPATIAL_DIM;
@@ -8237,73 +8733,9 @@ void freeSurfaceFlowModel::
                 }
             }
 
-            // projection-based harmonic mean of FOrig
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                B_el[d] = 0.0;
-            }
-            for (label ni = 0; ni < nodesPerElement; ++ni)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                }
-            }
-            {
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] *= invN;
-                }
-            }
-            scalar mag = 0.0;
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                mag += B_el[d] * B_el[d];
-            }
-            mag = std::sqrt(mag);
-            if (mag < SMALL)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = 0.0;
-                }
-            }
-            else
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_uhat[d] = B_el[d] / mag;
-                }
-                scalar h = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    h += p_uhat[d] * p_FOrig_elem[d];
-                }
-                h = std::max(h, 0.0);
-                for (label ni = 1; ni < nodesPerElement; ++ni)
-                {
-                    scalar dk = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                    }
-                    dk = std::max(dk, 0.0);
-                    if (h > 0.0)
-                    {
-                        h = static_cast<scalar>(ni + 1) * dk * h /
-                            (static_cast<scalar>(ni) * dk + h);
-                    }
-                    else
-                    {
-                        h = 0.0;
-                    }
-                }
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = h * p_uhat[d];
-                }
-            }
+            // element body force seen by each node
+            elementBodyForce(
+                theElemTopo, &p_coordinates[0], &p_FOrig_elem[0], &B_el[0]);
 
             //======================================
             // gather nodal data off of face
@@ -8390,24 +8822,27 @@ void freeSurfaceFlowModel::
                 {
                     p_coordBip[j] = 0.0;
                     p_uBip[j] = 0.0;
-                    // pressure gradient: harmonic for Gpdx
-                    const scalar gFace =
-                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
-                    const scalar gOpp =
-                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
-                    p_GpdxBip[j] =
-                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
-                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    // pressure gradient and body force of the face node and
+                    // the opposing node
+                    p_GpdxBip[j] = rhieChowNodalPair(
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j],
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j],
+                        p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                        p_rhoBulk_elem[opposingNode],
+                        balancedForce);
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
-                    // body force: harmonic for F
-                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
-                    const scalar fOpp =
-                        p_F_elem[opposingNode * SPATIAL_DIM + j];
-                    p_FBip[j] =
-                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
-                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                    p_FOrigBip[j] = B_el[j];
+                    p_FBip[j] = rhieChowNodalPair(
+                        p_F[localFaceNode * SPATIAL_DIM + j],
+                        p_F_elem[opposingNode * SPATIAL_DIM + j],
+                        p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                        p_rhoBulk_elem[opposingNode],
+                        balancedForce);
+                    p_FOrigBip[j] =
+                        0.5 *
+                        (B_el[faceNodeOrdinals[localFaceNode] * SPATIAL_DIM +
+                              j] +
+                         B_el[opposingNode * SPATIAL_DIM + j]);
                 }
 
                 // interpolate to bip
@@ -8433,6 +8868,19 @@ void freeSurfaceFlowModel::
                         p_duBip[j] += r * p_du[icNdim + j];
                     }
                 }
+
+                // balanced_force: body force at the boundary integration point
+                if (balancedForce)
+                    balancedForceIp(domain.get(),
+                                    nodesPerElement,
+                                    p_rhoBulk_elem,
+                                    p_FOrig_elem,
+                                    p_coordinates,
+                                    &p_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                                    p_coordBip,
+                                    faceNodeOrdinals[localFaceNode],
+                                    opposingNode,
+                                    p_FOrigBip);
 
                 // form dpdxBip
                 for (label ic = 0; ic < nodesPerElement; ++ic)
@@ -8497,7 +8945,6 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     std::vector<scalar> duBip(SPATIAL_DIM);
     std::vector<scalar> FBip(SPATIAL_DIM);
     std::vector<scalar> FOrigBip(SPATIAL_DIM);
-    std::vector<scalar> uhat(SPATIAL_DIM);
 
     // pointers to fixed values
     scalar* p_coordBip = &coordBip[0];
@@ -8507,7 +8954,6 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     scalar* p_duBip = &duBip[0];
     scalar* p_FBip = &FBip[0];
     scalar* p_FOrigBip = &FOrigBip[0];
-    scalar* p_uhat = &uhat[0];
 
     // nodal fields to gather
     std::vector<scalar> ws_coordinates;
@@ -8520,10 +8966,11 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
     std::vector<scalar> ws_FOrig;
     std::vector<scalar> ws_Gpdx_elem;
     std::vector<scalar> ws_F_elem;
+    std::vector<scalar> ws_rhoBulk_elem;
     std::vector<scalar> ws_FOrig_elem;
     std::vector<scalar> ws_capPot;
     std::vector<scalar> ws_sk;
-    std::vector<scalar> B_el(SPATIAL_DIM);
+    std::vector<scalar> B_el;
 
     // master element
     std::vector<scalar> ws_face_shape_function;
@@ -8533,6 +8980,9 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
 
     // Get fields
     const auto& rhoSTKFieldRef = rhoField.stkFieldRef();
+    const auto& rhoBulkSTKFieldRef = rhoRef().stkFieldRef();
+    const bool balancedForce = bodyForceTreatment(domain.get()) ==
+                               bodyForceTreatmentType::balancedForce;
     const auto& pSTKFieldRef = this->pRef().stkFieldRef();
     const auto& USTKFieldRef = this->URef().stkFieldRef();
     const auto& gradPSTKFieldRef = this->pRef().gradRef().stkFieldRef();
@@ -8619,7 +9069,9 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         ws_FOrig.resize(nodesPerSide * SPATIAL_DIM);
         ws_Gpdx_elem.resize(nodesPerElement * SPATIAL_DIM);
         ws_F_elem.resize(nodesPerElement * SPATIAL_DIM);
+        ws_rhoBulk_elem.resize(nodesPerElement);
         ws_FOrig_elem.resize(nodesPerElement * SPATIAL_DIM);
+        B_el.resize(nodesPerElement * SPATIAL_DIM);
         ws_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_coordinate_face_shape_function.resize(numScsBip * nodesPerSide);
         ws_dndx.resize(SPATIAL_DIM * numScsBip * nodesPerElement);
@@ -8638,6 +9090,7 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
         scalar* p_FOrig = &ws_FOrig[0];
         scalar* p_Gpdx_elem = &ws_Gpdx_elem[0];
         scalar* p_F_elem = &ws_F_elem[0];
+        scalar* p_rhoBulk_elem = &ws_rhoBulk_elem[0];
         scalar* p_FOrig_elem = &ws_FOrig_elem[0];
         scalar* p_face_shape_function = &ws_face_shape_function[0];
         scalar* p_coordinate_face_shape_function =
@@ -8711,6 +9164,8 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                 scalar* coords = stk::mesh::field_data(coordsSTKFieldRef, node);
                 scalar* Gjp_e = stk::mesh::field_data(gradPSTKFieldRef, node);
                 const scalar* F_e = stk::mesh::field_data(*FSTKFieldPtr, node);
+                p_rhoBulk_elem[ni] =
+                    *stk::mesh::field_data(rhoBulkSTKFieldRef, node);
                 const scalar* FOrig_e =
                     stk::mesh::field_data(*FOrigSTKFieldPtr, node);
                 const label offSet = ni * SPATIAL_DIM;
@@ -8723,73 +9178,9 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                 }
             }
 
-            // projection-based harmonic mean of FOrig
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                B_el[d] = 0.0;
-            }
-            for (label ni = 0; ni < nodesPerElement; ++ni)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] += p_FOrig_elem[ni * SPATIAL_DIM + d];
-                }
-            }
-            {
-                const scalar invN = 1.0 / static_cast<scalar>(nodesPerElement);
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] *= invN;
-                }
-            }
-            scalar mag = 0.0;
-            for (label d = 0; d < SPATIAL_DIM; ++d)
-            {
-                mag += B_el[d] * B_el[d];
-            }
-            mag = std::sqrt(mag);
-            if (mag < SMALL)
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = 0.0;
-                }
-            }
-            else
-            {
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    p_uhat[d] = B_el[d] / mag;
-                }
-                scalar h = 0.0;
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    h += p_uhat[d] * p_FOrig_elem[d];
-                }
-                h = std::max(h, 0.0);
-                for (label ni = 1; ni < nodesPerElement; ++ni)
-                {
-                    scalar dk = 0.0;
-                    for (label d = 0; d < SPATIAL_DIM; ++d)
-                    {
-                        dk += p_uhat[d] * p_FOrig_elem[ni * SPATIAL_DIM + d];
-                    }
-                    dk = std::max(dk, 0.0);
-                    if (h > 0.0)
-                    {
-                        h = static_cast<scalar>(ni + 1) * dk * h /
-                            (static_cast<scalar>(ni) * dk + h);
-                    }
-                    else
-                    {
-                        h = 0.0;
-                    }
-                }
-                for (label d = 0; d < SPATIAL_DIM; ++d)
-                {
-                    B_el[d] = h * p_uhat[d];
-                }
-            }
+            // element body force seen by each node
+            elementBodyForce(
+                theElemTopo, &p_coordinates[0], &p_FOrig_elem[0], &B_el[0]);
 
             //======================================
             // gather nodal data off of face
@@ -8866,24 +9257,27 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                 {
                     p_coordBip[j] = 0.0;
                     p_uBip[j] = 0.0;
-                    // pressure gradient: harmonic for Gpdx
-                    const scalar gFace =
-                        p_Gpdx[localFaceNode * SPATIAL_DIM + j];
-                    const scalar gOpp =
-                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j];
-                    p_GpdxBip[j] =
-                        (std::abs(gFace) * gOpp + gFace * std::abs(gOpp)) /
-                        (std::abs(gFace) + std::abs(gOpp) + SMALL);
+                    // pressure gradient and body force of the face node and
+                    // the opposing node
+                    p_GpdxBip[j] = rhieChowNodalPair(
+                        p_Gpdx[localFaceNode * SPATIAL_DIM + j],
+                        p_Gpdx_elem[opposingNode * SPATIAL_DIM + j],
+                        p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                        p_rhoBulk_elem[opposingNode],
+                        balancedForce);
                     p_dpdxBip[j] = 0.0;
                     p_duBip[j] = 0.0;
-                    // body force: harmonic for F
-                    const scalar fFace = p_F[localFaceNode * SPATIAL_DIM + j];
-                    const scalar fOpp =
-                        p_F_elem[opposingNode * SPATIAL_DIM + j];
-                    p_FBip[j] =
-                        (std::abs(fFace) * fOpp + fFace * std::abs(fOpp)) /
-                        (std::abs(fFace) + std::abs(fOpp) + SMALL);
-                    p_FOrigBip[j] = B_el[j];
+                    p_FBip[j] = rhieChowNodalPair(
+                        p_F[localFaceNode * SPATIAL_DIM + j],
+                        p_F_elem[opposingNode * SPATIAL_DIM + j],
+                        p_rhoBulk_elem[faceNodeOrdinals[localFaceNode]],
+                        p_rhoBulk_elem[opposingNode],
+                        balancedForce);
+                    p_FOrigBip[j] =
+                        0.5 *
+                        (B_el[faceNodeOrdinals[localFaceNode] * SPATIAL_DIM +
+                              j] +
+                         B_el[opposingNode * SPATIAL_DIM + j]);
                 }
 
                 // interpolate to bip
@@ -8910,6 +9304,19 @@ void freeSurfaceFlowModel::updateMassFlowRateBoundaryFieldOpeningPressure_(
                         p_duBip[j] += r * p_du[icNdim + j];
                     }
                 }
+
+                // balanced_force: body force at the boundary integration point
+                if (balancedForce)
+                    balancedForceIp(domain.get(),
+                                    nodesPerElement,
+                                    p_rhoBulk_elem,
+                                    p_FOrig_elem,
+                                    p_coordinates,
+                                    &p_dndx[SPATIAL_DIM * nodesPerElement * ip],
+                                    p_coordBip,
+                                    faceNodeOrdinals[localFaceNode],
+                                    opposingNode,
+                                    p_FOrigBip);
 
                 // form dpdxBip
                 for (label ic = 0; ic < nodesPerElement; ++ic)

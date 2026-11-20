@@ -570,6 +570,36 @@ void domain::read_()
                                         .template as<std::string>());
                         }
 
+                        if (freeSurfaceModelBlock["volume_fraction_update"])
+                        {
+                            const std::string v =
+                                freeSurfaceModelBlock["volume_fraction_update"]
+                                    .template as<std::string>();
+                            if (v == "once_per_time_step")
+                            {
+                                multiphase_.freeSurfaceModel_
+                                    .volumeFractionOncePerStep_ = true;
+                            }
+                            else if (v != "every_iteration")
+                            {
+                                errorMsg("volume_fraction_update: '" + v +
+                                         "' is not every_iteration or "
+                                         "once_per_time_step");
+                            }
+                        }
+
+                        if (freeSurfaceModelBlock["body_force_treatment"])
+                        {
+                            multiphase_.freeSurfaceModel_.bodyForceTreatment_ =
+                                convertBodyForceTreatmentTypeFromString(
+                                    freeSurfaceModelBlock
+                                        ["body_force_treatment"]
+                                            .template as<std::string>());
+                            infoMsg("Body force treatment: " +
+                                    toString(*multiphase_.freeSurfaceModel_
+                                                  .bodyForceTreatment_));
+                        }
+
                         infoMsg("Volume fraction advection scheme: " +
                                 toString(multiphase_.freeSurfaceModel_
                                              .advectionScheme_));

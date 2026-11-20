@@ -12,6 +12,7 @@
 // code
 #include "domain.h"
 #include "flowModel.h"
+#include "freeSurfaceFlowModel.h"
 #include "interface.h"
 #include "mesh.h"
 #include "robinNeumannState.h"
@@ -73,11 +74,13 @@ void assembleWallInterfaceSide(Assembler& self,
     std::vector<scalar> ws_rho;
     std::vector<scalar> ws_alpha;
     std::vector<scalar> ws_rho_mix;
-    std::vector<scalar> ws_du;     // pressure diffusivity (per component)
-    std::vector<scalar> ws_FOrig;  // original body force (per component)
-    std::vector<scalar> ws_elem_p; // element nodal p for the BIP gradient
-    std::vector<scalar> ws_dndx;   // shape-function derivatives at the BIP
-    std::vector<scalar> ws_det_j;  // Jacobian (general_face_grad_op)
+    std::vector<scalar> ws_du;         // pressure diffusivity (per component)
+    std::vector<scalar> ws_FOrig;      // original body force (per component)
+    std::vector<scalar> ws_elem_p;     // element nodal p for the BIP gradient
+    std::vector<scalar> ws_elem_rho;   // balanced_force: element mixture rho
+    std::vector<scalar> ws_elem_FOrig; // balanced_force: element F_orig
+    std::vector<scalar> ws_dndx;       // shape-function derivatives at the BIP
+    std::vector<scalar> ws_det_j;      // Jacobian (general_face_grad_op)
 
     // master element
     std::vector<scalar> ws_velocity_face_shape_function;
@@ -116,6 +119,14 @@ void assembleWallInterfaceSide(Assembler& self,
         FOrigSTKFieldPtr = metaData.get_field<scalar>(stk::topology::NODE_RANK,
                                                       flowModel::FOriginal_ID);
     }
+
+    // free-surface balanced_force: the Robin row balances grad(p) against the
+    // same body force as the interior Rhie-Chow (balancedForceIp), not the
+    // raw nodal F_orig, so that a fluid at rest gives no Robin flux
+    const auto* fsModel = dynamic_cast<const freeSurfaceFlowModel*>(model);
+    const bool balancedForce = robin && fsModel &&
+                               fsModel->bodyForceTreatment(domain) ==
+                                   bodyForceTreatmentType::balancedForce;
 
 #ifndef NDEBUG
     // SCL check field for debug: accumulates mesh flux to verify SCL
@@ -195,6 +206,8 @@ void assembleWallInterfaceSide(Assembler& self,
         ws_du.resize(nodesPerSide * SPATIAL_DIM);
         ws_FOrig.assign(nodesPerSide * SPATIAL_DIM, 0.0);
         ws_elem_p.resize(nodesPerElement);
+        ws_elem_rho.resize(nodesPerElement);
+        ws_elem_FOrig.resize(nodesPerElement * SPATIAL_DIM);
         ws_dndx.resize(SPATIAL_DIM * nodesPerElement);
         ws_det_j.resize(1);
         ws_velocity_face_shape_function.resize(numScsBip * nodesPerSide);
@@ -371,6 +384,15 @@ void assembleWallInterfaceSide(Assembler& self,
                 if (robin)
                 {
                     ws_elem_p[ni] = *stk::mesh::field_data(*pSTKFieldPtr, node);
+                }
+                if (balancedForce)
+                {
+                    ws_elem_rho[ni] = *stk::mesh::field_data(
+                        model->rhoRef().stkFieldRef(), node);
+                    const scalar* FOrigNode =
+                        stk::mesh::field_data(*FOrigSTKFieldPtr, node);
+                    for (label j = 0; j < SPATIAL_DIM; ++j)
+                        ws_elem_FOrig[ni * SPATIAL_DIM + j] = FOrigNode[j];
                 }
             }
 
@@ -572,6 +594,20 @@ void assembleWallInterfaceSide(Assembler& self,
                 {
                     scalar nDotGradPOld = 0.0;
                     scalar nDotFOrig = 0.0;
+                    if (balancedForce)
+                    {
+                        fsModel->balancedForceIp(
+                            domain,
+                            nodesPerElement,
+                            &ws_elem_rho[0],
+                            &ws_elem_FOrig[0],
+                            &p_coordinates[0],
+                            &ws_dndx[0],
+                            p_coordBip,
+                            nearestNode,
+                            meSCS->opposingNodes(faceOrdinal, ip),
+                            FOrigBip);
+                    }
                     for (label j = 0; j < SPATIAL_DIM; ++j)
                     {
                         nDotGradPOld += pGradBip[j] *

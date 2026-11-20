@@ -127,6 +127,12 @@ protected:
         // 3) refresh ghosts, then build grad(p') (gradient relaxation == 1)
         pCorr.synchronizeGhostedEntities(domain->index());
         pCorr.updateGradientField(domain->index());
+        if (model_->bodyForceTreatment(domain) ==
+                bodyForceTreatmentType::balancedForce &&
+            !model_->hasFluidSolidInterface(domain))
+        {
+            model_->reconstructPressureCorrectionGradient(domain);
+        }
     }
 
 private:
