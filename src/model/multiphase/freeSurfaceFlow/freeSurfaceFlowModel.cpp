@@ -1481,9 +1481,16 @@ void freeSurfaceFlowModel::balancedForceIp(const domain* domain,
         return;
     }
 
+    // g.x multiplying grad(rho) is taken at the element centroid, not at the
+    // integration point: grad(rho) is one vector per element row, so an
+    // element-constant g.x keeps grad(p) = F solvable at rest on skewed cells
+    // (sub-control surfaces at different heights with a vertical normal)
+    (void)coordIp;
     scalar gxIp = 0.0;
-    for (label d = 0; d < SPATIAL_DIM; ++d)
-        gxIp += g[d] * coordIp[d];
+    for (label ic = 0; ic < nodesPerElement; ++ic)
+        for (label d = 0; d < SPATIAL_DIM; ++d)
+            gxIp += g[d] * coordinates[ic * SPATIAL_DIM + d];
+    gxIp /= nodesPerElement;
     for (label j = 0; j < SPATIAL_DIM; ++j)
     {
         scalar dphi = 0.0;
